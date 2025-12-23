@@ -1,1 +1,3 @@
-# config
+# Config
+
+Herein lies my configuration files
