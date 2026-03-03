@@ -1,0 +1,74 @@
+#!/bin/bash
+set -euo pipefail
+
+branch="${1:-}"
+base_branch="${2:-main}"
+
+if [ -z "$branch" ]; then
+    echo "Usage: dev-wt-new <branch> [base-branch]"
+    exit 1
+fi
+
+if ! command -v git >/dev/null 2>&1; then
+    echo "git is required"
+    exit 1
+fi
+
+if ! command -v tmux >/dev/null 2>&1; then
+    echo "tmux is required"
+    exit 1
+fi
+
+if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "Run this from inside a git repository or worktree."
+    exit 1
+fi
+
+git_common_dir="$(git rev-parse --git-common-dir)"
+repo_root="$(cd "${git_common_dir}/.." && pwd)"
+repo_name="$(basename "$repo_root")"
+container_dir="$(dirname "$repo_root")"
+
+wk_dir="$container_dir/wk"
+wt_path="$wk_dir/$branch"
+
+mkdir -p "$wk_dir"
+
+if [ -d "$wt_path" ]; then
+    echo "Worktree already exists at $wt_path"
+else
+    if git -C "$repo_root" show-ref --verify --quiet "refs/heads/$branch"; then
+        git -C "$repo_root" worktree add "$wt_path" "$branch"
+    else
+        git -C "$repo_root" worktree add -b "$branch" "$wt_path" "$base_branch"
+    fi
+fi
+
+session_name="$(printf "%s-%s" "$repo_name" "$branch" | tr '/:.' '---')"
+
+if tmux has-session -t "$session_name" 2>/dev/null; then
+    if [ -n "${TMUX:-}" ]; then
+        tmux switch-client -t "$session_name"
+    else
+        tmux attach-session -t "$session_name"
+    fi
+    exit 0
+fi
+
+tmux new-session -d -s "$session_name" -n nvim -c "$wt_path"
+tmux send-keys -t "$session_name:nvim" "nvim" C-m
+
+tmux new-window -t "$session_name:" -n opencode -c "$wt_path"
+tmux send-keys -t "$session_name:opencode" "opencode" C-m
+
+tmux new-window -t "$session_name:" -n lazygit -c "$wt_path"
+tmux send-keys -t "$session_name:lazygit" "lazygit" C-m
+
+tmux new-window -t "$session_name:" -n term -c "$wt_path"
+tmux select-window -t "$session_name:nvim"
+
+if [ -n "${TMUX:-}" ]; then
+    tmux switch-client -t "$session_name"
+else
+    tmux attach-session -t "$session_name"
+fi
