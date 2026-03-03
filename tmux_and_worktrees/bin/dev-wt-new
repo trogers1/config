@@ -2,7 +2,7 @@
 set -euo pipefail
 
 branch="${1:-}"
-base_branch="${2:-main}"
+base_branch="${2:-}"
 
 if [ -z "$branch" ]; then
     echo "Usage: dev-wt-new <branch> [base-branch]"
@@ -22,6 +22,13 @@ fi
 if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     echo "Run this from inside a git repository or worktree."
     exit 1
+fi
+
+if [ -z "$base_branch" ]; then
+    base_branch="$(git symbolic-ref --quiet --short HEAD || true)"
+    if [ -z "$base_branch" ]; then
+        base_branch="main"
+    fi
 fi
 
 git_common_dir="$(git rev-parse --git-common-dir)"

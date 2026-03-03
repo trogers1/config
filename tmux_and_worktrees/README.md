@@ -5,7 +5,7 @@ This directory contains a portable tmux/worktree workflow you can copy into its 
 ## What it sets up
 
 - `dnew` -> normal dev tmux session in current repo/path
-- `dTree <branch> [base]` -> create/switch to a git worktree + tmux session
+- `dTree <branch> [base]` -> create/switch to a git worktree + tmux session (defaults base to current branch)
 - `dmerge [branch] [main] [--keep]` -> merge branch back and clean up
 
 Each dev session opens 4 tmux windows:
@@ -34,7 +34,7 @@ tmux source-file ~/.tmux.conf
 
 ## tmux keybinds
 
-Use your existing tmux prefix key, then:
+Prefix is `M-Space` (Meta+Space), then:
 
 - `N` -> local dev session (`dnew`)
 - `W` -> new worktree session (`dTree`)
@@ -48,3 +48,6 @@ Use your existing tmux prefix key, then:
 ```
 
 `dTree` creates worktrees under `wk/<branch>`.
+
+When creating a new branch, `dTree` bases it on your current branch by default.
+If your current HEAD is detached, it falls back to `main`.
