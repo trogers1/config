@@ -1,13 +1,49 @@
 #!/bin/bash
 set -euo pipefail
 
+log() {
+    printf "[dtree] %s\n" "$*"
+}
+
+run_bootstrap() {
+    local repo_root="$1"
+    local wt_path="$2"
+    local bootstrap_script=""
+
+    if [ -f "$repo_root/.worktree-init.sh" ]; then
+        bootstrap_script="$repo_root/.worktree-init.sh"
+    elif [ -f "$repo_root/scripts/worktree-init.sh" ]; then
+        bootstrap_script="$repo_root/scripts/worktree-init.sh"
+    fi
+
+    if [ -n "$bootstrap_script" ]; then
+        log "Running bootstrap script: $bootstrap_script"
+        (cd "$wt_path" && REPO_ROOT="$repo_root" WORKTREE_PATH="$wt_path" bash "$bootstrap_script")
+        return
+    fi
+
+    if [ ! -e "$wt_path/.env" ] && [ -f "$repo_root/.env" ]; then
+        ln -s "$repo_root/.env" "$wt_path/.env"
+        log "Linked .env from main checkout"
+    fi
+
+    if [ -f "$wt_path/package.json" ] && [ ! -d "$wt_path/node_modules" ]; then
+        if command -v npm >/dev/null 2>&1; then
+            if [ -f "$wt_path/package-lock.json" ]; then
+                log "Installing dependencies with npm ci"
+                (cd "$wt_path" && npm ci)
+            else
+                log "Installing dependencies with npm install"
+                (cd "$wt_path" && npm install)
+            fi
+        else
+            log "Skipped dependency install (npm not found)"
+        fi
+    fi
+}
+
 branch="${1:-}"
 base_branch="${2:-}"
-
-if [ -z "$branch" ]; then
-    echo "Usage: dev-wt-new <branch> [base-branch]"
-    exit 1
-fi
 
 if ! command -v git >/dev/null 2>&1; then
     echo "git is required"
@@ -24,8 +60,19 @@ if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     exit 1
 fi
 
+current_branch="$(git symbolic-ref --quiet --short HEAD || true)"
+
+if [ -z "$branch" ]; then
+    if [ -n "$current_branch" ]; then
+        branch="$current_branch"
+    else
+        echo "Usage: dev-wt-new <branch> [base-branch]"
+        exit 1
+    fi
+fi
+
 if [ -z "$base_branch" ]; then
-    base_branch="$(git symbolic-ref --quiet --short HEAD || true)"
+    base_branch="$current_branch"
     if [ -z "$base_branch" ]; then
         base_branch="main"
     fi
@@ -37,17 +84,38 @@ repo_name="$(basename "$repo_root")"
 container_dir="$(dirname "$repo_root")"
 
 wk_dir="$container_dir/wk"
-wt_path="$wk_dir/$branch"
+default_wt_path="$wk_dir/$branch"
 
-mkdir -p "$wk_dir"
+existing_wt_path=""
+current_wt_path=""
+while IFS= read -r line; do
+    case "$line" in
+        worktree\ *)
+            current_wt_path="${line#worktree }"
+            ;;
+        branch\ refs/heads/*)
+            if [ "${line#branch }" = "refs/heads/$branch" ]; then
+                existing_wt_path="$current_wt_path"
+                break
+            fi
+            ;;
+    esac
+done < <(git -C "$repo_root" worktree list --porcelain)
 
-if [ -d "$wt_path" ]; then
-    echo "Worktree already exists at $wt_path"
+if [ -n "$existing_wt_path" ]; then
+    wt_path="$existing_wt_path"
 else
-    if git -C "$repo_root" show-ref --verify --quiet "refs/heads/$branch"; then
-        git -C "$repo_root" worktree add "$wt_path" "$branch"
+    wt_path="$default_wt_path"
+    mkdir -p "$wk_dir"
+
+    if [ -d "$wt_path" ]; then
+        echo "Worktree already exists at $wt_path"
     else
-        git -C "$repo_root" worktree add -b "$branch" "$wt_path" "$base_branch"
+        if git -C "$repo_root" show-ref --verify --quiet "refs/heads/$branch"; then
+            git -C "$repo_root" worktree add "$wt_path" "$branch"
+        else
+            git -C "$repo_root" worktree add -b "$branch" "$wt_path" "$base_branch"
+        fi
     fi
 fi
 
@@ -61,6 +129,8 @@ if tmux has-session -t "$session_name" 2>/dev/null; then
     fi
     exit 0
 fi
+
+run_bootstrap "$repo_root" "$wt_path"
 
 tmux new-session -d -s "$session_name" -n nvim -c "$wt_path"
 tmux send-keys -t "$session_name:nvim" "nvim" C-m

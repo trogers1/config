@@ -1,17 +1,35 @@
 #!/bin/bash
 set -euo pipefail
 
-branch="${1:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)}"
-main_branch="${2:-main}"
-keep_worktree="${3:-}"
+branch=""
+target_branch=""
+keep_worktree="false"
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --keep)
+            keep_worktree="true"
+            ;;
+        *)
+            if [ -z "$branch" ]; then
+                branch="$1"
+            elif [ -z "$target_branch" ]; then
+                target_branch="$1"
+            else
+                echo "Usage: dev-wt-merge [branch] [target-branch] [--keep]"
+                exit 1
+            fi
+            ;;
+    esac
+    shift
+done
 
 if [ -z "$branch" ]; then
-    echo "Usage: dev-wt-merge <branch> [main-branch] [--keep]"
-    exit 1
+    branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
 fi
 
-if [ "$branch" = "$main_branch" ]; then
-    echo "Refusing to merge '$main_branch' into itself."
+if [ -z "$branch" ]; then
+    echo "Usage: dev-wt-merge [branch] [target-branch] [--keep]"
     exit 1
 fi
 
@@ -30,6 +48,68 @@ repo_root="$(cd "${git_common_dir}/.." && pwd)"
 repo_name="$(basename "$repo_root")"
 session_name="$(printf "%s-%s" "$repo_name" "$branch" | tr '/:.' '---')"
 
+if [ -z "$target_branch" ]; then
+    mapfile -t candidates < <(git -C "$repo_root" for-each-ref --format='%(refname:short)' refs/heads | awk -v source="$branch" '$0 != source')
+
+    if [ "${#candidates[@]}" -eq 0 ]; then
+        echo "No local target branches found to merge into."
+        exit 1
+    fi
+
+    default_target=""
+    repo_head="$(git -C "$repo_root" symbolic-ref --quiet --short HEAD || true)"
+    if [ -n "$repo_head" ] && [ "$repo_head" != "$branch" ] && [ "$repo_head" != "main" ]; then
+        default_target="$repo_head"
+    elif printf '%s\n' "${candidates[@]}" | grep -qx "staging"; then
+        default_target="staging"
+    elif printf '%s\n' "${candidates[@]}" | grep -qx "develop"; then
+        default_target="develop"
+    else
+        for candidate in "${candidates[@]}"; do
+            if [ "$candidate" != "main" ]; then
+                default_target="$candidate"
+                break
+            fi
+        done
+        if [ -z "$default_target" ]; then
+            default_target="${candidates[0]}"
+        fi
+    fi
+
+    if [ -t 0 ]; then
+        default_index=1
+        printf "Select target branch to merge '%s' into:\n" "$branch"
+        for i in "${!candidates[@]}"; do
+            idx=$((i + 1))
+            marker=" "
+            if [ "${candidates[i]}" = "$default_target" ]; then
+                default_index="$idx"
+                marker="*"
+            fi
+            printf "  %2d) %s %s\n" "$idx" "$marker" "${candidates[i]}"
+        done
+        printf "Enter choice [%d]: " "$default_index"
+        read -r choice
+        if [ -z "$choice" ]; then
+            choice="$default_index"
+        fi
+        if ! [[ "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 1 ] || [ "$choice" -gt "${#candidates[@]}" ]; then
+            echo "Invalid choice: $choice"
+            exit 1
+        fi
+        target_branch="${candidates[$((choice - 1))]}"
+    else
+        echo "No target branch provided and no interactive terminal available."
+        echo "Run: dev-wt-merge <branch> <target-branch> [--keep]"
+        exit 1
+    fi
+fi
+
+if [ "$branch" = "$target_branch" ]; then
+    echo "Refusing to merge '$branch' into itself."
+    exit 1
+fi
+
 if [ -n "$(git status --porcelain)" ]; then
     echo "Current working tree is dirty. Commit/stash first."
     exit 1
@@ -40,10 +120,10 @@ if [ -n "$(git -C "$repo_root" status --porcelain)" ]; then
     exit 1
 fi
 
-git -C "$repo_root" checkout "$main_branch"
+git -C "$repo_root" checkout "$target_branch"
 git -C "$repo_root" merge --no-ff "$branch"
 
-if [ "$keep_worktree" != "--keep" ]; then
+if [ "$keep_worktree" != "true" ]; then
     wt_path="$(git -C "$repo_root" worktree list --porcelain | awk -v target="refs/heads/$branch" '
         $1 == "worktree" { path = $2 }
         $1 == "branch" && $2 == target { print path; exit }
@@ -59,4 +139,4 @@ if [ "$keep_worktree" != "--keep" ]; then
     fi
 fi
 
-echo "Merged '$branch' into '$main_branch'."
+echo "Merged '$branch' into '$target_branch'."

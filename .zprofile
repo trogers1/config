@@ -17,7 +17,7 @@ export PATH="$HOME/bin:$PATH"
 # <<< local bin path <<<
 # >>> dev worktree aliases >>>
 alias dnew='dev-local'
-alias dTree='dev-wt-new'
+alias dtree='dev-wt-new'
 alias dmerge='dev-wt-merge'
 # <<< dev worktree aliases <<<
 
@@ -68,4 +68,3 @@ export PATH="$HOME/.local/bin:$PATH"
 
 # go
 # export PATH="/usr/local/go/bin:$PATH"
-

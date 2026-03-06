@@ -15,7 +15,7 @@ Tip: when this guide says `prefix + x`, press `M-Space`, release, then press `x`
 ## Windows (tabs)
 
 - New window: `prefix + c`
-- Next window: `prefix + n`
+- Next window: `prefix + Right`
 - Previous window: `prefix + p`
 - Last window: `prefix + l`
 - Go to window number: `prefix + 0` ... `prefix + 9`
@@ -48,8 +48,10 @@ Tip: when this guide says `prefix + x`, press `M-Space`, release, then press `x`
 
 With `prefix` set to `M-Space`:
 
+- `prefix + n` -> local dev session (`dnew`)
 - `prefix + N` -> local dev session (`dnew`)
-- `prefix + W` -> new worktree session (`dTree`)
+- `prefix + t` -> new worktree session (`dtree`)
+- `prefix + W` -> new worktree session (`dtree`)
 - `prefix + M` -> merge current branch back (`dmerge`)
 
 ## If Option/Meta does not work

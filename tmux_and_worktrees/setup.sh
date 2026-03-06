@@ -14,7 +14,8 @@ ln -sfn "$BIN_SRC_DIR/dev-wt-new" "$BIN_DEST_DIR/dev-wt-new"
 ln -sfn "$BIN_SRC_DIR/dev-wt-merge" "$BIN_DEST_DIR/dev-wt-merge"
 ln -sfn "$BIN_SRC_DIR/dev-local" "$BIN_DEST_DIR/dev-local"
 ln -sfn "$BIN_SRC_DIR/dev-local" "$BIN_DEST_DIR/dnew"
-ln -sfn "$BIN_SRC_DIR/dev-wt-new" "$BIN_DEST_DIR/dTree"
+
+ln -sfn "$BIN_SRC_DIR/dev-wt-new" "$BIN_DEST_DIR/dtree"
 ln -sfn "$SCRIPT_DIR/tmux-worktree.conf" "$TMUX_WORKTREE_LINK"
 
 chmod +x "$BIN_SRC_DIR/dev-wt-new"
@@ -38,7 +39,7 @@ mv "$tmp_file" "$ZPROFILE"
 cat >> "$ZPROFILE" <<'EOF'
 # >>> dev worktree aliases >>>
 alias dnew='dev-local'
-alias dTree='dev-wt-new'
+alias dtree='dev-wt-new'
 alias dmerge='dev-wt-merge'
 # <<< dev worktree aliases <<<
 EOF
@@ -69,7 +70,7 @@ echo "  $BIN_DEST_DIR/dev-wt-new -> $BIN_SRC_DIR/dev-wt-new"
 echo "  $BIN_DEST_DIR/dev-wt-merge -> $BIN_SRC_DIR/dev-wt-merge"
 echo "  $BIN_DEST_DIR/dev-local -> $BIN_SRC_DIR/dev-local"
 echo "  $BIN_DEST_DIR/dnew -> $BIN_SRC_DIR/dev-local"
-echo "  $BIN_DEST_DIR/dTree -> $BIN_SRC_DIR/dev-wt-new"
+echo "  $BIN_DEST_DIR/dtree -> $BIN_SRC_DIR/dev-wt-new"
 echo "  $TMUX_WORKTREE_LINK -> $SCRIPT_DIR/tmux-worktree.conf"
 echo "Aliases added to $ZPROFILE (if missing)."
 echo "PATH update added to $ZPROFILE (if missing)."
