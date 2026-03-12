@@ -30,7 +30,7 @@ tmux source-file ~/.tmux.conf
 
 - symlink scripts into `~/bin`
 - ensure `~/bin` is on `PATH` in `~/.zprofile`
-- add aliases (`dnew`, `dtree`, `dkill`, `dmerge`) to `~/.zprofile`
+- remove any legacy alias block for these commands from `~/.zprofile`
 - source tmux bindings from `~/.tmux.worktree.conf`
 
 ## tmux keybinds

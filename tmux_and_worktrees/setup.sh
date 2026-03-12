@@ -10,25 +10,24 @@ TMUX_WORKTREE_LINK="$HOME/.tmux.worktree.conf"
 
 mkdir -p "$BIN_DEST_DIR"
 
-ln -sfn "$BIN_SRC_DIR/dev-wt-new" "$BIN_DEST_DIR/dev-wt-new"
-ln -sfn "$BIN_SRC_DIR/dev-wt-close" "$BIN_DEST_DIR/dev-wt-close"
-ln -sfn "$BIN_SRC_DIR/dev-wt-merge" "$BIN_DEST_DIR/dev-wt-merge"
-ln -sfn "$BIN_SRC_DIR/dev-local" "$BIN_DEST_DIR/dev-local"
-ln -sfn "$BIN_SRC_DIR/dev-local" "$BIN_DEST_DIR/dnew"
+rm -f "$BIN_DEST_DIR/dev-wt-new" "$BIN_DEST_DIR/dev-wt-close" "$BIN_DEST_DIR/dev-wt-merge" "$BIN_DEST_DIR/dev-local"
 
-ln -sfn "$BIN_SRC_DIR/dev-wt-new" "$BIN_DEST_DIR/dtree"
+ln -sfn "$BIN_SRC_DIR/dtree" "$BIN_DEST_DIR/dtree"
+ln -sfn "$BIN_SRC_DIR/dkill" "$BIN_DEST_DIR/dkill"
+ln -sfn "$BIN_SRC_DIR/dmerge" "$BIN_DEST_DIR/dmerge"
+ln -sfn "$BIN_SRC_DIR/dnew" "$BIN_DEST_DIR/dnew"
 ln -sfn "$SCRIPT_DIR/tmux-worktree.conf" "$TMUX_WORKTREE_LINK"
 
-chmod +x "$BIN_SRC_DIR/dev-wt-new"
-chmod +x "$BIN_SRC_DIR/dev-wt-close"
-chmod +x "$BIN_SRC_DIR/dev-wt-merge"
-chmod +x "$BIN_SRC_DIR/dev-local"
+chmod +x "$BIN_SRC_DIR/dtree"
+chmod +x "$BIN_SRC_DIR/dkill"
+chmod +x "$BIN_SRC_DIR/dmerge"
+chmod +x "$BIN_SRC_DIR/dnew"
 
 if [ ! -f "$ZPROFILE" ]; then
     touch "$ZPROFILE"
 fi
 
-# Refresh alias block on every run so changes stay in sync.
+# Refresh alias block on every run so removed aliases get cleaned up.
 tmp_file="$(mktemp)"
 awk '
     BEGIN { skip = 0 }
@@ -37,15 +36,6 @@ awk '
     skip == 0 { print }
 ' "$ZPROFILE" > "$tmp_file"
 mv "$tmp_file" "$ZPROFILE"
-
-cat >> "$ZPROFILE" <<'EOF'
-# >>> dev worktree aliases >>>
-alias dnew='dev-local'
-alias dtree='dev-wt-new'
-alias dkill='dev-wt-close'
-alias dmerge='dev-wt-merge'
-# <<< dev worktree aliases <<<
-EOF
 
 if ! grep -q "# >>> local bin path >>>" "$ZPROFILE"; then
     cat >> "$ZPROFILE" <<'EOF'
@@ -69,14 +59,12 @@ EOF
 fi
 
 echo "Installed:"
-echo "  $BIN_DEST_DIR/dev-wt-new -> $BIN_SRC_DIR/dev-wt-new"
-echo "  $BIN_DEST_DIR/dev-wt-close -> $BIN_SRC_DIR/dev-wt-close"
-echo "  $BIN_DEST_DIR/dev-wt-merge -> $BIN_SRC_DIR/dev-wt-merge"
-echo "  $BIN_DEST_DIR/dev-local -> $BIN_SRC_DIR/dev-local"
-echo "  $BIN_DEST_DIR/dnew -> $BIN_SRC_DIR/dev-local"
-echo "  $BIN_DEST_DIR/dtree -> $BIN_SRC_DIR/dev-wt-new"
+echo "  $BIN_DEST_DIR/dtree -> $BIN_SRC_DIR/dtree"
+echo "  $BIN_DEST_DIR/dkill -> $BIN_SRC_DIR/dkill"
+echo "  $BIN_DEST_DIR/dmerge -> $BIN_SRC_DIR/dmerge"
+echo "  $BIN_DEST_DIR/dnew -> $BIN_SRC_DIR/dnew"
 echo "  $TMUX_WORKTREE_LINK -> $SCRIPT_DIR/tmux-worktree.conf"
-echo "Aliases added to $ZPROFILE (if missing)."
+echo "Legacy alias block removed from $ZPROFILE (if present)."
 echo "PATH update added to $ZPROFILE (if missing)."
 echo "Tmux source line added to $TMUX_CONF (if missing)."
 echo "Open a new shell or run: source ~/.zprofile"

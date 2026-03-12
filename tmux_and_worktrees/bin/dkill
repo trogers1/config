@@ -45,7 +45,7 @@ while [ "$#" -gt 0 ]; do
             if [ -z "$branch" ]; then
                 branch="$1"
             else
-                echo "Usage: dev-wt-close [branch] [--force]"
+                echo "Usage: dkill [branch] [--force]"
                 exit 1
             fi
             ;;
@@ -69,7 +69,7 @@ if [ -z "$branch" ]; then
 fi
 
 if [ -z "$branch" ]; then
-    echo "Usage: dev-wt-close [branch] [--force]"
+    echo "Usage: dkill [branch] [--force]"
     exit 1
 fi
 

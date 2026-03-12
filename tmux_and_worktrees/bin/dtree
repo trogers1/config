@@ -121,7 +121,7 @@ if [ -z "$branch" ]; then
     if [ -n "$current_branch" ]; then
         branch="$current_branch"
     else
-        echo "Usage: dev-wt-new <branch> [base-branch]"
+        echo "Usage: dtree <branch> [base-branch]"
         exit 1
     fi
 fi

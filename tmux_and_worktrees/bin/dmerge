@@ -16,7 +16,7 @@ while [ "$#" -gt 0 ]; do
             elif [ -z "$target_branch" ]; then
                 target_branch="$1"
             else
-                echo "Usage: dev-wt-merge [branch] [target-branch] [--keep]"
+                echo "Usage: dmerge [branch] [target-branch] [--keep]"
                 exit 1
             fi
             ;;
@@ -29,7 +29,7 @@ if [ -z "$branch" ]; then
 fi
 
 if [ -z "$branch" ]; then
-    echo "Usage: dev-wt-merge [branch] [target-branch] [--keep]"
+    echo "Usage: dmerge [branch] [target-branch] [--keep]"
     exit 1
 fi
 
@@ -100,7 +100,7 @@ if [ -z "$target_branch" ]; then
         target_branch="${candidates[$((choice - 1))]}"
     else
         echo "No target branch provided and no interactive terminal available."
-        echo "Run: dev-wt-merge <branch> <target-branch> [--keep]"
+        echo "Run: dmerge <branch> <target-branch> [--keep]"
         exit 1
     fi
 fi
