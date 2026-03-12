@@ -11,6 +11,7 @@ TMUX_WORKTREE_LINK="$HOME/.tmux.worktree.conf"
 mkdir -p "$BIN_DEST_DIR"
 
 ln -sfn "$BIN_SRC_DIR/dev-wt-new" "$BIN_DEST_DIR/dev-wt-new"
+ln -sfn "$BIN_SRC_DIR/dev-wt-close" "$BIN_DEST_DIR/dev-wt-close"
 ln -sfn "$BIN_SRC_DIR/dev-wt-merge" "$BIN_DEST_DIR/dev-wt-merge"
 ln -sfn "$BIN_SRC_DIR/dev-local" "$BIN_DEST_DIR/dev-local"
 ln -sfn "$BIN_SRC_DIR/dev-local" "$BIN_DEST_DIR/dnew"
@@ -19,6 +20,7 @@ ln -sfn "$BIN_SRC_DIR/dev-wt-new" "$BIN_DEST_DIR/dtree"
 ln -sfn "$SCRIPT_DIR/tmux-worktree.conf" "$TMUX_WORKTREE_LINK"
 
 chmod +x "$BIN_SRC_DIR/dev-wt-new"
+chmod +x "$BIN_SRC_DIR/dev-wt-close"
 chmod +x "$BIN_SRC_DIR/dev-wt-merge"
 chmod +x "$BIN_SRC_DIR/dev-local"
 
@@ -40,6 +42,7 @@ cat >> "$ZPROFILE" <<'EOF'
 # >>> dev worktree aliases >>>
 alias dnew='dev-local'
 alias dtree='dev-wt-new'
+alias dkill='dev-wt-close'
 alias dmerge='dev-wt-merge'
 # <<< dev worktree aliases <<<
 EOF
@@ -67,6 +70,7 @@ fi
 
 echo "Installed:"
 echo "  $BIN_DEST_DIR/dev-wt-new -> $BIN_SRC_DIR/dev-wt-new"
+echo "  $BIN_DEST_DIR/dev-wt-close -> $BIN_SRC_DIR/dev-wt-close"
 echo "  $BIN_DEST_DIR/dev-wt-merge -> $BIN_SRC_DIR/dev-wt-merge"
 echo "  $BIN_DEST_DIR/dev-local -> $BIN_SRC_DIR/dev-local"
 echo "  $BIN_DEST_DIR/dnew -> $BIN_SRC_DIR/dev-local"

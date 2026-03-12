@@ -1,0 +1,142 @@
+#!/bin/bash
+set -euo pipefail
+
+branch=""
+force="false"
+
+log() {
+    printf "[dclose] %s\n" "$*"
+}
+
+kill_sessions_for_worktree() {
+    local wt_path="$1"
+    local repo_name="$2"
+    local branch="$3"
+    local session_name=""
+    local env_line=""
+    local session_path=""
+    local preferred_session_name=""
+
+    preferred_session_name="$(printf "%s-%s" "$repo_name" "$branch" | tr '/:.' '---')"
+
+    while IFS= read -r session_name; do
+        [ -n "$session_name" ] || continue
+
+        env_line="$(tmux show-environment -t "$session_name" DTREE_WORKTREE_PATH 2>/dev/null || true)"
+        session_path=""
+        case "$env_line" in
+            DTREE_WORKTREE_PATH=*)
+                session_path="${env_line#DTREE_WORKTREE_PATH=}"
+                ;;
+        esac
+
+        if [ "$session_path" = "$wt_path" ] || [ "$session_name" = "$preferred_session_name" ]; then
+            tmux kill-session -t "$session_name" 2>/dev/null || true
+        fi
+    done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null || true)
+}
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --force|-f)
+            force="true"
+            ;;
+        *)
+            if [ -z "$branch" ]; then
+                branch="$1"
+            else
+                echo "Usage: dev-wt-close [branch] [--force]"
+                exit 1
+            fi
+            ;;
+    esac
+    shift
+done
+
+if ! command -v git >/dev/null 2>&1; then
+    echo "git is required"
+    exit 1
+fi
+
+if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "Run this from inside a git repository or worktree."
+    exit 1
+fi
+
+current_branch="$(git symbolic-ref --quiet --short HEAD || true)"
+if [ -z "$branch" ]; then
+    branch="$current_branch"
+fi
+
+if [ -z "$branch" ]; then
+    echo "Usage: dev-wt-close [branch] [--force]"
+    exit 1
+fi
+
+case "$branch" in
+    main|master|develop|staging)
+        if [ "$force" != "true" ]; then
+            echo "Refusing to close protected branch '$branch' without --force."
+            exit 1
+        fi
+        ;;
+esac
+
+git_common_dir="$(git rev-parse --git-common-dir)"
+repo_root="$(cd "${git_common_dir}/.." && pwd)"
+repo_name="$(basename "$repo_root")"
+
+wt_path="$(git -C "$repo_root" worktree list --porcelain | awk -v target="refs/heads/$branch" '
+    $1 == "worktree" { path = $2 }
+    $1 == "branch" && $2 == target { print path; exit }
+')"
+
+if [ -z "$wt_path" ]; then
+    echo "No worktree found for branch '$branch'."
+    exit 1
+fi
+
+current_wt_path="$(git rev-parse --show-toplevel)"
+if [ "$wt_path" = "$repo_root" ]; then
+    echo "Refusing to remove the main checkout: $wt_path"
+    exit 1
+fi
+
+if [ "$force" != "true" ] && [ -n "$(git -C "$wt_path" status --porcelain)" ]; then
+    echo "Worktree is dirty: $wt_path"
+    echo "Commit/stash first, or rerun with --force."
+    exit 1
+fi
+
+if [ "$force" != "true" ] && [ -t 0 ]; then
+    printf "Close worktree '%s' and delete local branch '%s'? [y/N] " "$wt_path" "$branch"
+    read -r answer
+    case "$answer" in
+        y|Y|yes|YES)
+            ;;
+        *)
+            echo "Cancelled."
+            exit 0
+            ;;
+    esac
+fi
+
+remove_args=(worktree remove)
+branch_args=(branch -d)
+if [ "$force" = "true" ]; then
+    remove_args+=(--force)
+    branch_args=(branch -D)
+fi
+
+git -C "$repo_root" "${remove_args[@]}" "$wt_path"
+git -C "$repo_root" "${branch_args[@]}" "$branch"
+
+if command -v tmux >/dev/null 2>&1; then
+    kill_sessions_for_worktree "$wt_path" "$repo_name" "$branch"
+fi
+
+if [ "$current_wt_path" = "$wt_path" ]; then
+    log "Closed current worktree '$branch'. Open another session if needed."
+else
+    log "Closed worktree '$branch'."
+fi

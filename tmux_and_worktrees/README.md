@@ -6,6 +6,7 @@ This directory contains a portable tmux/worktree workflow you can copy into its 
 
 - `dnew` -> normal dev tmux session in current repo/path
 - `dtree <branch> [base]` -> create/switch to a git worktree + tmux session (defaults base to current branch)
+- `dkill [branch] [--force]` -> kill the worktree tmux session and delete that worktree + local branch
 - `dmerge [branch] [target] [--keep]` -> interactively choose merge target and clean up
 
 Each dev session opens 4 tmux windows:
@@ -29,7 +30,7 @@ tmux source-file ~/.tmux.conf
 
 - symlink scripts into `~/bin`
 - ensure `~/bin` is on `PATH` in `~/.zprofile`
-- add aliases (`dnew`, `dtree`, `dmerge`) to `~/.zprofile`
+- add aliases (`dnew`, `dtree`, `dkill`, `dmerge`) to `~/.zprofile`
 - source tmux bindings from `~/.tmux.worktree.conf`
 
 ## tmux keybinds
@@ -57,6 +58,18 @@ If your current HEAD is detached, it falls back to `main`.
 from worktree `A` reconnects only to the session already bound to `wk/B`.
 If a session named for branch `B` already exists but points at some other checkout,
 `dtree` creates a new suffixed session instead of attaching you to the wrong worktree.
+
+## Killing a worktree
+
+Use `dkill` from inside a worktree session when you want to discard that worktree
+without merging it anywhere.
+
+- `dkill` -> close the current branch's worktree, kill its tmux session, and delete the local branch
+- `dkill my-branch` -> close a specific branch worktree
+- `dkill --force` -> allow closing a dirty worktree and force-delete the local branch
+
+`dkill` refuses to remove the main checkout, and it protects `main`, `master`,
+`develop`, and `staging` unless you pass `--force`.
 
 ## Worktree bootstrap (one-command setup)
 
