@@ -15,7 +15,7 @@ Each dev session opens 4 tmux windows:
 3. `lazygit`
 4. `term`
 
-## Install
+## Install (or re-setup after updating)
 
 From this directory:
 
@@ -53,6 +53,10 @@ Prefix is `M-Space` (Meta+Space), then:
 
 When creating a new branch, `dtree` bases it on your current branch by default.
 If your current HEAD is detached, it falls back to `main`.
+`dtree` now reuses tmux sessions by matching the resolved worktree path, so `dtree B`
+from worktree `A` reconnects only to the session already bound to `wk/B`.
+If a session named for branch `B` already exists but points at some other checkout,
+`dtree` creates a new suffixed session instead of attaching you to the wrong worktree.
 
 ## Worktree bootstrap (one-command setup)
 
