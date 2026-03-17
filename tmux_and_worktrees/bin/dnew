@@ -22,6 +22,7 @@ project_name="$(basename "$project_path")"
 session_name="$(printf "%s-dev" "$project_name" | tr '/:.' '---')"
 
 if tmux has-session -t "$session_name" 2>/dev/null; then
+    tmux set-environment -t "$session_name" DTREE_WORKTREE_PATH "$project_path"
     if [ -n "${TMUX:-}" ]; then
         tmux switch-client -t "$session_name"
     else
@@ -31,6 +32,7 @@ if tmux has-session -t "$session_name" 2>/dev/null; then
 fi
 
 tmux new-session -d -s "$session_name" -n nvim -c "$project_path"
+tmux set-environment -t "$session_name" DTREE_WORKTREE_PATH "$project_path"
 tmux send-keys -t "$session_name:nvim" "nvim" C-m
 
 tmux new-window -t "$session_name:" -n opencode -c "$project_path"

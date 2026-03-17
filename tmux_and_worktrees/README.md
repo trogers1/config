@@ -8,6 +8,9 @@ This directory contains a portable tmux/worktree workflow you can copy into its 
 - `dtree <branch> [base]` -> create/switch to a git worktree + tmux session (defaults base to current branch)
 - `dkill [branch] [--force]` -> kill the worktree tmux session and delete that worktree + local branch
 - `dmerge [branch] [target] [--keep]` -> interactively choose merge target and clean up
+- `dhome` -> jump the current shell back to the root path for the active tmux dev session
+
+`dhome` is only available inside a tmux dev session created by `dnew` or `dtree`.
 
 Each dev session opens 4 tmux windows:
 
@@ -31,6 +34,7 @@ tmux source-file ~/.tmux.conf
 - symlink scripts into `~/bin`
 - ensure `~/bin` is on `PATH` in `~/.zprofile`
 - remove any legacy alias block for these commands from `~/.zprofile`
+- install a `dhome` shell function in `~/.zprofile`
 - source tmux bindings from `~/.tmux.worktree.conf`
 
 ## tmux keybinds

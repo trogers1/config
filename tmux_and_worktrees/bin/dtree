@@ -178,6 +178,8 @@ preferred_session_name="$(make_session_name "${repo_name}-${branch}")"
 session_name="$(find_session_for_worktree_path "$wt_path" || true)"
 
 if [ -n "$session_name" ]; then
+    tmux set-environment -t "$session_name" DTREE_WORKTREE_PATH "$wt_path"
+    tmux set-environment -t "$session_name" DTREE_BRANCH "$branch"
     attach_or_switch "$session_name"
     exit 0
 fi
