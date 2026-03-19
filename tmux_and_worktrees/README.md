@@ -7,6 +7,7 @@ This directory contains a portable tmux/worktree workflow you can copy into its 
 - `dnew` -> normal dev tmux session in current repo/path
 - `dopen` -> alias for `dnew`
 - `dtree <branch> [base]` -> create/switch to a git worktree + tmux session (defaults base to current branch)
+- `dclose [branch]` -> kill the tmux session only, leaving the checkout/worktree intact
 - `dkill [branch] [--force]` -> kill the worktree tmux session and delete that worktree + local branch
 - `dmerge [branch] [target] [--keep]` -> interactively choose merge target and clean up
 - `dhome` -> jump the current shell back to the root path for the active tmux dev session
@@ -75,6 +76,14 @@ without merging it anywhere.
 
 `dkill` refuses to remove the main checkout, and it protects `main`, `master`,
 `develop`, and `staging` unless you pass `--force`.
+
+## Closing a session only
+
+Use `dclose` when you want to shut down the tmux session but keep the repo or
+worktree exactly as-is.
+
+- `dclose` -> close the current repo/worktree dev session
+- `dclose my-branch` -> close the tmux session for a specific worktree branch
 
 ## Worktree bootstrap (one-command setup)
 

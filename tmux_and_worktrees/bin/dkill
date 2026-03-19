@@ -5,7 +5,7 @@ branch=""
 force="false"
 
 log() {
-    printf "[dclose] %s\n" "$*"
+    printf "[dkill] %s\n" "$*"
 }
 
 kill_sessions_for_worktree() {

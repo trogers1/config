@@ -14,6 +14,7 @@ rm -f "$BIN_DEST_DIR/dev-wt-new" "$BIN_DEST_DIR/dev-wt-close" "$BIN_DEST_DIR/dev
 
 ln -sfn "$BIN_SRC_DIR/dtree" "$BIN_DEST_DIR/dtree"
 ln -sfn "$BIN_SRC_DIR/dkill" "$BIN_DEST_DIR/dkill"
+ln -sfn "$BIN_SRC_DIR/dclose" "$BIN_DEST_DIR/dclose"
 ln -sfn "$BIN_SRC_DIR/dmerge" "$BIN_DEST_DIR/dmerge"
 ln -sfn "$BIN_SRC_DIR/dnew" "$BIN_DEST_DIR/dnew"
 ln -sfn "$BIN_SRC_DIR/dopen" "$BIN_DEST_DIR/dopen"
@@ -21,6 +22,7 @@ ln -sfn "$SCRIPT_DIR/tmux-worktree.conf" "$TMUX_WORKTREE_LINK"
 
 chmod +x "$BIN_SRC_DIR/dtree"
 chmod +x "$BIN_SRC_DIR/dkill"
+chmod +x "$BIN_SRC_DIR/dclose"
 chmod +x "$BIN_SRC_DIR/dmerge"
 chmod +x "$BIN_SRC_DIR/dnew"
 chmod +x "$BIN_SRC_DIR/dopen"
@@ -94,6 +96,7 @@ fi
 echo "Installed:"
 echo "  $BIN_DEST_DIR/dtree -> $BIN_SRC_DIR/dtree"
 echo "  $BIN_DEST_DIR/dkill -> $BIN_SRC_DIR/dkill"
+echo "  $BIN_DEST_DIR/dclose -> $BIN_SRC_DIR/dclose"
 echo "  $BIN_DEST_DIR/dmerge -> $BIN_SRC_DIR/dmerge"
 echo "  $BIN_DEST_DIR/dnew -> $BIN_SRC_DIR/dnew"
 echo "  $BIN_DEST_DIR/dopen -> $BIN_SRC_DIR/dopen"

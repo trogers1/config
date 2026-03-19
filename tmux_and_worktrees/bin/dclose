@@ -1,0 +1,125 @@
+#!/bin/bash
+set -euo pipefail
+
+log() {
+    printf "[dclose] %s\n" "$*"
+}
+
+get_session_worktree_path() {
+    local session_name="$1"
+    local env_line=""
+
+    env_line="$(tmux show-environment -t "$session_name" DTREE_WORKTREE_PATH 2>/dev/null || true)"
+    case "$env_line" in
+        DTREE_WORKTREE_PATH=*)
+            printf '%s\n' "${env_line#DTREE_WORKTREE_PATH=}"
+            return 0
+            ;;
+    esac
+
+    return 1
+}
+
+make_session_name() {
+    printf '%s\n' "$1" | tr '/:.' '---'
+}
+
+usage() {
+    echo "Usage: dclose [branch]"
+}
+
+if [ "$#" -gt 1 ]; then
+    usage
+    exit 1
+fi
+
+if ! command -v tmux >/dev/null 2>&1; then
+    echo "tmux is required"
+    exit 1
+fi
+
+branch="${1:-}"
+target_path=""
+preferred_session_name=""
+description="dev session"
+current_session=""
+
+if [ -n "${TMUX:-}" ]; then
+    current_session="$(tmux display-message -p '#S' 2>/dev/null || true)"
+fi
+
+if [ -n "$branch" ]; then
+    if ! command -v git >/dev/null 2>&1; then
+        echo "git is required"
+        exit 1
+    fi
+
+    if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        echo "Run this from inside a git repository or worktree."
+        exit 1
+    fi
+
+    git_common_dir="$(git rev-parse --git-common-dir)"
+    repo_root="$(cd "${git_common_dir}/.." && pwd)"
+    repo_name="$(basename "$repo_root")"
+
+    wt_path="$(git -C "$repo_root" worktree list --porcelain | awk -v target="refs/heads/$branch" '
+        $1 == "worktree" { path = $2 }
+        $1 == "branch" && $2 == target { print path; exit }
+    ')"
+
+    if [ -z "$wt_path" ]; then
+        echo "No worktree found for branch '$branch'."
+        exit 1
+    fi
+
+    target_path="$wt_path"
+    preferred_session_name="$(make_session_name "${repo_name}-${branch}")"
+    description="worktree session '$branch'"
+else
+    if [ -n "$current_session" ]; then
+        target_path="$(get_session_worktree_path "$current_session" || true)"
+    fi
+
+    if [ -z "$target_path" ]; then
+        project_path="$(pwd)"
+        if command -v git >/dev/null 2>&1 && git -C "$project_path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+            project_path="$(git -C "$project_path" rev-parse --show-toplevel)"
+        else
+            project_path="$(cd "$project_path" && pwd)"
+        fi
+
+        project_name="$(basename "$project_path")"
+        target_path="$project_path"
+        preferred_session_name="$(make_session_name "${project_name}-dev")"
+    fi
+fi
+
+matches=()
+while IFS= read -r session_name; do
+    [ -n "$session_name" ] || continue
+
+    session_path="$(get_session_worktree_path "$session_name" || true)"
+    if [ "$session_path" = "$target_path" ] || { [ -n "$preferred_session_name" ] && [ "$session_name" = "$preferred_session_name" ]; }; then
+        matches+=("$session_name")
+    fi
+done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null || true)
+
+if [ "${#matches[@]}" -eq 0 ]; then
+    echo "No tmux session found for $target_path"
+    exit 1
+fi
+
+log "Closing ${#matches[@]} session(s) for $target_path"
+
+for session_name in "${matches[@]}"; do
+    if [ "$session_name" != "$current_session" ]; then
+        tmux kill-session -t "$session_name"
+    fi
+done
+
+for session_name in "${matches[@]}"; do
+    if [ "$session_name" = "$current_session" ]; then
+        tmux kill-session -t "$session_name"
+    fi
+done
