@@ -17,4 +17,4 @@ If you only want the dotfile symlinks, run `./symlink_dotfiles.sh` directly. For
 
 ## [Tmux and Worktrees](./tmux_and_worktrees)
 
-Simply run `bash ./tmux_and_worktrees/setup.sh` to set up tmux and worktree commands (see [the README](./tmux_and_worktrees/README.md) for instructions/dependencies).
+This config includes my development tmux+worktree setup for parallel agentic development. It can be installed via the [./setup.sh](./setup.sh) script (or directly by running `bash ./tmux_and_worktrees/setup.sh`). This will set up tmux and worktree commands (see [the README](./tmux_and_worktrees/README.md) for instructions/dependencies).
