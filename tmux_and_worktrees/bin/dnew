@@ -1,6 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/lib/tmux_worktree.sh"
+
 target_path="${1:-$(pwd)}"
 
 if [ ! -d "$target_path" ]; then
@@ -8,44 +11,22 @@ if [ ! -d "$target_path" ]; then
     exit 1
 fi
 
-if ! command -v tmux >/dev/null 2>&1; then
-    echo "tmux is required"
-    exit 1
-fi
+tmux_worktree_require_tmux
 
-project_path="$(cd "$target_path" && pwd)"
-if command -v git >/dev/null 2>&1 && git -C "$project_path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    project_path="$(git -C "$project_path" rev-parse --show-toplevel)"
-fi
+project_path="$(tmux_worktree_resolve_project_path "$target_path")"
+preferred_session_name="$(tmux_worktree_preferred_local_session_name "$project_path")"
+session_name="$(tmux_worktree_find_session_for_worktree_path "$project_path" || true)"
 
-project_name="$(basename "$project_path")"
-session_name="$(printf "%s-dev" "$project_name" | tr '/:.' '---')"
-
-if tmux has-session -t "$session_name" 2>/dev/null; then
-    tmux set-environment -t "$session_name" DTREE_WORKTREE_PATH "$project_path"
-    if [ -n "${TMUX:-}" ]; then
-        tmux switch-client -t "$session_name"
-    else
-        tmux attach-session -t "$session_name"
-    fi
+if [ -n "$session_name" ]; then
+    tmux_worktree_set_session_metadata "$session_name" "$project_path"
+    tmux_worktree_attach_or_switch "$session_name"
     exit 0
 fi
 
-tmux new-session -d -s "$session_name" -n nvim -c "$project_path"
-tmux set-environment -t "$session_name" DTREE_WORKTREE_PATH "$project_path"
-tmux send-keys -t "$session_name:nvim" "nvim" C-m
-
-tmux new-window -t "$session_name:" -n opencode -c "$project_path"
-tmux send-keys -t "$session_name:opencode" "opencode" C-m
-
-tmux new-window -t "$session_name:" -n lazygit -c "$project_path"
-tmux send-keys -t "$session_name:lazygit" "lazygit" C-m
-
-tmux new-window -t "$session_name:" -n term -c "$project_path"
-tmux select-window -t "$session_name:nvim"
-
-if [ -n "${TMUX:-}" ]; then
-    tmux switch-client -t "$session_name"
-else
-    tmux attach-session -t "$session_name"
+session_name="$preferred_session_name"
+if tmux has-session -t "$session_name" 2>/dev/null; then
+    session_name="$(tmux_worktree_make_session_name "${preferred_session_name}-$(tmux_worktree_path_checksum "$project_path")")"
 fi
+
+tmux_worktree_create_standard_session "$session_name" "$project_path"
+tmux_worktree_attach_or_switch "$session_name"

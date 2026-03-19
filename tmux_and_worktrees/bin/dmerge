@@ -1,6 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/lib/tmux_worktree.sh"
+
 branch=""
 target_branch=""
 keep_worktree="false"
@@ -24,8 +27,11 @@ while [ "$#" -gt 0 ]; do
     shift
 done
 
+tmux_worktree_require_git
+tmux_worktree_require_git_repo
+
 if [ -z "$branch" ]; then
-    branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+    branch="$(tmux_worktree_git_current_branch)"
 fi
 
 if [ -z "$branch" ]; then
@@ -33,20 +39,9 @@ if [ -z "$branch" ]; then
     exit 1
 fi
 
-if ! command -v git >/dev/null 2>&1; then
-    echo "git is required"
-    exit 1
-fi
-
-if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    echo "Run this from inside a git repository or worktree."
-    exit 1
-fi
-
-git_common_dir="$(git rev-parse --git-common-dir)"
-repo_root="$(cd "${git_common_dir}/.." && pwd)"
+repo_root="$(tmux_worktree_main_repo_root)"
 repo_name="$(basename "$repo_root")"
-session_name="$(printf "%s-%s" "$repo_name" "$branch" | tr '/:.' '---')"
+preferred_session_name="$(tmux_worktree_preferred_worktree_session_name "$repo_name" "$branch")"
 
 if [ -z "$target_branch" ]; then
     mapfile -t candidates < <(git -C "$repo_root" for-each-ref --format='%(refname:short)' refs/heads | awk -v source="$branch" '$0 != source')
@@ -124,10 +119,7 @@ git -C "$repo_root" checkout "$target_branch"
 git -C "$repo_root" merge --no-ff "$branch"
 
 if [ "$keep_worktree" != "true" ]; then
-    wt_path="$(git -C "$repo_root" worktree list --porcelain | awk -v target="refs/heads/$branch" '
-        $1 == "worktree" { path = $2 }
-        $1 == "branch" && $2 == target { print path; exit }
-    ')"
+    wt_path="$(tmux_worktree_path_for_branch "$repo_root" "$branch")"
 
     if [ -n "$wt_path" ]; then
         git -C "$repo_root" worktree remove "$wt_path"
@@ -135,7 +127,7 @@ if [ "$keep_worktree" != "true" ]; then
 
     git -C "$repo_root" branch -d "$branch" || true
     if command -v tmux >/dev/null 2>&1; then
-        tmux kill-session -t "$session_name" 2>/dev/null || true
+        tmux_worktree_kill_sessions_for_worktree_path "$wt_path" "$preferred_session_name" "$(tmux_worktree_current_session_name)" || true
     fi
 fi
 

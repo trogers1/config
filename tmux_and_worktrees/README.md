@@ -21,6 +21,11 @@ Each dev session opens 4 tmux windows:
 3. `lazygit`
 4. `term`
 
+Session reuse and cleanup are path-based first: `dnew`, `dtree`, `dclose`,
+`dkill`, and `dmerge` all resolve the owning tmux session by
+`DTREE_WORKTREE_PATH` before falling back to the preferred human-readable
+session name.
+
 ## Install (or re-setup after updating)
 
 From this directory:
@@ -33,7 +38,7 @@ tmux source-file ~/.tmux.conf
 
 `setup.sh` will:
 
-- symlink scripts into `~/bin`
+- install thin command wrappers into `~/bin`
 - ensure `~/bin` is on `PATH` in `~/.zprofile`
 - remove any legacy alias block for these commands from `~/.zprofile`
 - install a `dhome` shell function in `~/.zprofile`
@@ -65,6 +70,10 @@ from worktree `A` reconnects only to the session already bound to `wk/B`.
 If a session named for branch `B` already exists but points at some other checkout,
 `dtree` creates a new suffixed session instead of attaching you to the wrong worktree.
 
+`dnew` follows the same rule for non-worktree sessions: it reuses the session for the
+resolved project path, and if the preferred `<repo>-dev` name is already attached to
+some other checkout, it creates a suffixed session instead of reusing the wrong one.
+
 ## Killing a worktree
 
 Use `dkill` from inside a worktree session when you want to discard that worktree
@@ -84,6 +93,10 @@ worktree exactly as-is.
 
 - `dclose` -> close the current repo/worktree dev session
 - `dclose my-branch` -> close the tmux session for a specific worktree branch
+
+`dclose` uses the same session-resolution rules as `dnew` and `dtree`, so it closes
+the session attached to the resolved path even when a suffixed fallback session name
+was used.
 
 ## Worktree bootstrap (one-command setup)
 

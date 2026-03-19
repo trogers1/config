@@ -1,6 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/lib/tmux_worktree.sh"
+
 branch=""
 force="false"
 
@@ -12,28 +15,10 @@ kill_sessions_for_worktree() {
     local wt_path="$1"
     local repo_name="$2"
     local branch="$3"
-    local session_name=""
-    local env_line=""
-    local session_path=""
     local preferred_session_name=""
 
-    preferred_session_name="$(printf "%s-%s" "$repo_name" "$branch" | tr '/:.' '---')"
-
-    while IFS= read -r session_name; do
-        [ -n "$session_name" ] || continue
-
-        env_line="$(tmux show-environment -t "$session_name" DTREE_WORKTREE_PATH 2>/dev/null || true)"
-        session_path=""
-        case "$env_line" in
-            DTREE_WORKTREE_PATH=*)
-                session_path="${env_line#DTREE_WORKTREE_PATH=}"
-                ;;
-        esac
-
-        if [ "$session_path" = "$wt_path" ] || [ "$session_name" = "$preferred_session_name" ]; then
-            tmux kill-session -t "$session_name" 2>/dev/null || true
-        fi
-    done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null || true)
+    preferred_session_name="$(tmux_worktree_preferred_worktree_session_name "$repo_name" "$branch")"
+    tmux_worktree_kill_sessions_for_worktree_path "$wt_path" "$preferred_session_name" "$(tmux_worktree_current_session_name)" || true
 }
 
 while [ "$#" -gt 0 ]; do
@@ -53,17 +38,10 @@ while [ "$#" -gt 0 ]; do
     shift
 done
 
-if ! command -v git >/dev/null 2>&1; then
-    echo "git is required"
-    exit 1
-fi
+tmux_worktree_require_git
+tmux_worktree_require_git_repo
 
-if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    echo "Run this from inside a git repository or worktree."
-    exit 1
-fi
-
-current_branch="$(git symbolic-ref --quiet --short HEAD || true)"
+current_branch="$(tmux_worktree_git_current_branch)"
 if [ -z "$branch" ]; then
     branch="$current_branch"
 fi
@@ -82,14 +60,10 @@ case "$branch" in
         ;;
 esac
 
-git_common_dir="$(git rev-parse --git-common-dir)"
-repo_root="$(cd "${git_common_dir}/.." && pwd)"
+repo_root="$(tmux_worktree_main_repo_root)"
 repo_name="$(basename "$repo_root")"
 
-wt_path="$(git -C "$repo_root" worktree list --porcelain | awk -v target="refs/heads/$branch" '
-    $1 == "worktree" { path = $2 }
-    $1 == "branch" && $2 == target { print path; exit }
-')"
+wt_path="$(tmux_worktree_path_for_branch "$repo_root" "$branch")"
 
 if [ -z "$wt_path" ]; then
     echo "No worktree found for branch '$branch'."

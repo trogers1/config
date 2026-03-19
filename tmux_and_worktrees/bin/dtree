@@ -1,63 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/lib/tmux_worktree.sh"
+
 log() {
     printf "[dtree] %s\n" "$*"
-}
-
-attach_or_switch() {
-    local session_name="$1"
-
-    if [ -n "${TMUX:-}" ]; then
-        tmux switch-client -t "$session_name"
-    else
-        tmux attach-session -t "$session_name"
-    fi
-}
-
-get_session_worktree_path() {
-    local session_name="$1"
-    local env_line=""
-
-    env_line="$(tmux show-environment -t "$session_name" DTREE_WORKTREE_PATH 2>/dev/null || true)"
-    case "$env_line" in
-        DTREE_WORKTREE_PATH=*)
-            printf '%s\n' "${env_line#DTREE_WORKTREE_PATH=}"
-            return 0
-            ;;
-    esac
-
-    return 1
-}
-
-find_session_for_worktree_path() {
-    local target_path="$1"
-    local session_name=""
-    local session_path=""
-
-    while IFS= read -r session_name; do
-        [ -n "$session_name" ] || continue
-
-        session_path="$(get_session_worktree_path "$session_name" || true)"
-        if [ "$session_path" = "$target_path" ]; then
-            printf '%s\n' "$session_name"
-            return 0
-        fi
-    done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null || true)
-
-    return 1
-}
-
-make_session_name() {
-    printf '%s\n' "$1" | tr '/:.' '---'
-}
-
-path_checksum() {
-    local input_path="$1"
-    local checksum=""
-
-    checksum="$(printf '%s' "$input_path" | cksum)"
-    printf '%s\n' "${checksum%% *}"
 }
 
 run_bootstrap() {
@@ -100,22 +48,11 @@ run_bootstrap() {
 branch="${1:-}"
 base_branch="${2:-}"
 
-if ! command -v git >/dev/null 2>&1; then
-    echo "git is required"
-    exit 1
-fi
+tmux_worktree_require_git
+tmux_worktree_require_tmux
+tmux_worktree_require_git_repo
 
-if ! command -v tmux >/dev/null 2>&1; then
-    echo "tmux is required"
-    exit 1
-fi
-
-if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    echo "Run this from inside a git repository or worktree."
-    exit 1
-fi
-
-current_branch="$(git symbolic-ref --quiet --short HEAD || true)"
+current_branch="$(tmux_worktree_git_current_branch)"
 
 if [ -z "$branch" ]; then
     if [ -n "$current_branch" ]; then
@@ -133,29 +70,14 @@ if [ -z "$base_branch" ]; then
     fi
 fi
 
-git_common_dir="$(git rev-parse --git-common-dir)"
-repo_root="$(cd "${git_common_dir}/.." && pwd)"
+repo_root="$(tmux_worktree_main_repo_root)"
 repo_name="$(basename "$repo_root")"
 container_dir="$(dirname "$repo_root")"
 
 wk_dir="$container_dir/wk"
 default_wt_path="$wk_dir/$branch"
 
-existing_wt_path=""
-current_wt_path=""
-while IFS= read -r line; do
-    case "$line" in
-        worktree\ *)
-            current_wt_path="${line#worktree }"
-            ;;
-        branch\ refs/heads/*)
-            if [ "${line#branch }" = "refs/heads/$branch" ]; then
-                existing_wt_path="$current_wt_path"
-                break
-            fi
-            ;;
-    esac
-done < <(git -C "$repo_root" worktree list --porcelain)
+existing_wt_path="$(tmux_worktree_path_for_branch "$repo_root" "$branch")"
 
 if [ -n "$existing_wt_path" ]; then
     wt_path="$existing_wt_path"
@@ -174,36 +96,22 @@ else
     fi
 fi
 
-preferred_session_name="$(make_session_name "${repo_name}-${branch}")"
-session_name="$(find_session_for_worktree_path "$wt_path" || true)"
+preferred_session_name="$(tmux_worktree_preferred_worktree_session_name "$repo_name" "$branch")"
+session_name="$(tmux_worktree_find_session_for_worktree_path "$wt_path" || true)"
 
 if [ -n "$session_name" ]; then
-    tmux set-environment -t "$session_name" DTREE_WORKTREE_PATH "$wt_path"
-    tmux set-environment -t "$session_name" DTREE_BRANCH "$branch"
-    attach_or_switch "$session_name"
+    tmux_worktree_set_session_metadata "$session_name" "$wt_path" "$branch"
+    tmux_worktree_attach_or_switch "$session_name"
     exit 0
 fi
 
 session_name="$preferred_session_name"
 if tmux has-session -t "$session_name" 2>/dev/null; then
-    session_name="$(make_session_name "${preferred_session_name}-$(path_checksum "$wt_path")")"
+    session_name="$(tmux_worktree_make_session_name "${preferred_session_name}-$(tmux_worktree_path_checksum "$wt_path")")"
     log "Session $preferred_session_name is already attached to another worktree; using $session_name"
 fi
 
 run_bootstrap "$repo_root" "$wt_path"
 
-tmux new-session -d -s "$session_name" -n nvim -c "$wt_path"
-tmux set-environment -t "$session_name" DTREE_WORKTREE_PATH "$wt_path"
-tmux set-environment -t "$session_name" DTREE_BRANCH "$branch"
-tmux send-keys -t "$session_name:nvim" "nvim" C-m
-
-tmux new-window -t "$session_name:" -n opencode -c "$wt_path"
-tmux send-keys -t "$session_name:opencode" "opencode" C-m
-
-tmux new-window -t "$session_name:" -n lazygit -c "$wt_path"
-tmux send-keys -t "$session_name:lazygit" "lazygit" C-m
-
-tmux new-window -t "$session_name:" -n term -c "$wt_path"
-tmux select-window -t "$session_name:nvim"
-
-attach_or_switch "$session_name"
+tmux_worktree_create_standard_session "$session_name" "$wt_path" "$branch"
+tmux_worktree_attach_or_switch "$session_name"
