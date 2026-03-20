@@ -2,18 +2,29 @@
 
 Herein lies my configuration files
 
+## Layout
+
+- `home/` contains files that should be symlinked into `~/`
+- `xdg/` contains application configs that should be symlinked into `~/.config/`
+- `tmux_and_worktrees/` contains my tmux + git worktree development workflow
+
 ## Setup
 
 Run `./setup.sh` from this repository to install the full config.
 
 It will:
 
-- symlink each top-level dotfile in this repo into your home directory
-- skip `.git` and `.gitignore`
+- symlink each entry in `home/` into `~/`
+- symlink each entry in `xdg/` into `~/.config/`
 - run `./tmux_and_worktrees/setup.sh` to install the tmux/worktree helpers
 - reload tmux config automatically when a tmux server is already running
 
-If you only want the dotfile symlinks, run `./symlink_dotfiles.sh` directly. For shell changes, open a new shell or run `source ~/.zprofile`.
+If you only want the home + XDG symlinks, run `./symlink_dotfiles.sh` directly. For shell changes, open a new shell or run `source ~/.zprofile`.
+
+## XDG configs
+
+Application configs that normally live under `~/.config/` live in `./xdg/` in this repo.
+See [`./xdg/README.md`](./xdg/README.md) for the rationale and mapping.
 
 ## [Tmux and Worktrees](./tmux_and_worktrees)
 
