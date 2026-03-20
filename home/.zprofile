@@ -63,3 +63,29 @@ export PATH="$HOME/.local/bin:$PATH"
 
 # go
 # export PATH="/usr/local/go/bin:$PATH"
+
+# >>> dev worktree dhome >>>
+dhome() {
+    local env_line=""
+    local target=""
+
+    if [ -z "${TMUX:-}" ]; then
+        echo "dhome is only available in a tmux dev session"
+        return 1
+    fi
+
+    env_line="$(tmux show-environment DTREE_WORKTREE_PATH 2>/dev/null || true)"
+    case "$env_line" in
+        DTREE_WORKTREE_PATH=*)
+            target="${env_line#DTREE_WORKTREE_PATH=}"
+            ;;
+    esac
+
+    if [ -z "$target" ]; then
+        echo "dhome is only available in a tmux dev session"
+        return 1
+    fi
+
+    cd "$target"
+}
+# <<< dev worktree dhome <<<
