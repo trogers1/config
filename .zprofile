@@ -15,18 +15,13 @@ export PATH="$PATH:/Users/taylor.rogers/.local/bin"
 # >>> local bin path >>>
 export PATH="$HOME/bin:$PATH"
 # <<< local bin path <<<
-# >>> dev worktree aliases >>>
-alias dnew='dev-local'
-alias dtree='dev-wt-new'
-alias dmerge='dev-wt-merge'
-# <<< dev worktree aliases <<<
 
 # Adding homebrew to the PATH 
 [ -x /opt/homebrew/bin/brew ] && eval "$(/opt/homebrew/bin/brew shellenv)"
 
 # nvm: load fast, do not auto-switch on shell start
 export NVM_DIR="$HOME/.nvm"
-[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" --no-use
+[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" # --no-use
 [ -s "$NVM_DIR/bash_completion" ] && . "$NVM_DIR/bash_completion"
 # Auto-switch only when changing directories
 autoload -U add-zsh-hook
