@@ -1,0 +1,21 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/lib/tmux_worktree.sh"
+
+target_path="${1:-$(pwd)}"
+ghostty_font="${GHOSTTY_WRITING_FONT:-GoMono Nerd Font}"
+ghostty_theme="${GHOSTTY_WRITING_THEME:-Builtin Light}"
+
+if [ ! -d "$target_path" ]; then
+    echo "Path does not exist: $target_path"
+    exit 1
+fi
+
+project_path="$(tmux_worktree_resolve_project_path "$target_path")"
+
+exec env -u TMUX open -na Ghostty.app --args \
+    --font-family="$ghostty_font" \
+    --theme="$ghostty_theme" \
+    -e zsh -lc "unset TMUX; exec \"$HOME/bin/wopen\" \"$project_path\""
