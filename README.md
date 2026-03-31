@@ -1,12 +1,12 @@
 # Config
 
-Herein lies my configuration files
+Herein lies my configuration files 📜
 
 ## Layout
 
 - `home/` contains files that should be symlinked into `~/`
 - `xdg/` contains application configs that should be symlinked into `~/.config/`
-- `tmux_and_worktrees/` contains my tmux + git worktree development workflow
+- `tmux_and_worktrees/` contains my tmux + git worktree development workflow (tooling built specifically for parallel agentic workflows)
 
 ## Setup
 
