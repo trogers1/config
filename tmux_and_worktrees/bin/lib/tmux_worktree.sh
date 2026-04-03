@@ -33,6 +33,24 @@ tmux_worktree_main_repo_root() {
     (cd "${git_common_dir}/.." && pwd)
 }
 
+tmux_worktree_default_root() {
+    local repo_root="$1"
+    local repo_parent=""
+    local repo_name=""
+
+    repo_parent="$(dirname "$repo_root")"
+    repo_name="$(basename "$repo_root")"
+
+    printf '%s\n' "$repo_parent/${repo_name}-worktrees"
+}
+
+tmux_worktree_default_path() {
+    local repo_root="$1"
+    local branch="$2"
+
+    printf '%s\n' "$(tmux_worktree_default_root "$repo_root")/$branch"
+}
+
 tmux_worktree_resolve_project_path() {
     local target_path="$1"
     local project_path=""

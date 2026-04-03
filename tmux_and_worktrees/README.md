@@ -59,16 +59,16 @@ Prefix is `M-Space` (Meta+Space), then:
 ## Recommended repo layout
 
 ```text
-/path/to/project/repo   # main checkout
-/path/to/project/wk     # worktrees
+/path/to/project-name             # main checkout
+/path/to/project-name-worktrees   # worktrees
 ```
 
-`dtree` creates worktrees under `wk/<branch>`.
+`dtree` creates worktrees under `<repo-name>-worktrees/<branch>`.
 
 When creating a new branch, `dtree` bases it on your current branch by default.
 If your current HEAD is detached, it falls back to `main`.
 `dtree` now reuses tmux sessions by matching the resolved worktree path, so `dtree B`
-from worktree `A` reconnects only to the session already bound to `wk/B`.
+from worktree `A` reconnects only to the session already bound to the same worktree path.
 If a session named for branch `B` already exists but points at some other checkout,
 `dtree` creates a new suffixed session instead of attaching you to the wrong worktree.
 

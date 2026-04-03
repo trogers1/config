@@ -72,10 +72,8 @@ fi
 
 repo_root="$(tmux_worktree_main_repo_root)"
 repo_name="$(basename "$repo_root")"
-container_dir="$(dirname "$repo_root")"
-
-wk_dir="$container_dir/wk"
-default_wt_path="$wk_dir/$branch"
+worktree_root="$(tmux_worktree_default_root "$repo_root")"
+default_wt_path="$(tmux_worktree_default_path "$repo_root" "$branch")"
 
 existing_wt_path="$(tmux_worktree_path_for_branch "$repo_root" "$branch")"
 
@@ -83,7 +81,7 @@ if [ -n "$existing_wt_path" ]; then
     wt_path="$existing_wt_path"
 else
     wt_path="$default_wt_path"
-    mkdir -p "$wk_dir"
+    mkdir -p "$worktree_root"
 
     if [ -d "$wt_path" ]; then
         echo "Worktree already exists at $wt_path"
