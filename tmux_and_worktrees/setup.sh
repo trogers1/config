@@ -85,7 +85,6 @@ EOF
 fi
 
 cat >> "$ZPROFILE_TARGET" <<'EOF'
-
 # >>> dev worktree dhome >>>
 dhome() {
     local env_line=""
