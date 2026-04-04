@@ -1,0 +1,90 @@
+*md-comments.txt*  Markdown Comments Plugin
+
+Markdown Comments Plugin                                  *md-comments*
+
+A Neovim plugin for managing comments on markdown files using a sidecar file
+approach. Perfect for writers who want to add editorial comments, notes, and
+feedback to their blog posts or documents.
+
+FEATURES                                        *md-comments-features*
+
+1. Sidecar file format - Comments stored in `.comments` sidecars like `post.md.comments`
+2. Line-range comments - Comments can span single lines or multiple paragraphs
+3. Bidirectional navigation - Jump between markdown text and comments
+4. Visual indicators - Commented lines show red line numbers
+5. Quick split window - Open comments in vertical split
+
+USAGE                                           *md-comments-usage*
+
+When editing a markdown file (e.g., `post.md`):
+
+<leader>mc      Open comments sidecar (creates `post.md.comments`)
+<leader>mv      View comment for current line
+<leader>ma      Add new comment for current line
+<leader>ma (visual) Add comment for selected lines
+
+In the comments file:
+<CR>            Jump to the referenced line in markdown
+
+FILE FORMAT                                     *md-comments-format*
+
+Comments are stored in `.comments` sidecars with this format:
+>
+    [5] Single line comment for line 5
+    
+    [10-15] Multi-line comment spanning lines 10-15
+    This comment continues on the next line.
+    And can have multiple paragraphs.
+    
+    [20] Another single line comment
+<
+
+The format is:
+- `[N]` - Comment for line N
+- `[N-M]` - Comment spanning lines N through M
+- Text after `]` is the comment content
+- Comments can span multiple lines
+
+EXAMPLE WORKFLOW                                *md-comments-example*
+
+1. Open your markdown blog post
+2. Place cursor on a line you want to comment
+3. Press <leader>ma to add a comment
+4. Type your comment in the sidecar window
+5. Press <CR> on any comment line to jump back to markdown
+6. Commented lines show red line numbers
+
+CONFIGURATION                                   *md-comments-config*
+
+Default configuration:
+>
+    require('custom.md_comments').setup({
+      sidecar_ext = '.comments',       -- Suffix added to markdown files
+      highlight_group = 'CommentLineNr', -- Highlight group for line numbers
+      sign_priority = 10,              -- Priority of line number highlights
+    })
+<
+
+You can customize the highlight color:
+>
+    vim.api.nvim_set_hl(0, 'CommentLineNr', {
+      fg = '#ff6b6b',  -- Red color
+      bold = true,
+    })
+<
+
+KEYMAPS                                         *md-comments-keymaps*
+
+Default keymaps (in markdown files):
+<leader>mc      Open comments sidecar
+<leader>mv      View comment for current line
+<leader>ma      Add comment (normal/visual mode)
+
+Note: Uses <leader>m prefix to avoid conflict with LSP code actions (<leader>c).
+
+In sidecar files:
+<CR>            Jump to referenced markdown line
+
+CREDITS                                         *md-comments-credits*
+
+Created as a custom plugin for kickstart.nvim configuration.

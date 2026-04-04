@@ -1010,6 +1010,8 @@ require('lazy').setup({
   },
 })
 
+require('custom.md_comments').setup()
+
 -- Required for custom aerial plugin
 require('aerial').setup {
   -- optionally use on_attach to set keymaps when aerial has attached to a buffer
