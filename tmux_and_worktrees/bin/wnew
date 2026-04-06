@@ -15,7 +15,7 @@ fi
 
 project_path="$(tmux_worktree_resolve_project_path "$target_path")"
 
-exec env -u TMUX open -na Ghostty.app --args \
+exec env -u TMUX -u NVIM_BACKGROUND -u NVIM_COLORSCHEME open -na Ghostty.app --args \
     --font-family="$ghostty_font" \
     --theme="$ghostty_theme" \
-    -e zsh -lc "unset TMUX; exec \"$HOME/bin/wopen\" \"$project_path\""
+    -e zsh -lc "unset TMUX NVIM_BACKGROUND NVIM_COLORSCHEME; exec \"$HOME/bin/wopen\" \"$project_path\""

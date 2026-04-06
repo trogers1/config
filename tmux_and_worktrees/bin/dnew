@@ -4,7 +4,37 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/lib/tmux_worktree.sh"
 
-target_path="${1:-$(pwd)}"
+nvim_command=""
+target_path="$(pwd)"
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --nvim-command)
+            if [ "$#" -lt 2 ]; then
+                echo "Missing value for --nvim-command"
+                exit 1
+            fi
+            nvim_command="$2"
+            shift 2
+            ;;
+        --)
+            shift
+            break
+            ;;
+        -*)
+            echo "Unknown option: $1"
+            exit 1
+            ;;
+        *)
+            target_path="$1"
+            shift
+            ;;
+    esac
+done
+
+if [ "$#" -gt 0 ]; then
+    target_path="$1"
+fi
 
 if [ ! -d "$target_path" ]; then
     echo "Path does not exist: $target_path"
@@ -28,5 +58,5 @@ if tmux has-session -t "$session_name" 2>/dev/null; then
     session_name="$(tmux_worktree_make_session_name "${preferred_session_name}-$(tmux_worktree_path_checksum "$project_path")")"
 fi
 
-tmux_worktree_create_standard_session "$session_name" "$project_path"
+tmux_worktree_create_standard_session "$session_name" "$project_path" "" "$nvim_command"
 tmux_worktree_attach_or_switch "$session_name"

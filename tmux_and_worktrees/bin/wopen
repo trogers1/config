@@ -30,4 +30,4 @@ if [ -n "$session_name" ]; then
     exit 0
 fi
 
-exec env TMUX_WORKTREE_NVIM_COMMAND='env NVIM_BACKGROUND=light NVIM_COLORSCHEME=shine nvim' "$SCRIPT_DIR/dnew" "$project_path"
+exec "$SCRIPT_DIR/dnew" --nvim-command 'env NVIM_BACKGROUND=light NVIM_COLORSCHEME=shine nvim' "$project_path"

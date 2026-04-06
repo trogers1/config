@@ -206,7 +206,7 @@ tmux_worktree_create_standard_session() {
     local session_name="$1"
     local worktree_path="$2"
     local branch="${3:-}"
-    local nvim_command="${TMUX_WORKTREE_NVIM_COMMAND:-nvim}"
+    local nvim_command="${4:-nvim}"
 
     tmux new-session -d -s "$session_name" -n nvim -c "$worktree_path"
     tmux_worktree_set_session_metadata "$session_name" "$worktree_path" "$branch"

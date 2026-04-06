@@ -8,6 +8,9 @@ This directory contains a portable tmux/worktree workflow you can copy into its 
 - `dopen` -> alias for `dnew`
 - `wopen` -> `dnew`, but launch `nvim` with `NVIM_COLORSCHEME=shine`
 - `wnew` -> open a new Ghostty window with writing overrides, then run `wopen`
+
+Writing-mode `nvim` overrides are passed explicitly by `wopen`/`wnew`, so plain
+`dnew` does not depend on inherited shell environment for editor mode.
 - `dtree <branch> [base]` -> create/switch to a git worktree + tmux session (defaults base to current branch)
 - `dclose [branch]` -> kill the tmux session only, leaving the checkout/worktree intact
 - `dkill [branch] [--force]` -> kill the worktree tmux session and delete that worktree + local branch
