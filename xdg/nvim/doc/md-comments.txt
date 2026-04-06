@@ -9,7 +9,7 @@ feedback to their blog posts or documents.
 FEATURES                                        *md-comments-features*
 
 1. Sidecar file format - Comments stored in `.comments` sidecars like `post.md.comments`
-2. Line-range comments - Comments can span single lines or multiple paragraphs
+2. Line and column ranges - Comments can target full lines or exact text spans
 3. Bidirectional navigation - Jump between markdown text and comments
 4. Visual indicators - Commented lines show red line numbers
 5. Quick split window - Open comments in vertical split
@@ -21,7 +21,7 @@ When editing a markdown file (e.g., `post.md`):
 <leader>mc      Open comments sidecar (creates `post.md.comments`)
 <leader>mv      View comment for current line
 <leader>ma      Add new comment for current line
-<leader>ma (visual) Add comment for selected lines
+<leader>ma (visual) Add comment for selected text or lines
 
 In the comments file:
 <CR>            Jump to the referenced line in markdown
@@ -36,20 +36,21 @@ Comments are stored in `.comments` sidecars with this format:
     This comment continues on the next line.
     And can have multiple paragraphs.
     
-    [20] Another single line comment
+    [20:8-20:19] Comment for a specific text span on line 20
 <
 
 The format is:
 - `[N]` - Comment for line N
 - `[N-M]` - Comment spanning lines N through M
+- `[N:C-M:D]` - Comment spanning exact columns from line N, col C to line M, col D
 - Text after `]` is the comment content
-- Comments can span multiple lines
+- Use normal mode for whole-line comments, visual mode for exact spans
 
 EXAMPLE WORKFLOW                                *md-comments-example*
 
 1. Open your markdown blog post
 2. Place cursor on a line you want to comment
-3. Press <leader>ma to add a comment
+3. Press <leader>ma to add a comment, or visually select text first for a column-aware comment
 4. Type your comment in the sidecar window
 5. Press <CR> on any comment line to jump back to markdown
 6. Commented lines show red line numbers
@@ -61,6 +62,7 @@ Default configuration:
     require('custom.md_comments').setup({
       sidecar_ext = '.comments',       -- Suffix added to markdown files
       highlight_group = 'CommentLineNr', -- Highlight group for line numbers
+      range_highlight_group = 'MdCommentRange', -- Highlight for commented text
       sign_priority = 10,              -- Priority of line number highlights
     })
 <
