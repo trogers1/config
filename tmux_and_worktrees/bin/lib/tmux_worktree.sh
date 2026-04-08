@@ -173,12 +173,62 @@ tmux_worktree_collect_sessions_for_worktree_path() {
     done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null || true)
 }
 
+tmux_worktree_session_is_excluded() {
+    local target_session="$1"
+    shift || true
+
+    local excluded_session=""
+    for excluded_session in "$@"; do
+        if [ "$target_session" = "$excluded_session" ]; then
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+tmux_worktree_find_last_used_managed_session() {
+    local excluded_sessions=("$@")
+    local session_name=""
+    local session_last_attached=""
+    local session_path=""
+    local best_session_name=""
+    local best_last_attached="-1"
+
+    while IFS=$'\t' read -r session_name session_last_attached; do
+        [ -n "$session_name" ] || continue
+
+        if tmux_worktree_session_is_excluded "$session_name" "${excluded_sessions[@]}"; then
+            continue
+        fi
+
+        session_path="$(tmux_worktree_get_session_worktree_path "$session_name" || true)"
+        if [ -z "$session_path" ]; then
+            continue
+        fi
+
+        session_last_attached="${session_last_attached:-0}"
+        if [ "$session_last_attached" -gt "$best_last_attached" ]; then
+            best_session_name="$session_name"
+            best_last_attached="$session_last_attached"
+        fi
+    done < <(tmux list-sessions -F '#{session_name}	#{session_last_attached}' 2>/dev/null || true)
+
+    if [ -n "$best_session_name" ]; then
+        printf '%s\n' "$best_session_name"
+        return 0
+    fi
+
+    return 1
+}
+
 tmux_worktree_kill_sessions_for_worktree_path() {
     local target_path="$1"
     local preferred_session_name="${2:-}"
     local current_session_name="${3:-}"
     local session_name=""
     local matches=()
+    local fallback_session_name=""
 
     while IFS= read -r session_name; do
         [ -n "$session_name" ] || continue
@@ -187,6 +237,13 @@ tmux_worktree_kill_sessions_for_worktree_path() {
 
     if [ "${#matches[@]}" -eq 0 ]; then
         return 1
+    fi
+
+    if [ -n "$current_session_name" ] && tmux_worktree_session_is_excluded "$current_session_name" "${matches[@]}"; then
+        fallback_session_name="$(tmux_worktree_find_last_used_managed_session "${matches[@]}" || true)"
+        if [ -n "$fallback_session_name" ]; then
+            tmux switch-client -t "$fallback_session_name"
+        fi
     fi
 
     for session_name in "${matches[@]}"; do

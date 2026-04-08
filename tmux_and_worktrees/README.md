@@ -103,6 +103,10 @@ worktree exactly as-is.
 the session attached to the resolved path even when a suffixed fallback session name
 was used.
 
+When you run `dclose`/`wclose` from inside the current tmux dev session, tmux switches
+you to the most recently used remaining managed dev/writing session before closing the
+current one.
+
 ## Worktree bootstrap (one-command setup)
 
 `dtree` now runs a bootstrap step before opening a brand new tmux session.
