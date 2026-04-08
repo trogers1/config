@@ -8,9 +8,9 @@
       "mode": "primary",
       "prompt": "{file:./prompts/socrates.md}",
       "permission": {
-        "edit": "deny"
-      }
-    }
+        "edit": "deny",
+      },
+    },
   },
   "permission": {
     "bash": {
@@ -46,10 +46,14 @@
       "npx vitest *": "allow",
       "sed *": "allow",
       "ls *": "allow",
+      "file *": "allow",
       "npm *": "allow",
       "openspec *": "allow",
       "npx tsc --noEmit": "allow",
     },
     "external_directory": "ask",
+    "read": {
+      ".env": "deny",
+    },
   },
 }
