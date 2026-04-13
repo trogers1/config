@@ -1010,8 +1010,7 @@ require('lazy').setup({
   },
 })
 
-require('custom.md_comments').setup()
-require('custom.markdown_tk_diagnostics').setup()
+require('custom').setup()
 
 -- Required for custom aerial plugin
 require('aerial').setup {

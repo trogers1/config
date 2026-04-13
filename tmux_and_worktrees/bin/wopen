@@ -18,16 +18,16 @@ project_path="$(tmux_worktree_resolve_project_path "$target_path")"
 session_name="$(tmux_worktree_find_session_for_worktree_path "$project_path" || true)"
 
 if [ -n "$session_name" ]; then
-    nvim_command="$(tmux list-panes -t "$session_name:nvim" -F '#{pane_current_command}' 2>/dev/null || true)"
+    pane_current_command="$(tmux list-panes -t "$session_name:nvim" -F '#{pane_current_command}' 2>/dev/null || true)"
 
-    if [ "$nvim_command" = "nvim" ]; then
-        tmux send-keys -t "$session_name:nvim" Escape ":set background=light | colorscheme shine" Enter
+    if [ "$pane_current_command" = "nvim" ]; then
+        tmux send-keys -t "$session_name:nvim" Escape ":let $NVIM_CONTEXT='writing' | set background=light | colorscheme shine" Enter
     else
-        tmux send-keys -t "$session_name:nvim" "env NVIM_BACKGROUND=light NVIM_COLORSCHEME=shine nvim" C-m
+        tmux send-keys -t "$session_name:nvim" "env NVIM_CONTEXT=writing NVIM_BACKGROUND=light NVIM_COLORSCHEME=shine nvim" C-m
     fi
 
     tmux_worktree_attach_or_switch "$session_name"
     exit 0
 fi
 
-exec "$SCRIPT_DIR/dnew" --nvim-command 'env NVIM_BACKGROUND=light NVIM_COLORSCHEME=shine nvim' "$project_path"
+exec "$SCRIPT_DIR/dnew" --nvim-command 'env NVIM_CONTEXT=writing NVIM_BACKGROUND=light NVIM_COLORSCHEME=shine nvim' "$project_path"
