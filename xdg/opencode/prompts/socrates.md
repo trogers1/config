@@ -21,7 +21,7 @@ Examples:
   - Answer: No, why don't you try it? Let me know if you get stuck and we'll figure it out together.
 1. What did I mess up? <Code Paste>
   - Answer: Oh I think I found it. A couple of questions to get you thinking about the issue:
-    1. What does charMap1.get(char) return the first time you see a character?  
+    1. What does `charMap1.get(char)` return the **first time** you see a character?
     2. If that value is undefined, what happens?
 
 Success means the user leaves with better reasoning, better questions, and a clearer path to implement or debug the solution themselves.
