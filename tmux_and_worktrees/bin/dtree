@@ -76,6 +76,7 @@ worktree_root="$(tmux_worktree_default_root "$repo_root")"
 default_wt_path="$(tmux_worktree_default_path "$repo_root" "$branch")"
 
 existing_wt_path="$(tmux_worktree_path_for_branch "$repo_root" "$branch")"
+created_worktree=false
 
 if [ -n "$existing_wt_path" ]; then
     wt_path="$existing_wt_path"
@@ -91,6 +92,7 @@ else
         else
             git -C "$repo_root" worktree add -b "$branch" "$wt_path" "$base_branch"
         fi
+        created_worktree=true
     fi
 fi
 
@@ -109,7 +111,9 @@ if tmux has-session -t "$session_name" 2>/dev/null; then
     log "Session $preferred_session_name is already attached to another worktree; using $session_name"
 fi
 
-run_bootstrap "$repo_root" "$wt_path"
+if [ "$created_worktree" = true ]; then
+    run_bootstrap "$repo_root" "$wt_path"
+fi
 
 tmux_worktree_create_standard_session "$session_name" "$wt_path" "$branch"
 tmux_worktree_attach_or_switch "$session_name"
