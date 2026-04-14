@@ -59,6 +59,12 @@ local function write_file_lines(filepath, lines)
   file:close()
 end
 
+local function delete_file_if_exists(filepath)
+  if vim.fn.filereadable(filepath) == 1 then
+    vim.fn.delete(filepath)
+  end
+end
+
 local function split_text_lines(text)
   if text == nil or text == '' then
     return { '' }
@@ -452,7 +458,15 @@ local function render_sidecar(md_path, opts)
     end
   end
 
-  if opts.write_file or (#lines == 0 and sidecar_exists) then
+  if #lines == 0 then
+    if sidecar_exists then
+      delete_file_if_exists(sidecar_path)
+    end
+
+    if valid_buf(sidecar_buf) then
+      vim.bo[sidecar_buf].modified = false
+    end
+  elseif opts.write_file then
     write_file_lines(sidecar_path, lines)
     if valid_buf(sidecar_buf) then
       vim.bo[sidecar_buf].modified = false
@@ -670,9 +684,11 @@ function M.open_sidecar(md_filepath, opts)
     end
   end
 
-  local file = io.open(sidecar_path, 'a')
-  if file then
-    file:close()
+  if opts.ensure_file and vim.fn.filereadable(sidecar_path) == 0 then
+    local file = io.open(sidecar_path, 'w')
+    if file then
+      file:close()
+    end
   end
 
   if sidecar_buf then
@@ -830,7 +846,7 @@ function M.add_comment_for_range(start_line, end_line, start_col, end_col)
   table.insert(state.comments, comment)
   apply_comments_to_md_buffer(state, md_buf)
 
-  M.open_sidecar(md_path, { vsplit = true })
+  M.open_sidecar(md_path, { vsplit = true, ensure_file = true })
   local sidecar_buf = vim.api.nvim_get_current_buf()
   local line_by_id = render_sidecar(md_path, {
     sidecar_buf = sidecar_buf,

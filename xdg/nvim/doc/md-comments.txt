@@ -18,7 +18,7 @@ USAGE                                           *md-comments-usage*
 
 When editing a markdown file (e.g., `post.md`):
 
-<leader>mc      Open comments sidecar (creates `post.md.comments`)
+<leader>mc      Open comments sidecar
 <leader>mv      View comment for current line
 <leader>ma      Add new comment for current line
 <leader>ma (visual) Add comment for selected text or lines
