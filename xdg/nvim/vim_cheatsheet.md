@@ -18,6 +18,8 @@
 | `F<char>` | **F**ind previous character on line |
 | `%` | Jump to matching paren/bracket/brace |
 | `<num>G` | Go to specific line number |
+| `I` | Insert from start of line (first char) |
+| `A` | Append from end of line (last char) |
 
 ### Copy, Cut, Paste
 | Command | Description |
