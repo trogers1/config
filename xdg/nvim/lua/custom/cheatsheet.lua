@@ -1,4 +1,5 @@
 local M = {}
+local uv = vim.uv or vim.loop
 
 M.config = {
   path = vim.fn.stdpath 'config' .. '/vim_cheatsheet.md',
@@ -78,28 +79,12 @@ local function show_random_tip()
   local tip = tips[math.random(#tips)]
 
   local width = math.min(80, vim.o.columns - 4)
-  local height = 6
   local buf = vim.api.nvim_create_buf(false, true)
 
   local ui = vim.api.nvim_list_uis()[1]
   local win_width = ui.width
   local win_height = ui.height
-  local row = math.ceil((win_height - height) / 2)
   local col = math.ceil((win_width - width) / 2)
-
-  local opts = {
-    style = 'minimal',
-    relative = 'editor',
-    width = width,
-    height = height,
-    row = row,
-    col = col,
-    border = 'rounded',
-    title = ' 💡 Neovim Tip of the Day ',
-    title_pos = 'center',
-  }
-
-  local win = vim.api.nvim_open_win(buf, false, opts)
 
   local wrapped_tip = tip
   if #tip > width - 6 then
@@ -124,33 +109,36 @@ local function show_random_tip()
       table.insert(lines, current_line)
     end
 
-    wrapped_tip = table.concat(lines, '\n  ')
+    wrapped_tip = table.concat(lines, '\n')
   end
 
-  local content_lines = { '', '  ' .. wrapped_tip, '', '  Press any key to dismiss...', '' }
-
-  if wrapped_tip:find '\n' then
-    content_lines = { '' }
-    for line in wrapped_tip:gmatch '[^\n]+' do
-      table.insert(content_lines, '  ' .. line)
-    end
-    table.insert(content_lines, '')
-    table.insert(content_lines, '  Press any key to dismiss...')
-    table.insert(content_lines, '')
-
-    height = #content_lines + 2
-    opts.height = height
-    opts.row = math.ceil((win_height - height) / 2)
-    vim.api.nvim_win_close(win, true)
-    win = vim.api.nvim_open_win(buf, false, opts)
+  local content_lines = { '' }
+  for line in wrapped_tip:gmatch '[^\n]+' do
+    table.insert(content_lines, '  ' .. line)
   end
+  table.insert(content_lines, '')
+
+  local height = #content_lines + 2
+  local opts = {
+    style = 'minimal',
+    relative = 'editor',
+    width = width,
+    height = height,
+    row = math.ceil((win_height - height) / 2),
+    col = col,
+    border = 'rounded',
+    title = ' 💡 Neovim Tip ',
+    title_pos = 'center',
+  }
+
+  local win = vim.api.nvim_open_win(buf, false, opts)
 
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, content_lines)
-  vim.api.nvim_buf_set_option(buf, 'modifiable', false)
-  vim.api.nvim_buf_set_option(buf, 'bufhidden', 'wipe')
-  vim.api.nvim_win_set_option(win, 'winhl', 'Normal:Normal,FloatBorder:FloatBorder')
+  vim.api.nvim_set_option_value('modifiable', false, { buf = buf })
+  vim.api.nvim_set_option_value('bufhidden', 'wipe', { buf = buf })
+  vim.api.nvim_set_option_value('winhl', 'Normal:Normal,FloatBorder:FloatBorder', { win = win })
 
-  local timer = vim.loop.new_timer()
+  local timer = uv.new_timer()
   timer:start(
     8000,
     0,
@@ -186,7 +174,7 @@ local function show_random_tip()
 end
 
 local function maybe_show_write_tip(args)
-  local now = math.floor((vim.uv or vim.loop).hrtime() / 1000000)
+  local now = math.floor(uv.hrtime() / 1000000)
   if now - M.state.last_tip_at < M.config.write_tip_throttle_ms then
     return
   end
