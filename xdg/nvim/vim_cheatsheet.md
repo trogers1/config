@@ -183,20 +183,20 @@ Tip: for moving files or directories, `x` then navigate then `p` is usually bett
 ### Custom Plugins/Bindings
 | Command | Description |
 |---------|-------------|
-| `:SnykToggle` | Toggle the custom Snyk plugin (which requires a SNYK_TOKEN) |
+| `<Leader>ma` | Add a sidecar comment to a markdown file (use Visual mode to comment on selection) |
+| `<Leader>mc` | View sidecar comments file |
+| `<Leader>mv` | View comment in sidecar comments file |
 
 ---
 
 ## 🤖 Agentic Coding
 | Command | Description |
 |---------|-------------|
-| `<Leader>ocp` | Opencode prompt (plan agent); sends selection/line to opencode CLI |
-| `<Leader>ocb` | Opencode prompt (build agent); sends selection/line to opencode CLI |
-| `<Leader>oca` | Apply last diff from the most recent opencode response |
-| `<Leader>oa` | Apply diff under cursor (only in `opencode://<agent>` buffers) |
 | `:AvanteAsk` | Ask in the Avante sidebar (uses OpenCode ACP) |
-| `@general <task>` | Use OpenCode general subagent within Avante Chat |
-| `@explore <task>` | Use OpenCode explore subagent within Avante Chat |
+| `<Leader>aa` | Ask in the Avante sidebar (uses OpenCode ACP) |
+| `<Leader>ae` | Ask AI in-inline (uses OpenCode ACP) |
+| `@general <task>` (in Avante chat) | Use OpenCode general subagent within Avante Chat |
+| `@explore <task>` (in Avante chat) | Use OpenCode explore subagent within Avante Chat |
 
 ---
 
