@@ -1,70 +1,72 @@
-# Dev Config: tmux + git worktrees
+= Dev Config: tmux + git worktrees
 
 This directory contains a portable tmux/worktree workflow you can copy into its own repo.
 
-## What it sets up
+== What it sets up
 
-- `dnew` -> normal dev tmux session in current repo/path
-- `dopen` -> alias for `dnew`
-- `wopen` -> `dnew`, but launch `nvim` with `NVIM_COLORSCHEME=shine`
-- `wnew` -> open a new Ghostty window with writing overrides, then run `wopen`
+* `dnew` -> normal dev tmux session in current repo/path
+* `dopen` -> alias for `dnew`
+* `wopen` -> `dnew`, but launch `nvim` with `NVIM_COLORSCHEME=shine`
+* `wnew` -> open a new Ghostty window with writing overrides, then run `wopen`
 
 Writing-mode `nvim` overrides are passed explicitly by `wopen`/`wnew`, so plain
 `dnew` does not depend on inherited shell environment for editor mode.
-- `dtree <branch> [base]` -> create/switch to a git worktree + tmux session (defaults base to current branch)
-- `dclose [branch]` -> kill the tmux session only, leaving the checkout/worktree intact
-- `dkill [branch] [--force]` -> kill the worktree tmux session and delete that worktree + local branch
-- `dmerge [branch] [target] [--keep]` -> interactively choose merge target and clean up
-- `dhome` -> jump the current shell back to the root path for the active tmux dev session
+* `dtree <branch> [base]` -> create/switch to a git worktree + tmux session (defaults base to current branch)
+* `dclose [branch]` -> kill the tmux session only, leaving the checkout/worktree intact
+* `dkill [branch] [--force]` -> kill the worktree tmux session and delete that worktree + local branch
+* `dmerge [branch] [target] [--keep]` -> interactively choose merge target and clean up
+* `dhome` -> jump the current shell back to the root path for the active tmux dev session
 
 `dhome` is only available inside a tmux dev session created by `dnew`, `dopen`, or `dtree`.
 
 Each dev session opens 4 tmux windows:
 
-1. `nvim`
-2. `opencode`
-3. `lazygit`
-4. `term`
+. `nvim`
+. `opencode`
+. `lazygit`
+. `term`
 
 Session reuse and cleanup are path-based first: `dnew`, `dtree`, `dclose`,
 `dkill`, and `dmerge` all resolve the owning tmux session by
 `DTREE_WORKTREE_PATH` before falling back to the preferred human-readable
 session name.
 
-## Install (or re-setup after updating)
+== Install (or re-setup after updating)
 
 From this directory:
 
-```bash
+[source,bash]
+----
 bash setup.sh
 source ~/.zprofile
 tmux source-file ~/.tmux.conf
-```
+----
 
 `setup.sh` will:
 
-- install thin command wrappers into `~/bin`
-- ensure `~/bin` is on `PATH` in `~/.zprofile`
-- remove any legacy alias block for these commands from `~/.zprofile`
-- install a `dhome` shell function in `~/.zprofile`
-- source tmux bindings from `~/.tmux.worktree.conf`
+* install thin command wrappers into `~/bin`
+* ensure `~/bin` is on `PATH` in `~/.zprofile`
+* remove any legacy alias block for these commands from `~/.zprofile`
+* install a `dhome` shell function in `~/.zprofile`
+* source tmux bindings from `~/.tmux.worktree.conf`
 
-## tmux keybinds
+== tmux keybinds
 
 Prefix is `M-Space` (Meta+Space), then:
 
-- `n` -> local dev session (`dnew`)
-- `N` -> local dev session (`dnew`)
-- `t` -> new worktree session (`dtree`)
-- `W` -> new worktree session (`dtree`)
-- `M` -> run `dmerge` in-pane (interactive target prompt)
+* `n` -> local dev session (`dnew`)
+* `N` -> local dev session (`dnew`)
+* `t` -> new worktree session (`dtree`)
+* `W` -> new worktree session (`dtree`)
+* `M` -> run `dmerge` in-pane (interactive target prompt)
 
-## Recommended repo layout
+== Recommended repo layout
 
-```text
+[source,text]
+----
 /path/to/project-name             # main checkout
 /path/to/project-name-worktrees   # worktrees
-```
+----
 
 `dtree` creates worktrees under `<repo-name>-worktrees/<branch>`.
 
@@ -79,25 +81,25 @@ If a session named for branch `B` already exists but points at some other checko
 resolved project path, and if the preferred `<repo>-dev` name is already attached to
 some other checkout, it creates a suffixed session instead of reusing the wrong one.
 
-## Killing a worktree
+== Killing a worktree
 
 Use `dkill` from inside a worktree session when you want to discard that worktree
 without merging it anywhere.
 
-- `dkill` -> close the current branch's worktree, kill its tmux session, and delete the local branch
-- `dkill my-branch` -> close a specific branch worktree
-- `dkill --force` -> allow closing a dirty worktree and force-delete the local branch
+* `dkill` -> close the current branch's worktree, kill its tmux session, and delete the local branch
+* `dkill my-branch` -> close a specific branch worktree
+* `dkill --force` -> allow closing a dirty worktree and force-delete the local branch
 
 `dkill` refuses to remove the main checkout, and it protects `main`, `master`,
 `develop`, and `staging` unless you pass `--force`.
 
-## Closing a session only
+== Closing a session only
 
 Use `dclose` when you want to shut down the tmux session but keep the repo or
 worktree exactly as-is.
 
-- `dclose` -> close the current repo/worktree dev session
-- `dclose my-branch` -> close the tmux session for a specific worktree branch
+* `dclose` -> close the current repo/worktree dev session
+* `dclose my-branch` -> close the tmux session for a specific worktree branch
 
 `dclose` uses the same session-resolution rules as `dnew` and `dtree`, so it closes
 the session attached to the resolved path even when a suffixed fallback session name
@@ -107,27 +109,28 @@ When you run `dclose`/`wclose` from inside the current tmux dev session, tmux sw
 you to the most recently used remaining managed dev/writing session before closing the
 current one.
 
-## Worktree bootstrap (one-command setup)
+== Worktree bootstrap (one-command setup)
 
 `dtree` now runs a bootstrap step before opening a brand new tmux session.
 
 Default behavior (if no custom script is found):
 
-- symlink `.env` from the main checkout if missing in the worktree
-- install dependencies when `package.json` exists and `node_modules` is missing
-  - uses `npm ci` when `package-lock.json` exists
-  - otherwise uses `npm install`
+* symlink `.env` from the main checkout if missing in the worktree
+* install dependencies when `package.json` exists and `node_modules` is missing
+** uses `npm ci` when `package-lock.json` exists
+** otherwise uses `npm install`
 
 To customize setup per project, add either of these scripts in your main checkout:
 
-- `.worktree-init.sh`
-- `scripts/worktree-init.sh`
+* `.worktree-init.sh`
+* `scripts/worktree-init.sh`
 
 If present, `dtree` will run that script instead of the default bootstrap.
 
 Example:
 
-```bash
+[source,bash]
+----
 #!/bin/bash
 set -euo pipefail
 
@@ -143,4 +146,4 @@ fi
 if [ -f package.json ] && [ ! -d node_modules ]; then
   npm ci
 fi
-```
+----
