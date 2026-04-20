@@ -6,18 +6,23 @@ typeset -U path PATH
 
 # Setting PATH for Python 3.10
 # The original version is saved in .zprofile.pysave
-PATH="/Library/Frameworks/Python.framework/Versions/3.10/bin:${PATH}"
-export PATH
-
-# Created by `pipx` on 2023-06-13 14:14:30
-export PATH="$PATH:/Users/taylor.rogers/.local/bin"
+if command -v python3.10 >/dev/null 2>&1; then
+  python310_bin="$(python3.10 -c 'import sysconfig; print(sysconfig.get_path("scripts"))' 2>/dev/null)"
+  if [ -n "$python310_bin" ] && [ -d "$python310_bin" ]; then
+    export PATH="$python310_bin:$PATH"
+  fi
+fi
 
 # >>> local bin path >>>
-export PATH="$HOME/bin:$PATH"
+export PATH="$HOME/.local/bin:$HOME/bin:$PATH"
 # <<< local bin path <<<
 
-# Adding homebrew to the PATH 
-[ -x /opt/homebrew/bin/brew ] && eval "$(/opt/homebrew/bin/brew shellenv)"
+# Adding homebrew to the PATH
+if [ -x /opt/homebrew/bin/brew ]; then
+  eval "$(/opt/homebrew/bin/brew shellenv)"
+elif [ -x /usr/local/bin/brew ]; then
+  eval "$(/usr/local/bin/brew shellenv)"
+fi
 
 # nvm: load fast, do not auto-switch on shell start
 export NVM_DIR="$HOME/.nvm"
@@ -51,15 +56,14 @@ if command -v pyenv >/dev/null 2>&1; then
 fi
 
 # bun completions
-[ -s "/Users/taylor.rogers/.bun/_bun" ] && source "/Users/taylor.rogers/.bun/_bun"
+[ -s "$HOME/.bun/_bun" ] && source "$HOME/.bun/_bun"
 
 # bun
 export BUN_INSTALL="$HOME/.bun"
 export PATH="$BUN_INSTALL/bin:$PATH"
 
 # opencode
-export PATH=/Users/taylor.rogers/.opencode/bin:$PATH
-export PATH="$HOME/.local/bin:$PATH"
+export PATH="$HOME/.opencode/bin:$PATH"
 
 # go
 # export PATH="/usr/local/go/bin:$PATH"
