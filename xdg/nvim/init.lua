@@ -674,6 +674,7 @@ require('lazy').setup({
         --
         -- But for many setups, the LSP (`ts_ls`) will work just fine
         ts_ls = {},
+        eslint = {},
         -- denols = {}, -- to use, uncomment. To uninstall, use `:MasonUninstall deno` since commenting out will not work. Check what is installed with `:Mason`
         -- Custom webdev servers
         html = {},
