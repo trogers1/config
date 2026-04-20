@@ -17,10 +17,10 @@ Fwiw, I have found opencode config files in these locations. To remove them all:
 [source,bash]
 ----
 rm -rf ~/.cache/opencode \
-rm -rf ~/.local/share/opencode # auth.json lives here \
+rm -rf ~/.local/share/opencode \ # auth.json lives here
 rm -rf ~/.local/share/opentui/opencode \
 rm -rf ~/.local/state/opencode \
-rm -rf ~/.config/opencode # custom config lives here \ 
+rm -rf ~/.config/opencode \ # custom config lives here
 rm -rf ~/.opencode \
 rm -rf ~/.bun/install/cache/@opencode-ai
 ----
