@@ -54,6 +54,7 @@
     "external_directory": "ask",
     "read": {
       ".env": "deny",
+      ".git": "deny",
     },
   },
 }
