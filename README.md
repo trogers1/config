@@ -19,7 +19,7 @@ It will:
 - run `./tmux_and_worktrees/setup.sh` to install the tmux/worktree helpers
 - reload tmux config automatically when a tmux server is already running
 
-If you only want the home + XDG symlinks, run `./symlink_dotfiles.sh` directly. For shell changes, open a new shell or run `source ~/.zprofile`.
+If you only want the home + XDG symlinks, run `./setup_symlinks.sh` directly. For shell changes, open a new shell or run `source ~/.zprofile`.
 
 ## XDG configs
 
