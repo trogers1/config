@@ -232,14 +232,7 @@ local function get_text_for_location(bufnr, location)
     return ''
   end
 
-  local lines = vim.api.nvim_buf_get_text(
-    bufnr,
-    normalized.start_line - 1,
-    normalized.start_col,
-    normalized.end_line - 1,
-    normalized.end_col,
-    {}
-  )
+  local lines = vim.api.nvim_buf_get_text(bufnr, normalized.start_line - 1, normalized.start_col, normalized.end_line - 1, normalized.end_col, {})
 
   return table.concat(lines, '\n')
 end
@@ -1028,7 +1021,7 @@ function M.setup(opts)
   })
 
   vim.api.nvim_set_hl(0, M.config.range_highlight_group, {
-    bg = '#b77b7b',
+    bg = '#fcefef',
   })
 
   M.setup_autocommands()
