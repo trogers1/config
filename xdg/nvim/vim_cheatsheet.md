@@ -20,6 +20,7 @@
 | `<num>G` | Go to specific line number |
 | `I` | Insert from start of line (first char) |
 | `A` | Append from end of line (last char) |
+| `<C-k>a'` | Type á ( <C-k> can be used for typing accented and other characters) |
 
 ### Copy, Cut, Paste
 | Command | Description |
