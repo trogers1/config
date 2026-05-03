@@ -21,7 +21,7 @@ if [ -n "$session_name" ]; then
     pane_current_command="$(tmux list-panes -t "$session_name:nvim" -F '#{pane_current_command}' 2>/dev/null || true)"
 
     if [ "$pane_current_command" = "nvim" ]; then
-        tmux send-keys -t "$session_name:nvim" Escape ":let $NVIM_CONTEXT='writing' | set background=light | colorscheme shine" Enter
+        tmux send-keys -t "$session_name:nvim" Escape ":let \$NVIM_CONTEXT='writing' | set background=light | colorscheme shine" Enter
     else
         tmux send-keys -t "$session_name:nvim" "env NVIM_CONTEXT=writing NVIM_BACKGROUND=light NVIM_COLORSCHEME=shine nvim" C-m
     fi
