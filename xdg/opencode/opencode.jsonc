@@ -50,6 +50,8 @@
       "npm *": "allow",
       "openspec *": "allow",
       "npx tsc --noEmit": "allow",
+      "printf *": "allow",
+      "true": "allow", // needed for " ... || true" commands
     },
     "external_directory": "ask",
     "read": {
