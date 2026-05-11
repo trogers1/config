@@ -9,17 +9,46 @@
       "prompt": "{file:./prompts/socrates.md}",
       "permission": {
         "edit": "deny",
+        "bash": "deny",
+        "task": "deny",
+        "read": "ask",
+      },
+    },
+    // allow edit permissions for specific agents (from: https://github.com/anomalyco/opencode/issues/24615#issuecomment-4346108562 )
+    "build": {
+      "permission": {
+        "edit": {
+          "*": "allow",
+        },
+        "task": {
+          // allow agents with edit permission to run subagents with edit permissions by default without user confirmation
+          "general": "allow",
+        },
+      },
+    },
+    "general": {
+      "permission": {
+        "edit": {
+          "*": "allow",
+        },
+        "task": {
+          "general": "allow",
+        },
       },
     },
   },
   "permission": {
+    "task": {
+      // do not allow running subagents with edit permissions by default without user confirmation
+      "*": "ask",
+      "explore": "allow",
+    },
+    "edit": "ask",
     "bash": {
       "*": "ask",
       "git *": "ask",
       // git READ-only
-      "git status*": "allow",
       "git status *": "allow",
-      "git log*": "allow",
       "git log *": "allow",
       "git rm *": "allow",
       "git mv *": "allow",
@@ -32,6 +61,7 @@
       "git ls-files *": "allow",
       "git rev-parse *": "allow",
       "git show-ref *": "allow",
+      "git merge-base *": "allow",
       // Git destructive
       "git branch *": "deny",
       "git rebase *": "deny",
