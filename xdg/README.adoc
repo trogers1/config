@@ -9,5 +9,6 @@ In this repo:
 
 * `xdg/nvim` maps to `~/.config/nvim`
 * `xdg/opencode` maps to `~/.config/opencode`
+* `xdg/ghostty` maps to `~/.config/ghostty`
 
 The setup script symlinks each directory in `xdg/` into `~/.config/`.

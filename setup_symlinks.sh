@@ -16,16 +16,69 @@ resolve_path() {
   python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$1"
 }
 
+prompt_backup_or_skip() {
+  local target_path="$1"
+  local backup_path="$2"
+  local reply
+
+  if [ ! -r /dev/tty ]; then
+    warn_red "Found pre-existing config at $target_path, but no interactive prompt is available. Skipping."
+    return 1
+  fi
+
+  while true; do
+    printf 'Found pre-existing config file at %s. Shall I back it up to %s and still symlink this config (y/Y) or skip this one (n/N)? ' "$target_path" "$backup_path" > /dev/tty
+    read -r reply < /dev/tty
+
+    case "$reply" in
+      y|Y)
+        return 0
+        ;;
+      n|N)
+        return 1
+        ;;
+      *)
+        printf 'Please answer y or n.\n' > /dev/tty
+        ;;
+    esac
+  done
+}
+
 safe_link() {
   local source_path="$1"
   local target_path="$2"
   local label="$3"
+  local backup_path
   local source_real
   local target_real
 
-  if [ -e "$target_path" ] && [ ! -L "$target_path" ]; then
-    warn_red "Failed to symlink $label $source_path -> $target_path: destination already exists and is not a symlink"
-    return 1
+  source_real="$(resolve_path "$source_path")"
+
+  if [ -L "$target_path" ]; then
+    target_real="$(resolve_path "$target_path")"
+
+    if [ "$source_real" = "$target_real" ]; then
+      printf 'Already symlinked %s %s -> %s\n' "$label" "$source_path" "$target_path"
+      symlinked=1
+      return 0
+    fi
+  fi
+
+  if [ -e "$target_path" ] || [ -L "$target_path" ]; then
+    backup_path="$target_path.bak"
+
+    if ! prompt_backup_or_skip "$target_path" "$backup_path"; then
+      printf 'Skipped %s %s -> %s\n' "$label" "$source_path" "$target_path"
+      return 0
+    fi
+
+    if [ -e "$backup_path" ] || [ -L "$backup_path" ]; then
+      warn_red "Failed to symlink $label $source_path -> $target_path: backup path already exists at $backup_path"
+      return 1
+    fi
+
+    mv "$target_path" "$backup_path"
+    printf 'Backed up existing %s to %s\n' "$target_path" "$backup_path"
   fi
 
   ln -sfn "$source_path" "$target_path"
@@ -35,7 +88,6 @@ safe_link() {
     return 1
   fi
 
-  source_real="$(resolve_path "$source_path")"
   target_real="$(resolve_path "$target_path")"
 
   if [ "$source_real" != "$target_real" ]; then

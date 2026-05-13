@@ -1,0 +1,7 @@
+# This is the configuration file for Ghostty.
+#
+# Run `ghostty +show-config --default --docs` to view a list of
+# all available config options and their default values.
+
+font-family = FiraCode Nerd Font Mono
+scrollback-limit = 4294967295
