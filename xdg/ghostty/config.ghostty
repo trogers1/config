@@ -5,3 +5,5 @@
 
 font-family = FiraCode Nerd Font Mono
 scrollback-limit = 4294967295
+# Necessary for my M-Space tmux prefix:
+macos-option-as-alt = true
