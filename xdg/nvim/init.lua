@@ -889,7 +889,7 @@ require('lazy').setup({
     priority = 1000, -- Make sure to load this before all the other start plugins.
     init = function()
       vim.o.background = vim.env.NVIM_BACKGROUND or 'dark'
-      local colorscheme = vim.env.NVIM_COLORSCHEME or 'tokyonight-night'
+      local colorscheme = vim.env.NVIM_COLORSCHEME or 'zaibatsu'
 
       -- Load the colorscheme here.
       -- Like many other themes, this one has different styles, and you could load
