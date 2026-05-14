@@ -65,6 +65,9 @@ export PATH="$BUN_INSTALL/bin:$PATH"
 # opencode
 export PATH="$HOME/.opencode/bin:$PATH"
 
+# rancher-desktop
+export PATH="$HOME/.rd/bin:$PATH"
+
 # go
 # export PATH="/usr/local/go/bin:$PATH"
 
@@ -80,10 +83,10 @@ dhome() {
 
     env_line="$(tmux show-environment DTREE_WORKTREE_PATH 2>/dev/null || true)"
     case "$env_line" in
-        DTREE_WORKTREE_PATH=*)
+      DTREE_WORKTREE_PATH=*)
             target="${env_line#DTREE_WORKTREE_PATH=}"
             ;;
-    esac
+        esac
 
     if [ -z "$target" ]; then
         echo "dhome is only available in a tmux dev session"

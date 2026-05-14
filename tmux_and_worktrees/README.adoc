@@ -38,16 +38,16 @@ From this directory:
 [source,bash]
 ----
 bash setup.sh
-source ~/.zprofile
+source ~/.zshrc
 tmux source-file ~/.tmux.conf
 ----
 
 `setup.sh` will:
 
 * install thin command wrappers into `~/bin`
-* ensure `~/bin` is on `PATH` in `~/.zprofile`
-* remove any legacy alias block for these commands from `~/.zprofile`
-* install a `dhome` shell function in `~/.zprofile`
+* ensure `~/bin` is on `PATH` in `~/.zshrc`
+* remove any legacy alias block for these commands from `~/.zshrc`
+* install a `dhome` shell function in `~/.zshrc`
 * source tmux bindings from `~/.tmux.worktree.conf`
 
 == tmux keybinds

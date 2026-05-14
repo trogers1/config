@@ -8,6 +8,8 @@ XDG_DIR="$REPO_DIR/xdg"
 symlinked=0
 failed=0
 
+printf '\nSetting up your config symlinks...\n'
+
 warn_red() {
   printf '\033[31m%s\033[0m\n' "$1" >&2
 }
@@ -19,15 +21,16 @@ resolve_path() {
 prompt_backup_or_skip() {
   local target_path="$1"
   local backup_path="$2"
+  local label="$3"
   local reply
 
   if [ ! -r /dev/tty ]; then
-    warn_red "Found pre-existing config at $target_path, but no interactive prompt is available. Skipping."
+    warn_red "Found pre-existing $label config at $target_path, but no interactive prompt is available. Skipping."
     return 1
   fi
 
   while true; do
-    printf 'Found pre-existing config file at %s. Shall I back it up to %s and still symlink this config (y/Y) or skip this one (n/N)? ' "$target_path" "$backup_path" > /dev/tty
+    printf 'Found pre-existing %s config at %s. Shall I back it up to %s and still symlink this config (y/Y) or skip this one (n/N)? ' "$label" "$target_path" "$backup_path" > /dev/tty
     read -r reply < /dev/tty
 
     case "$reply" in
@@ -67,7 +70,7 @@ safe_link() {
   if [ -e "$target_path" ] || [ -L "$target_path" ]; then
     backup_path="$target_path.bak"
 
-    if ! prompt_backup_or_skip "$target_path" "$backup_path"; then
+    if ! prompt_backup_or_skip "$target_path" "$backup_path" "$label"; then
       printf 'Skipped %s %s -> %s\n' "$label" "$source_path" "$target_path"
       return 0
     fi
