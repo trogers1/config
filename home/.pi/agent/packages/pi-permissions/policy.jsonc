@@ -1,0 +1,61 @@
+{
+  // Default behavior for bash commands that do not match a more specific rule.
+  "defaultBashDecision": "ask",
+
+  "bash": [
+    { "pattern": "*", "decision": "ask" },
+    { "pattern": "git *", "decision": "ask" },
+
+    // Git read-only / semi-destructive commands intentionally allowed to match opencode.
+    { "pattern": "git status", "decision": "allow" },
+    { "pattern": "git status *", "decision": "allow" },
+    { "pattern": "git log", "decision": "allow" },
+    { "pattern": "git log *", "decision": "allow" },
+    { "pattern": "git rm *", "decision": "allow" },
+    { "pattern": "git mv *", "decision": "allow" },
+    { "pattern": "git diff", "decision": "allow" },
+    { "pattern": "git diff *", "decision": "allow" },
+    { "pattern": "git pull", "decision": "allow" },
+    { "pattern": "git grep *", "decision": "allow" },
+    { "pattern": "git bisect *", "decision": "allow" },
+    { "pattern": "git show *", "decision": "allow" },
+    { "pattern": "git ls-files", "decision": "allow" },
+    { "pattern": "git ls-files *", "decision": "allow" },
+    { "pattern": "git rev-parse", "decision": "allow" },
+    { "pattern": "git rev-parse *", "decision": "allow" },
+    { "pattern": "git show-ref", "decision": "allow" },
+    { "pattern": "git show-ref *", "decision": "allow" },
+    { "pattern": "git merge-base *", "decision": "allow" },
+
+    // Git destructive / workflow-changing commands.
+    { "pattern": "git branch *", "decision": "deny" },
+    { "pattern": "git rebase *", "decision": "deny" },
+    { "pattern": "git switch *", "decision": "deny" },
+    { "pattern": "git tag *", "decision": "deny" },
+    { "pattern": "git commit *", "decision": "deny" },
+    { "pattern": "git push *", "decision": "deny" },
+    { "pattern": "git checkout *", "decision": "deny" },
+    { "pattern": "git add *", "decision": "deny" },
+    { "pattern": "git worktree *", "decision": "deny" },
+
+    // Common low-risk commands from the opencode config.
+    { "pattern": "grep *", "decision": "allow" },
+    { "pattern": "npx vitest", "decision": "allow" },
+    { "pattern": "npx vitest *", "decision": "allow" },
+    { "pattern": "sed *", "decision": "allow" },
+    { "pattern": "ls", "decision": "allow" },
+    { "pattern": "ls *", "decision": "allow" },
+    { "pattern": "file *", "decision": "allow" },
+    { "pattern": "npm *", "decision": "allow" },
+    { "pattern": "openspec *", "decision": "allow" },
+    { "pattern": "npx tsc --noEmit", "decision": "allow" },
+    { "pattern": "printf *", "decision": "allow" },
+    { "pattern": "true", "decision": "allow" },
+  ],
+
+  "readDeniedPathParts": [".env", ".git"],
+  "pathTools": ["read", "write", "edit", "grep", "find", "ls"],
+  "readOnlyPathTools": ["read", "grep", "find", "ls"],
+  "writeTools": ["write", "edit"],
+  "askBeforeExternalDirectoryAccess": true
+}

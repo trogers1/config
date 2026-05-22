@@ -24,7 +24,7 @@ prompt_backup_or_skip() {
   local label="$3"
   local reply
 
-  if [ ! -r /dev/tty ]; then
+  if ! { true < /dev/tty; } 2>/dev/null; then
     warn_red "Found pre-existing $label config at $target_path, but no interactive prompt is available. Skipping."
     return 1
   fi
@@ -70,18 +70,23 @@ safe_link() {
   if [ -e "$target_path" ] || [ -L "$target_path" ]; then
     backup_path="$target_path.bak"
 
-    if ! prompt_backup_or_skip "$target_path" "$backup_path" "$label"; then
-      printf 'Skipped %s %s -> %s\n' "$label" "$source_path" "$target_path"
-      return 0
-    fi
+    if [ -f "$source_path" ] && [ -f "$target_path" ] && cmp -s "$source_path" "$target_path"; then
+      rm "$target_path"
+      printf 'Replaced identical existing %s config at %s with symlink\n' "$label" "$target_path"
+    else
+      if ! prompt_backup_or_skip "$target_path" "$backup_path" "$label"; then
+        printf 'Skipped %s %s -> %s\n' "$label" "$source_path" "$target_path"
+        return 0
+      fi
 
-    if [ -e "$backup_path" ] || [ -L "$backup_path" ]; then
-      warn_red "Failed to symlink $label $source_path -> $target_path: backup path already exists at $backup_path"
-      return 1
-    fi
+      if [ -e "$backup_path" ] || [ -L "$backup_path" ]; then
+        warn_red "Failed to symlink $label $source_path -> $target_path: backup path already exists at $backup_path"
+        return 1
+      fi
 
-    mv "$target_path" "$backup_path"
-    printf 'Backed up existing %s to %s\n' "$target_path" "$backup_path"
+      mv "$target_path" "$backup_path"
+      printf 'Backed up existing %s to %s\n' "$target_path" "$backup_path"
+    fi
   fi
 
   ln -sfn "$source_path" "$target_path"
@@ -129,6 +134,10 @@ link_entries() {
         # Only cli-config.json is managed here; do not replace all of ~/.cursor.
         continue
         ;;
+      .pi)
+        # Only selected pi agent files are managed here; do not replace all of ~/.pi.
+        continue
+        ;;
     esac
 
     target_path="$target_dir/$name"
@@ -147,6 +156,22 @@ cursor_cli_config="$HOME_DIR/.cursor/cli-config.json"
 if [ -f "$cursor_cli_config" ]; then
   mkdir -p "$HOME/.cursor"
   if ! safe_link "$cursor_cli_config" "$HOME/.cursor/cli-config.json" "cursor cli"; then
+    failed=1
+  fi
+fi
+
+pi_settings="$HOME_DIR/.pi/agent/settings.json"
+if [ -f "$pi_settings" ]; then
+  mkdir -p "$HOME/.pi/agent"
+  if ! safe_link "$pi_settings" "$HOME/.pi/agent/settings.json" "pi settings"; then
+    failed=1
+  fi
+fi
+
+pi_permissions_package="$HOME_DIR/.pi/agent/packages/pi-permissions"
+if [ -d "$pi_permissions_package" ]; then
+  mkdir -p "$HOME/.pi/agent/packages"
+  if ! safe_link "$pi_permissions_package" "$HOME/.pi/agent/packages/pi-permissions" "pi permissions package"; then
     failed=1
   fi
 fi
