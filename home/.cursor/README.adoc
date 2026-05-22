@@ -1,0 +1,40 @@
+= Cursor CLI Config
+
+`cli-config.json` maps to `~/.cursor/cli-config.json`.
+
+Only this file is symlinked by `setup_symlinks.sh`; the rest of `~/.cursor/` (chats, auth cache, skills, etc.) stays local.
+
+== Permissions
+
+Shell/read/write rules are converted from the global `permission` block in link:../../xdg/opencode/opencode.jsonc[`xdg/opencode/opencode.jsonc`].
+
+[cols="1,1,1"]
+|===
+| OpenCode | Cursor CLI | Notes
+
+| `bash` patterns
+| `Shell(command)` or `Shell(cmd:args*)`
+| Use `git:subcommand*` for git rules (see link:https://cursor.com/docs/cli/reference/permissions[Cursor permissions docs])
+
+| `read` paths
+| `Read(glob)`
+| e.g. `.env` → `Read(.env*)`
+
+| `edit`
+| `Write(glob)`
+| Global opencode `edit: ask` → no broad `Write` entries (prompts by default with `approvalMode: allowlist`)
+
+| `task` (subagents)
+| —
+| No direct equivalent in CLI permissions; subagent behavior is not configured here
+
+| `external_directory`
+| —
+| No direct equivalent; out-of-workspace access still prompts
+
+| Per-agent `permission` (e.g. `socrates`, `build`)
+| —
+| OpenCode agent overrides are not expressible in global `cli-config.json`
+|===
+
+On Linux/BSD, Cursor also supports `$XDG_CONFIG_HOME/cursor/cli-config.json`; this repo targets the macOS default path under `~/.cursor/`.

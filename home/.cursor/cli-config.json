@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "editor": {
+    "vimMode": false
+  },
+  "approvalMode": "allowlist",
+  "permissions": {
+    "allow": [
+      "Shell(git:status*)",
+      "Shell(git:log*)",
+      "Shell(git:rm*)",
+      "Shell(git:mv*)",
+      "Shell(git:diff)",
+      "Shell(git:diff*)",
+      "Shell(git:pull)",
+      "Shell(git:grep*)",
+      "Shell(git:bisect*)",
+      "Shell(git:show*)",
+      "Shell(git:ls-files*)",
+      "Shell(git:rev-parse*)",
+      "Shell(git:show-ref*)",
+      "Shell(git:merge-base*)",
+      "Shell(grep*)",
+      "Shell(npx:vitest*)",
+      "Shell(sed*)",
+      "Shell(ls*)",
+      "Shell(file*)",
+      "Shell(npm*)",
+      "Shell(openspec*)",
+      "Shell(npx:tsc --noEmit)",
+      "Shell(printf*)",
+      "Shell(true)"
+    ],
+    "deny": [
+      "Shell(git:branch*)",
+      "Shell(git:rebase*)",
+      "Shell(git:switch*)",
+      "Shell(git:tag*)",
+      "Shell(git:commit*)",
+      "Shell(git:push*)",
+      "Shell(git:checkout*)",
+      "Shell(git:add*)",
+      "Shell(git:worktree*)",
+      "Read(.env*)",
+      "Read(.git/**)"
+    ]
+  },
+  "sandbox": {
+    "mode": "disabled",
+    "networkAccess": "user_config_with_defaults"
+  },
+  "attribution": {
+    "attributeCommitsToAgent": true,
+    "attributePRsToAgent": true
+  }
+}

@@ -125,6 +125,10 @@ link_entries() {
       README|README.*)
         continue
         ;;
+      .cursor)
+        # Only cli-config.json is managed here; do not replace all of ~/.cursor.
+        continue
+        ;;
     esac
 
     target_path="$target_dir/$name"
@@ -138,6 +142,14 @@ link_entries() {
 
 link_entries "$HOME_DIR" "$HOME" "home"
 link_entries "$XDG_DIR" "$HOME/.config" "xdg"
+
+cursor_cli_config="$HOME_DIR/.cursor/cli-config.json"
+if [ -f "$cursor_cli_config" ]; then
+  mkdir -p "$HOME/.cursor"
+  if ! safe_link "$cursor_cli_config" "$HOME/.cursor/cli-config.json" "cursor cli"; then
+    failed=1
+  fi
+fi
 
 if [ "$symlinked" -eq 0 ]; then
   echo "No config files found to symlink."

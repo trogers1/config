@@ -4,7 +4,7 @@ Herein lies my configuration files 📜
 
 == Layout
 
-* `home/` contains files that should be symlinked into `~/`
+* `home/` contains files that should be symlinked into `~/` (including `home/.cursor/cli-config.json` → `~/.cursor/cli-config.json`)
 * `xdg/` contains application configs that should be symlinked into `~/.config/`
 * `tmux_and_worktrees/` contains my tmux + git worktree development workflow (tooling built specifically for parallel agentic workflows)
 
