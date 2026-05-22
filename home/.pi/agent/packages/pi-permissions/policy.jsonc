@@ -44,6 +44,7 @@
       { "pattern": "grep *", "decision": "allow" },
       { "pattern": "npx vitest", "decision": "allow" },
       { "pattern": "npx vitest *", "decision": "allow" },
+      { "pattern": "sort *", "decision": "allow" },
       { "pattern": "sed *", "decision": "allow" },
       { "pattern": "ls", "decision": "allow" },
       { "pattern": "ls *", "decision": "allow" },
