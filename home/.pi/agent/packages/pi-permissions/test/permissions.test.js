@@ -11,23 +11,26 @@ const jiti = createJiti(__dirname + "/");
 const permissions = jiti("../extensions/permissions.ts");
 
 const policy = {
-  defaultBashDecision: "ask",
-  bash: [
-    { pattern: "*", decision: "ask" },
-    { pattern: "git *", decision: "ask" },
-    { pattern: "git status *", decision: "allow" },
-    { pattern: "git checkout *", decision: "deny" },
-    { pattern: "npm *", decision: "allow" },
-    { pattern: "npm publish *", decision: "deny" },
-    { pattern: "npx tsc --noEmit", decision: "allow" },
-    { pattern: "ls", decision: "allow" },
-    { pattern: "ls *", decision: "allow" },
+  tools: {
+    bash: [
+      { pattern: "*", decision: "ask" },
+      { pattern: "git *", decision: "ask" },
+      { pattern: "git status *", decision: "allow" },
+      { pattern: "git checkout *", decision: "deny" },
+      { pattern: "npm *", decision: "allow" },
+      { pattern: "npm publish *", decision: "deny" },
+      { pattern: "npx tsc --noEmit", decision: "allow" },
+      { pattern: "ls", decision: "allow" },
+      { pattern: "ls *", decision: "allow" },
+      { pattern: "printf *", decision: "allow" },
+    ],
+  },
+  bashPathReferences: [
+    { pattern: "*", decision: "allow" },
+    { pattern: "../**", decision: "ask" },
+    { pattern: "**/.env", decision: "deny" },
+    { pattern: "**/.git/**", decision: "deny" },
   ],
-  readDeniedPathParts: [".env", ".git"],
-  pathTools: ["read", "write", "edit", "grep", "find", "ls"],
-  readOnlyPathTools: ["read", "grep", "find", "ls"],
-  writeTools: ["write", "edit"],
-  askBeforeExternalDirectoryAccess: true,
 };
 
 function ctx({ confirm = true, cwd = process.cwd() } = {}) {
@@ -144,4 +147,11 @@ test("outside path in bash asks before running", async () => {
     policy,
   );
   assert.equal(confirmations, 1);
+});
+
+test("glob patterns support protected root and nested paths", () => {
+  assert.equal(permissions.matchesGlobPattern("**/.env", ".env"), true);
+  assert.equal(permissions.matchesGlobPattern("**/.env", "app/.env"), true);
+  assert.equal(permissions.matchesGlobPattern("**/.git/**", ".git/config"), true);
+  assert.equal(permissions.matchesGlobPattern("../**", "../other/file.txt"), true);
 });

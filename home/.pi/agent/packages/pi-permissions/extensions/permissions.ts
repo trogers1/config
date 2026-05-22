@@ -10,31 +10,19 @@ type Rule = {
 };
 
 type Policy = {
-	defaultBashDecision: Decision;
-	bash: Rule[];
-	readDeniedPathParts: string[];
-	pathTools: string[];
-	readOnlyPathTools: string[];
-	writeTools: string[];
-	askBeforeExternalDirectoryAccess: boolean;
+	tools: Record<string, Rule[]>;
+	bashPathReferences: Rule[];
 };
 
 const defaultPolicy: Policy = {
-	defaultBashDecision: "ask",
-	bash: [{ pattern: "*", decision: "ask" }],
-	readDeniedPathParts: [".env", ".git"],
-	pathTools: ["read", "write", "edit", "grep", "find", "ls"],
-	readOnlyPathTools: ["read", "grep", "find", "ls"],
-	writeTools: ["write", "edit"],
-	askBeforeExternalDirectoryAccess: true,
+	tools: {
+		bash: [{ pattern: "*", decision: "ask" }],
+	},
+	bashPathReferences: [{ pattern: "*", decision: "allow" }],
 };
 
 const moduleDir = typeof __dirname === "string" ? __dirname : process.cwd();
 const policy = loadPolicy(path.resolve(moduleDir, "../policy.jsonc"));
-const readDeniedPathParts = new Set(policy.readDeniedPathParts);
-const pathToolNames = new Set(policy.pathTools);
-const readOnlyPathToolNames = new Set(policy.readOnlyPathTools);
-const writeToolNames = new Set(policy.writeTools);
 
 export default function (pi: ExtensionAPI) {
 	const startupCwd = path.resolve(process.cwd());
@@ -53,29 +41,23 @@ export default function (pi: ExtensionAPI) {
 			return await gateBash(command, startupCwd, ctx, policy);
 		}
 
-		if (!pathToolNames.has(event.toolName)) return undefined;
+		const rules = policy.tools[event.toolName];
+		if (!rules) return undefined;
 
 		const requestedPath = toolPath(event.toolName, event.input);
 		const absolutePath = resolveRequestedPath(requestedPath, ctx.cwd ?? startupCwd);
+		const matchPath = policyMatchPath(absolutePath, startupCwd);
+		const decision = decideByPattern(matchPath, rules, "allow", matchesGlobPattern);
 
-		if (readOnlyPathToolNames.has(event.toolName) && isDeniedReadPath(absolutePath, readDeniedPathParts)) {
-			return { block: true, reason: `Reading protected path is denied: ${displayPath(absolutePath, startupCwd)}` };
+		if (decision === "deny") {
+			return { block: true, reason: `${event.toolName} denied by policy for path: ${displayPath(absolutePath, startupCwd)}` };
 		}
 
-		if (policy.askBeforeExternalDirectoryAccess && isOutside(absolutePath, startupCwd)) {
-			const ok = await confirmOrBlock(
-				ctx,
-				"Access outside startup directory?",
-				`${event.toolName} wants to access:\n${absolutePath}\n\nPi was started in:\n${startupCwd}`,
-			);
-			if (!ok) return { block: true, reason: `Access outside startup directory was not approved: ${absolutePath}` };
-		}
-
-		if (writeToolNames.has(event.toolName)) {
+		if (decision === "ask") {
 			const ok = await confirmOrBlock(
 				ctx,
 				`Allow ${event.toolName}?`,
-				`${event.toolName} wants to modify:\n${absolutePath}`,
+				`${event.toolName} wants to access:\n${absolutePath}\n\nMatched policy path:\n${matchPath}`,
 			);
 			if (!ok) return { block: true, reason: `${event.toolName} was not approved: ${absolutePath}` };
 		}
@@ -86,20 +68,23 @@ export default function (pi: ExtensionAPI) {
 
 export async function gateBash(command: string, startupCwd: string, ctx: ExtensionContext, activePolicy = policy) {
 	const commands = extractShellCommands(command).map(normalizeCommandForDecision).filter(Boolean);
-	const decisions = commands.length > 0 ? commands.map((cmd) => decideBash(cmd, activePolicy)) : [activePolicy.defaultBashDecision];
+	const decisions = commands.length > 0 ? commands.map((cmd) => decideBash(cmd, activePolicy)) : [decideBash("", activePolicy)];
 
 	if (decisions.includes("deny")) {
 		return { block: true, reason: `Command denied by explicit rule: ${command}` };
 	}
 
-	const outsidePath = firstOutsidePathReference(command, startupCwd, ctx.cwd ?? startupCwd);
-	if (activePolicy.askBeforeExternalDirectoryAccess && outsidePath) {
+	const pathDecision = decideBashPathReferences(command, startupCwd, ctx.cwd ?? startupCwd, activePolicy);
+	if (pathDecision?.decision === "deny") {
+		return { block: true, reason: `Bash path reference denied by policy: ${pathDecision.path}` };
+	}
+	if (pathDecision?.decision === "ask") {
 		const ok = await confirmOrBlock(
 			ctx,
-			"Bash command references path outside startup directory?",
-			`${command}\n\nOutside path:\n${outsidePath}\n\nPi was started in:\n${startupCwd}`,
+			"Bash command references a gated path?",
+			`${command}\n\nPath:\n${pathDecision.path}\n\nMatched policy path:\n${pathDecision.matchPath}`,
 		);
-		if (!ok) return { block: true, reason: `Outside-directory bash path was not approved: ${outsidePath}` };
+		if (!ok) return { block: true, reason: `Bash path reference was not approved: ${pathDecision.path}` };
 	}
 
 	if (decisions.includes("ask")) {
@@ -111,11 +96,7 @@ export async function gateBash(command: string, startupCwd: string, ctx: Extensi
 }
 
 export function decideBash(command: string, activePolicy = policy): Decision {
-	let decision: Decision = activePolicy.defaultBashDecision;
-	for (const rule of activePolicy.bash) {
-		if (matchesCommandPattern(rule.pattern, command)) decision = rule.decision;
-	}
-	return decision;
+	return decideByPattern(command, activePolicy.tools.bash ?? [], "ask", matchesCommandPattern);
 }
 
 export function extractShellCommands(command: string): string[] {
@@ -267,17 +248,85 @@ export function matchesCommandPattern(pattern: string, command: string): boolean
 	return regex.test(command);
 }
 
+export function matchesGlobPattern(pattern: string, value: string): boolean {
+	const normalizedPattern = normalizePolicyPath(pattern);
+	const normalizedValue = normalizePolicyPath(value);
+	const regex = new RegExp(`^${globToRegExpSource(normalizedPattern)}$`);
+	return regex.test(normalizedValue);
+}
+
+function decideByPattern(
+	value: string,
+	rules: Rule[],
+	defaultDecision: Decision,
+	matches: (pattern: string, value: string) => boolean,
+): Decision {
+	let decision: Decision = defaultDecision;
+	for (const rule of rules) {
+		if (matches(rule.pattern, value)) decision = rule.decision;
+	}
+	return decision;
+}
+
+function decideBashPathReferences(
+	command: string,
+	startupCwd: string,
+	cwd: string,
+	activePolicy: Policy,
+): { decision: Decision; path: string; matchPath: string } | undefined {
+	for (const token of shellishTokens(command)) {
+		if (!looksLikePath(token)) continue;
+		const absolutePath = resolveRequestedPath(token, cwd);
+		const matchPath = policyMatchPath(absolutePath, startupCwd);
+		const decision = decideByPattern(matchPath, activePolicy.bashPathReferences, "allow", matchesGlobPattern);
+		if (decision !== "allow") return { decision, path: absolutePath, matchPath };
+	}
+	return undefined;
+}
+
+function policyMatchPath(absolutePath: string, root: string): string {
+	const relative = path.relative(root, absolutePath);
+	return normalizePolicyPath(relative || ".");
+}
+
+function normalizePolicyPath(value: string): string {
+	return value.replace(/\\/g, "/");
+}
+
+function globToRegExpSource(pattern: string): string {
+	let source = "";
+	for (let i = 0; i < pattern.length; i++) {
+		const char = pattern[i];
+		const next = pattern[i + 1];
+		if (char === "*" && next === "*") {
+			const after = pattern[i + 2];
+			if (after === "/") {
+				source += "(?:.*?/)?";
+				i += 2;
+			} else {
+				source += ".*";
+				i += 1;
+			}
+		} else if (char === "*") {
+			source += "[^/]*";
+		} else {
+			source += escapeRegExp(char);
+		}
+	}
+	return source;
+}
+
 function loadPolicy(policyPath: string): Policy {
 	try {
 		const parsed = JSON.parse(stripJsonCommentsAndTrailingCommas(fs.readFileSync(policyPath, "utf8"))) as Partial<Policy>;
 		return {
 			...defaultPolicy,
 			...parsed,
-			bash: parsed.bash ?? defaultPolicy.bash,
-			readDeniedPathParts: parsed.readDeniedPathParts ?? defaultPolicy.readDeniedPathParts,
-			pathTools: parsed.pathTools ?? defaultPolicy.pathTools,
-			readOnlyPathTools: parsed.readOnlyPathTools ?? defaultPolicy.readOnlyPathTools,
-			writeTools: parsed.writeTools ?? defaultPolicy.writeTools,
+			tools: {
+				...defaultPolicy.tools,
+				...(parsed.tools ?? {}),
+			},
+			bashPathReferences: parsed.bashPathReferences ?? defaultPolicy.bashPathReferences,
 		};
 	} catch (error) {
 		throw new Error(`Failed to load pi permissions policy at ${policyPath}: ${error instanceof Error ? error.message : String(error)}`);
@@ -423,13 +472,6 @@ function expandHome(value: string): string {
 	return value;
 }
 
-function isDeniedReadPath(absolutePath: string, deniedParts: Set<string>): boolean {
-	return path
-		.normalize(absolutePath)
-		.split(path.sep)
-		.some((part) => deniedParts.has(part));
-}
-
 function isOutside(absolutePath: string, root: string): boolean {
 	const relative = path.relative(root, absolutePath);
 	return relative === "" ? false : relative.startsWith("..") || path.isAbsolute(relative);
@@ -442,15 +484,6 @@ function displayPath(absolutePath: string, root: string): string {
 async function confirmOrBlock(ctx: ExtensionContext, title: string, message: string): Promise<boolean> {
 	if (!ctx.hasUI) return false;
 	return await ctx.ui.confirm(title, message);
-}
-
-function firstOutsidePathReference(command: string, startupCwd: string, cwd: string): string | undefined {
-	for (const token of shellishTokens(command)) {
-		if (!looksLikePath(token)) continue;
-		const absolutePath = resolveRequestedPath(token, cwd);
-		if (isOutside(absolutePath, startupCwd)) return absolutePath;
-	}
-	return undefined;
 }
 
 function shellishTokens(command: string): string[] {
