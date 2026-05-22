@@ -259,24 +259,80 @@ tmux_worktree_kill_sessions_for_worktree_path() {
     done
 }
 
+tmux_worktree_default_dev_config_path() {
+    local lib_dir=""
+
+    lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    printf '%s\n' "$(cd "$lib_dir/../.." && pwd)/devConfig.jsonc"
+}
+
+tmux_worktree_dev_config_path() {
+    local worktree_path="$1"
+    local project_config="$worktree_path/devConfig.jsonc"
+    local default_config=""
+
+    if [ -f "$project_config" ]; then
+        printf '%s\n' "$project_config"
+        return 0
+    fi
+
+    default_config="$(tmux_worktree_default_dev_config_path)"
+    if [ -f "$default_config" ]; then
+        printf '%s\n' "$default_config"
+        return 0
+    fi
+
+    return 1
+}
+
+tmux_worktree_read_dev_config_windows() {
+    local config_path="$1"
+    local lib_dir=""
+
+    lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    python3 "$lib_dir/read_dev_config_windows.py" "$config_path"
+}
+
 tmux_worktree_create_standard_session() {
     local session_name="$1"
     local worktree_path="$2"
     local branch="${3:-}"
-    local nvim_command="${4:-nvim}"
+    local nvim_command="${4:-}"
+    local config_path=""
+    local window_name=""
+    local window_command=""
+    local first_window_name=""
+    local created_first_window=false
 
-    tmux new-session -d -s "$session_name" -n nvim -c "$worktree_path"
-    tmux_worktree_set_session_metadata "$session_name" "$worktree_path" "$branch"
-    tmux send-keys -t "$session_name:nvim" "$nvim_command" C-m
+    config_path="$(tmux_worktree_dev_config_path "$worktree_path")"
 
-    tmux new-window -t "$session_name:" -n opencode -c "$worktree_path"
-    tmux send-keys -t "$session_name:opencode" "opencode" C-m
+    while IFS=$'\t' read -r window_name window_command; do
+        [ -n "$window_name" ] || continue
 
-    tmux new-window -t "$session_name:" -n lazygit -c "$worktree_path"
-    tmux send-keys -t "$session_name:lazygit" "lazygit" C-m
+        if [ -n "$nvim_command" ] && [ "$window_name" = "nvim" ]; then
+            window_command="$nvim_command"
+        fi
 
-    tmux new-window -t "$session_name:" -n term -c "$worktree_path"
-    tmux select-window -t "$session_name:nvim"
+        if [ "$created_first_window" = false ]; then
+            tmux new-session -d -s "$session_name" -n "$window_name" -c "$worktree_path"
+            tmux_worktree_set_session_metadata "$session_name" "$worktree_path" "$branch"
+            first_window_name="$window_name"
+            created_first_window=true
+        else
+            tmux new-window -t "$session_name:" -n "$window_name" -c "$worktree_path"
+        fi
+
+        if [ -n "$window_command" ]; then
+            tmux send-keys -t "$session_name:$window_name" "$window_command" C-m
+        fi
+    done < <(tmux_worktree_read_dev_config_windows "$config_path")
+
+    if [ "$created_first_window" = false ]; then
+        echo "No windows configured in $config_path"
+        exit 1
+    fi
+
+    tmux select-window -t "$session_name:$first_window_name"
 }
 
 tmux_worktree_path_for_branch() {

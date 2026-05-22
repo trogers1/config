@@ -19,12 +19,26 @@ Writing-mode `nvim` overrides are passed explicitly by `wopen`/`wnew`, so plain
 
 `dhome` is only available inside a tmux dev session created by `dnew`, `dopen`, or `dtree`.
 
-Each dev session opens 4 tmux windows:
+Each dev session opens tmux windows from `devConfig.jsonc`.
+By default, this subsystem uses `tmux_and_worktrees/devConfig.jsonc`:
 
-. `nvim`
-. `opencode`
-. `lazygit`
-. `term`
+[source,jsonc]
+----
+{
+  "windows": [
+    { "name": "nvim", "command": "nvim" },
+    { "name": "opencode", "command": "opencode" },
+    { "name": "lazygit", "command": "lazygit" },
+    { "name": "term", "command": "" }
+  ]
+}
+----
+
+Add a project-specific `devConfig.jsonc` at the repo/worktree root to override
+those windows for that project. `windows` is an array of objects with:
+
+* `name` -> tmux window/tab name
+* `command` -> command to run in that window; use an empty string for an idle shell
 
 Session reuse and cleanup are path-based first: `dnew`, `dtree`, `dclose`,
 `dkill`, and `dmerge` all resolve the owning tmux session by

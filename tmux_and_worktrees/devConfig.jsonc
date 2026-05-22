@@ -1,0 +1,23 @@
+{
+  // Tmux windows (tabs) to open for each dev session.
+  // Project-specific repos can override this by adding their own devConfig.jsonc
+  // at the repo/worktree root.
+  "windows": [
+    {
+      "name": "nvim",
+      "command": "nvim"
+    },
+    {
+      "name": "opencode",
+      "command": "opencode"
+    },
+    {
+      "name": "lazygit",
+      "command": "lazygit"
+    },
+    {
+      "name": "term",
+      "command": ""
+    }
+  ]
+}
