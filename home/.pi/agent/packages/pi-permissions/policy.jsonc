@@ -51,11 +51,13 @@
     { "pattern": "npx tsc --noEmit", "decision": "allow" },
     { "pattern": "printf *", "decision": "allow" },
     { "pattern": "true", "decision": "allow" },
+    { "pattern": "rg", "decision": "allow" },
+    { "pattern": "find", "decision": "allow" },
   ],
 
   "readDeniedPathParts": [".env", ".git"],
   "pathTools": ["read", "write", "edit", "grep", "find", "ls"],
   "readOnlyPathTools": ["read", "grep", "find", "ls"],
   "writeTools": ["write", "edit"],
-  "askBeforeExternalDirectoryAccess": true
+  "askBeforeExternalDirectoryAccess": true,
 }
