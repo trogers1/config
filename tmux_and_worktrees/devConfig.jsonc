@@ -5,19 +5,19 @@
   "windows": [
     {
       "name": "nvim",
-      "command": "nvim"
+      "command": "nvim",
     },
     {
-      "name": "opencode",
-      "command": "opencode"
+      "name": "agent",
+      "command": "pi",
     },
     {
       "name": "lazygit",
-      "command": "lazygit"
+      "command": "lazygit",
     },
     {
       "name": "term",
-      "command": ""
-    }
-  ]
+      "command": "",
+    },
+  ],
 }
