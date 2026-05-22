@@ -3,5 +3,8 @@
   "defaultModel": "gpt-5.5",
   "defaultThinkingLevel": "medium",
   "hideThinkingBlock": false,
-  "packages": ["./packages/pi-permissions"]
+  "packages": [
+    "./packages/pi-permissions"
+  ],
+  "lastChangelogVersion": "0.75.4"
 }
