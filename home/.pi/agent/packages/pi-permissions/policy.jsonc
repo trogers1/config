@@ -54,8 +54,9 @@
       { "pattern": "npx tsc --noEmit", "decision": "allow" },
       { "pattern": "printf *", "decision": "allow" },
       { "pattern": "true", "decision": "allow" },
-      { "pattern": "rg", "decision": "allow" },
-      { "pattern": "ripgrep", "decision": "allow" },
+      { "pattern": "rg *", "decision": "allow" },
+      { "pattern": "ripgrep *", "decision": "allow" },
+      { "pattern": "terraform fmt *", "decision": "allow" },
     ],
 
     "read": [
