@@ -155,3 +155,26 @@ test("glob patterns support protected root and nested paths", () => {
   assert.equal(permissions.matchesGlobPattern("**/.git/**", ".git/config"), true);
   assert.equal(permissions.matchesGlobPattern("../**", "../other/file.txt"), true);
 });
+
+test("parsed command preview shows numbered colorized decisions", () => {
+  const preview = permissions.formatParsedCommands("git status --short && npm publish --dry-run", policy);
+
+  assert.match(preview, /1\. \[\x1b\[34mallow\x1b\[0m\] git status --short/);
+  assert.match(preview, /2\. \[\x1b\[31mdeny\x1b\[0m\] npm publish --dry-run/);
+});
+
+test("bash confirmation shows raw command before parsed command preview", async () => {
+  const messages = [];
+  await permissions.gateBash("python scripts/build.py", process.cwd(), {
+    ...ctx(),
+    ui: {
+      confirm: async (_title, message) => {
+        messages.push(message);
+        return false;
+      },
+    },
+  }, policy);
+
+  assert.match(messages[0], /^Raw command:\npython scripts\/build\.py\n\nParsed command segments:/);
+  assert.match(messages[0], /\x1b\[33mask\x1b\[0m/);
+});

@@ -62,6 +62,7 @@
           { "pattern": "rg *", "decision": "allow" },
           { "pattern": "ripgrep *", "decision": "allow" },
           { "pattern": "terraform fmt *", "decision": "allow" },
+          { "pattern": "terraform validate *", "decision": "allow" },
           { "pattern": "head *", "decision": "allow" },
         ],
 

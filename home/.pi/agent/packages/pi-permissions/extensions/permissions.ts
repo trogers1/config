@@ -9,6 +9,13 @@ type Rule = {
 	decision: Decision;
 };
 
+const ansi = {
+	blue: (value: string) => `\x1b[34m${value}\x1b[0m`,
+	yellow: (value: string) => `\x1b[33m${value}\x1b[0m`,
+	red: (value: string) => `\x1b[31m${value}\x1b[0m`,
+	dim: (value: string) => `\x1b[2m${value}\x1b[0m`,
+};
+
 type ProfilePolicy = {
 	promptFile?: string | null;
 	tools: Record<string, Rule[]>;
@@ -177,13 +184,17 @@ export async function gateBash(command: string, startupCwd: string, ctx: Extensi
 		const ok = await confirmOrBlock(
 			ctx,
 			"Bash command references a gated path?",
-			`${command}\n\nPath:\n${pathDecision.path}\n\nMatched policy path:\n${pathDecision.matchPath}`,
+			`Raw command:\n${command}\n\nParsed command segments:\n${formatParsedCommands(command, activePolicy)}\n\nPath:\n${pathDecision.path}\n\nMatched policy path:\n${pathDecision.matchPath}`,
 		);
 		if (!ok) return { block: true, reason: `Bash path reference was not approved: ${pathDecision.path}` };
 	}
 
 	if (decisions.includes("ask")) {
-		const ok = await confirmOrBlock(ctx, "Allow bash command?", command);
+		const ok = await confirmOrBlock(
+			ctx,
+			"Allow bash command?",
+			`Raw command:\n${command}\n\nParsed command segments:\n${formatParsedCommands(command, activePolicy)}`,
+		);
 		if (!ok) return { block: true, reason: `Command was not approved: ${command}` };
 	}
 
@@ -192,6 +203,25 @@ export async function gateBash(command: string, startupCwd: string, ctx: Extensi
 
 export function decideBash(command: string, activePolicy = defaultPolicy): Decision {
 	return decideByPattern(command, activePolicy.tools.bash ?? [], "ask", matchesCommandPattern);
+}
+
+export function formatParsedCommands(command: string, activePolicy = defaultPolicy): string {
+	const commands = extractShellCommands(command).map(normalizeCommandForDecision).filter(Boolean);
+	if (commands.length === 0) return ansi.dim("(no parsed command segments)");
+
+	return commands
+		.map((cmd, index) => {
+			const decision = decideBash(cmd, activePolicy);
+			const label = formatDecision(decision);
+			return `${String(index + 1).padStart(2, " ")}. [${label}] ${cmd}`;
+		})
+		.join("\n");
+}
+
+function formatDecision(decision: Decision): string {
+	if (decision === "allow") return ansi.blue("allow");
+	if (decision === "ask") return ansi.yellow("ask");
+	return ansi.red("deny");
 }
 
 export function extractShellCommands(command: string): string[] {
