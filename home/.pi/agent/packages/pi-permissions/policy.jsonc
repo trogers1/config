@@ -64,6 +64,7 @@
           { "pattern": "terraform fmt *", "decision": "allow" },
           { "pattern": "terraform validate *", "decision": "allow" },
           { "pattern": "head *", "decision": "allow" },
+          { "pattern": "tail *", "decision": "allow" },
         ],
 
         "read": [
@@ -86,7 +87,7 @@
 
         "find": [
           { "pattern": "*", "decision": "allow" },
-          { "pattern": "../**", "decision": "ask" },
+          { "pattern": "../**", "decision": "allow" },
           { "pattern": "**/.env", "decision": "deny" },
           { "pattern": "**/.env/**", "decision": "deny" },
           { "pattern": "**/.git", "decision": "deny" },
@@ -136,7 +137,26 @@
     "socrates": {
       "promptFile": "./prompts/socrates.md",
       "tools": {
-        "bash": [{ "pattern": "*", "decision": "deny" }],
+        "bash": [
+          { "pattern": "*", "decision": "deny" },
+          // Common Read-only commands.
+          { "pattern": "grep *", "decision": "allow" },
+          { "pattern": "npx vitest", "decision": "allow" },
+          { "pattern": "npx vitest *", "decision": "allow" },
+          { "pattern": "sort *", "decision": "allow" },
+          { "pattern": "sed *", "decision": "allow" },
+          { "pattern": "ls", "decision": "allow" },
+          { "pattern": "ls *", "decision": "allow" },
+          { "pattern": "file *", "decision": "allow" },
+          { "pattern": "npx tsc --noEmit", "decision": "allow" },
+          { "pattern": "printf *", "decision": "allow" },
+          { "pattern": "true", "decision": "allow" },
+          { "pattern": "rg *", "decision": "allow" },
+          { "pattern": "ripgrep *", "decision": "allow" },
+          { "pattern": "terraform validate *", "decision": "allow" },
+          { "pattern": "head *", "decision": "allow" },
+          { "pattern": "tail *", "decision": "allow" },
+        ],
 
         "read": [
           { "pattern": "*", "decision": "ask" },
@@ -158,7 +178,7 @@
 
         "find": [
           { "pattern": "*", "decision": "allow" },
-          { "pattern": "../**", "decision": "ask" },
+          { "pattern": "../**", "decision": "allow" },
           { "pattern": "**/.env", "decision": "deny" },
           { "pattern": "**/.env/**", "decision": "deny" },
           { "pattern": "**/.git", "decision": "deny" },
