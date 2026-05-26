@@ -9,12 +9,18 @@ type Rule = {
 	decision: Decision;
 };
 
-type Policy = {
+type ProfilePolicy = {
+	promptFile?: string | null;
 	tools: Record<string, Rule[]>;
 	bashPathReferences: Rule[];
 };
 
-const defaultPolicy: Policy = {
+type PolicyConfig = {
+	defaultProfile: string;
+	profiles: Record<string, ProfilePolicy>;
+};
+
+const defaultPolicy: ProfilePolicy = {
 	tools: {
 		bash: [{ pattern: "*", decision: "ask" }],
 	},
@@ -22,20 +28,109 @@ const defaultPolicy: Policy = {
 };
 
 const moduleDir = typeof __dirname === "string" ? __dirname : process.cwd();
-const policy = loadPolicy(path.resolve(moduleDir, "../policy.jsonc"));
+const policyPath = path.resolve(moduleDir, "../policy.jsonc");
+const profileEntryType = "pi-permissions-profile";
 
 export default function (pi: ExtensionAPI) {
 	const startupCwd = path.resolve(process.cwd());
+	let activeProfile = loadPolicyConfig(policyPath).defaultProfile;
+
+	function restoreActiveProfile(ctx: ExtensionContext): void {
+		const config = loadPolicyConfig(policyPath);
+		activeProfile = config.defaultProfile;
+
+		for (const entry of ctx.sessionManager.getEntries()) {
+			if (entry.type !== "custom" || entry.customType !== profileEntryType) continue;
+			const profile = (entry.data as { profile?: unknown } | undefined)?.profile;
+			if (typeof profile === "string" && config.profiles[profile]) activeProfile = profile;
+		}
+	}
+
+	function setActiveProfile(profile: string): void {
+		activeProfile = profile;
+		pi.appendEntry(profileEntryType, { profile, timestamp: Date.now() });
+	}
 
 	pi.on("session_start", async (_event, ctx) => {
-		ctx.ui.setStatus("permissions", "permissions: curated");
+		restoreActiveProfile(ctx);
+		ctx.ui.setStatus("permissions", `profile: ${activeProfile}`);
 	});
 
 	pi.on("session_shutdown", async (_event, ctx) => {
 		ctx.ui.setStatus("permissions", undefined);
 	});
 
+	pi.registerCommand("profile", {
+		description: "Show or switch the active permissions profile",
+		getArgumentCompletions: (prefix) => {
+			const config = loadPolicyConfig(policyPath);
+			return Object.keys(config.profiles)
+				.filter((profile) => profile.startsWith(prefix))
+				.map((profile) => ({
+					value: profile,
+					label: profile,
+					description: profile === activeProfile ? "active" : undefined,
+				}));
+		},
+		handler: async (args, ctx) => {
+			const config = loadPolicyConfig(policyPath);
+			const requested = args.trim();
+
+			if (!requested) {
+				ctx.ui.notify(`Active profile: ${activeProfile}. Available: ${Object.keys(config.profiles).join(", ")}`, "info");
+				return;
+			}
+
+			if (!config.profiles[requested]) {
+				ctx.ui.notify(`Unknown profile '${requested}'. Available: ${Object.keys(config.profiles).join(", ")}`, "error");
+				return;
+			}
+
+			setActiveProfile(requested);
+			ctx.ui.setStatus("permissions", `profile: ${activeProfile}`);
+			ctx.ui.notify(`Switched to profile: ${activeProfile}`, "info");
+		},
+	});
+
+	pi.registerCommand("socrates", {
+		description: "Switch to the Socrates coaching profile",
+		handler: async (_args, ctx) => {
+			const config = loadPolicyConfig(policyPath);
+			if (!config.profiles.socrates) {
+				ctx.ui.notify("No 'socrates' profile is configured", "error");
+				return;
+			}
+
+			setActiveProfile("socrates");
+			ctx.ui.setStatus("permissions", "profile: socrates");
+			ctx.ui.notify("Socrates profile enabled", "info");
+		},
+	});
+
+	pi.registerCommand("socrates-off", {
+		description: "Switch back to the default permissions profile",
+		handler: async (_args, ctx) => {
+			const config = loadPolicyConfig(policyPath);
+			setActiveProfile(config.defaultProfile);
+			ctx.ui.setStatus("permissions", `profile: ${activeProfile}`);
+			ctx.ui.notify(`Socrates profile disabled; active profile: ${activeProfile}`, "info");
+		},
+	});
+
+	pi.on("before_agent_start", async (event) => {
+		const config = loadPolicyConfig(policyPath);
+		const policy = config.profiles[activeProfile] ?? config.profiles[config.defaultProfile];
+		if (!policy?.promptFile) return undefined;
+
+		const promptPath = resolvePolicyRelativePath(policy.promptFile);
+		const prompt = fs.readFileSync(promptPath, "utf8").trim();
+		return { systemPrompt: `${event.systemPrompt}\n\n# Active profile: ${activeProfile}\n\n${prompt}` };
+	});
+
 	pi.on("tool_call", async (event, ctx) => {
+		const config = loadPolicyConfig(policyPath);
+		const policy = config.profiles[activeProfile] ?? config.profiles[config.defaultProfile];
+
 		if (event.toolName === "bash") {
 			const command = String((event.input as { command?: unknown }).command ?? "");
 			return await gateBash(command, startupCwd, ctx, policy);
@@ -66,7 +161,7 @@ export default function (pi: ExtensionAPI) {
 	});
 }
 
-export async function gateBash(command: string, startupCwd: string, ctx: ExtensionContext, activePolicy = policy) {
+export async function gateBash(command: string, startupCwd: string, ctx: ExtensionContext, activePolicy = defaultPolicy) {
 	const commands = extractShellCommands(command).map(normalizeCommandForDecision).filter(Boolean);
 	const decisions = commands.length > 0 ? commands.map((cmd) => decideBash(cmd, activePolicy)) : [decideBash("", activePolicy)];
 
@@ -95,7 +190,7 @@ export async function gateBash(command: string, startupCwd: string, ctx: Extensi
 	return undefined;
 }
 
-export function decideBash(command: string, activePolicy = policy): Decision {
+export function decideBash(command: string, activePolicy = defaultPolicy): Decision {
 	return decideByPattern(command, activePolicy.tools.bash ?? [], "ask", matchesCommandPattern);
 }
 
@@ -272,7 +367,7 @@ function decideBashPathReferences(
 	command: string,
 	startupCwd: string,
 	cwd: string,
-	activePolicy: Policy,
+	activePolicy: ProfilePolicy,
 ): { decision: Decision; path: string; matchPath: string } | undefined {
 	for (const token of shellishTokens(command)) {
 		if (!looksLikePath(token)) continue;
@@ -316,21 +411,49 @@ function globToRegExpSource(pattern: string): string {
 	return source;
 }
 
-function loadPolicy(policyPath: string): Policy {
+function loadPolicyConfig(policyPath: string): PolicyConfig {
 	try {
-		const parsed = JSON.parse(stripJsonCommentsAndTrailingCommas(fs.readFileSync(policyPath, "utf8"))) as Partial<Policy>;
-		return {
-			...defaultPolicy,
-			...parsed,
-			tools: {
-				...defaultPolicy.tools,
-				...(parsed.tools ?? {}),
-			},
-			bashPathReferences: parsed.bashPathReferences ?? defaultPolicy.bashPathReferences,
-		};
+		const parsed = JSON.parse(stripJsonCommentsAndTrailingCommas(fs.readFileSync(policyPath, "utf8"))) as Partial<PolicyConfig & ProfilePolicy>;
+
+		// Backward compatibility for the original single-profile policy shape.
+		if (!parsed.profiles) {
+			return {
+				defaultProfile: "default",
+				profiles: {
+					default: normalizeProfilePolicy(parsed),
+				},
+			};
+		}
+
+		const profiles: Record<string, ProfilePolicy> = {};
+		for (const [name, profile] of Object.entries(parsed.profiles)) {
+			profiles[name] = normalizeProfilePolicy(profile);
+		}
+
+		const defaultProfile = parsed.defaultProfile ?? "default";
+		if (!profiles[defaultProfile]) throw new Error(`defaultProfile '${defaultProfile}' is not defined in profiles`);
+
+		return { defaultProfile, profiles };
 	} catch (error) {
 		throw new Error(`Failed to load pi permissions policy at ${policyPath}: ${error instanceof Error ? error.message : String(error)}`);
 	}
+}
+
+function normalizeProfilePolicy(policy: Partial<ProfilePolicy> | undefined): ProfilePolicy {
+	return {
+		...defaultPolicy,
+		...(policy ?? {}),
+		tools: {
+			...defaultPolicy.tools,
+			...(policy?.tools ?? {}),
+		},
+		bashPathReferences: policy?.bashPathReferences ?? defaultPolicy.bashPathReferences,
+	};
+}
+
+function resolvePolicyRelativePath(value: string): string {
+	const expanded = expandHome(value);
+	return path.isAbsolute(expanded) ? expanded : path.resolve(moduleDir, "..", expanded);
 }
 
 export function stripJsonCommentsAndTrailingCommas(input: string): string {

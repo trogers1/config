@@ -1,127 +1,184 @@
 {
-  // Tool policies are ordered: later matching rules override earlier ones.
-  // For bash, patterns match normalized command segments.
-  // For path-based tools, patterns match paths relative to pi's startup directory.
-  // Outside paths appear as ../..., so use ../** to gate external access.
-  "tools": {
-    "bash": [
-      { "pattern": "*", "decision": "ask" },
-      { "pattern": "git *", "decision": "ask" },
+  "defaultProfile": "default",
 
-      // Git read-only / semi-destructive commands intentionally allowed.
-      { "pattern": "git status", "decision": "allow" },
-      { "pattern": "git status *", "decision": "allow" },
-      { "pattern": "git log", "decision": "allow" },
-      { "pattern": "git log *", "decision": "allow" },
-      { "pattern": "git rm *", "decision": "allow" },
-      { "pattern": "git mv *", "decision": "allow" },
-      { "pattern": "git diff", "decision": "allow" },
-      { "pattern": "git diff *", "decision": "allow" },
-      { "pattern": "git pull", "decision": "allow" },
-      { "pattern": "git grep *", "decision": "allow" },
-      { "pattern": "git bisect *", "decision": "allow" },
-      { "pattern": "git show *", "decision": "allow" },
-      { "pattern": "git ls-files", "decision": "allow" },
-      { "pattern": "git ls-files *", "decision": "allow" },
-      { "pattern": "git rev-parse", "decision": "allow" },
-      { "pattern": "git rev-parse *", "decision": "allow" },
-      { "pattern": "git show-ref", "decision": "allow" },
-      { "pattern": "git show-ref *", "decision": "allow" },
-      { "pattern": "git merge-base *", "decision": "allow" },
+  "profiles": {
+    "default": {
+      // No promptFile means: keep Pi's normal system prompt unchanged.
+      // Tool policies are ordered: later matching rules override earlier ones.
+      // For bash, patterns match normalized command segments.
+      // For path-based tools, patterns match paths relative to pi's startup directory.
+      // Outside paths appear as ../..., so use ../** to gate external access.
+      "tools": {
+        "bash": [
+          { "pattern": "*", "decision": "ask" },
+          { "pattern": "git *", "decision": "ask" },
 
-      // Git destructive / workflow-changing commands.
-      { "pattern": "git branch *", "decision": "deny" },
-      { "pattern": "git rebase *", "decision": "deny" },
-      { "pattern": "git switch *", "decision": "deny" },
-      { "pattern": "git tag *", "decision": "deny" },
-      { "pattern": "git commit *", "decision": "deny" },
-      { "pattern": "git push *", "decision": "deny" },
-      { "pattern": "git checkout *", "decision": "deny" },
-      { "pattern": "git add *", "decision": "deny" },
-      { "pattern": "git worktree *", "decision": "deny" },
+          // Git read-only / semi-destructive commands intentionally allowed.
+          { "pattern": "git status", "decision": "allow" },
+          { "pattern": "git status *", "decision": "allow" },
+          { "pattern": "git log", "decision": "allow" },
+          { "pattern": "git log *", "decision": "allow" },
+          { "pattern": "git rm *", "decision": "allow" },
+          { "pattern": "git mv *", "decision": "allow" },
+          { "pattern": "git diff", "decision": "allow" },
+          { "pattern": "git diff *", "decision": "allow" },
+          { "pattern": "git pull", "decision": "allow" },
+          { "pattern": "git grep *", "decision": "allow" },
+          { "pattern": "git bisect *", "decision": "allow" },
+          { "pattern": "git show *", "decision": "allow" },
+          { "pattern": "git ls-files", "decision": "allow" },
+          { "pattern": "git ls-files *", "decision": "allow" },
+          { "pattern": "git rev-parse", "decision": "allow" },
+          { "pattern": "git rev-parse *", "decision": "allow" },
+          { "pattern": "git show-ref", "decision": "allow" },
+          { "pattern": "git show-ref *", "decision": "allow" },
+          { "pattern": "git merge-base *", "decision": "allow" },
 
-      // Common low-risk commands.
-      { "pattern": "grep *", "decision": "allow" },
-      { "pattern": "npx vitest", "decision": "allow" },
-      { "pattern": "npx vitest *", "decision": "allow" },
-      { "pattern": "sort *", "decision": "allow" },
-      { "pattern": "sed *", "decision": "allow" },
-      { "pattern": "ls", "decision": "allow" },
-      { "pattern": "ls *", "decision": "allow" },
-      { "pattern": "file *", "decision": "allow" },
-      { "pattern": "npm *", "decision": "allow" },
-      { "pattern": "openspec *", "decision": "allow" },
-      { "pattern": "npx tsc --noEmit", "decision": "allow" },
-      { "pattern": "printf *", "decision": "allow" },
-      { "pattern": "true", "decision": "allow" },
-      { "pattern": "rg *", "decision": "allow" },
-      { "pattern": "ripgrep *", "decision": "allow" },
-      { "pattern": "terraform fmt *", "decision": "allow" },
-    ],
+          // Git destructive / workflow-changing commands.
+          { "pattern": "git branch *", "decision": "deny" },
+          { "pattern": "git rebase *", "decision": "deny" },
+          { "pattern": "git switch *", "decision": "deny" },
+          { "pattern": "git tag *", "decision": "deny" },
+          { "pattern": "git commit *", "decision": "deny" },
+          { "pattern": "git push *", "decision": "deny" },
+          { "pattern": "git checkout *", "decision": "deny" },
+          { "pattern": "git add *", "decision": "deny" },
+          { "pattern": "git worktree *", "decision": "deny" },
 
-    "read": [
-      { "pattern": "*", "decision": "allow" },
-      { "pattern": "../**", "decision": "ask" },
-      { "pattern": "**/.env", "decision": "deny" },
-      { "pattern": "**/.env/**", "decision": "deny" },
-      { "pattern": "**/.git", "decision": "deny" },
-      { "pattern": "**/.git/**", "decision": "deny" },
-    ],
+          // Common low-risk commands.
+          { "pattern": "grep *", "decision": "allow" },
+          { "pattern": "npx vitest", "decision": "allow" },
+          { "pattern": "npx vitest *", "decision": "allow" },
+          { "pattern": "sort *", "decision": "allow" },
+          { "pattern": "sed *", "decision": "allow" },
+          { "pattern": "ls", "decision": "allow" },
+          { "pattern": "ls *", "decision": "allow" },
+          { "pattern": "file *", "decision": "allow" },
+          { "pattern": "npm *", "decision": "allow" },
+          { "pattern": "openspec *", "decision": "allow" },
+          { "pattern": "npx tsc --noEmit", "decision": "allow" },
+          { "pattern": "printf *", "decision": "allow" },
+          { "pattern": "true", "decision": "allow" },
+          { "pattern": "rg *", "decision": "allow" },
+          { "pattern": "ripgrep *", "decision": "allow" },
+          { "pattern": "terraform fmt *", "decision": "allow" },
+          { "pattern": "head *", "decision": "allow" },
+        ],
 
-    "grep": [
-      { "pattern": "*", "decision": "allow" },
-      { "pattern": "../**", "decision": "ask" },
-      { "pattern": "**/.env", "decision": "deny" },
-      { "pattern": "**/.env/**", "decision": "deny" },
-      { "pattern": "**/.git", "decision": "deny" },
-      { "pattern": "**/.git/**", "decision": "deny" },
-    ],
+        "read": [
+          { "pattern": "*", "decision": "allow" },
+          { "pattern": "../**", "decision": "ask" },
+          { "pattern": "**/.env", "decision": "deny" },
+          { "pattern": "**/.env/**", "decision": "deny" },
+          { "pattern": "**/.git", "decision": "deny" },
+          { "pattern": "**/.git/**", "decision": "deny" },
+        ],
 
-    "find": [
-      { "pattern": "*", "decision": "allow" },
-      { "pattern": "../**", "decision": "ask" },
-      { "pattern": "**/.env", "decision": "deny" },
-      { "pattern": "**/.env/**", "decision": "deny" },
-      { "pattern": "**/.git", "decision": "deny" },
-      { "pattern": "**/.git/**", "decision": "deny" },
-    ],
+        "grep": [
+          { "pattern": "*", "decision": "allow" },
+          { "pattern": "../**", "decision": "ask" },
+          { "pattern": "**/.env", "decision": "deny" },
+          { "pattern": "**/.env/**", "decision": "deny" },
+          { "pattern": "**/.git", "decision": "deny" },
+          { "pattern": "**/.git/**", "decision": "deny" },
+        ],
 
-    "ls": [
-      { "pattern": "*", "decision": "allow" },
-      { "pattern": "../**", "decision": "ask" },
-      { "pattern": "**/.env", "decision": "deny" },
-      { "pattern": "**/.env/**", "decision": "deny" },
-      { "pattern": "**/.git", "decision": "deny" },
-      { "pattern": "**/.git/**", "decision": "deny" },
-    ],
+        "find": [
+          { "pattern": "*", "decision": "allow" },
+          { "pattern": "../**", "decision": "ask" },
+          { "pattern": "**/.env", "decision": "deny" },
+          { "pattern": "**/.env/**", "decision": "deny" },
+          { "pattern": "**/.git", "decision": "deny" },
+          { "pattern": "**/.git/**", "decision": "deny" },
+        ],
 
-    "edit": [
-      { "pattern": "*", "decision": "allow" },
-      { "pattern": "../**", "decision": "ask" },
-      { "pattern": "**/.env", "decision": "deny" },
-      { "pattern": "**/.env/**", "decision": "deny" },
-      { "pattern": "**/.git", "decision": "deny" },
-      { "pattern": "**/.git/**", "decision": "deny" },
-    ],
+        "ls": [
+          { "pattern": "*", "decision": "allow" },
+          { "pattern": "../**", "decision": "ask" },
+          { "pattern": "**/.env", "decision": "deny" },
+          { "pattern": "**/.env/**", "decision": "deny" },
+          { "pattern": "**/.git", "decision": "deny" },
+          { "pattern": "**/.git/**", "decision": "deny" },
+        ],
 
-    "write": [
-      { "pattern": "*", "decision": "allow" },
-      { "pattern": "../**", "decision": "ask" },
-      { "pattern": "**/.env", "decision": "deny" },
-      { "pattern": "**/.env/**", "decision": "deny" },
-      { "pattern": "**/.git", "decision": "deny" },
-      { "pattern": "**/.git/**", "decision": "deny" },
-    ],
+        "edit": [
+          { "pattern": "*", "decision": "allow" },
+          { "pattern": "../**", "decision": "ask" },
+          { "pattern": "**/.env", "decision": "deny" },
+          { "pattern": "**/.env/**", "decision": "deny" },
+          { "pattern": "**/.git", "decision": "deny" },
+          { "pattern": "**/.git/**", "decision": "deny" },
+        ],
+
+        "write": [
+          { "pattern": "*", "decision": "allow" },
+          { "pattern": "../**", "decision": "ask" },
+          { "pattern": "**/.env", "decision": "deny" },
+          { "pattern": "**/.env/**", "decision": "deny" },
+          { "pattern": "**/.git", "decision": "deny" },
+          { "pattern": "**/.git/**", "decision": "deny" },
+        ],
+      },
+
+      // Bash is command-oriented, but shell commands can still reference paths.
+      // These glob rules gate those path references separately.
+      "bashPathReferences": [
+        { "pattern": "*", "decision": "allow" },
+        { "pattern": "../**", "decision": "ask" },
+        { "pattern": "**/.env", "decision": "deny" },
+        { "pattern": "**/.env/**", "decision": "deny" },
+        { "pattern": "**/.git", "decision": "deny" },
+        { "pattern": "**/.git/**", "decision": "deny" },
+      ],
+    },
+
+    "socrates": {
+      "promptFile": "./prompts/socrates.md",
+      "tools": {
+        "bash": [{ "pattern": "*", "decision": "deny" }],
+
+        "read": [
+          { "pattern": "*", "decision": "ask" },
+          { "pattern": "../**", "decision": "ask" },
+          { "pattern": "**/.env", "decision": "deny" },
+          { "pattern": "**/.env/**", "decision": "deny" },
+          { "pattern": "**/.git", "decision": "deny" },
+          { "pattern": "**/.git/**", "decision": "deny" },
+        ],
+
+        "grep": [
+          { "pattern": "*", "decision": "allow" },
+          { "pattern": "../**", "decision": "ask" },
+          { "pattern": "**/.env", "decision": "deny" },
+          { "pattern": "**/.env/**", "decision": "deny" },
+          { "pattern": "**/.git", "decision": "deny" },
+          { "pattern": "**/.git/**", "decision": "deny" },
+        ],
+
+        "find": [
+          { "pattern": "*", "decision": "allow" },
+          { "pattern": "../**", "decision": "ask" },
+          { "pattern": "**/.env", "decision": "deny" },
+          { "pattern": "**/.env/**", "decision": "deny" },
+          { "pattern": "**/.git", "decision": "deny" },
+          { "pattern": "**/.git/**", "decision": "deny" },
+        ],
+
+        "ls": [
+          { "pattern": "*", "decision": "allow" },
+          { "pattern": "../**", "decision": "ask" },
+          { "pattern": "**/.env", "decision": "deny" },
+          { "pattern": "**/.env/**", "decision": "deny" },
+          { "pattern": "**/.git", "decision": "deny" },
+          { "pattern": "**/.git/**", "decision": "deny" },
+        ],
+
+        "edit": [{ "pattern": "*", "decision": "deny" }],
+
+        "write": [{ "pattern": "*", "decision": "deny" }],
+      },
+
+      "bashPathReferences": [{ "pattern": "*", "decision": "deny" }],
+    },
   },
-
-  // Bash is command-oriented, but shell commands can still reference paths.
-  // These glob rules gate those path references separately.
-  "bashPathReferences": [
-    { "pattern": "*", "decision": "allow" },
-    { "pattern": "../**", "decision": "ask" },
-    { "pattern": "**/.env", "decision": "deny" },
-    { "pattern": "**/.env/**", "decision": "deny" },
-    { "pattern": "**/.git", "decision": "deny" },
-    { "pattern": "**/.git/**", "decision": "deny" },
-  ],
 }

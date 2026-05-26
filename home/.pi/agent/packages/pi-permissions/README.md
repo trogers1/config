@@ -1,13 +1,24 @@
 # Taylor Pi Permissions
 
-Pi package that mirrors the curated opencode permission posture:
+Pi package that mirrors the curated opencode permission posture and adds switchable profiles:
 
+- `default`: normal Pi system prompt with the current curated permissions
+- `socrates`: Socratic coaching prompt with read-only / no-edit permissions
 - explicit deny rules for destructive git operations and protected paths
 - explicit allow rules for common read-only / low-risk commands
 - confirmation for every unspecified bash command
 - confirmation before configured tools access paths outside the directory where pi was started
 
-Policy lives in `policy.jsonc`.
+Policy lives in `policy.jsonc`. The Socrates prompt lives in `prompts/socrates.md`.
+
+## Commands
+
+- `/profile` shows the active profile and available profiles.
+- `/profile <name>` switches to a profile.
+- `/socrates` switches to the Socrates coaching profile.
+- `/socrates-off` switches back to the configured default profile.
+
+Profile changes are persisted in the Pi session, so resumed sessions restore their last selected profile.
 
 ## Policy model
 
