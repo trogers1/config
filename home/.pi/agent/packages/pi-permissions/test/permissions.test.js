@@ -163,6 +163,15 @@ test("parsed command preview shows numbered colorized decisions", () => {
   assert.match(preview, /2\. \[\x1b\[31mdeny\x1b\[0m\] npm publish --dry-run/);
 });
 
+test("denied bash result includes raw command and parsed command preview", async () => {
+  const result = await permissions.gateBash("git status --short && npm publish --dry-run", process.cwd(), ctx(), policy);
+
+  assert.equal(result.block, true);
+  assert.match(result.reason, /^Command denied by explicit rule\.\n\nRaw command:\ngit status --short && npm publish --dry-run\n\nParsed command segments:/);
+  assert.match(result.reason, /\x1b\[34mallow\x1b\[0m/);
+  assert.match(result.reason, /\x1b\[31mdeny\x1b\[0m/);
+});
+
 test("bash confirmation shows raw command before parsed command preview", async () => {
   const messages = [];
   await permissions.gateBash("python scripts/build.py", process.cwd(), {

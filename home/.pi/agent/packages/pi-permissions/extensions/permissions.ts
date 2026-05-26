@@ -173,12 +173,12 @@ export async function gateBash(command: string, startupCwd: string, ctx: Extensi
 	const decisions = commands.length > 0 ? commands.map((cmd) => decideBash(cmd, activePolicy)) : [decideBash("", activePolicy)];
 
 	if (decisions.includes("deny")) {
-		return { block: true, reason: `Command denied by explicit rule: ${command}` };
+		return { block: true, reason: `Command denied by explicit rule.\n\nRaw command:\n${command}\n\nParsed command segments:\n${formatParsedCommands(command, activePolicy)}` };
 	}
 
 	const pathDecision = decideBashPathReferences(command, startupCwd, ctx.cwd ?? startupCwd, activePolicy);
 	if (pathDecision?.decision === "deny") {
-		return { block: true, reason: `Bash path reference denied by policy: ${pathDecision.path}` };
+		return { block: true, reason: `Bash path reference denied by policy.\n\nRaw command:\n${command}\n\nParsed command segments:\n${formatParsedCommands(command, activePolicy)}\n\nPath:\n${pathDecision.path}\n\nMatched policy path:\n${pathDecision.matchPath}` };
 	}
 	if (pathDecision?.decision === "ask") {
 		const ok = await confirmOrBlock(
