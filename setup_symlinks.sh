@@ -176,6 +176,14 @@ if [ -d "$pi_permissions_package" ]; then
   fi
 fi
 
+pi_skills="$HOME_DIR/.pi/agent/skills"
+if [ -d "$pi_skills" ]; then
+  mkdir -p "$HOME/.pi/agent"
+  if ! safe_link "$pi_skills" "$HOME/.pi/agent/skills" "pi skills"; then
+    failed=1
+  fi
+fi
+
 if [ "$symlinked" -eq 0 ]; then
   echo "No config files found to symlink."
 fi
