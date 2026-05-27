@@ -4,6 +4,7 @@ Pi package that mirrors the curated opencode permission posture and adds switcha
 
 - `default`: normal Pi system prompt with the current curated permissions
 - `socrates`: Socratic coaching prompt with read-only / no-edit permissions
+- optional per-profile `color` and `emoji` metadata for the status line
 - explicit deny rules for destructive git operations and protected paths
 - explicit allow rules for common read-only / low-risk commands
 - confirmation for every unspecified bash command
@@ -19,6 +20,17 @@ Policy lives in `policy.jsonc`. The Socrates prompt lives in `prompts/socrates.m
 - `/socrates-off` switches back to the configured default profile.
 
 Profile changes are persisted in the Pi session, so resumed sessions restore their last selected profile.
+
+Profile status metadata is configured per profile:
+
+```jsonc
+"socrates": {
+  "color": "cyan", // defaults to blue when omitted
+  "emoji": "🧠" // Optional. Have some fun if you want.
+}
+```
+
+Supported colors: `black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `white`.
 
 ## Policy model
 

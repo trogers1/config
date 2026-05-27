@@ -90,3 +90,13 @@ test("/socrates and /socrates-off switch profiles", async () => {
   await commands.get("socrates-off").handler("", ctx);
   assert.equal(profile.getArgumentCompletions("").find((item) => item.value === "default").description, "active");
 });
+
+test("profile status includes emoji, bold profile name, and configured color", async () => {
+  const { commands } = loadExtension();
+  const { ctx, statuses } = commandContext();
+
+  await commands.get("socrates").handler("", ctx);
+
+  assert.equal(statuses.at(-1).name, "permissions");
+  assert.equal(statuses.at(-1).value, "profile: 🧠 \x1b[36m\x1b[1msocrates\x1b[0m\x1b[0m");
+});

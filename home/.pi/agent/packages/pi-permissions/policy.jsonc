@@ -3,6 +3,8 @@
 
   "profiles": {
     "default": {
+      "color": "blue",
+      "emoji": "🛠️",
       // No promptFile means: keep Pi's normal system prompt unchanged.
       // Tool policies are ordered: later matching rules override earlier ones.
       // For bash, patterns match normalized command segments.
@@ -141,6 +143,8 @@
 
     "socrates": {
       "promptFile": "./prompts/socrates.md",
+      "color": "cyan",
+      "emoji": "🧠",
       "tools": {
         "bash": [
           { "pattern": "*", "decision": "deny" },
