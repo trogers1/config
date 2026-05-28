@@ -104,6 +104,8 @@
         "read": [
           { "pattern": "*", "decision": "allow" },
           { "pattern": "../**", "decision": "ask" },
+          // Allow reading installed Pi skills even when Pi starts inside a project/worktree.
+          { "pattern": "../**/.pi/agent/skills/**", "decision": "allow" },
           { "pattern": "**/.env", "decision": "deny" },
           { "pattern": "**/.env/**", "decision": "deny" },
           { "pattern": "**/.git", "decision": "deny" },
@@ -164,6 +166,10 @@
         // Allow fixed address-comments skill helper scripts even when Pi starts in a project.
         {
           "pattern": "../**/.pi/agent/skills/address-comments/scripts/*.sh",
+          "decision": "allow",
+        },
+        {
+          "pattern": "../**/.pi/agent/skills/address-comments/*",
           "decision": "allow",
         },
         { "pattern": "**/.env", "decision": "deny" },
@@ -276,6 +282,8 @@
         "read": [
           { "pattern": "*", "decision": "allow" },
           { "pattern": "../**", "decision": "ask" },
+          // Allow reading installed Pi skills even when Pi starts inside a project/worktree.
+          { "pattern": "../**/.pi/agent/skills/**", "decision": "allow" },
           { "pattern": "**/.env", "decision": "deny" },
           { "pattern": "**/.env/**", "decision": "deny" },
           { "pattern": "**/.git", "decision": "deny" },
@@ -338,6 +346,11 @@
           "pattern": "../**/.pi/agent/skills/address-comments/scripts/*.sh",
           "decision": "allow",
         },
+        {
+          "pattern": "../**/.pi/agent/skills/address-comments/*",
+          "decision": "allow",
+        },
+
         { "pattern": "**/.env", "decision": "deny" },
         { "pattern": "**/.env/**", "decision": "deny" },
         { "pattern": "**/.git", "decision": "deny" },
