@@ -6,5 +6,5 @@
   "packages": [
     "./packages/pi-permissions"
   ],
-  "lastChangelogVersion": "0.75.5"
+  "lastChangelogVersion": "0.76.0"
 }
