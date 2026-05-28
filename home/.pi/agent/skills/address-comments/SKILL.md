@@ -4,150 +4,85 @@ description: >-
   Refresh unresolved GitLab MR threads marked with :robot:, implement requested
   changes, verify, and annotate comments.md with Robot resolution notes. Use when
   addressing merge request review feedback, GitLab MR comments, or Robot-tagged
-  review threads on the current branch.
+  review threads for a supplied MR URL.
 ---
 
 # Address MR Comments
 
-Use this workflow to refresh unresolved GitLab MR comments, implement the requested changes when feasible, verify the changes, and annotate `comments.md` with a `Robot` resolution note for each addressed discussion.
+Use this workflow to refresh unresolved GitLab MR comments for a supplied MR URL, implement feasible changes, verify them, and annotate `comments.md` with a `Robot` resolution note for each addressed discussion.
+
+GitLab data is fetched only through **read-only scripts** in this skill (`scripts/`). Do not run `glab api` or other GitLab CLI commands directly.
 
 ## Goal
 
-Given an open MR:
+Given an MR URL:
 
-- Fetch the current discussions from GitLab using `glab`
-- Filter to unresolved human discussions that have a `:robot:` (`robot`) reaction on at least one note in the thread
+- Refresh unresolved human discussions that have a `:robot:` (`robot`) reaction on at least one note
 - Collect discussions that reference one another into a single section to resolve coherently, and write them into `comments.md` with links to the MR and each thread
 - Make the smallest reasonable code changes to address each discussion section
 - Run targeted verification
+- Commit each complete, atomic fix separately with discussion links in the commit body
 - Append a `Robot` note to `comments.md` for each discussion you resolved in code
 
 ## Rules
 
-- Use `glab api`, not the GitLab web UI.
+- Use the skill scripts below — not the GitLab web UI and not raw `glab` commands.
 - Always refresh live MR discussions before acting; do not trust a stale `comments.md`.
 - Only use human comments where `system == false` when deciding what needs action.
 - Prefer the smallest correct code change.
-- If multiple comments point at the same underlying issue, make one coherent fix.
+- If multiple comments point at the same underlying issue, make one coherent fix and one commit covering those discussions.
+- After each complete, atomic fix for a discussion section (or batched related sections), commit immediately — do not batch unrelated sections into one commit.
 - If a comment only asks for test structure, comments, naming, or assertion quality, keep the change narrow to that scope.
 - If a comment cannot be reasonably resolved without product direction, leave it alone and do not add a `Robot` note for it.
 - After making changes, add a `Robot` paragraph only for discussions you actually addressed.
-- For diff comments, use relative local Markdown links, not GitLab blob URLs.
 - Put line numbers in the link **label** only; keep the Markdown **href** as the file path (for example `[src/a.ts#L10](src/a.ts)`).
 - Validate that linked file paths exist in the repo before writing `comments.md`.
-- Prefer `glab api "projects/:fullpath/merge_requests/<iid>/discussions?per_page=100"` over `glab mr view --comments`.
 
-## Example
+## Refresh `comments.md` (preferred)
 
-Reference MR (run from `~/Code/mcp` on branch `RI-208-add-cache`):
-
-- https://gitlab.economicmodeling.com/ltc/ask-lightcast-ai/mcp/-/merge_requests/125
-
-That MR currently has dozens of unresolved `:robot:` threads after enrichment.
-
-## Refresh Current Discussions
-
-Run from the project repo root so `projects/:fullpath` resolves and code links are valid.
-
-Get the branch name:
+OpenCode:
 
 ```bash
-git rev-parse --abbrev-ref HEAD
+bash ~/.config/opencode/skills/address-comments/scripts/refresh-robot-comments-md.sh \
+  https://gitlab.economicmodeling.com/group/project/-/merge_requests/125
 ```
 
-Find the MR for that branch (replace `<branch>`):
+Pi:
 
 ```bash
-glab api "projects/:fullpath/merge_requests?source_branch=<branch>&state=opened"
+bash ~/.pi/agent/skills/address-comments/scripts/refresh-robot-comments-md.sh \
+  https://gitlab.economicmodeling.com/group/project/-/merge_requests/125
 ```
 
-From that JSON, copy the MR `iid` and `web_url`. Then fetch discussions (replace `<iid>`):
+Arguments: `<mr-url> [output-file]` (default output: `comments.md`). If `output-file` is an absolute path inside a worktree, the scripts use that worktree as the GitLab project context.
 
 ```bash
-discussions_json="$(mktemp)"
-enriched_json="$(mktemp)"
-trap 'rm -f "$discussions_json" "$enriched_json"' EXIT
+# From any cwd — target a worktree explicitly via the output path
+bash ~/.pi/agent/skills/address-comments/scripts/refresh-robot-comments-md.sh \
+  https://gitlab.economicmodeling.com/group/project/-/merge_requests/125 \
+  ~/Code/project-worktrees/fix-comments/comments.md
 
-glab api "projects/:fullpath/merge_requests/<iid>/discussions?per_page=100" --output json >"$discussions_json"
+# Or rely on DTREE_WORKTREE_PATH in tmux worktree sessions
+bash ~/.pi/agent/skills/address-comments/scripts/refresh-robot-comments-md.sh \
+  https://gitlab.economicmodeling.com/group/project/-/merge_requests/125
 ```
 
-Enrich discussions with per-note emoji reactions (required for `:robot:` filtering):
+## Step-by-step scripts (debugging)
 
 ```bash
-bash ~/.pi/agent/skills/address-comments/scripts/enrich-discussions.sh "$discussions_json" "<iid>" >"$enriched_json"
+SCRIPTS=~/.pi/agent/skills/address-comments/scripts
+MR_URL=https://gitlab.economicmodeling.com/group/project/-/merge_requests/125
+MR_IID=125
+
+# Discussions for the supplied MR
+bash "$SCRIPTS/fetch-mr-discussions.sh" "$MR_IID" /tmp/discussions.json
+
+# Enrich with award_emoji (required for :robot: filter)
+bash "$SCRIPTS/enrich-discussions.sh" /tmp/discussions.json "$MR_IID" > /tmp/enriched.json
+
+# Render robot-filtered comments.md
+bash "$SCRIPTS/render-comments-md.sh" robot /tmp/enriched.json "$MR_URL" comments.md
 ```
-
-Set `MR_URL` from the MR lookup `web_url`, then generate `comments.md` (replace `<discussion-json-file>` with `"$enriched_json"`):
-
-```bash
-MR_URL='<web_url from MR lookup>'
-export MR_URL
-
-jq -r --arg mr_url "$MR_URL" '
-  . as $all
-  | ($all[0].notes[0].noteable_iid | tostring) as $mr_iid
-  | "# Merge Request Comments\n\n"
-    + "Merge request: [!" + $mr_iid + "](" + $mr_url + ")\n\n"
-    + "Only unresolved discussions with :robot: reaction\n\n"
-    + (
-        [
-          $all[]
-          | . as $d
-          | ($d.notes | map(select(.system == false))) as $human
-          | select(
-              ($d.resolved // false) == false
-              and ($human | length) > 0
-              and (
-                $d.notes
-                | any(
-                    (.award_emoji // [])
-                    | any(.name == "robot")
-                  )
-              )
-            )
-        ]
-        | to_entries
-        | map(
-            .value as $d
-            | ($d.notes | map(select(.system == false))) as $human
-            | "## Discussion " + (.key + 1 | tostring) + "\n\n"
-              + "Thread: [!" + $mr_iid + "](" + $mr_url + "#note_" + ($human[0].id | tostring) + ")\n\n"
-              + (
-                  if ($human[0].position // null) then
-                    (
-                      ($human[0].position.new_path // $human[0].position.old_path) as $path
-                      | (
-                          $human[0].position.new_line
-                          // $human[0].position.old_line
-                          // $human[0].position.line_range.start.new_line
-                          // $human[0].position.line_range.start.old_line
-                        ) as $line
-                      | if ($line == null) then
-                          "Code: [" + $path + "](" + $path + ")\n\n"
-                        else
-                          "Code: [" + $path + "#L" + ($line | tostring) + "](" + $path + ")\n\n"
-                        end
-                    )
-                  else ""
-                  end
-                )
-              + "Status: unresolved\n\n"
-              + (
-                  [
-                    $human[]
-                    | "**" + .author.name + "** (@" + .author.username + ") - " + .created_at
-                      + " — [comment](" + $mr_url + "#note_" + (.id | tostring) + ")\n\n"
-                      + (.body | gsub("\r"; ""))
-                  ]
-                  | join("\n\n---\n\n")
-                )
-          )
-        | join("\n\n")
-      )
-' "$enriched_json" >comments.md
-```
-
-If the MR has more than 100 discussions, fetch additional pages (`&page=2`, etc.), merge the JSON arrays, enrich once, then run `jq`.
 
 ## How To Address Comments
 
@@ -156,8 +91,10 @@ For each discussion in `comments.md`:
 1. Read the referenced file and surrounding code.
 2. Decide whether the comment is actionable without further product clarification.
 3. Make the smallest reasonable change.
-4. If several discussions or comments touch the same area (or reference one another), batch them into one coherent edit.
+4. Batch related discussions into one coherent edit when they touch the same area.
 5. Prefer behavior assertions over implementation-detail assertions in tests when practical.
+6. Run targeted verification for that change.
+7. Commit the change before moving to the next discussion section.
 6. If a comment is about organization only, reorganize narrowly rather than rewriting broader logic.
 
 Typical examples:
@@ -169,12 +106,23 @@ Typical examples:
 - Add a concise explanatory comment for confusing but necessary logic.
 - Add a tiny helper like `sleep(ms)` if it removes repeated async boilerplate.
 
+## Commits
+
+One commit per complete, atomic discussion section (or per batched group of related sections). Keep the subject very short (about 50 characters). Put discussion links in the commit **body**, copied from the `Thread:` / `comment` links in `comments.md`.
+
+```text
+extract fakeCache helper
+
+Adresses:
+- https://gitlab.economicmodeling.com/group/project/-/merge_requests/125#note_988438
+- https://gitlab.economicmodeling.com/group/project/-/merge_requests/125#note_989896
+```
+
+Do not commit until verification for that section passes. Do not commit sections you did not change or left unresolved.
+
 ## Verification
 
-Run the narrowest relevant verification command for the changed area.
-
-Example when changing HTTP client tests:
-
+Run the narrowest relevant verification for the changed area, for example:
 ```bash
 npm run typecheck && npm test -- httpClient.test
 ```
@@ -214,11 +162,10 @@ Here's a basic code snippet/pseudocode representing the changes I made for this 
 
 ## Final Checklist
 
-- Live MR discussions refreshed from `glab`
-- Discussions enriched with `award_emoji` and filtered to unresolved `:robot:` threads
-- `comments.md` regenerated with MR and per-comment links
+- `comments.md` refreshed via `refresh-robot-comments-md.sh <mr-url> [output-file]`
 - Requested code/test/comment changes applied where feasible
-- Targeted verification command passed
+- Targeted verification passed per section
+- One atomic commit per section (or related batch), with discussion links in the commit body
 - `Robot` note added for each addressed discussion
 
 ## Related skill
