@@ -105,6 +105,7 @@
           { "pattern": "*", "decision": "allow" },
           { "pattern": "../**", "decision": "ask" },
           // Allow reading installed Pi skills even when Pi starts inside a project/worktree.
+          { "pattern": "../.pi/agent/skills/**", "decision": "allow" },
           { "pattern": "../**/.pi/agent/skills/**", "decision": "allow" },
           { "pattern": "**/.env", "decision": "deny" },
           { "pattern": "**/.env/**", "decision": "deny" },
@@ -283,6 +284,7 @@
           { "pattern": "*", "decision": "allow" },
           { "pattern": "../**", "decision": "ask" },
           // Allow reading installed Pi skills even when Pi starts inside a project/worktree.
+          { "pattern": "../.pi/agent/skills/**", "decision": "allow" },
           { "pattern": "../**/.pi/agent/skills/**", "decision": "allow" },
           { "pattern": "**/.env", "decision": "deny" },
           { "pattern": "**/.env/**", "decision": "deny" },
