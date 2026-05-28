@@ -2,29 +2,30 @@
 name: address-comments
 description: >-
   Refresh unresolved GitLab MR threads marked with :robot:, implement requested
-  changes, verify, and annotate comments.md with Robot resolution notes. Use when
-  addressing merge request review feedback, GitLab MR comments, or Robot-tagged
-  review threads for a supplied MR URL.
+  changes or investigate questions, verify, and annotate comments.md with Robot
+  resolution notes for a supplied MR URL.
 ---
 
 # Address MR Comments
 
-Use this workflow to refresh unresolved GitLab MR comments for a supplied MR URL, implement feasible changes, verify them, and annotate `comments.md` with a `Robot` resolution note for each addressed discussion.
+Use this workflow to refresh unresolved GitLab MR comments for a supplied MR URL, take Taylor's requested first pass on Robot-marked discussions, and annotate `comments.md` with a `Robot` note for **every** discussion explaining whether it was resolved or remains unresolved.
 
 GitLab data is fetched only through **read-only scripts** in this skill (`scripts/`). Do not run `glab api` or other GitLab CLI commands directly.
 
 ## Role and Goal
 
-You are Taylor's assistant robot. Taylor marks PR/MR discussions with the `:robot:` emoji when he wants you to take a first, best-effort pass on his behalf: implement fixes he has agreed to, answer questions he wants answered, or gather enough context to propose a clear response. Work as Taylor's helper, not as an independent reviewer; focus only on the Robot-marked human discussions.
+You are Taylor's assistant robot. Taylor marks PR/MR discussions with the `:robot:` emoji when he wants you to take a first, best-effort pass on his behalf: implement fixes he has agreed to, answer questions he wants answered, or gather enough context to propose a clear response. Work as Taylor's helper, not as an independent reviewer; focus only on Robot-marked human discussions.
 
 Given an MR URL:
 
-- Refresh unresolved human discussions that have a `:robot:` (`robot`) reaction on at least one note
-- Collect discussions that reference one another into a single section to resolve coherently, and write them into `comments.md` with links to the MR and each thread
-- Make the smallest reasonable code changes to address each discussion section
-- Run targeted verification
-- Commit each complete, atomic fix separately with discussion links in the commit body
-- Append a `Robot` note to `comments.md` for each discussion you resolved in code
+- Refresh unresolved human discussions that have a `:robot:` (`robot`) reaction on at least one note.
+- Write those discussions into `comments.md` with links to the MR and each thread.
+- For every discussion, decide whether it is actionable, answerable, or blocked.
+- Group discussions that share a theme or reference each other into one cohesive resolution group when appropriate.
+- Make the smallest reasonable code/test/doc change for actionable discussions or resolution groups.
+- Run targeted verification for changed code.
+- Commit each complete, atomic fix separately with discussion links in the commit body.
+- Append a `Robot` note to every discussion in `comments.md`, marking it `RESOLVED` or `UNRESOLVED` and explaining why.
 
 ## Rules
 
@@ -35,15 +36,18 @@ Given an MR URL:
 - Always refresh live MR discussions before acting; do not trust a stale `comments.md`.
 - Only use human comments where `system == false` when deciding what needs action.
 - Prefer the smallest correct code change.
-- If multiple comments point at the same underlying issue, make one coherent fix and one commit covering those discussions.
-- After each complete, atomic fix for a discussion section (or batched related sections), commit immediately — do not batch unrelated sections into one commit.
+- If multiple comments point at the same underlying issue, share a theme, or reference each other by comment links, treat them as one resolution group.
+- For each resolution group, make one coherent fix and one commit covering all discussions in that group.
+- Add one full canonical `Robot` note for the group, then add short `Robot` notes on the other grouped discussions that point back to the canonical note/discussion.
+- After each complete, atomic fix for a discussion section or resolution group, commit immediately — do not batch unrelated sections into one commit.
 - If a comment only asks for test structure, comments, naming, or assertion quality, keep the change narrow to that scope.
-- If a comment cannot be reasonably resolved without product direction, leave it alone and do not add a `Robot` note for it.
-- After making changes, add a `Robot` paragraph only for discussions you actually addressed.
+- If a discussion is answerable without a code change, add a `RESOLVED` Robot note with the answer and do not commit anything for that discussion.
+- If a discussion cannot be reasonably resolved without product direction, missing context, failing verification, or unsafe assumptions, add an `UNRESOLVED` Robot note explaining exactly what is needed next.
+- Add a `Robot` note for every discussion in `comments.md`, even when no code change was made. For grouped discussions, the note may be a short cross-reference to the group's canonical Robot note.
 - Use the normal file edit tool to add `Robot` paragraphs to `comments.md`; do not generate or run custom Python/Node/shell scripts just to modify `comments.md`.
 - Never commit `comments.md`; it is a local working note for the agent/user, not part of code changes.
-- Put line numbers in the link **label** only; keep the Markdown **href** as the file path (for example `[src/a.ts#L10](src/a.ts)`).
-- Validate that linked file paths exist in the repo before writing `comments.md`.
+- For diff comments, use relative local Markdown links; put line numbers in the link label only (`[path#L10](path)`).
+- Validate linked file paths exist before writing `comments.md`.
 
 ## Refresh `comments.md` (preferred)
 
@@ -89,16 +93,24 @@ bash "$SCRIPTS/render-comments-md.sh" robot /tmp/enriched.json "$MR_URL" comment
 
 ## How To Address Comments
 
-For each discussion in `comments.md`:
+First scan all discussions in `comments.md` and form resolution groups:
 
-1. Read the referenced file and surrounding code.
-2. Decide whether the comment is actionable without further product clarification.
-3. Make the smallest reasonable change.
-4. Batch related discussions into one coherent edit when they touch the same area.
-5. Prefer behavior assertions over implementation-detail assertions in tests when practical.
-6. Run targeted verification for that change.
-7. Commit the change before moving to the next discussion section.
-6. If a comment is about organization only, reorganize narrowly rather than rewriting broader logic.
+- Group discussions that explicitly link to each other, discuss the same code path, ask for the same underlying change, or share a clear theme.
+- Keep unrelated discussions separate, even if they are nearby in the file.
+- Pick one primary discussion in each group as the canonical place for the full Robot note.
+
+For each discussion or resolution group:
+
+1. Read the referenced files and surrounding code.
+2. Decide whether the discussion/group is actionable, answerable without code, or blocked.
+3. If actionable, make the smallest reasonable change that resolves the whole group.
+4. Prefer behavior assertions over implementation-detail assertions in tests when practical.
+5. Run targeted verification for changed code.
+6. If verification passes, commit the code/test/doc change before moving to unrelated work.
+7. Append Robot notes:
+   - On the primary discussion, add the full `Robot — RESOLVED` or `Robot — UNRESOLVED` note.
+   - On other discussions in the group, add a short `Robot — RESOLVED` or `Robot — UNRESOLVED` note that references the primary discussion's Robot note.
+   - For ungrouped discussions, add the full Robot note directly to that discussion.
 
 Typical examples:
 
@@ -116,7 +128,7 @@ One commit per complete, atomic discussion section (or per batched group of rela
 ```text
 extract fakeCache helper
 
-Adresses:
+Addresses:
 - https://gitlab.economicmodeling.com/group/project/-/merge_requests/125#note_988438
 - https://gitlab.economicmodeling.com/group/project/-/merge_requests/125#note_989896
 ```
@@ -126,58 +138,92 @@ Do not commit until verification for that section passes. Do not commit sections
 ## Verification
 
 Run the narrowest relevant verification for the changed area, for example:
+
 ```bash
 npm run typecheck && npm test -- httpClient.test
 ```
 
 If tests fail:
 
-- fix the test or implementation
-- rerun the same narrow command
-- do not add `Robot` notes for unresolved or reverted attempts
+- Fix the test or implementation and rerun the same narrow command, if feasible.
+- If verification still fails or the fix must be reverted, mark the discussion `UNRESOLVED` in the Robot note and explain the failure.
+- Do not commit failing or reverted changes.
 
 ## `Robot` Note Format
 
-For every discussion you address, append this exact structure immediately after that discussion in `comments.md` using the edit tool. Avoid ad-hoc scripts for this file update.
+For every discussion, append one of these structures immediately after that discussion in `comments.md` using the edit tool. Avoid ad-hoc scripts for this file update. For grouped discussions, use one full canonical note and short cross-reference notes for the rest of the group.
 
-```md
+Resolved with code change:
+
+````md
 ---
-**Robot**
+**Robot — RESOLVED**
 
-I've made the requested change by <x, y, z methods>. Note, this required <a, b tradeoffs>.
+I've made the requested change by <specific summary>. Verification: `<command>` passed.
 
-Here's a basic code snippet/pseudocode representing the changes I made for this comment:
-
-```ts
-<pseudo-code or code snippet with comments describing the change>
-
-Commit hash: <xyz>
+Commit: <commit-hash>
 
 Files changed:
 
-- src/1
-- src/2
+- <path-1>
+- <path-2>
 
+Snippet/pseudocode:
+
+```ts
+<focused snippet or pseudocode showing the relevant change>
+```
+````
+
+Resolved without code change / answered:
+
+```md
+---
+**Robot — RESOLVED**
+
+No code change was needed. <Answer the question or explain why the existing behavior is correct. Include file/path references when useful.>
 ```
 
+Unresolved:
+
+```md
+---
+**Robot — UNRESOLVED**
+
+I couldn't safely resolve this yet because <specific reason>. Needed next: <product decision, missing context, failing verification details, or recommended follow-up>.
+```
+
+Grouped discussion cross-reference:
+
+```md
+---
+**Robot — RESOLVED**
+
+Handled as part of the same resolution group as <Discussion N / thread link>. See that Robot note for the full explanation, commit, verification, and files changed.
+```
+
+Use `Robot — UNRESOLVED` for the cross-reference instead when the group remains unresolved.
 
 ## `Robot` Note Guidance
 
-- Be specific about what changed.
+- Be specific about what changed or what you investigated.
+- For grouped discussions, put the detailed explanation, commit, verification, and files changed in the canonical note only; keep the other grouped notes short and refer back to it.
+- Include the commit hash only when a commit was made for that discussion or group.
 - Mention any tradeoff or limitation briefly.
 - Use pseudocode when the real code is too long.
-- Keep the snippet focused on the idea that resolved the comment.
-- Do not claim a discussion is resolved if you did not actually implement a change for it.
-- If the discussion requires no changes or only needs advise or help, provide a concise recommended response.
+- Keep snippets focused on the idea that resolved the comment.
+- Do not claim a discussion is resolved if verification failed, changes were reverted, or product direction is still needed.
+- If the discussion only needs advice or an answer, provide a concise recommended response and mark it `RESOLVED`.
 
 ## Final Checklist
 
-- `comments.md` refreshed via `refresh-robot-comments-md.sh <mr-url> [output-file]`
-- Requested code/test/comment changes applied where feasible
-- Targeted verification passed per section
-- One atomic commit per section (or related batch), with discussion links in the commit body, excluding `comments.md`
-- `Robot` note added for each addressed discussion
+- `comments.md` refreshed via `refresh-robot-comments-md.sh <mr-url> [output-file]`.
+- Every Robot-marked discussion has a `Robot — RESOLVED` or `Robot — UNRESOLVED` note, either full or a grouped cross-reference.
+- Requested code/test/comment changes applied where feasible.
+- Targeted verification passed for committed changes.
+- One atomic commit per section (or related batch), with discussion links in the commit body, excluding `comments.md`.
+- `comments.md` remains uncommitted.
 
 ## Related skill
 
-Use `export-mr-comments` for a full export of all human threads (resolved and unresolved) without the `:robot:` filter.
+Use `export-mr-comments` and `refresh-all-comments-md.sh` for a full export of all human threads (resolved and unresolved).
