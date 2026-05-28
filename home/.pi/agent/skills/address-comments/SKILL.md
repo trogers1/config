@@ -150,9 +150,16 @@ Here's a basic code snippet/pseudocode representing the changes I made for this 
 
 ```ts
 <pseudo-code or code snippet with comments describing the change>
-```
+
+Commit hash: <xyz>
+
+Files changed:
+
+- src/1
+- src/2
 
 ```
+
 
 ## `Robot` Note Guidance
 
