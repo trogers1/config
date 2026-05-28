@@ -162,7 +162,10 @@
         { "pattern": "*", "decision": "allow" },
         { "pattern": "../**", "decision": "ask" },
         // Allow fixed address-comments skill helper scripts even when Pi starts in a project.
-        { "pattern": "../**/.pi/agent/skills/address-comments/scripts/*.sh", "decision": "allow" },
+        {
+          "pattern": "../**/.pi/agent/skills/address-comments/scripts/*.sh",
+          "decision": "allow",
+        },
         { "pattern": "**/.env", "decision": "deny" },
         { "pattern": "**/.env/**", "decision": "deny" },
         { "pattern": "**/.git", "decision": "deny" },
@@ -184,6 +187,7 @@
 
           // Specific to comment-addressing profile only:
           { "pattern": "git commit *", "decision": "allow" },
+          { "pattern": "git add *", "decision": "allow" },
 
           // Git read-only / semi-destructive commands intentionally allowed.
           { "pattern": "git status", "decision": "allow" },
@@ -213,7 +217,6 @@
           { "pattern": "git tag *", "decision": "deny" },
           { "pattern": "git push *", "decision": "deny" },
           { "pattern": "git checkout *", "decision": "deny" },
-          { "pattern": "git add *", "decision": "deny" },
           { "pattern": "git worktree *", "decision": "deny" },
 
           // Common low-risk commands.
@@ -331,7 +334,10 @@
         { "pattern": "*", "decision": "allow" },
         { "pattern": "../**", "decision": "ask" },
         // Allow fixed address-comments skill helper scripts even when Pi starts in a project.
-        { "pattern": "../**/.pi/agent/skills/address-comments/scripts/*.sh", "decision": "allow" },
+        {
+          "pattern": "../**/.pi/agent/skills/address-comments/scripts/*.sh",
+          "decision": "allow",
+        },
         { "pattern": "**/.env", "decision": "deny" },
         { "pattern": "**/.env/**", "decision": "deny" },
         { "pattern": "**/.git", "decision": "deny" },
