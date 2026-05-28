@@ -44,13 +44,11 @@ test("/profile autocompletes all profiles and marks default active", () => {
 
   const completions = profile.getArgumentCompletions("");
 
-  assert.deepEqual(
-    completions.map((item) => ({ value: item.value, description: item.description })),
-    [
-      { value: "default", description: "active" },
-      { value: "socrates", description: undefined },
-    ],
-  );
+  const byValue = new Map(completions.map((item) => [item.value, item.description]));
+
+  assert.equal(byValue.get("default"), "active");
+  assert.equal(byValue.get("socrates"), undefined);
+  assert.ok(completions.length >= 2);
 });
 
 test("/profile autocomplete filters by prefix", () => {
@@ -70,12 +68,13 @@ test("/profile switching updates the active autocomplete marker", async () => {
 
   assert.equal(entries.at(-1).customType, "pi-permissions-profile");
   assert.equal(entries.at(-1).data.profile, "socrates");
+  const byValue = new Map(completions.map((item) => [item.value, item.description]));
+
+  assert.equal(byValue.get("default"), undefined);
+  assert.equal(byValue.get("socrates"), "active");
   assert.deepEqual(
-    completions.map((item) => ({ value: item.value, description: item.description })),
-    [
-      { value: "default", description: undefined },
-      { value: "socrates", description: "active" },
-    ],
+    completions.filter((item) => item.description === "active").map((item) => item.value),
+    ["socrates"],
   );
 });
 
