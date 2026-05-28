@@ -8,119 +8,51 @@ description: >-
 
 # Export MR Comments
 
-Export human MR review comments from GitLab into `comments.md` with local code links and GitLab anchors.
+Export human MR review comments from a supplied GitLab MR URL into `comments.md` with local code links and GitLab anchors.
+
+GitLab data is fetched only through **read-only scripts** shared with the `address-comments` skill. Do not run `glab api` or other GitLab CLI commands directly.
 
 ## Rules
 
-- Use `glab api`, not the GitLab web UI.
-- Run from the project repo root so `projects/:fullpath` resolves.
+- You must provide the MR URL as the 1st argument to `refresh-all-comments-md.sh`.
+- The supplied MR URL is used to identify both the GitLab project and MR IID; no branch or local git lookup is needed.
+- If you pass an output file, treat it as the complete path where `comments.md` should be written.
+- Use the skill scripts below — not the GitLab web UI and not raw `glab` commands.
 - Only include human comments where `system == false`.
-- Exclude GitLab system notes (`added commits`, `changed this line`, assignments, etc.).
 - Include your own human replies in each thread.
-- For diff comments, use relative local Markdown links, not GitLab blob URLs.
-- Put line numbers in the link **label** only; keep the Markdown **href** as the file path (for example `[src/a.ts#L10](src/a.ts)`).
-- Before writing `comments.md`, verify each code path exists in the repo; if the path is missing, link to the path text only and note that the file may have moved.
+- For diff comments, use relative local Markdown links; put line numbers in the label only (`[path#L10](path)`).
+- Validate linked file paths exist before writing `comments.md`.
 
-## Example
+## Refresh `comments.md` (preferred)
 
-Reference MR (from `~/Code/mcp`, branch `RI-208-add-cache`):
-
-- https://gitlab.economicmodeling.com/ltc/ask-lightcast-ai/mcp/-/merge_requests/125
-
-## Commands
-
-Get the branch name:
+OpenCode:
 
 ```bash
-git rev-parse --abbrev-ref HEAD
+bash ~/.config/opencode/skills/address-comments/scripts/refresh-all-comments-md.sh \
+  https://gitlab.economicmodeling.com/group/project/-/merge_requests/125
 ```
 
-Look up the open MR (replace `<branch>`):
+Pi:
 
 ```bash
-glab api "projects/:fullpath/merge_requests?source_branch=<branch>&state=opened"
+bash ~/.pi/agent/skills/address-comments/scripts/refresh-all-comments-md.sh \
+  https://gitlab.economicmodeling.com/group/project/-/merge_requests/125
 ```
 
-From that JSON, copy the MR `iid` and `web_url`. Fetch discussions (replace `<iid>`):
+Arguments: `<mr-url> [output-file]`. The output argument is the full destination path/name to write.
 
 ```bash
-discussions_json="$(mktemp)"
-trap 'rm -f "$discussions_json"' EXIT
-
-glab api "projects/:fullpath/merge_requests/<iid>/discussions?per_page=100" --output json >"$discussions_json"
-```
-
-Generate `comments.md` (set `MR_URL` from MR lookup `web_url`):
-
-```bash
-MR_URL='<web_url from MR lookup>'
-export MR_URL
-
-jq -r --arg mr_url "$MR_URL" '
-  . as $all
-  | ($all[0].notes[0].noteable_iid | tostring) as $mr_iid
-  | "# Merge Request Comments\n\n"
-    + "Merge request: [!" + $mr_iid + "](" + $mr_url + ")\n\n"
-    + "All human discussions (resolved and unresolved)\n\n"
-    + (
-        [
-          $all[]
-          | . as $d
-          | ($d.notes | map(select(.system == false))) as $human
-          | select($human | length > 0)
-        ]
-        | to_entries
-        | map(
-            .value as $d
-            | ($d.notes | map(select(.system == false))) as $human
-            | "## Discussion " + (.key + 1 | tostring) + "\n\n"
-              + "Thread: [!" + $mr_iid + "](" + $mr_url + "#note_" + ($human[0].id | tostring) + ")\n\n"
-              + (
-                  if ($human[0].position // null) then
-                    (
-                      ($human[0].position.new_path // $human[0].position.old_path) as $path
-                      | (
-                          $human[0].position.new_line
-                          // $human[0].position.old_line
-                          // $human[0].position.line_range.start.new_line
-                          // $human[0].position.line_range.start.old_line
-                        ) as $line
-                      | if ($line == null) then
-                          "Code: [" + $path + "](" + $path + ")\n\n"
-                        else
-                          "Code: [" + $path + "#L" + ($line | tostring) + "](" + $path + ")\n\n"
-                        end
-                    )
-                  else ""
-                  end
-                )
-              + "Status: "
-              + (if ($d.resolved // false) then "resolved" else "unresolved" end)
-              + "\n\n"
-              + (
-                  [
-                    $human[]
-                    | "**" + .author.name + "** (@" + .author.username + ") - " + .created_at
-                      + " — [comment](" + $mr_url + "#note_" + (.id | tostring) + ")\n\n"
-                      + (.body | gsub("\r"; ""))
-                  ]
-                  | join("\n\n---\n\n")
-                )
-          )
-        | join("\n\n")
-      )
-' "$discussions_json" >comments.md
+bash ~/.pi/agent/skills/address-comments/scripts/refresh-all-comments-md.sh \
+  https://gitlab.economicmodeling.com/group/project/-/merge_requests/125 \
+  /absolute/path/to/comments.md
 ```
 
 ## Output
 
-- Write `comments.md` in the repo root.
-- Preserve discussion order from the API.
-- Preserve all human comments in each thread.
-- Do not rewrite comment bodies except JSON decoding via `jq`.
+- Writes `comments.md` in the current directory by default, or to the supplied output path.
+- Includes resolved and unresolved human discussions.
+- Preserves discussion order and comment bodies from the API.
 
-## Notes
+## Related skill
 
-- Prefer `glab api "projects/:fullpath/merge_requests/<iid>/discussions?per_page=100"` over `glab mr view --comments`.
-- If there are more than 100 discussions, fetch `&page=2`, `&page=3`, merge arrays, then run `jq`.
-- To implement fixes on unresolved `:robot:` threads, use the `address-comments` skill instead.
+Use `address-comments` and `refresh-robot-comments-md.sh` to work unresolved `:robot:` threads and add Robot resolution notes.
