@@ -798,7 +798,18 @@ async function confirmOrBlock(
   message: string,
 ): Promise<boolean> {
   if (!ctx.hasUI) return false;
-  return await ctx.ui.confirm(title, message);
+
+  // Permission prompts are shown while the agent is otherwise "working".
+  // For large ask messages, the animated Working row can force repeated
+  // full-screen redraws under the modal, which looks like flicker. Suspend it
+  // while waiting for the user's decision, then restore the normal row.
+  const setWorkingVisible = ctx.ui.setWorkingVisible?.bind(ctx.ui);
+  setWorkingVisible?.(false);
+  try {
+    return await ctx.ui.confirm(title, message);
+  } finally {
+    setWorkingVisible?.(true);
+  }
 }
 
 function shellishTokens(command: string): string[] {
