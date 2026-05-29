@@ -187,3 +187,35 @@ test("bash confirmation shows raw command before parsed command preview", async 
   assert.match(messages[0], /^Raw command:\npython scripts\/build\.py\n\nParsed command segments:/);
   assert.match(messages[0], /\x1b\[33mask\x1b\[0m/);
 });
+
+test("denied bash confirmation can include optional user steering", async () => {
+  const result = await permissions.gateBash("python scripts/build.py", process.cwd(), {
+    ...ctx(),
+    ui: {
+      confirm: async () => false,
+      editor: async (title, prefill) => {
+        assert.match(title, /optional steering/i);
+        assert.equal(prefill, "");
+        return "Use npm test instead; do not run the custom build script.";
+      },
+    },
+  }, policy);
+
+  assert.equal(result.block, true);
+  assert.match(result.reason, /Command was not approved: python scripts\/build\.py/);
+  assert.match(result.reason, /User steering after denial:\nUse npm test instead; do not run the custom build script\./);
+});
+
+test("empty denied bash steering is omitted", async () => {
+  const result = await permissions.gateBash("python scripts/build.py", process.cwd(), {
+    ...ctx(),
+    ui: {
+      confirm: async () => false,
+      editor: async () => "   ",
+    },
+  }, policy);
+
+  assert.equal(result.block, true);
+  assert.match(result.reason, /Command was not approved: python scripts\/build\.py/);
+  assert.doesNotMatch(result.reason, /User steering after denial:/);
+});

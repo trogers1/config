@@ -7,6 +7,11 @@ import type {
 
 type Decision = "allow" | "ask" | "deny";
 
+type Approval = {
+  approved: boolean;
+  guidance?: string;
+};
+
 type Rule = {
   pattern: string;
   decision: Decision;
@@ -198,15 +203,18 @@ export default function (pi: ExtensionAPI) {
     }
 
     if (decision === "ask") {
-      const ok = await confirmOrBlock(
+      const approval = await confirmOrBlock(
         ctx,
         `Allow ${event.toolName}?`,
         `${event.toolName} wants to access:\n${absolutePath}\n\nMatched policy path:\n${matchPath}`,
       );
-      if (!ok)
+      if (!approval.approved)
         return {
           block: true,
-          reason: `${event.toolName} was not approved: ${absolutePath}`,
+          reason: appendUserGuidance(
+            `${event.toolName} was not approved: ${absolutePath}`,
+            approval.guidance,
+          ),
         };
     }
 
@@ -248,26 +256,35 @@ export async function gateBash(
     };
   }
   if (pathDecision?.decision === "ask") {
-    const ok = await confirmOrBlock(
+    const approval = await confirmOrBlock(
       ctx,
       "Bash command references a gated path?",
       `Raw command:\n${command}\n\nParsed command segments:\n${formatParsedCommands(command, activePolicy)}\n\nPath:\n${pathDecision.path}\n\nMatched policy path:\n${pathDecision.matchPath}`,
     );
-    if (!ok)
+    if (!approval.approved)
       return {
         block: true,
-        reason: `Bash path reference was not approved: ${pathDecision.path}`,
+        reason: appendUserGuidance(
+          `Bash path reference was not approved: ${pathDecision.path}`,
+          approval.guidance,
+        ),
       };
   }
 
   if (decisions.includes("ask")) {
-    const ok = await confirmOrBlock(
+    const approval = await confirmOrBlock(
       ctx,
       "Allow bash command?",
       `Raw command:\n${command}\n\nParsed command segments:\n${formatParsedCommands(command, activePolicy)}`,
     );
-    if (!ok)
-      return { block: true, reason: `Command was not approved: ${command}` };
+    if (!approval.approved)
+      return {
+        block: true,
+        reason: appendUserGuidance(
+          `Command was not approved: ${command}`,
+          approval.guidance,
+        ),
+      };
   }
 
   return undefined;
@@ -796,8 +813,8 @@ async function confirmOrBlock(
   ctx: ExtensionContext,
   title: string,
   message: string,
-): Promise<boolean> {
-  if (!ctx.hasUI) return false;
+): Promise<Approval> {
+  if (!ctx.hasUI) return { approved: false };
 
   // Permission prompts are shown while the agent is otherwise "working".
   // For large ask messages, the animated Working row can force repeated
@@ -806,10 +823,34 @@ async function confirmOrBlock(
   const setWorkingVisible = ctx.ui.setWorkingVisible?.bind(ctx.ui);
   setWorkingVisible?.(false);
   try {
-    return await ctx.ui.confirm(title, message);
+    const approved = await ctx.ui.confirm(title, message);
+    if (approved) return { approved: true };
+
+    const guidance = await collectDenialGuidance(ctx);
+    return guidance ? { approved: false, guidance } : { approved: false };
   } finally {
     setWorkingVisible?.(true);
   }
+}
+
+async function collectDenialGuidance(
+  ctx: ExtensionContext,
+): Promise<string | undefined> {
+  const prompt =
+    "Denied permission request — optional steering for the agent. Leave blank or press Esc to skip.";
+  const input =
+    typeof ctx.ui.editor === "function"
+      ? await ctx.ui.editor(prompt, "")
+      : typeof ctx.ui.input === "function"
+        ? await ctx.ui.input(prompt, "")
+        : undefined;
+  const trimmed = input?.trim();
+  return trimmed || undefined;
+}
+
+function appendUserGuidance(reason: string, guidance: string | undefined): string {
+  if (!guidance) return reason;
+  return `${reason}\n\nUser steering after denial:\n${guidance}`;
 }
 
 function shellishTokens(command: string): string[] {
