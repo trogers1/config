@@ -48,6 +48,7 @@
           { "pattern": "git worktree *", "decision": "deny" },
 
           // Common low-risk commands.
+          { "pattern": "pwd", "decision": "allow" },
           { "pattern": "grep *", "decision": "allow" },
           { "pattern": "npx vitest", "decision": "allow" },
           { "pattern": "npx vitest *", "decision": "allow" },
@@ -233,6 +234,7 @@
           { "pattern": "git worktree *", "decision": "deny" },
 
           // Common low-risk commands.
+          { "pattern": "pwd", "decision": "allow" },
           { "pattern": "grep *", "decision": "allow" },
           { "pattern": "npx vitest", "decision": "allow" },
           { "pattern": "npx vitest *", "decision": "allow" },
@@ -380,6 +382,7 @@
         "bash": [
           { "pattern": "*", "decision": "deny" },
           // Common Read-only commands.
+          { "pattern": "pwd", "decision": "allow" },
           { "pattern": "grep *", "decision": "allow" },
           { "pattern": "npx vitest", "decision": "allow" },
           { "pattern": "npx vitest *", "decision": "allow" },

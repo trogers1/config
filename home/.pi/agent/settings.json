@@ -1,10 +1,10 @@
 {
-  "defaultProvider": "openai",
-  "defaultModel": "gpt-5.5",
+  "defaultProvider": "openai-codex",
+  "defaultModel": "gpt-5.4",
   "defaultThinkingLevel": "medium",
   "hideThinkingBlock": false,
   "packages": [
     "./packages/pi-permissions"
   ],
-  "lastChangelogVersion": "0.77.0"
+  "lastChangelogVersion": "0.78.0"
 }
