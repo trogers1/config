@@ -24,11 +24,13 @@ elif [ -x /usr/local/bin/brew ]; then
   eval "$(/usr/local/bin/brew shellenv)"
 fi
 
-# nvm: load fast, do not auto-switch on shell start
+# nvm: load fast, start on an installed Node 24.x, then auto-switch by directory
 export NVM_DIR="$HOME/.nvm"
-[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" # --no-use
+[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" --no-use
 [ -s "$NVM_DIR/bash_completion" ] && . "$NVM_DIR/bash_completion"
-# Auto-switch only when changing directories
+# Ensure Node-based tools work in fresh shells/tmux panes.
+nvm use --silent 24 >/dev/null 2>&1 || true
+# Auto-switch by directory
 autoload -U add-zsh-hook
 load-nvmrc() {
   local nvmrc_path node_version nvmrc_node_version
@@ -44,7 +46,7 @@ load-nvmrc() {
   fi
 }
 add-zsh-hook chpwd load-nvmrc
-# intentionally no initial `load-nvmrc` call
+load-nvmrc
 
 # pyenv lazy loader (only initializes when first used)
 if command -v pyenv >/dev/null 2>&1; then
