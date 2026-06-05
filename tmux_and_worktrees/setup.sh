@@ -104,7 +104,7 @@ done
 
 mkdir -p "$BIN_DEST_DIR"
 
-rm -f "$BIN_DEST_DIR/dev-wt-new" "$BIN_DEST_DIR/dev-wt-close" "$BIN_DEST_DIR/dev-wt-merge" "$BIN_DEST_DIR/dev-local"
+rm -f "$BIN_DEST_DIR/dev-wt-new" "$BIN_DEST_DIR/dev-wt-close" "$BIN_DEST_DIR/dev-wt-merge" "$BIN_DEST_DIR/dev-local" "$BIN_DEST_DIR/pi"
 
 for command_name in "${BIN_COMMANDS[@]}"; do
   rm -f "$BIN_DEST_DIR/$command_name"
