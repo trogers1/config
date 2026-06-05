@@ -4,5 +4,6 @@ This repo manages selected global pi agent config:
 
 * `home/.pi/agent/settings.json` → `~/.pi/agent/settings.json`
 * `home/.pi/agent/packages/pi-permissions` → `~/.pi/agent/packages/pi-permissions`
+* `home/.pi/agent/packages/pi-webfetch` → `~/.pi/agent/packages/pi-webfetch`
 
 Pi-managed local state such as `auth.json`, sessions, downloaded packages, and helper binaries stays outside the repo.

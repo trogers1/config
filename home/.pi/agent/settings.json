@@ -4,7 +4,8 @@
   "defaultThinkingLevel": "medium",
   "hideThinkingBlock": false,
   "packages": [
-    "./packages/pi-permissions"
+    "./packages/pi-permissions",
+    "./packages/pi-webfetch"
   ],
-  "lastChangelogVersion": "0.78.0"
+  "lastChangelogVersion": "0.78.1"
 }
