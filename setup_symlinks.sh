@@ -168,12 +168,17 @@ if [ -f "$pi_settings" ]; then
   fi
 fi
 
-pi_permissions_package="$HOME_DIR/.pi/agent/packages/pi-permissions"
-if [ -d "$pi_permissions_package" ]; then
+pi_packages_dir="$HOME_DIR/.pi/agent/packages"
+if [ -d "$pi_packages_dir" ]; then
   mkdir -p "$HOME/.pi/agent/packages"
-  if ! safe_link "$pi_permissions_package" "$HOME/.pi/agent/packages/pi-permissions" "pi permissions package"; then
-    failed=1
-  fi
+  shopt -s dotglob nullglob
+  for package_path in "$pi_packages_dir"/*; do
+    package_name="$(basename "$package_path")"
+    if ! safe_link "$package_path" "$HOME/.pi/agent/packages/$package_name" "pi package"; then
+      failed=1
+    fi
+  done
+  shopt -u dotglob nullglob
 fi
 
 pi_skills="$HOME_DIR/.pi/agent/skills"
