@@ -7,13 +7,14 @@ A tiny Pi package that adds a single `webfetch` tool.
 - accepts one `http` or `https` URL
 - loads it in headless Chromium via Playwright
 - waits for the page to render with JavaScript enabled
-- returns the resulting HTML
+- returns sanitized, content-focused HTML rather than the full noisy DOM
 - truncates large output and saves the full HTML to a temp file
 - asks once per origin per session before first fetch
 
 ## What it intentionally does not do
 
 - no clicking, form filling, or arbitrary browsing flows
+- not intended to preserve full page structure or scripts exactly
 - no multi-page crawling
 - no screenshotting
 - no cookie/session persistence across calls

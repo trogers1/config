@@ -71,8 +71,8 @@ export default function webfetchExtension(pi: ExtensionAPI) {
       name: "webfetch",
       label: "Webfetch",
       description:
-        "Fetch a single URL in headless Chromium with JavaScript enabled and return the rendered HTML. Keep usage narrow: inspect one supplied page, not broad crawling or browsing.",
-      promptSnippet: "Fetch one user-supplied web page with JS enabled and inspect the rendered HTML.",
+        "Fetch a single URL in headless Chromium with JavaScript enabled and return sanitized, content-focused HTML. Keep usage narrow: inspect one supplied page, not broad crawling or browsing.",
+      promptSnippet: "Fetch one user-supplied web page with JS enabled and inspect sanitized, content-focused HTML.",
       promptGuidelines: [
         "Use webfetch when the user explicitly wants content from a URL that may require JavaScript rendering.",
         "Use webfetch for a single page fetch, not for broad site crawling or repeated navigation.",
@@ -164,7 +164,102 @@ export default function webfetchExtension(pi: ExtensionAPI) {
             await page.waitForTimeout(settleMs);
           }
 
-          const html = await page.content();
+          const extracted = await page.evaluate(() => {
+            const contentRoot =
+              document.querySelector("main") ??
+              document.querySelector("article") ??
+              document.querySelector("[role='main']") ??
+              document.body ??
+              document.documentElement;
+
+            const clone = contentRoot.cloneNode(true) as HTMLElement;
+
+            const removeSelectors = [
+              "script",
+              "style",
+              "noscript",
+              "template",
+              "svg",
+              "canvas",
+              "iframe",
+              "video",
+              "audio",
+              "picture",
+              "source",
+              "object",
+              "embed",
+              "form",
+              "button",
+              "input",
+              "select",
+              "option",
+              "textarea",
+              "nav",
+              "header",
+              "footer",
+              "aside",
+              "dialog",
+              "menu",
+              "menuitem",
+              "link",
+              "meta",
+            ];
+
+            clone.querySelectorAll(removeSelectors.join(",")).forEach((node) => node.remove());
+
+            clone.querySelectorAll("img").forEach((img) => {
+              const alt = img.getAttribute("alt")?.trim();
+              if (alt) {
+                const replacement = document.createElement("p");
+                replacement.textContent = `[Image: ${alt}]`;
+                img.replaceWith(replacement);
+              } else {
+                img.remove();
+              }
+            });
+
+            clone.querySelectorAll("a").forEach((anchor) => {
+              const href = anchor.getAttribute("href");
+              if (!href) return;
+              try {
+                anchor.setAttribute("href", new URL(href, document.baseURI).toString());
+              } catch {
+                anchor.removeAttribute("href");
+              }
+            });
+
+            clone.querySelectorAll("*").forEach((element) => {
+              const hidden = element.getAttribute("hidden") !== null || element.getAttribute("aria-hidden") === "true";
+              if (hidden) {
+                element.remove();
+                return;
+              }
+
+              for (const attr of Array.from(element.attributes)) {
+                const keepHref = element.tagName === "A" && attr.name === "href";
+                if (!keepHref) element.removeAttribute(attr.name);
+              }
+            });
+
+            const isMeaningful = (node: Element): boolean => {
+              if (["BR", "HR"].includes(node.tagName)) return true;
+              if (node.children.length > 0) return true;
+              return (node.textContent ?? "").replace(/\s+/g, " ").trim().length > 0;
+            };
+
+            Array.from(clone.querySelectorAll("*")).reverse().forEach((element) => {
+              if (!isMeaningful(element)) element.remove();
+            });
+
+            const html = clone.outerHTML.replace(/\n{3,}/g, "\n\n").trim();
+            const text = (clone.textContent ?? "").replace(/\s+/g, " ").trim();
+            return {
+              contentHtml: html,
+              contentTextLength: text.length,
+              rootTag: clone.tagName.toLowerCase(),
+            };
+          });
+
           const title = await page.title();
           const finalUrl = page.url();
           const status = response?.status() ?? null;
@@ -174,8 +269,10 @@ export default function webfetchExtension(pi: ExtensionAPI) {
             `Final URL: ${finalUrl}`,
             `Title: ${title || "(none)"}`,
             `HTTP status: ${status ?? "unknown"}`,
+            `Content root: <${extracted.rootTag}>`,
+            `Content text length: ${extracted.contentTextLength}`,
             "",
-            html,
+            extracted.contentHtml,
           ].join("\n");
 
           const truncation = truncateHead(body, {
@@ -192,6 +289,8 @@ export default function webfetchExtension(pi: ExtensionAPI) {
             waitUntil,
             timeoutMs,
             settleMs,
+            contentRootTag: extracted.rootTag,
+            contentTextLength: extracted.contentTextLength,
           };
 
           let output = truncation.content;
