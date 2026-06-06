@@ -858,7 +858,7 @@ function M.setup_highlighting(bufnr)
   bufnr = bufnr or vim.api.nvim_get_current_buf()
   local filepath = vim.api.nvim_buf_get_name(bufnr)
 
-  if not filepath:match '%.md$' then
+  if filepath:match(vim.pesc(M.config.sidecar_ext) .. '$') then
     return
   end
 
@@ -914,8 +914,15 @@ function M.setup_autocommands()
 
   vim.api.nvim_create_autocmd({ 'BufReadPost', 'BufNewFile' }, {
     group = augroup,
-    pattern = '*.md',
+    pattern = '*',
     callback = function(args)
+      local filepath = vim.api.nvim_buf_get_name(args.buf)
+      if filepath == '' or vim.bo[args.buf].buftype ~= '' then
+        return
+      end
+      if filepath:match(vim.pesc(M.config.sidecar_ext) .. '$') then
+        return
+      end
       ensure_comments_for_md_buffer(args.buf)
       M.setup_highlighting(args.buf)
     end,
@@ -923,9 +930,15 @@ function M.setup_autocommands()
 
   vim.api.nvim_create_autocmd('BufWritePost', {
     group = augroup,
-    pattern = '*.md',
+    pattern = '*',
     callback = function(args)
       local md_path = vim.api.nvim_buf_get_name(args.buf)
+      if md_path == '' or vim.bo[args.buf].buftype ~= '' then
+        return
+      end
+      if md_path:match(vim.pesc(M.config.sidecar_ext) .. '$') then
+        return
+      end
       local sidecar_buf = find_buffer_by_name(M.get_sidecar_path(md_path))
 
       if valid_buf(sidecar_buf) then
