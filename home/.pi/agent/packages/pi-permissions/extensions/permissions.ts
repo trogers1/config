@@ -4,6 +4,7 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import { policyConfig } from "../policy";
 
 type Decision = "allow" | "ask" | "deny";
 
@@ -40,7 +41,7 @@ type ProfilePolicy = {
 
 type ProfileColor = keyof typeof ansi;
 
-type PolicyConfig = {
+export type PolicyConfig = {
   defaultProfile: string;
   profiles: Record<string, ProfilePolicy>;
 };
@@ -53,23 +54,21 @@ const defaultPolicy: ProfilePolicy = {
 };
 
 const moduleDir = typeof __dirname === "string" ? __dirname : process.cwd();
-const policyPath = path.resolve(moduleDir, "../policy.jsonc");
 const profileEntryType = "pi-permissions-profile";
 
 export default function (pi: ExtensionAPI) {
   const startupCwd = path.resolve(process.cwd());
-  let activeProfile = loadPolicyConfig(policyPath).defaultProfile;
+  let activeProfile: string = policyConfig.defaultProfile;
 
   function restoreActiveProfile(ctx: ExtensionContext): void {
-    const config = loadPolicyConfig(policyPath);
-    activeProfile = config.defaultProfile;
+    activeProfile = policyConfig.defaultProfile;
 
     for (const entry of ctx.sessionManager.getEntries()) {
       if (entry.type !== "custom" || entry.customType !== profileEntryType)
         continue;
       const profile = (entry.data as { profile?: unknown } | undefined)
         ?.profile;
-      if (typeof profile === "string" && config.profiles[profile])
+      if (typeof profile === "string" && policyConfig.profiles[profile])
         activeProfile = profile;
     }
   }
@@ -91,8 +90,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("profile", {
     description: "Show or switch the active permissions profile",
     getArgumentCompletions: (prefix) => {
-      const config = loadPolicyConfig(policyPath);
-      return Object.keys(config.profiles)
+      return Object.keys(policyConfig.profiles)
         .filter((profile) => profile.startsWith(prefix))
         .map((profile) => ({
           value: profile,
@@ -101,20 +99,19 @@ export default function (pi: ExtensionAPI) {
         }));
     },
     handler: async (args, ctx) => {
-      const config = loadPolicyConfig(policyPath);
       const requested = args.trim();
 
       if (!requested) {
         ctx.ui.notify(
-          `Active profile: ${activeProfile}. Available: ${Object.keys(config.profiles).join(", ")}`,
+          `Active profile: ${activeProfile}. Available: ${Object.keys(policyConfig.profiles).join(", ")}`,
           "info",
         );
         return;
       }
 
-      if (!config.profiles[requested]) {
+      if (!policyConfig.profiles[requested]) {
         ctx.ui.notify(
-          `Unknown profile '${requested}'. Available: ${Object.keys(config.profiles).join(", ")}`,
+          `Unknown profile '${requested}'. Available: ${Object.keys(policyConfig.profiles).join(", ")}`,
           "error",
         );
         return;
@@ -129,8 +126,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("socrates", {
     description: "Switch to the Socrates coaching profile",
     handler: async (_args, ctx) => {
-      const config = loadPolicyConfig(policyPath);
-      if (!config.profiles.socrates) {
+      if (!policyConfig.profiles.socrates) {
         ctx.ui.notify("No 'socrates' profile is configured", "error");
         return;
       }
@@ -144,8 +140,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("socrates-off", {
     description: "Switch back to the default permissions profile",
     handler: async (_args, ctx) => {
-      const config = loadPolicyConfig(policyPath);
-      setActiveProfile(config.defaultProfile);
+      setActiveProfile(policyConfig.defaultProfile);
       ctx.ui.setStatus("permissions", formatProfileStatus(activeProfile));
       ctx.ui.notify(
         `Socrates profile disabled; active profile: ${activeProfile}`,
@@ -155,9 +150,9 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("before_agent_start", async (event) => {
-    const config = loadPolicyConfig(policyPath);
     const policy =
-      config.profiles[activeProfile] ?? config.profiles[config.defaultProfile];
+      policyConfig.profiles[activeProfile] ??
+      policyConfig.profiles[policyConfig.defaultProfile];
     if (!policy?.promptFile) return undefined;
 
     const promptPath = resolvePolicyRelativePath(policy.promptFile);
@@ -168,9 +163,9 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("tool_call", async (event, ctx) => {
-    const config = loadPolicyConfig(policyPath);
     const policy =
-      config.profiles[activeProfile] ?? config.profiles[config.defaultProfile];
+      policyConfig.profiles[activeProfile] ??
+      policyConfig.profiles[policyConfig.defaultProfile];
 
     if (event.toolName === "bash") {
       const command = String(
@@ -327,8 +322,7 @@ function formatDecision(decision: Decision): string {
 }
 
 function formatProfileStatus(profileName: string): string {
-  const config = loadPolicyConfig(policyPath);
-  const profile = config.profiles[profileName];
+  const profile = policyConfig.profiles[profileName];
   const color = profile?.color ?? "blue";
   const emoji = profile?.emoji ? `${profile.emoji} ` : "";
   const colorize = ansi[color] ?? ansi.blue;
@@ -600,56 +594,6 @@ function globToRegExpSource(pattern: string): string {
   return source;
 }
 
-function loadPolicyConfig(policyPath: string): PolicyConfig {
-  try {
-    const parsed = JSON.parse(
-      stripJsonCommentsAndTrailingCommas(fs.readFileSync(policyPath, "utf8")),
-    ) as Partial<PolicyConfig & ProfilePolicy>;
-
-    // Backward compatibility for the original single-profile policy shape.
-    if (!parsed.profiles) {
-      return {
-        defaultProfile: "default",
-        profiles: {
-          default: normalizeProfilePolicy(parsed),
-        },
-      };
-    }
-
-    const profiles: Record<string, ProfilePolicy> = {};
-    for (const [name, profile] of Object.entries(parsed.profiles)) {
-      profiles[name] = normalizeProfilePolicy(profile);
-    }
-
-    const defaultProfile = parsed.defaultProfile ?? "default";
-    if (!profiles[defaultProfile])
-      throw new Error(
-        `defaultProfile '${defaultProfile}' is not defined in profiles`,
-      );
-
-    return { defaultProfile, profiles };
-  } catch (error) {
-    throw new Error(
-      `Failed to load pi permissions policy at ${policyPath}: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-}
-
-function normalizeProfilePolicy(
-  policy: Partial<ProfilePolicy> | undefined,
-): ProfilePolicy {
-  return {
-    ...defaultPolicy,
-    ...(policy ?? {}),
-    tools: {
-      ...defaultPolicy.tools,
-      ...(policy?.tools ?? {}),
-    },
-    bashPathReferences:
-      policy?.bashPathReferences ?? defaultPolicy.bashPathReferences,
-  };
-}
-
 function resolvePolicyRelativePath(value: string): string {
   const expanded = expandHome(value);
   return path.isAbsolute(expanded)
@@ -871,7 +815,10 @@ async function collectDenialGuidance(
   return trimmed || undefined;
 }
 
-function appendUserGuidance(reason: string, guidance: string | undefined): string {
+function appendUserGuidance(
+  reason: string,
+  guidance: string | undefined,
+): string {
   if (!guidance) return reason;
   return `${reason}\n\nUser steering after denial:\n${guidance}`;
 }
