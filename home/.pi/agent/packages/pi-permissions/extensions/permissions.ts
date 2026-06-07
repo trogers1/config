@@ -244,7 +244,7 @@ export async function gateBash(
   }
 
   const pathDecision = decideBashPathReferences(
-    command,
+    commands,
     startupCwd,
     ctx.cwd ?? startupCwd,
     activePolicy,
@@ -524,25 +524,48 @@ function decideByPattern(
 }
 
 function decideBashPathReferences(
-  command: string,
+  commandSegments: string[],
   startupCwd: string,
   cwd: string,
   activePolicy: ProfilePolicy,
 ): { decision: Decision; path: string; matchPath: string } | undefined {
-  for (const token of shellishTokens(command)) {
-    if (!looksLikePath(token)) continue;
-    const absolutePath = resolveRequestedPath(token, cwd);
-    const matchPath = policyMatchPath(absolutePath, startupCwd);
-    const decision = decideByPattern(
-      matchPath,
-      activePolicy.bashPathReferences,
-      "allow",
-      matchesGlobPattern,
-    );
-    if (decision !== "allow")
-      return { decision, path: absolutePath, matchPath };
+  let simulatedCwd = cwd;
+  for (const segment of commandSegments) {
+    for (const token of shellishTokens(segment)) {
+      if (!looksLikePath(token)) continue;
+      const absolutePath = resolveRequestedPath(token, simulatedCwd);
+      const matchPath = policyMatchPath(absolutePath, startupCwd);
+      const decision = decideByPattern(
+        matchPath,
+        activePolicy.bashPathReferences,
+        "allow",
+        matchesGlobPattern,
+      );
+      if (decision !== "allow")
+        return { decision, path: absolutePath, matchPath };
+    }
+
+    const cdTarget = extractCdTarget(segment);
+    if (cdTarget !== undefined) {
+      if (cdTarget !== "-") {
+        simulatedCwd = resolveRequestedPath(cdTarget, simulatedCwd);
+      }
+    }
   }
   return undefined;
+}
+
+function extractCdTarget(command: string): string | undefined {
+  const tokens = shellishTokens(command);
+  if (tokens[0] !== "cd") return undefined;
+  let arg: string | undefined;
+  for (let i = 1; i < tokens.length; i++) {
+    const token = tokens[i];
+    if (token.startsWith("-")) continue;
+    arg = token;
+    break;
+  }
+  return arg ?? "~";
 }
 
 function policyMatchPath(absolutePath: string, root: string): string {

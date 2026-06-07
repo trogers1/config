@@ -4,7 +4,7 @@ const { test } = require("node:test");
 const { createRequire } = require("node:module");
 
 const piRequire = createRequire(
-  "/Users/taylor.rogers/.nvm/versions/node/v24.13.1/lib/node_modules/@earendil-works/pi-coding-agent/package.json",
+  path.join(path.dirname(process.execPath), "..", "lib", "node_modules", "@earendil-works", "pi-coding-agent", "package.json"),
 );
 const { createJiti } = piRequire("jiti");
 const jiti = createJiti(__dirname + "/");
@@ -20,6 +20,8 @@ const policy = {
       { pattern: "npm *", decision: "allow" },
       { pattern: "npm publish *", decision: "deny" },
       { pattern: "npx tsc --noEmit", decision: "allow" },
+      { pattern: "cd", decision: "allow" },
+      { pattern: "cd *", decision: "allow" },
       { pattern: "ls", decision: "allow" },
       { pattern: "ls *", decision: "allow" },
       { pattern: "printf *", decision: "allow" },
@@ -27,6 +29,7 @@ const policy = {
   },
   bashPathReferences: [
     { pattern: "*", decision: "allow" },
+    { pattern: "..", decision: "ask" },
     { pattern: "../**", decision: "ask" },
     { pattern: "**/.env", decision: "deny" },
     { pattern: "**/.git/**", decision: "deny" },
@@ -218,4 +221,212 @@ test("empty denied bash steering is omitted", async () => {
   assert.equal(result.block, true);
   assert.match(result.reason, /Command was not approved: python scripts\/build\.py/);
   assert.doesNotMatch(result.reason, /User steering after denial:/);
+});
+
+test("cd to a child directory is allowed without confirmation", async () => {
+  const cwd = path.join(process.cwd(), "project");
+  let confirmations = 0;
+  const result = await permissions.gateBash(
+    "cd " + path.join(cwd, "repo"),
+    process.cwd(),
+    {
+      ...ctx({ cwd }),
+      ui: {
+        confirm: async () => {
+          confirmations++;
+          return true;
+        },
+        setStatus: () => {},
+      },
+    },
+    policy,
+  );
+  assert.equal(result, undefined);
+  assert.equal(confirmations, 0);
+});
+
+test("cd to a parent directory inside startupCwd is allowed", async () => {
+  const cwd = path.join(process.cwd(), "project");
+  let confirmations = 0;
+  const result = await permissions.gateBash(
+    "cd ..",
+    process.cwd(),
+    {
+      ...ctx({ cwd }),
+      ui: {
+        confirm: async () => {
+          confirmations++;
+          return true;
+        },
+        setStatus: () => {},
+      },
+    },
+    policy,
+  );
+  assert.equal(result, undefined);
+  assert.equal(confirmations, 0);
+});
+
+test("compound cd chain: child, back, then outside startupCwd asks", async () => {
+  const startupCwd = path.join(process.cwd(), "fred");
+
+  // Static analyzer simulates cwd changes across segments:
+  // cd docs -> /fred/docs (inside), cd .. -> /fred (inside),
+  // cd .. -> /user (outside startupCwd)
+  let confirmations = 0;
+  const result = await permissions.gateBash(
+    "cd docs && cd .. && cd ..",
+    startupCwd,
+    {
+      ...ctx({ cwd: startupCwd }),
+      ui: {
+        confirm: async () => {
+          confirmations++;
+          return true;
+        },
+        setStatus: () => {},
+      },
+    },
+    policy,
+  );
+  // Third cd .. resolves outside startupCwd
+  assert.equal(result, undefined);
+  assert.equal(confirmations, 1);
+});
+
+test("compound cd chain child then back is fully allowed", async () => {
+  const startupCwd = path.join(process.cwd(), "fred");
+
+  let confirmations = 0;
+  const result = await permissions.gateBash(
+    "cd docs && cd ..",
+    startupCwd,
+    {
+      ...ctx({ cwd: startupCwd }),
+      ui: {
+        confirm: async () => {
+          confirmations++;
+          return true;
+        },
+        setStatus: () => {},
+      },
+    },
+    policy,
+  );
+  assert.equal(result, undefined);
+  assert.equal(confirmations, 0);
+});
+
+test("compound cd chain with absolute escape asks", async () => {
+  const startupCwd = path.join(process.cwd(), "fred");
+
+  let confirmations = 0;
+  const result = await permissions.gateBash(
+    "cd docs && cd /tmp",
+    startupCwd,
+    {
+      ...ctx({ cwd: startupCwd }),
+      ui: {
+        confirm: async () => {
+          confirmations++;
+          return true;
+        },
+        setStatus: () => {},
+      },
+    },
+    policy,
+  );
+  // cd docs is allowed, but cd /tmp references a path outside startupCwd.
+  assert.equal(result, undefined);
+  assert.equal(confirmations, 1);
+});
+
+test("mixed chain: non-cd path references tracked against simulated cwd", async () => {
+  const startupCwd = path.join(process.cwd(), "fred");
+
+  // /fred -> cd doc -> /fred/doc -> cd drafts -> /fred/doc/drafts
+  // ls ../.. from /fred/doc/drafts -> /fred (inside)
+  // ls ../../.. from /fred/doc/drafts -> /fred/.. (outside)
+  let confirmations = 0;
+  const result = await permissions.gateBash(
+    "cd doc && cd drafts && ls ../.. xyz && ls ../../.. xyz",
+    startupCwd,
+    {
+      ...ctx({ cwd: startupCwd }),
+      ui: {
+        confirm: async () => {
+          confirmations++;
+          return true;
+        },
+        setStatus: () => {},
+      },
+    },
+    policy,
+  );
+  // Only the last find references a path outside startupCwd
+  assert.equal(result, undefined);
+  assert.equal(confirmations, 1);
+});
+
+test("cd with absolute path outside cwd still asks", async () => {
+  const cwd = path.join(process.cwd(), "project");
+  let confirmations = 0;
+  await permissions.gateBash(
+    "cd /tmp",
+    process.cwd(),
+    {
+      ...ctx({ cwd }),
+      ui: {
+        confirm: async () => {
+          confirmations++;
+          return true;
+        },
+        setStatus: () => {},
+      },
+    },
+    policy,
+  );
+  // Command is allowed; only the outside path reference triggers the ask
+  assert.equal(confirmations, 1);
+});
+
+test("bash path reference outside startupCwd still asks even if inside cwd", async () => {
+  const startupCwd = path.join(process.cwd(), "project");
+  const cwd = path.dirname(startupCwd);
+  let confirmations = 0;
+  await permissions.gateBash(
+    "ls " + path.join(cwd, "docs"),
+    startupCwd,
+    {
+      ...ctx({ cwd }),
+      ui: {
+        confirm: async () => {
+          confirmations++;
+          return true;
+        },
+        setStatus: () => {},
+      },
+    },
+    policy,
+  );
+  assert.equal(confirmations, 1);
+});
+
+test("bash path reference inside cwd still honors explicit deny rules", async () => {
+  const startupCwd = path.join(process.cwd(), "project");
+  const cwd = path.dirname(startupCwd);
+  const result = await permissions.gateBash(
+    "ls " + path.join(cwd, ".env"),
+    startupCwd,
+    {
+      ...ctx({ cwd }),
+      ui: {
+        confirm: async () => true,
+        setStatus: () => {},
+      },
+    },
+    policy,
+  );
+  assert.equal(result.block, true);
+  assert.match(result.reason, /denied/i);
 });

@@ -63,6 +63,7 @@
           { "pattern": "wc *", "decision": "allow" },
           { "pattern": "file *", "decision": "allow" },
           { "pattern": "npm *", "decision": "allow" },
+          { "pattern": "go *", "decision": "allow" },
           { "pattern": "openspec *", "decision": "allow" },
           { "pattern": "npx tsc --noEmit", "decision": "allow" },
           { "pattern": "printf *", "decision": "allow" },
@@ -111,7 +112,8 @@
 
         "read": [
           { "pattern": "*", "decision": "allow" },
-          { "pattern": "../**", "decision": "ask" },
+        { "pattern": "..", "decision": "ask" },
+        { "pattern": "../**", "decision": "ask" },
           // Allow reading installed Pi skills even when Pi starts inside a project/worktree.
           { "pattern": "../.pi/agent/skills/**", "decision": "allow" },
           { "pattern": "../**/.pi/agent/skills/**", "decision": "allow" },
@@ -171,6 +173,7 @@
       // These glob rules gate those path references separately.
       "bashPathReferences": [
         { "pattern": "*", "decision": "allow" },
+        { "pattern": "..", "decision": "ask" },
         { "pattern": "../**", "decision": "ask" },
         // Allow fixed address-comments skill helper scripts even when Pi starts in a project.
         {
@@ -250,6 +253,7 @@
           { "pattern": "wc *", "decision": "allow" },
           { "pattern": "file *", "decision": "allow" },
           { "pattern": "npm *", "decision": "allow" },
+          { "pattern": "go *", "decision": "allow" },
           { "pattern": "openspec *", "decision": "allow" },
           { "pattern": "npx tsc --noEmit", "decision": "allow" },
           { "pattern": "printf *", "decision": "allow" },
@@ -358,6 +362,7 @@
       // These glob rules gate those path references separately.
       "bashPathReferences": [
         { "pattern": "*", "decision": "allow" },
+        { "pattern": "..", "decision": "ask" },
         { "pattern": "../**", "decision": "ask" },
         // Allow fixed address-comments skill helper scripts even when Pi starts in a project.
         {
