@@ -4,15 +4,15 @@ M.config = {
   sidecar_ext = '.comments',
   comment_pattern = '^%[(.-)%]%s*(.*)$',
   highlight_group = 'CommentLineNr',
-  range_highlight_group = 'MdCommentRange',
+  range_highlight_group = 'SidecarCommentRange',
   sign_priority = 10,
 }
 
-M.highlight_ns_id = vim.api.nvim_create_namespace 'md_comments_highlight'
-M.comment_ns_id = vim.api.nvim_create_namespace 'md_comments_tracking'
-M.diagnostic_ns_id = vim.api.nvim_create_namespace 'md_comments_diagnostics'
+M.highlight_ns_id = vim.api.nvim_create_namespace 'sidecar_comments_highlight'
+M.comment_ns_id = vim.api.nvim_create_namespace 'sidecar_comments_tracking'
+M.diagnostic_ns_id = vim.api.nvim_create_namespace 'sidecar_comments_diagnostics'
 M.state = {
-  by_md_path = {},
+  by_src_path = {},
   next_id = 0,
 }
 
@@ -86,15 +86,15 @@ local function find_buffer_by_name(filepath)
   end
 end
 
-local function get_or_create_state(md_path)
-  local state = M.state.by_md_path[md_path]
+local function get_or_create_state(src_path)
+  local state = M.state.by_src_path[src_path]
   if not state then
     state = {
       comments = {},
       initialized = false,
-      md_buf = nil,
+      src_buf = nil,
     }
-    M.state.by_md_path[md_path] = state
+    M.state.by_src_path[src_path] = state
   end
 
   return state
@@ -187,7 +187,7 @@ local function parse_sidecar_lines(lines)
 end
 
 local function get_current_location(state, comment)
-  if not valid_buf(state.md_buf) or not comment.extmark_id then
+  if not valid_buf(state.src_buf) or not comment.extmark_id then
     return {
       start_line = comment.start_line,
       start_col = comment.start_col,
@@ -196,7 +196,7 @@ local function get_current_location(state, comment)
     }
   end
 
-  local extmark = vim.api.nvim_buf_get_extmark_by_id(state.md_buf, M.comment_ns_id, comment.extmark_id, { details = true })
+  local extmark = vim.api.nvim_buf_get_extmark_by_id(state.src_buf, M.comment_ns_id, comment.extmark_id, { details = true })
   if #extmark == 0 then
     return {
       start_line = comment.start_line,
@@ -238,11 +238,11 @@ local function get_text_for_location(bufnr, location)
 end
 
 local function get_current_comment_text(state, comment)
-  if comment.kind ~= 'range' or not valid_buf(state.md_buf) then
+  if comment.kind ~= 'range' or not valid_buf(state.src_buf) then
     return nil
   end
 
-  return get_text_for_location(state.md_buf, get_current_location(state, comment))
+  return get_text_for_location(state.src_buf, get_current_location(state, comment))
 end
 
 local function ensure_anchor_text(state, comment)
@@ -254,7 +254,7 @@ local function ensure_anchor_text(state, comment)
 end
 
 local function refresh_comment_locations(state)
-  if not valid_buf(state.md_buf) then
+  if not valid_buf(state.src_buf) then
     return
   end
 
@@ -303,12 +303,12 @@ normalize_comment_for_buffer = function(bufnr, comment)
   }
 end
 
-local function apply_comments_to_md_buffer(state, md_buf)
-  state.md_buf = md_buf
-  vim.api.nvim_buf_clear_namespace(md_buf, M.comment_ns_id, 0, -1)
+local function apply_comments_to_buffer(state, src_buf)
+  state.src_buf = src_buf
+  vim.api.nvim_buf_clear_namespace(src_buf, M.comment_ns_id, 0, -1)
 
   for _, comment in ipairs(state.comments) do
-    local location = normalize_comment_for_buffer(md_buf, comment)
+    local location = normalize_comment_for_buffer(src_buf, comment)
     comment.start_line = location.start_line
     comment.end_line = location.end_line
 
@@ -320,7 +320,7 @@ local function apply_comments_to_md_buffer(state, md_buf)
       comment.end_col = nil
     end
 
-    comment.extmark_id = vim.api.nvim_buf_set_extmark(md_buf, M.comment_ns_id, location.start_line - 1, location.start_col, {
+    comment.extmark_id = vim.api.nvim_buf_set_extmark(src_buf, M.comment_ns_id, location.start_line - 1, location.start_col, {
       end_row = location.end_line - 1,
       end_col = location.end_col,
       right_gravity = true,
@@ -356,8 +356,8 @@ local function serialize_comment(comment)
   return serialized
 end
 
-local function serialize_state(md_path)
-  local state = get_or_create_state(md_path)
+local function serialize_state(src_path)
+  local state = get_or_create_state(src_path)
   refresh_comment_locations(state)
 
   local lines = {}
@@ -406,12 +406,12 @@ local function set_sidecar_buffer_lines(sidecar_buf, lines, preserve_view)
   end
 end
 
-local function update_sidecar_deleted_comment_diagnostics(sidecar_buf, md_path, line_range_by_id)
+local function update_sidecar_deleted_comment_diagnostics(sidecar_buf, src_path, line_range_by_id)
   if not valid_buf(sidecar_buf) then
     return
   end
 
-  local state = get_or_create_state(md_path)
+  local state = get_or_create_state(src_path)
   local diagnostics = {}
   local sidecar_lines = get_buf_lines(sidecar_buf)
 
@@ -426,7 +426,7 @@ local function update_sidecar_deleted_comment_diagnostics(sidecar_buf, md_path, 
           col = 0,
           end_col = math.max(#end_line_text, 1),
           severity = vim.diagnostic.severity.ERROR,
-          source = 'md-comments',
+          source = 'sidecar-comments',
           message = 'The text for this comment appears to have been deleted',
         })
       end
@@ -436,16 +436,16 @@ local function update_sidecar_deleted_comment_diagnostics(sidecar_buf, md_path, 
   vim.diagnostic.set(M.diagnostic_ns_id, sidecar_buf, diagnostics)
 end
 
-local function render_sidecar(md_path, opts)
+local function render_sidecar(src_path, opts)
   opts = opts or {}
-  local sidecar_path = M.get_sidecar_path(md_path)
-  local lines, line_by_id, line_range_by_id = serialize_state(md_path)
+  local sidecar_path = M.get_sidecar_path(src_path)
+  local lines, line_by_id, line_range_by_id = serialize_state(src_path)
   local sidecar_buf = opts.sidecar_buf or find_buffer_by_name(sidecar_path)
   local sidecar_exists = vim.fn.filereadable(sidecar_path) == 1
 
   if opts.update_buffer and valid_buf(sidecar_buf) then
     set_sidecar_buffer_lines(sidecar_buf, lines, opts.preserve_view)
-    update_sidecar_deleted_comment_diagnostics(sidecar_buf, md_path, line_range_by_id)
+    update_sidecar_deleted_comment_diagnostics(sidecar_buf, src_path, line_range_by_id)
     if opts.mark_unmodified then
       vim.bo[sidecar_buf].modified = false
     end
@@ -469,33 +469,33 @@ local function render_sidecar(md_path, opts)
   return line_by_id
 end
 
-local function load_comments_for_md_buffer(md_buf)
-  local md_path = vim.api.nvim_buf_get_name(md_buf)
-  local sidecar_path = M.get_sidecar_path(md_path)
+local function load_comments_for_buffer(src_buf)
+  local src_path = vim.api.nvim_buf_get_name(src_buf)
+  local sidecar_path = M.get_sidecar_path(src_path)
   local sidecar_buf = find_buffer_by_name(sidecar_path)
   local source_lines = valid_buf(sidecar_buf) and get_buf_lines(sidecar_buf) or read_file_lines(sidecar_path)
-  local state = get_or_create_state(md_path)
+  local state = get_or_create_state(src_path)
 
   state.comments = parse_sidecar_lines(source_lines)
   state.initialized = true
-  apply_comments_to_md_buffer(state, md_buf)
+  apply_comments_to_buffer(state, src_buf)
 
   return state
 end
 
-local function ensure_comments_for_md_buffer(md_buf)
-  local md_path = vim.api.nvim_buf_get_name(md_buf)
-  local state = get_or_create_state(md_path)
+local function ensure_comments_for_buffer(src_buf)
+  local src_path = vim.api.nvim_buf_get_name(src_buf)
+  local state = get_or_create_state(src_path)
 
-  if not state.initialized or state.md_buf ~= md_buf or not valid_buf(state.md_buf) then
-    return load_comments_for_md_buffer(md_buf)
+  if not state.initialized or state.src_buf ~= src_buf or not valid_buf(state.src_buf) then
+    return load_comments_for_buffer(src_buf)
   end
 
   return state
 end
 
-local function merge_sidecar_into_state(md_path, comments, preserve_positions)
-  local state = get_or_create_state(md_path)
+local function merge_sidecar_into_state(src_path, comments, preserve_positions)
+  local state = get_or_create_state(src_path)
 
   if preserve_positions then
     refresh_comment_locations(state)
@@ -541,8 +541,8 @@ local function merge_sidecar_into_state(md_path, comments, preserve_positions)
   state.comments = merged
   state.initialized = true
 
-  if valid_buf(state.md_buf) then
-    apply_comments_to_md_buffer(state, state.md_buf)
+  if valid_buf(state.src_buf) then
+    apply_comments_to_buffer(state, state.src_buf)
   end
 
   return state
@@ -550,15 +550,15 @@ end
 
 local function sync_state_from_sidecar_buffer(sidecar_buf, preserve_positions)
   local sidecar_path = vim.api.nvim_buf_get_name(sidecar_buf)
-  local md_path = M.get_md_path(sidecar_path)
+  local src_path = M.get_source_path(sidecar_path)
   local comments = parse_sidecar_lines(get_buf_lines(sidecar_buf))
-  local state = get_or_create_state(md_path)
+  local state = get_or_create_state(src_path)
 
-  if not valid_buf(state.md_buf) then
-    state.md_buf = find_buffer_by_name(md_path)
+  if not valid_buf(state.src_buf) then
+    state.src_buf = find_buffer_by_name(src_path)
   end
 
-  return merge_sidecar_into_state(md_path, comments, preserve_positions)
+  return merge_sidecar_into_state(src_path, comments, preserve_positions)
 end
 
 function M.parse_reference(reference)
@@ -603,11 +603,11 @@ function M.parse_sidecar(filepath)
   return parse_sidecar_lines(read_file_lines(filepath))
 end
 
-function M.get_sidecar_path(md_filepath)
-  return md_filepath .. M.config.sidecar_ext
+function M.get_sidecar_path(src_filepath)
+  return src_filepath .. M.config.sidecar_ext
 end
 
-function M.get_md_path(sidecar_filepath)
+function M.get_source_path(sidecar_filepath)
   return sidecar_filepath:gsub(vim.pesc(M.config.sidecar_ext) .. '$', '')
 end
 
@@ -663,9 +663,9 @@ comment_is_deleted = function(state, comment)
   return get_current_comment_text(state, comment) == ''
 end
 
-function M.open_sidecar(md_filepath, opts)
+function M.open_sidecar(src_filepath, opts)
   opts = opts or {}
-  local sidecar_path = M.get_sidecar_path(md_filepath)
+  local sidecar_path = M.get_sidecar_path(src_filepath)
   local sidecar_buf = find_buffer_by_name(sidecar_path)
 
   if sidecar_buf then
@@ -696,7 +696,7 @@ function M.open_sidecar(md_filepath, opts)
   return sidecar_path
 end
 
-function M.jump_to_md_line()
+function M.jump_to_source_line()
   local line = vim.api.nvim_get_current_line()
   local header = line:match(M.config.comment_pattern)
   local parsed = header and parse_comment_header(header) or nil
@@ -706,8 +706,8 @@ function M.jump_to_md_line()
   end
 
   local current_file = vim.api.nvim_buf_get_name(0)
-  local md_path = M.get_md_path(current_file)
-  local md_buf = find_buffer_by_name(md_path)
+  local src_path = M.get_source_path(current_file)
+  local src_buf = find_buffer_by_name(src_path)
   local location = {
     start_line = parsed.start_line,
     start_col = parsed.start_col,
@@ -715,11 +715,11 @@ function M.jump_to_md_line()
     end_col = parsed.end_col,
   }
 
-  if md_buf then
-    local state = get_or_create_state(md_path)
-    if not valid_buf(state.md_buf) or state.md_buf ~= md_buf then
-      ensure_comments_for_md_buffer(md_buf)
-      state = get_or_create_state(md_path)
+  if src_buf then
+    local state = get_or_create_state(src_path)
+    if not valid_buf(state.src_buf) or state.src_buf ~= src_buf then
+      ensure_comments_for_buffer(src_buf)
+      state = get_or_create_state(src_path)
     end
 
     if parsed.id then
@@ -730,9 +730,9 @@ function M.jump_to_md_line()
     end
   end
 
-  if md_buf then
+  if src_buf then
     for _, win in ipairs(vim.api.nvim_list_wins()) do
-      if vim.api.nvim_win_get_buf(win) == md_buf then
+      if vim.api.nvim_win_get_buf(win) == src_buf then
         vim.api.nvim_set_current_win(win)
         vim.api.nvim_win_set_cursor(0, { location.start_line, math.max((location.start_col or 1) - 1, 0) })
         return
@@ -740,15 +740,15 @@ function M.jump_to_md_line()
     end
   end
 
-  vim.cmd('edit ' .. vim.fn.fnameescape(md_path))
+  vim.cmd('edit ' .. vim.fn.fnameescape(src_path))
   vim.api.nvim_win_set_cursor(0, { location.start_line, math.max((location.start_col or 1) - 1, 0) })
 end
 
 function M.jump_to_comment()
-  local md_buf = vim.api.nvim_get_current_buf()
-  local md_path = vim.api.nvim_buf_get_name(md_buf)
-  local sidecar_path = M.get_sidecar_path(md_path)
-  local state = ensure_comments_for_md_buffer(md_buf)
+  local src_buf = vim.api.nvim_get_current_buf()
+  local src_path = vim.api.nvim_buf_get_name(src_buf)
+  local sidecar_path = M.get_sidecar_path(src_path)
+  local state = ensure_comments_for_buffer(src_buf)
 
   if #state.comments == 0 and vim.fn.filereadable(sidecar_path) == 0 then
     vim.notify('No comments file found', vim.log.levels.INFO)
@@ -763,9 +763,9 @@ function M.jump_to_comment()
 
   for _, comment in ipairs(state.comments) do
     if M.comment_contains_position(comment, current_line, current_col) then
-      M.open_sidecar(md_path, { vsplit = true })
+      M.open_sidecar(src_path, { vsplit = true })
       local sidecar_buf = vim.api.nvim_get_current_buf()
-      local line_by_id = render_sidecar(md_path, {
+      local line_by_id = render_sidecar(src_path, {
         sidecar_buf = sidecar_buf,
         update_buffer = true,
         preserve_view = true,
@@ -820,9 +820,9 @@ function M.add_comment_for_visual_selection()
 end
 
 function M.add_comment_for_range(start_line, end_line, start_col, end_col)
-  local md_buf = vim.api.nvim_get_current_buf()
-  local md_path = vim.api.nvim_buf_get_name(md_buf)
-  local state = ensure_comments_for_md_buffer(md_buf)
+  local src_buf = vim.api.nvim_get_current_buf()
+  local src_path = vim.api.nvim_buf_get_name(src_buf)
+  local state = ensure_comments_for_buffer(src_buf)
 
   refresh_comment_locations(state)
 
@@ -837,11 +837,11 @@ function M.add_comment_for_range(start_line, end_line, start_col, end_col)
   }
 
   table.insert(state.comments, comment)
-  apply_comments_to_md_buffer(state, md_buf)
+  apply_comments_to_buffer(state, src_buf)
 
-  M.open_sidecar(md_path, { vsplit = true, ensure_file = true })
+  M.open_sidecar(src_path, { vsplit = true, ensure_file = true })
   local sidecar_buf = vim.api.nvim_get_current_buf()
-  local line_by_id = render_sidecar(md_path, {
+  local line_by_id = render_sidecar(src_path, {
     sidecar_buf = sidecar_buf,
     update_buffer = true,
     write_file = true,
@@ -863,8 +863,8 @@ function M.setup_highlighting(bufnr)
   end
 
   local state = get_or_create_state(filepath)
-  if state.md_buf ~= bufnr or not valid_buf(state.md_buf) then
-    state = ensure_comments_for_md_buffer(bufnr)
+  if state.src_buf ~= bufnr or not valid_buf(state.src_buf) then
+    state = ensure_comments_for_buffer(bufnr)
   end
 
   refresh_comment_locations(state)
@@ -910,7 +910,7 @@ function M.setup_highlighting(bufnr)
 end
 
 function M.setup_autocommands()
-  local augroup = vim.api.nvim_create_augroup('MdComments', { clear = true })
+  local augroup = vim.api.nvim_create_augroup('SidecarComments', { clear = true })
 
   vim.api.nvim_create_autocmd({ 'BufReadPost', 'BufNewFile' }, {
     group = augroup,
@@ -923,7 +923,7 @@ function M.setup_autocommands()
       if filepath:match(vim.pesc(M.config.sidecar_ext) .. '$') then
         return
       end
-      ensure_comments_for_md_buffer(args.buf)
+      ensure_comments_for_buffer(args.buf)
       M.setup_highlighting(args.buf)
     end,
   })
@@ -932,22 +932,22 @@ function M.setup_autocommands()
     group = augroup,
     pattern = '*',
     callback = function(args)
-      local md_path = vim.api.nvim_buf_get_name(args.buf)
-      if md_path == '' or vim.bo[args.buf].buftype ~= '' then
+      local src_path = vim.api.nvim_buf_get_name(args.buf)
+      if src_path == '' or vim.bo[args.buf].buftype ~= '' then
         return
       end
-      if md_path:match(vim.pesc(M.config.sidecar_ext) .. '$') then
+      if src_path:match(vim.pesc(M.config.sidecar_ext) .. '$') then
         return
       end
-      local sidecar_buf = find_buffer_by_name(M.get_sidecar_path(md_path))
+      local sidecar_buf = find_buffer_by_name(M.get_sidecar_path(src_path))
 
       if valid_buf(sidecar_buf) then
         sync_state_from_sidecar_buffer(sidecar_buf, true)
       else
-        ensure_comments_for_md_buffer(args.buf)
+        ensure_comments_for_buffer(args.buf)
       end
 
-      render_sidecar(md_path, {
+      render_sidecar(src_path, {
         sidecar_buf = sidecar_buf,
         update_buffer = valid_buf(sidecar_buf),
         write_file = true,
@@ -963,20 +963,20 @@ function M.setup_autocommands()
     pattern = '*' .. M.config.sidecar_ext,
     callback = function(args)
       vim.bo[args.buf].filetype = 'markdown'
-      vim.keymap.set('n', '<CR>', M.jump_to_md_line, { buffer = args.buf, desc = 'Jump to markdown line' })
+      vim.keymap.set('n', '<CR>', M.jump_to_source_line, { buffer = args.buf, desc = '🛵 Jump to source line' })
 
-      local md_path = M.get_md_path(vim.api.nvim_buf_get_name(args.buf))
-      local md_buf = find_buffer_by_name(md_path)
-      if md_buf then
-        local state = get_or_create_state(md_path)
-        state.md_buf = md_buf
+      local src_path = M.get_source_path(vim.api.nvim_buf_get_name(args.buf))
+      local src_buf = find_buffer_by_name(src_path)
+      if src_buf then
+        local state = get_or_create_state(src_path)
+        state.src_buf = src_buf
         if #state.comments == 0 then
-          ensure_comments_for_md_buffer(md_buf)
+          ensure_comments_for_buffer(src_buf)
         else
           refresh_comment_locations(state)
         end
 
-        render_sidecar(md_path, {
+        render_sidecar(src_path, {
           sidecar_buf = args.buf,
           update_buffer = true,
           preserve_view = true,
@@ -984,7 +984,7 @@ function M.setup_autocommands()
         })
       else
         sync_state_from_sidecar_buffer(args.buf, false)
-        render_sidecar(md_path, {
+        render_sidecar(src_path, {
           sidecar_buf = args.buf,
           update_buffer = true,
           preserve_view = true,
@@ -998,9 +998,9 @@ function M.setup_autocommands()
     group = augroup,
     pattern = '*' .. M.config.sidecar_ext,
     callback = function(args)
-      local md_path = M.get_md_path(vim.api.nvim_buf_get_name(args.buf))
+      local src_path = M.get_source_path(vim.api.nvim_buf_get_name(args.buf))
       sync_state_from_sidecar_buffer(args.buf, false)
-      render_sidecar(md_path, {
+      render_sidecar(src_path, {
         sidecar_buf = args.buf,
         update_buffer = true,
         preserve_view = true,
@@ -1012,13 +1012,13 @@ function M.setup_autocommands()
     group = augroup,
     pattern = '*' .. M.config.sidecar_ext,
     callback = function(args)
-      local md_path = M.get_md_path(vim.api.nvim_buf_get_name(args.buf))
-      local state = get_or_create_state(md_path)
-      local md_buf = state.md_buf or find_buffer_by_name(md_path)
+      local src_path = M.get_source_path(vim.api.nvim_buf_get_name(args.buf))
+      local state = get_or_create_state(src_path)
+      local src_buf = state.src_buf or find_buffer_by_name(src_path)
 
-      if valid_buf(md_buf) then
-        state.md_buf = md_buf
-        M.setup_highlighting(md_buf)
+      if valid_buf(src_buf) then
+        state.src_buf = src_buf
+        M.setup_highlighting(src_buf)
       end
     end,
   })
@@ -1039,23 +1039,23 @@ function M.setup(opts)
 
   M.setup_autocommands()
 
-  vim.keymap.set('n', '<leader>mc', function()
-    local md_buf = vim.api.nvim_get_current_buf()
-    local md_path = vim.api.nvim_buf_get_name(md_buf)
+  vim.keymap.set('n', '<leader>so', function()
+    local src_buf = vim.api.nvim_get_current_buf()
+    local src_path = vim.api.nvim_buf_get_name(src_buf)
 
-    ensure_comments_for_md_buffer(md_buf)
-    M.open_sidecar(md_path, { vsplit = true })
-    render_sidecar(md_path, {
+    ensure_comments_for_buffer(src_buf)
+    M.open_sidecar(src_path, { vsplit = true })
+    render_sidecar(src_path, {
       sidecar_buf = vim.api.nvim_get_current_buf(),
       update_buffer = true,
       preserve_view = true,
       mark_unmodified = true,
     })
-  end, { desc = '[M]arkdown [C]omments open' })
+  end, { desc = '🛵 [S]idecarComments [O]pen' })
 
-  vim.keymap.set('n', '<leader>mv', M.jump_to_comment, { desc = '[M]arkdown [V]iew comment' })
-  vim.keymap.set('n', '<leader>ma', M.add_comment, { desc = '[M]arkdown [A]dd comment' })
-  vim.keymap.set('x', '<leader>ma', M.add_comment_for_visual_selection, { desc = '[M]arkdown [A]dd comment for selection' })
+  vim.keymap.set('n', '<leader>sv', M.jump_to_comment, { desc = '🛵 [S]idecarComments [V]iew' })
+  vim.keymap.set('n', '<leader>sa', M.add_comment, { desc = '🛵 [S]idecarComments [A]dd' })
+  vim.keymap.set('x', '<leader>sa', M.add_comment_for_visual_selection, { desc = '🛵 [S]idecarComments [A]dd for selection' })
 end
 
 return M

@@ -1,0 +1,101 @@
+*sidecar-comments.txt*  🛵 SidecarComments Plugin
+
+🛵 SidecarComments Plugin                                  *sidecar-comments*
+
+A Neovim plugin for managing comments on any file using a sidecar file
+approach. Perfect for writers, reviewers, and developers who want to add
+editorial comments, notes, and feedback without modifying the source file.
+
+FEATURES                                        *sidecar-comments-features*
+
+1. Sidecar file format - Comments stored in `.comments` sidecars like
+   `post.md.comments`, `main.rs.comments`, etc.
+2. Works with any filetype - Not limited to markdown
+3. Line and column ranges - Comments can target full lines or exact text spans
+4. Bidirectional navigation - Jump between source text and comments
+5. Visual indicators - Commented lines show red line numbers
+6. Quick split window - Open comments in vertical split
+
+USAGE                                           *sidecar-comments-usage*
+
+When editing any file (e.g., `post.md`, `main.rs`, `script.lua`):
+
+<leader>so      Open comments sidecar
+<leader>sv      View comment for current line
+<leader>sa      Add new comment for current line
+<leader>sa (visual) Add comment for selected text or lines
+
+In the comments file:
+<CR>            Jump to the referenced line in the source file
+
+FILE FORMAT                                     *sidecar-comments-format*
+
+Comments are stored in `.comments` sidecars with this format:
+>
+    [@c1a2b3c_1 5] Single line comment for line 5
+
+    [@c1a2b3c_2 10-15] Multi-line comment spanning lines 10-15
+    This comment continues on the next line.
+    And can have multiple paragraphs.
+
+    [@c1a2b3c_3 20:8-20:19 | aGVsbG8=] Comment for a specific text span
+<
+
+The header inside `[...]` contains:
+- `@id` - Unique comment identifier (required — do not remove or edit)
+- `reference` - Location in the source file:
+  - `N` - Line N
+  - `N-M` - Lines N through M
+  - `N:C-M:D` - Exact columns from line N, col C to line M, col D
+  - `N:C-D` - Columns C to D on line N
+- `| base64` - Optional base64-encoded anchor text for range comments (used to
+delete-detect when the commented source text changes)
+
+Text after `]` is the comment content. Everything between the header and the
+next header (or EOF) belongs to that comment.
+
+Use normal mode for whole-line comments, visual mode for exact spans.
+
+EXAMPLE WORKFLOW                                *sidecar-comments-example*
+
+1. Open your source file
+2. Place cursor on a line you want to comment
+3. Press <leader>sa to add a comment, or visually select text first for a
+   column-aware comment
+4. Type your comment in the sidecar window
+5. Press <CR> on any comment line to jump back to the source
+6. Commented lines show red line numbers
+
+CONFIGURATION                                   *sidecar-comments-config*
+
+Default configuration:
+>
+    require('custom.sidecar_comments').setup({
+      sidecar_ext = '.comments',       -- Suffix added to source files
+      highlight_group = 'CommentLineNr', -- Highlight group for line numbers
+      range_highlight_group = 'SidecarCommentRange', -- Highlight for commented text
+      sign_priority = 10,              -- Priority of line number highlights
+    })
+<
+
+You can customize the highlight color:
+>
+    vim.api.nvim_set_hl(0, 'CommentLineNr', {
+      fg = '#ff6b6b',  -- Red color
+      bold = true,
+    })
+<
+
+KEYMAPS                                         *sidecar-comments-keymaps*
+
+Default keymaps (in source files):
+<leader>so      🛵 [S]idecarComments [O]pen
+<leader>sv      🛵 [S]idecarComments [V]iew
+<leader>sa      🛵 [S]idecarComments [A]dd (normal/visual mode)
+
+In sidecar files:
+<CR>            🛵 Jump to source line
+
+CREDITS                                         *sidecar-comments-credits*
+
+Created as a custom plugin for kickstart.nvim configuration.

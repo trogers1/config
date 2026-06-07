@@ -186,9 +186,9 @@ Tip: for moving files or directories, `x` then navigate then `p` is usually bett
 ### Custom Plugins/Bindings
 | Command | Description |
 |---------|-------------|
-| `<Leader>ma` | Add a sidecar comment to a markdown file (use Visual mode to comment on selection) |
-| `<Leader>mc` | View sidecar comments file |
-| `<Leader>mv` | View comment in sidecar comments file |
+| `<Leader>sa` | 🛵 Add a sidecar comment (use Visual mode to comment on selection) |
+| `<Leader>so` | 🛵 Open sidecar comments file |
+| `<Leader>sv` | 🛵 View comment in sidecar comments file |
 
 ---
 
