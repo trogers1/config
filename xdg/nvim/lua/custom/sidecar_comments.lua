@@ -164,6 +164,8 @@ local function parse_sidecar_lines(lines)
       end
       seen_ids[comment_id] = true
 
+      local invalid_line_ref = parsed.start_line == -1 or parsed.end_line == -1
+
       current_comment = {
         id = comment_id,
         anchor_text = parsed.anchor_text,
@@ -174,6 +176,9 @@ local function parse_sidecar_lines(lines)
         end_col = parsed.end_col,
         text = text,
         sidecar_line = line_num,
+        invalid_line_ref = invalid_line_ref,
+        orig_start_line = parsed.start_line,
+        orig_end_line = parsed.end_line,
       }
     elseif current_comment then
       current_comment.text = current_comment.text .. '\n' .. line
@@ -340,7 +345,9 @@ local function find_comment(state, comment_id)
 end
 
 local function serialize_comment(comment)
-  local reference = M.format_reference(comment.start_line, comment.end_line, comment.start_col, comment.end_col, comment.kind)
+  local start_line = comment.invalid_line_ref and comment.orig_start_line or comment.start_line
+  local end_line = comment.invalid_line_ref and comment.orig_end_line or comment.end_line
+  local reference = M.format_reference(start_line, end_line, comment.start_col, comment.end_col, comment.kind)
   local text_lines = split_text_lines(comment.text)
   local header = string.format('@%s %s', comment.id, reference)
 
@@ -426,7 +433,7 @@ local function set_sidecar_buffer_lines(sidecar_buf, lines, preserve_view)
   end
 end
 
-local function update_sidecar_deleted_comment_diagnostics(sidecar_buf, src_path, line_range_by_id)
+local function update_sidecar_diagnostics(sidecar_buf, src_path, line_range_by_id)
   if not valid_buf(sidecar_buf) then
     return
   end
@@ -436,10 +443,21 @@ local function update_sidecar_deleted_comment_diagnostics(sidecar_buf, src_path,
   local sidecar_lines = get_buf_lines(sidecar_buf)
 
   for _, comment in ipairs(state.comments) do
-    if comment_is_deleted(state, comment) then
-      local line_range = line_range_by_id[comment.id]
-      if line_range then
-        local end_line_text = sidecar_lines[line_range.end_line] or ''
+    local line_range = line_range_by_id[comment.id]
+    if line_range then
+      local end_line_text = sidecar_lines[line_range.end_line] or ''
+
+      if comment.invalid_line_ref then
+        table.insert(diagnostics, {
+          lnum = line_range.start_line - 1,
+          end_lnum = line_range.end_line - 1,
+          col = 0,
+          end_col = math.max(#end_line_text, 1),
+          severity = vim.diagnostic.severity.ERROR,
+          source = 'sidecar-comments',
+          message = 'Comment has an invalid line reference (-1)',
+        })
+      elseif comment_is_deleted(state, comment) then
         table.insert(diagnostics, {
           lnum = line_range.start_line - 1,
           end_lnum = line_range.end_line - 1,
@@ -465,7 +483,7 @@ local function render_sidecar(src_path, opts)
 
   if opts.update_buffer and valid_buf(sidecar_buf) then
     set_sidecar_buffer_lines(sidecar_buf, lines, opts.preserve_view)
-    update_sidecar_deleted_comment_diagnostics(sidecar_buf, src_path, line_range_by_id)
+    update_sidecar_diagnostics(sidecar_buf, src_path, line_range_by_id)
     if opts.mark_unmodified then
       vim.bo[sidecar_buf].modified = false
     end
@@ -542,6 +560,9 @@ local function merge_sidecar_into_state(src_path, comments, preserve_positions)
         comment.end_line = parsed.end_line
         comment.end_col = parsed.end_col
       end
+      comment.invalid_line_ref = parsed.invalid_line_ref
+      comment.orig_start_line = parsed.orig_start_line
+      comment.orig_end_line = parsed.orig_end_line
     else
       comment = {
         id = parsed.id or new_comment_id(),
@@ -552,6 +573,9 @@ local function merge_sidecar_into_state(src_path, comments, preserve_positions)
         end_col = parsed.end_col,
         text = parsed.text,
         anchor_text = parsed.anchor_text,
+        invalid_line_ref = parsed.invalid_line_ref,
+        orig_start_line = parsed.orig_start_line,
+        orig_end_line = parsed.orig_end_line,
       }
     end
 
@@ -582,7 +606,7 @@ local function sync_state_from_sidecar_buffer(sidecar_buf, preserve_positions)
 end
 
 function M.parse_reference(reference)
-  local start_line, start_col, end_line, end_col = reference:match '^(%d+):(%d+)%-(%d+):(%d+)$'
+  local start_line, start_col, end_line, end_col = reference:match '^(-?%d+):(%d+)%-(-?%d+):(%d+)$'
   if start_line then
     return {
       start_line = tonumber(start_line),
@@ -592,7 +616,7 @@ function M.parse_reference(reference)
     }
   end
 
-  start_line, start_col, end_col = reference:match '^(%d+):(%d+)%-(%d+)$'
+  start_line, start_col, end_col = reference:match '^(-?%d+):(%d+)%-(%d+)$'
   if start_line then
     return {
       start_line = tonumber(start_line),
@@ -602,7 +626,7 @@ function M.parse_reference(reference)
     }
   end
 
-  start_line, end_line = reference:match '^(%d+)%-(%d+)$'
+  start_line, end_line = reference:match '^(-?%d+)%-(-?%d+)$'
   if start_line then
     return {
       start_line = tonumber(start_line),
@@ -610,7 +634,7 @@ function M.parse_reference(reference)
     }
   end
 
-  start_line = reference:match '^(%d+)$'
+  start_line = reference:match '^(-?%d+)$'
   if start_line then
     return {
       start_line = tonumber(start_line),
@@ -729,9 +753,9 @@ function M.jump_to_source_line()
   local src_path = M.get_source_path(current_file)
   local src_buf = find_buffer_by_name(src_path)
   local location = {
-    start_line = parsed.start_line,
+    start_line = math.max(parsed.start_line, 1),
     start_col = parsed.start_col,
-    end_line = parsed.end_line,
+    end_line = math.max(parsed.end_line, 1),
     end_col = parsed.end_col,
   }
 

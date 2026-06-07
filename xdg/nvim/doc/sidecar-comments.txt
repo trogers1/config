@@ -48,6 +48,9 @@ The header inside `[...]` contains:
   - `N-M` - Lines N through M
   - `N:C-M:D` - Exact columns from line N, col C to line M, col D
   - `N:C-D` - Columns C to D on line N
+  - `-1` - Invalid line reference (treated as line 1). A diagnostic error
+    is shown in the sidecar file and the comment is highlighted on the
+    first source line for navigation.
 - `| base64` - Optional base64-encoded anchor text for range comments (used to
 delete-detect when the commented source text changes)
 
