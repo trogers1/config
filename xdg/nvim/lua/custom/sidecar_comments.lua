@@ -6,6 +6,7 @@ M.config = {
   highlight_group = 'CommentLineNr',
   range_highlight_group = 'SidecarCommentRange',
   sign_priority = 10,
+  sort_comments = true,
 }
 
 M.highlight_ns_id = vim.api.nvim_create_namespace 'sidecar_comments_highlight'
@@ -356,9 +357,28 @@ local function serialize_comment(comment)
   return serialized
 end
 
+local function sort_comments_by_location(state)
+  table.sort(state.comments, function(a, b)
+    if a.start_line ~= b.start_line then
+      return a.start_line < b.start_line
+    end
+    if (a.start_col or 1) ~= (b.start_col or 1) then
+      return (a.start_col or 1) < (b.start_col or 1)
+    end
+    if (a.end_line or a.start_line) ~= (b.end_line or b.start_line) then
+      return (a.end_line or a.start_line) < (b.end_line or b.start_line)
+    end
+    return a.id < b.id
+  end)
+end
+
 local function serialize_state(src_path)
   local state = get_or_create_state(src_path)
   refresh_comment_locations(state)
+
+  if M.config.sort_comments then
+    sort_comments_by_location(state)
+  end
 
   local lines = {}
   local line_by_id = {}
@@ -852,6 +872,19 @@ function M.add_comment_for_range(start_line, end_line, start_col, end_col)
 
   vim.api.nvim_win_set_cursor(0, { target_line, vim.fn.col '$' - 1 })
   vim.cmd 'startinsert!'
+end
+
+function M.sort_comments(src_path)
+  src_path = src_path or vim.api.nvim_buf_get_name(vim.api.nvim_get_current_buf())
+  local state = get_or_create_state(src_path)
+  refresh_comment_locations(state)
+  sort_comments_by_location(state)
+  return render_sidecar(src_path, {
+    write_file = true,
+    update_buffer = true,
+    preserve_view = false,
+    mark_unmodified = true,
+  })
 end
 
 function M.setup_highlighting(bufnr)

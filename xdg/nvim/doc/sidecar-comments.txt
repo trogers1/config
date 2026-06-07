@@ -75,7 +75,21 @@ Default configuration:
       highlight_group = 'CommentLineNr', -- Highlight group for line numbers
       range_highlight_group = 'SidecarCommentRange', -- Highlight for commented text
       sign_priority = 10,              -- Priority of line number highlights
+      sort_comments = false,           -- Auto-sort comments by document order on save
     })
+<
+
+When `sort_comments = true`, comments are automatically reordered by their
+position in the source file (by start line, then start column, then end line)
+every time the source buffer or sidecar is saved.
+
+You can also sort manually with:
+>
+    require('custom.sidecar_comments').sort_comments()
+<
+Or pass a specific file path:
+>
+    require('custom.sidecar_comments').sort_comments('/path/to/file.rs')
 <
 
 You can customize the highlight color:
