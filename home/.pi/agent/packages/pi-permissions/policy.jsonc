@@ -49,6 +49,7 @@
 
           // Common low-risk commands.
           { "pattern": "pwd", "decision": "allow" },
+          { "pattern": "cd", "decision": "allow" },
           { "pattern": "grep *", "decision": "allow" },
           { "pattern": "npx vitest", "decision": "allow" },
           { "pattern": "npx vitest *", "decision": "allow" },
@@ -235,6 +236,7 @@
 
           // Common low-risk commands.
           { "pattern": "pwd", "decision": "allow" },
+          { "pattern": "cd", "decision": "allow" },
           { "pattern": "grep *", "decision": "allow" },
           { "pattern": "npx vitest", "decision": "allow" },
           { "pattern": "npx vitest *", "decision": "allow" },
@@ -383,6 +385,7 @@
           { "pattern": "*", "decision": "deny" },
           // Common Read-only commands.
           { "pattern": "pwd", "decision": "allow" },
+          { "pattern": "cd", "decision": "allow" },
           { "pattern": "grep *", "decision": "allow" },
           { "pattern": "npx vitest", "decision": "allow" },
           { "pattern": "npx vitest *", "decision": "allow" },
