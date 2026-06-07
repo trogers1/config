@@ -3,7 +3,7 @@ const { test } = require("node:test");
 const { createRequire } = require("node:module");
 
 const piRequire = createRequire(
-  "/Users/taylor.rogers/.nvm/versions/node/v24.13.1/lib/node_modules/@earendil-works/pi-coding-agent/package.json",
+  require("path").join(require("path").dirname(process.execPath), "..", "lib", "node_modules", "@earendil-works", "pi-coding-agent", "package.json"),
 );
 const { createJiti } = piRequire("jiti");
 const jiti = createJiti(__dirname + "/");
