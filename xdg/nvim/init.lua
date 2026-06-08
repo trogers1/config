@@ -657,11 +657,53 @@ require('lazy').setup({
       --  - capabilities (table): Override fields in capabilities. Can be used to disable certain LSP features.
       --  - settings (table): Override the default settings passed when initializing the server.
       --        For example, to see the options for `lua_ls`, you could go to: https://luals.github.io/wiki/settings/
+
+      -- Suppress known-noisy diagnostics for specific filetypes without disabling
+      -- the entire LSP or affecting other filetypes handled by the same server.
+      -- Extend this table as needed, e.g. { jsonc = { 519 }, markdown = { ... } }.
+      local diagnostic_code_suppressions_by_filetype = {
+        jsonc = { 519 }, -- jsonls warns on trailing commas in valid JSONC files
+      }
+
+      local publish_diagnostics = vim.lsp.handlers['textDocument/publishDiagnostics']
+      local suppressed_codes_by_filetype = vim.tbl_map(function(codes)
+        local suppressed = {}
+        for _, code in ipairs(codes) do
+          suppressed[code] = true
+        end
+        return suppressed
+      end, diagnostic_code_suppressions_by_filetype)
+
+      local function filter_diagnostics_by_filetype(err, result, ctx, config)
+        if result and result.uri and result.diagnostics then
+          local bufnr = vim.uri_to_bufnr(result.uri)
+          local filetype = vim.bo[bufnr].filetype
+          local suppressed_codes = suppressed_codes_by_filetype[filetype]
+
+          if suppressed_codes then
+            result = vim.tbl_extend('force', result, {
+              diagnostics = vim.tbl_filter(function(diagnostic)
+                return not suppressed_codes[diagnostic.code]
+              end, result.diagnostics),
+            })
+          end
+        end
+
+        return publish_diagnostics(err, result, ctx, config)
+      end
+
+      -- Servers that should honor diagnostic_code_suppressions_by_filetype
+      -- can set:
+      -- handlers = { ['textDocument/publishDiagnostics'] = filter_diagnostics_by_filetype }
       local servers = {
         -- clangd = {},
         actionlint = {},
         gopls = {},
-        jsonls = {},
+        jsonls = {
+          handlers = {
+            ['textDocument/publishDiagnostics'] = filter_diagnostics_by_filetype,
+          },
+        },
         pyright = {},
         rust_analyzer = {},
         terraform = {},
