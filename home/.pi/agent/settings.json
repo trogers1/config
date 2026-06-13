@@ -1,6 +1,6 @@
 {
-  "defaultProvider": "openai-codex",
-  "defaultModel": "gpt-5.4",
+  "defaultProvider": "moonshotai",
+  "defaultModel": "kimi-k2.6",
   "defaultThinkingLevel": "medium",
   "hideThinkingBlock": false,
   "packages": [
