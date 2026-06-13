@@ -4,16 +4,18 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { policyConfig } from "../policy";
+import { policyConfig } from "./policy";
 
-type Decision = "allow" | "ask" | "deny";
+// ─── Types ────────────────────────────────────────────────────────────
+
+export type Decision = "allow" | "ask" | "deny";
 
 type Approval = {
   approved: boolean;
   guidance?: string;
 };
 
-type Rule = {
+export type Rule = {
   pattern: string;
   decision: Decision;
 };
@@ -31,19 +33,27 @@ const ansi = {
   dim: (value: string) => `\x1b[2m${value}\x1b[0m`,
 } as const;
 
-type ProfilePolicy = {
+type ProfileColor =
+  | "black"
+  | "red"
+  | "green"
+  | "yellow"
+  | "blue"
+  | "magenta"
+  | "cyan"
+  | "white";
+
+export type ProfilePolicy = {
   promptFile?: string | null;
   color?: ProfileColor;
   emoji?: string;
   tools: Record<string, Rule[]>;
-  bashPathReferences: Rule[];
+  bashPathReferences: [Rule, ...Rule[]];
 };
 
-type ProfileColor = keyof typeof ansi;
-
-export type PolicyConfig = {
-  defaultProfile: string;
-  profiles: Record<string, ProfilePolicy>;
+export type PolicyConfig<Names extends string = string> = {
+  defaultProfile: Names;
+  profiles: Record<Names, ProfilePolicy>;
 };
 
 const defaultPolicy: ProfilePolicy = {
@@ -52,6 +62,47 @@ const defaultPolicy: ProfilePolicy = {
   },
   bashPathReferences: [{ pattern: "*", decision: "allow" }],
 };
+
+// ─── Compile-time helpers ─────────────────────────────────────────────
+
+export function definePolicyConfig<
+  Profiles extends Record<string, ProfilePolicy>,
+>(config: {
+  defaultProfile: keyof Profiles & string;
+  profiles: Profiles;
+}): PolicyConfig<keyof Profiles & string> {
+  return config;
+}
+
+// ─── Composition helpers ──────────────────────────────────────────────
+
+export function extendProfile(
+  base: ProfilePolicy,
+  override: Partial<Omit<ProfilePolicy, "tools">> & {
+    tools?: Record<string, Rule[]>;
+  },
+): ProfilePolicy {
+  const mergedTools: Record<string, Rule[]> = structuredClone(base.tools);
+
+  // Append override rules (later rules win by position)
+  for (const [tool, rules] of Object.entries(override.tools ?? {})) {
+    if (!rules) continue;
+    if (rules.length === 0) {
+      delete mergedTools[tool];
+    } else {
+      mergedTools[tool] = [...(mergedTools[tool] ?? []), ...rules];
+    }
+  }
+
+  return {
+    ...base,
+    ...override,
+    tools: mergedTools,
+    bashPathReferences: override.bashPathReferences ?? [
+      ...base.bashPathReferences,
+    ],
+  };
+}
 
 const moduleDir = typeof __dirname === "string" ? __dirname : process.cwd();
 const profileEntryType = "pi-permissions-profile";

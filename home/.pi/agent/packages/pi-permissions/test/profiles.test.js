@@ -99,3 +99,93 @@ test("profile status includes emoji, bold profile name, and configured color", a
   assert.equal(statuses.at(-1).name, "permissions");
   assert.equal(statuses.at(-1).value, "profile: 🧠 \x1b[36m\x1b[1msocrates\x1b[0m\x1b[0m");
 });
+
+// ─── Composition tests ────────────────────────────────────────────────
+
+test("extendProfile appends override rules after base rules", () => {
+  const base = {
+    tools: {
+      bash: [
+        { pattern: "*", decision: "ask" },
+        { pattern: "git *", decision: "deny" },
+      ],
+    },
+    bashPathReferences: [{ pattern: "*", decision: "allow" }],
+  };
+
+  const extended = permissions.extendProfile(base, {
+    tools: {
+      bash: [{ pattern: "git status", decision: "allow" }],
+    },
+  });
+
+  assert.equal(extended.tools.bash.length, 3);
+  assert.equal(extended.tools.bash[0].pattern, "*");
+  assert.equal(extended.tools.bash[2].pattern, "git status");
+  assert.equal(extended.tools.bash[2].decision, "allow");
+});
+
+test("extendProfile overrides color and emoji", () => {
+  const base = {
+    color: "blue",
+    emoji: "🛠️",
+    tools: { bash: [{ pattern: "*", decision: "ask" }] },
+    bashPathReferences: [{ pattern: "*", decision: "allow" }],
+  };
+
+  const extended = permissions.extendProfile(base, {
+    color: "red",
+    emoji: "🤖",
+  });
+
+  assert.equal(extended.color, "red");
+  assert.equal(extended.emoji, "🤖");
+});
+
+test("extendProfile inherits bashPathReferences when not overridden", () => {
+  const base = {
+    tools: { bash: [{ pattern: "*", decision: "ask" }] },
+    bashPathReferences: [
+      { pattern: "*", decision: "allow" },
+      { pattern: "../**", decision: "ask" },
+    ],
+  };
+
+  const extended = permissions.extendProfile(base, {
+    tools: { bash: [{ pattern: "ls", decision: "allow" }] },
+  });
+
+  assert.equal(extended.bashPathReferences.length, 2);
+  assert.equal(extended.bashPathReferences[1].pattern, "../**");
+});
+
+test("extendProfile can replace bashPathReferences", () => {
+  const base = {
+    tools: { bash: [{ pattern: "*", decision: "ask" }] },
+    bashPathReferences: [{ pattern: "*", decision: "allow" }],
+  };
+
+  const extended = permissions.extendProfile(base, {
+    bashPathReferences: [{ pattern: "*", decision: "deny" }],
+  });
+
+  assert.equal(extended.bashPathReferences.length, 1);
+  assert.equal(extended.bashPathReferences[0].decision, "deny");
+});
+
+test("extendProfile can remove a tool with empty array", () => {
+  const base = {
+    tools: {
+      bash: [{ pattern: "*", decision: "ask" }],
+      read: [{ pattern: "*", decision: "allow" }],
+    },
+    bashPathReferences: [{ pattern: "*", decision: "allow" }],
+  };
+
+  const extended = permissions.extendProfile(base, {
+    tools: { read: [] },
+  });
+
+  assert.equal(extended.tools.read, undefined);
+  assert.equal(extended.tools.bash.length, 1);
+});

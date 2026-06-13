@@ -1,0 +1,302 @@
+import {
+  extendProfile,
+  definePolicyConfig,
+  type ProfilePolicy,
+} from "./permissions";
+
+// ─── Shared base profile ──────────────────────────────────────────────
+//
+// Most profiles build on the same core tool rules. Use the `baseProfile`
+// as a common set of permissions so we don't duplicate it everywhere.
+
+const baseProfile: ProfilePolicy = {
+  color: "blue",
+  emoji: "🛠️",
+  // No promptFile means: keep Pi's normal system prompt unchanged.
+  // Tool policies are ordered: later matching rules override earlier ones.
+  // For bash, patterns match normalized command segments.
+  // For path-based tools, patterns match paths relative to pi's startup directory.
+  // Outside paths appear as ../..., so use ../** to gate external access.
+  tools: {
+    bash: [
+      { pattern: "*", decision: "ask" },
+      { pattern: "git *", decision: "ask" },
+
+      // Git read-only / semi-destructive commands intentionally allowed.
+      { pattern: "git status", decision: "allow" },
+      { pattern: "git status *", decision: "allow" },
+      { pattern: "git log", decision: "allow" },
+      { pattern: "git log *", decision: "allow" },
+      { pattern: "git rm *", decision: "allow" },
+      { pattern: "git mv *", decision: "allow" },
+      { pattern: "git diff", decision: "allow" },
+      { pattern: "git diff *", decision: "allow" },
+      { pattern: "git pull", decision: "allow" },
+      { pattern: "git grep *", decision: "allow" },
+      { pattern: "git bisect *", decision: "allow" },
+      { pattern: "git show *", decision: "allow" },
+      { pattern: "git ls-files", decision: "allow" },
+      { pattern: "git ls-files *", decision: "allow" },
+      { pattern: "git rev-parse", decision: "allow" },
+      { pattern: "git rev-parse *", decision: "allow" },
+      { pattern: "git show-ref", decision: "allow" },
+      { pattern: "git show-ref *", decision: "allow" },
+      { pattern: "git merge-base *", decision: "allow" },
+
+      // Git destructive / workflow-changing commands.
+      { pattern: "git branch *", decision: "deny" },
+      { pattern: "git rebase *", decision: "deny" },
+      { pattern: "git switch *", decision: "deny" },
+      { pattern: "git tag *", decision: "deny" },
+      { pattern: "git commit *", decision: "deny" },
+      { pattern: "git push *", decision: "deny" },
+      { pattern: "git checkout *", decision: "deny" },
+      { pattern: "git add *", decision: "deny" },
+      { pattern: "git worktree *", decision: "deny" },
+
+      // Common low-risk commands.
+      { pattern: "pwd", decision: "allow" },
+      { pattern: "cd", decision: "allow" },
+      { pattern: "grep *", decision: "allow" },
+      { pattern: "npx vitest", decision: "allow" },
+      { pattern: "npx vitest *", decision: "allow" },
+      { pattern: "find *", decision: "allow" },
+      { pattern: "sort *", decision: "allow" },
+      { pattern: "sort", decision: "allow" },
+      { pattern: "sed *", decision: "allow" },
+      { pattern: "ls", decision: "allow" },
+      { pattern: "ls *", decision: "allow" },
+      { pattern: "wc", decision: "allow" },
+      { pattern: "wc *", decision: "allow" },
+      { pattern: "file *", decision: "allow" },
+      { pattern: "npm *", decision: "allow" },
+      { pattern: "go *", decision: "allow" },
+      { pattern: "openspec *", decision: "allow" },
+      { pattern: "npx tsc --noEmit", decision: "allow" },
+      { pattern: "printf *", decision: "allow" },
+      { pattern: "true", decision: "allow" },
+      { pattern: "rg *", decision: "allow" },
+      { pattern: "ripgrep *", decision: "allow" },
+      { pattern: "terraform fmt *", decision: "allow" },
+      { pattern: "terraform validate", decision: "allow" },
+      { pattern: "terraform validate *", decision: "allow" },
+      { pattern: "terraform -chdir=* validate", decision: "allow" },
+      { pattern: "terraform -chdir=* validate *", decision: "allow" },
+      { pattern: "head", decision: "allow" },
+      { pattern: "head *", decision: "allow" },
+      { pattern: "tail", decision: "allow" },
+      { pattern: "tail *", decision: "allow" },
+      { pattern: "nl", decision: "allow" },
+      { pattern: "nl *", decision: "allow" },
+
+      // GitLab MR comment skills — read-only via fixed scripts (no direct glab).
+      { pattern: "glab *", decision: "deny" },
+      {
+        pattern: "bash *skills/address-comments/scripts/fetch-open-mr.sh*",
+        decision: "allow",
+      },
+      {
+        pattern:
+          "bash *skills/address-comments/scripts/fetch-mr-discussions.sh*",
+        decision: "allow",
+      },
+      {
+        pattern: "bash *skills/address-comments/scripts/enrich-discussions.sh*",
+        decision: "allow",
+      },
+      {
+        pattern: "bash *skills/address-comments/scripts/render-comments-md.sh*",
+        decision: "allow",
+      },
+      {
+        pattern:
+          "bash *skills/address-comments/scripts/refresh-robot-comments-md.sh*",
+        decision: "allow",
+      },
+      {
+        pattern:
+          "bash *skills/address-comments/scripts/refresh-all-comments-md.sh*",
+        decision: "allow",
+      },
+    ],
+
+    read: [
+      { pattern: "*", decision: "allow" },
+      { pattern: "..", decision: "ask" },
+      { pattern: "../**", decision: "ask" },
+      // Allow reading installed Pi skills even when Pi starts inside a project/worktree.
+      { pattern: "../.pi/agent/skills/**", decision: "allow" },
+      { pattern: "../**/.pi/agent/skills/**", decision: "allow" },
+      { pattern: "**/.env", decision: "deny" },
+      { pattern: "**/.env/**", decision: "deny" },
+      { pattern: "**/.git", decision: "deny" },
+      { pattern: "**/.git/**", decision: "deny" },
+    ],
+
+    grep: [
+      { pattern: "*", decision: "allow" },
+      { pattern: "../**", decision: "ask" },
+      { pattern: "**/.env", decision: "deny" },
+      { pattern: "**/.env/**", decision: "deny" },
+      { pattern: "**/.git", decision: "deny" },
+      { pattern: "**/.git/**", decision: "deny" },
+    ],
+
+    find: [
+      { pattern: "*", decision: "allow" },
+      { pattern: "../**", decision: "allow" },
+      { pattern: "**/.env", decision: "deny" },
+      { pattern: "**/.env/**", decision: "deny" },
+      { pattern: "**/.git", decision: "deny" },
+      { pattern: "**/.git/**", decision: "deny" },
+    ],
+
+    ls: [
+      { pattern: "*", decision: "allow" },
+      { pattern: "../**", decision: "ask" },
+      { pattern: "**/.env", decision: "deny" },
+      { pattern: "**/.env/**", decision: "deny" },
+      { pattern: "**/.git", decision: "deny" },
+      { pattern: "**/.git/**", decision: "deny" },
+    ],
+
+    edit: [
+      { pattern: "*", decision: "allow" },
+      { pattern: "../**", decision: "ask" },
+      { pattern: "**/.env", decision: "deny" },
+      { pattern: "**/.env/**", decision: "deny" },
+      { pattern: "**/.git", decision: "deny" },
+      { pattern: "**/.git/**", decision: "deny" },
+    ],
+
+    write: [
+      { pattern: "*", decision: "allow" },
+      { pattern: "../**", decision: "ask" },
+      { pattern: "**/.env", decision: "deny" },
+      { pattern: "**/.env/**", decision: "deny" },
+      { pattern: "**/.git", decision: "deny" },
+      { pattern: "**/.git/**", decision: "deny" },
+    ],
+  },
+
+  // Bash is command-oriented, but shell commands can still reference paths.
+  // These glob rules gate those path references separately.
+  bashPathReferences: [
+    { pattern: "*", decision: "allow" },
+    { pattern: "..", decision: "ask" },
+    { pattern: "../**", decision: "ask" },
+    // Allow fixed address-comments skill helper scripts even when Pi starts in a project.
+    {
+      pattern: "../**/.pi/agent/skills/address-comments/scripts/*.sh",
+      decision: "allow",
+    },
+    {
+      pattern: "../**/.pi/agent/skills/address-comments/*",
+      decision: "allow",
+    },
+    { pattern: "**/.env", decision: "deny" },
+    { pattern: "**/.env/**", decision: "deny" },
+    { pattern: "**/.git", decision: "deny" },
+    { pattern: "**/.git/**", decision: "deny" },
+  ],
+};
+
+// ─── Exported policy config ───────────────────────────────────────────
+
+export const policyConfig = definePolicyConfig({
+  defaultProfile: "default",
+
+  profiles: {
+    default: baseProfile,
+
+    "address-comments": extendProfile(baseProfile, {
+      color: "red",
+      emoji: "🤖",
+      // Specific to comment-addressing profile only:
+      tools: {
+        bash: [
+          { pattern: "git commit *", decision: "allow" },
+          { pattern: "git add *", decision: "allow" },
+        ],
+      },
+    }),
+
+    socrates: {
+      promptFile: "./prompts/socrates.md",
+      color: "cyan",
+      emoji: "🧠",
+      tools: {
+        bash: [
+          { pattern: "*", decision: "deny" },
+          // Common Read-only commands.
+          { pattern: "pwd", decision: "allow" },
+          { pattern: "cd", decision: "allow" },
+          { pattern: "grep *", decision: "allow" },
+          { pattern: "npx vitest", decision: "allow" },
+          { pattern: "npx vitest *", decision: "allow" },
+          { pattern: "find *", decision: "allow" },
+          { pattern: "sort *", decision: "allow" },
+          { pattern: "sort", decision: "allow" },
+          { pattern: "sed *", decision: "allow" },
+          { pattern: "ls", decision: "allow" },
+          { pattern: "ls *", decision: "allow" },
+          { pattern: "file *", decision: "allow" },
+          { pattern: "npx tsc --noEmit", decision: "allow" },
+          { pattern: "printf *", decision: "allow" },
+          { pattern: "true", decision: "allow" },
+          { pattern: "rg *", decision: "allow" },
+          { pattern: "ripgrep *", decision: "allow" },
+          { pattern: "terraform validate *", decision: "allow" },
+          { pattern: "head", decision: "allow" },
+          { pattern: "head *", decision: "allow" },
+          { pattern: "tail", decision: "allow" },
+          { pattern: "tail *", decision: "allow" },
+          { pattern: "nl", decision: "allow" },
+          { pattern: "nl *", decision: "allow" },
+        ],
+
+        read: [
+          { pattern: "*", decision: "ask" },
+          { pattern: "../**", decision: "ask" },
+          { pattern: "**/.env", decision: "deny" },
+          { pattern: "**/.env/**", decision: "deny" },
+          { pattern: "**/.git", decision: "deny" },
+          { pattern: "**/.git/**", decision: "deny" },
+        ],
+
+        grep: [
+          { pattern: "*", decision: "allow" },
+          { pattern: "../**", decision: "ask" },
+          { pattern: "**/.env", decision: "deny" },
+          { pattern: "**/.env/**", decision: "deny" },
+          { pattern: "**/.git", decision: "deny" },
+          { pattern: "**/.git/**", decision: "deny" },
+        ],
+
+        find: [
+          { pattern: "*", decision: "allow" },
+          { pattern: "../**", decision: "allow" },
+          { pattern: "**/.env", decision: "deny" },
+          { pattern: "**/.env/**", decision: "deny" },
+          { pattern: "**/.git", decision: "deny" },
+          { pattern: "**/.git/**", decision: "deny" },
+        ],
+
+        ls: [
+          { pattern: "*", decision: "allow" },
+          { pattern: "../**", decision: "ask" },
+          { pattern: "**/.env", decision: "deny" },
+          { pattern: "**/.env/**", decision: "deny" },
+          { pattern: "**/.git", decision: "deny" },
+          { pattern: "**/.git/**", decision: "deny" },
+        ],
+
+        edit: [{ pattern: "*", decision: "deny" }],
+
+        write: [{ pattern: "*", decision: "deny" }],
+      },
+
+      bashPathReferences: [{ pattern: "*", decision: "deny" }],
+    },
+  },
+});
