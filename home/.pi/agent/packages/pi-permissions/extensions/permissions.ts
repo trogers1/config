@@ -1,14 +1,16 @@
 import fs from "node:fs";
 import path from "node:path";
-import type {
-  ExtensionAPI,
-  ExtensionContext,
+import {
+  isToolCallEventType,
+  type ExtensionAPI,
+  type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { policyConfig } from "./policy";
+import { policyConfig } from "../policy";
 
 // ─── Types ────────────────────────────────────────────────────────────
 
-export type Decision = "allow" | "ask" | "deny";
+const decisionValues = ["allow", "ask", "deny"] as const;
+export type Decision = (typeof decisionValues)[number];
 
 type Approval = {
   approved: boolean;
@@ -33,15 +35,18 @@ const ansi = {
   dim: (value: string) => `\x1b[2m${value}\x1b[0m`,
 } as const;
 
-type ProfileColor =
-  | "black"
-  | "red"
-  | "green"
-  | "yellow"
-  | "blue"
-  | "magenta"
-  | "cyan"
-  | "white";
+const profileColorFormatters = {
+  black: ansi.black,
+  red: ansi.red,
+  green: ansi.green,
+  yellow: ansi.yellow,
+  blue: ansi.blue,
+  magenta: ansi.magenta,
+  cyan: ansi.cyan,
+  white: ansi.white,
+} as const;
+
+type ProfileColor = keyof typeof profileColorFormatters;
 
 export type ProfilePolicy = {
   promptFile?: string | null;
@@ -106,10 +111,35 @@ export function extendProfile(
 
 const moduleDir = typeof __dirname === "string" ? __dirname : process.cwd();
 const profileEntryType = "pi-permissions-profile";
+const pathToolNames = ["read", "grep", "find", "ls", "edit", "write"] as const;
+const pathToolNameSet: ReadonlySet<string> = new Set(pathToolNames);
+
+type ProfileName = keyof typeof policyConfig.profiles & string;
+type PathToolName = (typeof pathToolNames)[number];
+
+function typedKeys<T extends object>(value: T): Array<keyof T & string> {
+  return Object.keys(value) as Array<keyof T & string>;
+}
+
+function readStringProperty(value: unknown, key: string): string | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const property = Reflect.get(value, key);
+  return typeof property === "string" ? property : undefined;
+}
+
+const profileNames = () => typedKeys(policyConfig.profiles);
+
+function isProfileName(value: unknown): value is ProfileName {
+  return typeof value === "string" && value in policyConfig.profiles;
+}
+
+function activePolicy(profile: ProfileName): ProfilePolicy {
+  return policyConfig.profiles[profile];
+}
 
 export default function (pi: ExtensionAPI) {
   const startupCwd = path.resolve(process.cwd());
-  let activeProfile: string = policyConfig.defaultProfile;
+  let activeProfile: ProfileName = policyConfig.defaultProfile;
 
   function restoreActiveProfile(ctx: ExtensionContext): void {
     activeProfile = policyConfig.defaultProfile;
@@ -117,14 +147,14 @@ export default function (pi: ExtensionAPI) {
     for (const entry of ctx.sessionManager.getEntries()) {
       if (entry.type !== "custom" || entry.customType !== profileEntryType)
         continue;
-      const profile = (entry.data as { profile?: unknown } | undefined)
-        ?.profile;
-      if (typeof profile === "string" && policyConfig.profiles[profile])
+      const profile = readStringProperty(entry.data, "profile");
+      if (isProfileName(profile)) {
         activeProfile = profile;
+      }
     }
   }
 
-  function setActiveProfile(profile: string): void {
+  function setActiveProfile(profile: ProfileName): void {
     activeProfile = profile;
     pi.appendEntry(profileEntryType, { profile, timestamp: Date.now() });
   }
@@ -141,7 +171,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("profile", {
     description: "Show or switch the active permissions profile",
     getArgumentCompletions: (prefix) => {
-      return Object.keys(policyConfig.profiles)
+      return profileNames()
         .filter((profile) => profile.startsWith(prefix))
         .map((profile) => ({
           value: profile,
@@ -154,15 +184,15 @@ export default function (pi: ExtensionAPI) {
 
       if (!requested) {
         ctx.ui.notify(
-          `Active profile: ${activeProfile}. Available: ${Object.keys(policyConfig.profiles).join(", ")}`,
+          `Active profile: ${activeProfile}. Available: ${profileNames().join(", ")}`,
           "info",
         );
         return;
       }
 
-      if (!policyConfig.profiles[requested]) {
+      if (!isProfileName(requested)) {
         ctx.ui.notify(
-          `Unknown profile '${requested}'. Available: ${Object.keys(policyConfig.profiles).join(", ")}`,
+          `Unknown profile '${requested}'. Available: ${profileNames().join(", ")}`,
           "error",
         );
         return;
@@ -201,10 +231,8 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("before_agent_start", async (event) => {
-    const policy =
-      policyConfig.profiles[activeProfile] ??
-      policyConfig.profiles[policyConfig.defaultProfile];
-    if (!policy?.promptFile) return undefined;
+    const policy = activePolicy(activeProfile);
+    if (!policy.promptFile) return undefined;
 
     const promptPath = resolvePolicyRelativePath(policy.promptFile);
     const prompt = fs.readFileSync(promptPath, "utf8").trim();
@@ -214,15 +242,10 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("tool_call", async (event, ctx) => {
-    const policy =
-      policyConfig.profiles[activeProfile] ??
-      policyConfig.profiles[policyConfig.defaultProfile];
+    const policy = activePolicy(activeProfile);
 
-    if (event.toolName === "bash") {
-      const command = String(
-        (event.input as { command?: unknown }).command ?? "",
-      );
-      return await gateBash(command, startupCwd, ctx, policy);
+    if (isToolCallEventType("bash", event)) {
+      return await gateBash(event.input.command ?? "", startupCwd, ctx, policy);
     }
 
     const rules = policy.tools[event.toolName];
@@ -372,11 +395,11 @@ function formatDecision(decision: Decision): string {
   return ansi.red("deny");
 }
 
-function formatProfileStatus(profileName: string): string {
-  const profile = policyConfig.profiles[profileName];
-  const color = profile?.color ?? "blue";
-  const emoji = profile?.emoji ? `${profile.emoji} ` : "";
-  const colorize = ansi[color] ?? ansi.blue;
+function formatProfileStatus(profileName: ProfileName): string {
+  const profile = activePolicy(profileName);
+  const color = profile.color ?? "blue";
+  const emoji = profile.emoji ? `${profile.emoji} ` : "";
+  const colorize = profileColorFormatters[color];
   return `profile: ${emoji}${colorize(ansi.bold(profileName))}`;
 }
 
@@ -790,13 +813,16 @@ function escapeRegExp(value: string): string {
   return value.replace(/[|\\{}()[\]^$+?.*]/g, "\\$&");
 }
 
+function isPathToolName(toolName: string): toolName is PathToolName {
+  return pathToolNameSet.has(toolName);
+}
+
 function toolPath(toolName: string, input: unknown): string | undefined {
-  const params = input as { path?: unknown };
-  if (typeof params.path === "string" && params.path.length > 0)
-    return params.path;
-  if (toolName === "grep" || toolName === "find" || toolName === "ls")
-    return ".";
-  return undefined;
+  const requestedPath = readStringProperty(input, "path");
+  if (requestedPath) return requestedPath;
+  return isPathToolName(toolName) && ["grep", "find", "ls"].includes(toolName)
+    ? "."
+    : undefined;
 }
 
 function resolveRequestedPath(
