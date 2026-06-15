@@ -2,7 +2,7 @@ import {
   extendProfile,
   definePolicyConfig,
   type ProfilePolicy,
-} from "./permissions";
+} from "./extensions/permissions";
 
 // ─── Shared base profile ──────────────────────────────────────────────
 //
