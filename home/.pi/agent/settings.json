@@ -1,11 +1,13 @@
 {
-  "defaultProvider": "moonshotai",
-  "defaultModel": "kimi-k2.6",
+  "defaultProvider": "openai-codex",
+  "defaultModel": "gpt-5.5",
   "defaultThinkingLevel": "medium",
   "hideThinkingBlock": false,
   "packages": [
     "./packages/pi-permissions",
-    "./packages/pi-webfetch"
+    "./packages/pi-webfetch",
+    "./packages/pi-usage"
   ],
-  "lastChangelogVersion": "0.78.1"
+  "lastChangelogVersion": "0.79.4",
+  "theme": "dark"
 }
