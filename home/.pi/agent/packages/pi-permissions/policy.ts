@@ -127,6 +127,11 @@ const baseProfile: ProfilePolicy = {
       // Allow reading installed Pi skills even when Pi starts inside a project/worktree.
       { pattern: "../.pi/agent/skills/**", decision: "allow" },
       { pattern: "../**/.pi/agent/skills/**", decision: "allow" },
+      // Allow reading pi documentation
+      {
+        pattern: "../**/@earendil-works/pi-coding-agent/docs/*.md",
+        decision: "allow",
+      },
       { pattern: "**/.env", decision: "deny" },
       { pattern: "**/.env/**", decision: "deny" },
       { pattern: "**/.git", decision: "deny" },
@@ -209,6 +214,14 @@ export const policyConfig = definePolicyConfig({
   profiles: {
     default: baseProfile,
 
+    "performance-review": extendProfile(baseProfile, {
+      color: "red",
+      emoji: "📋",
+      // Specific to performance-review profile only:
+      tools: {
+        bash: [{ pattern: "glab *", decision: "allow" }],
+      },
+    }),
     "address-comments": extendProfile(baseProfile, {
       color: "red",
       emoji: "🤖",
