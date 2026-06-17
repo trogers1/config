@@ -1,0 +1,21 @@
+{
+  "name": "pi-usage",
+  "version": "0.1.0",
+  "private": true,
+  "keywords": [
+    "pi-package"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions/pi-usage.ts"
+    ]
+  },
+  "dependencies": {
+    "better-sqlite3": "latest"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  }
+}
