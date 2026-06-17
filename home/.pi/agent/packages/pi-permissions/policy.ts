@@ -219,7 +219,11 @@ export const policyConfig = definePolicyConfig({
       emoji: "📋",
       // Specific to performance-review profile only:
       tools: {
-        bash: [{ pattern: "glab *", decision: "allow" }],
+        bash: [
+          { pattern: "glab *", decision: "allow" },
+          { pattern: "gh *", decision: "allow" },
+          { pattern: "jq *", decision: "allow" },
+        ],
       },
     }),
     "address-comments": extendProfile(baseProfile, {
