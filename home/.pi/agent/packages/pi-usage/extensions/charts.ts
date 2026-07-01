@@ -18,12 +18,12 @@ export function barChart(
   rows: ChartRow[],
   valueKey: string,
   labelKey: string,
-  options: { width?: number; formatValue?: (value: unknown) => string } = {},
+  options: { width?: number; formatValue?: (value: unknown, row: ChartRow) => string } = {},
 ): string {
   if (rows.length === 0) return "(no daily usage)";
 
   const width = options.width ?? 30;
-  const formatValue = options.formatValue ?? formatCurrency;
+  const formatValue: (value: unknown, row: ChartRow) => string = options.formatValue ?? ((value) => formatCurrency(value));
   const max = Math.max(...rows.map((row) => asNumber(row[valueKey])), 0);
 
   return rows
@@ -31,7 +31,7 @@ export function barChart(
       const label = String(row[labelKey] ?? "");
       const value = asNumber(row[valueKey]);
       const barLength = max > 0 ? Math.max(value > 0 ? 1 : 0, Math.round((value / max) * width)) : 0;
-      return `${label.padEnd(10)} ${"█".repeat(barLength)} ${formatValue(value)}`.trimEnd();
+      return `${label.padEnd(10)} ${"█".repeat(barLength)} ${formatValue(value, row)}`.trimEnd();
     })
     .join("\n");
 }

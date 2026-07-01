@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
@@ -25,6 +26,7 @@ export type UsageEvent = {
   cacheWriteCost: number;
   totalCost: number;
   cwd?: string | null;
+  projectId?: string | null;
   sessionFile?: string | null;
   sessionEntryId?: string | null;
 };
@@ -48,6 +50,7 @@ export function getDb(): any {
   db = new Database(dbPath);
   db.pragma("journal_mode = WAL");
   db.exec(schemaSql);
+  migrateDb(db);
   return db;
 }
 
@@ -61,7 +64,7 @@ export function recordUsage(event: UsageEvent): InsertResult {
   const database = getDb();
   const uniqueKey = uniqueKeyForEvent(event);
   const day = localDay(event.timestampMs);
-  const result = insertStmt(database).run({
+  const values = {
     unique_key: uniqueKey,
     source: event.source,
     timestamp_ms: event.timestampMs,
@@ -80,11 +83,15 @@ export function recordUsage(event: UsageEvent): InsertResult {
     cache_write_cost: finiteNumber(event.cacheWriteCost),
     total_cost: finiteNumber(event.totalCost),
     cwd: displayCwd(event.cwd),
+    project_id: displayProjectId(event.projectId, event.cwd),
     session_file: displaySessionFile(event.sessionFile),
     session_entry_id: event.sessionEntryId ?? null,
     created_at_ms: Date.now(),
-  });
-  return result.changes > 0 ? "inserted" : "duplicate";
+  };
+  const result = insertStmt(database).run(values);
+  if (result.changes > 0) return "inserted";
+  updateMissingMetadata(database, values);
+  return "duplicate";
 }
 
 function insertStmt(database: any): any {
@@ -93,14 +100,23 @@ function insertStmt(database: any): any {
       unique_key, source, timestamp_ms, day, provider, model, api,
       input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, total_tokens,
       input_cost, output_cost, cache_read_cost, cache_write_cost, total_cost,
-      cwd, session_file, session_entry_id, created_at_ms
+      cwd, project_id, session_file, session_entry_id, created_at_ms
     ) VALUES (
       @unique_key, @source, @timestamp_ms, @day, @provider, @model, @api,
       @input_tokens, @output_tokens, @cache_read_tokens, @cache_write_tokens, @total_tokens,
       @input_cost, @output_cost, @cache_read_cost, @cache_write_cost, @total_cost,
-      @cwd, @session_file, @session_entry_id, @created_at_ms
+      @cwd, @project_id, @session_file, @session_entry_id, @created_at_ms
     )
   `);
+}
+
+function updateMissingMetadata(database: any, values: { unique_key: string; cwd: string | null; project_id: string }): void {
+  database.prepare(`
+    UPDATE usage_events
+    SET cwd = COALESCE(cwd, @cwd),
+      project_id = COALESCE(project_id, @project_id)
+    WHERE unique_key = @unique_key
+  `).run(values);
 }
 
 function uniqueKeyForEvent(event: UsageEvent): string {
@@ -134,6 +150,26 @@ function displayCwd(cwd: string | null | undefined): string | null {
   return cwd ? path.basename(cwd) : null;
 }
 
+function displayProjectId(projectId: string | null | undefined, cwd: string | null | undefined): string {
+  if (projectId && projectId.trim().length > 0) return projectId.trim();
+  return projectIdentifier(cwd);
+}
+
+function projectIdentifier(cwd: string | null | undefined): string {
+  if (!cwd) return "NON-GIT PROJECT";
+  try {
+    const commonGitDir = execFileSync("git", ["-C", cwd, "rev-parse", "--path-format=absolute", "--git-common-dir"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 1000,
+    }).trim();
+    if (!commonGitDir) return "NON-GIT PROJECT";
+    return path.basename(commonGitDir.endsWith("/.git") ? path.dirname(commonGitDir) : commonGitDir) || "NON-GIT PROJECT";
+  } catch {
+    return "NON-GIT PROJECT";
+  }
+}
+
 function displaySessionFile(sessionFile: string | null | undefined): string | null {
   if (!sessionFile) return null;
   return path.join(path.basename(path.dirname(sessionFile)), path.basename(sessionFile));
@@ -141,6 +177,14 @@ function displaySessionFile(sessionFile: string | null | undefined): string | nu
 
 function hash(value: string): string {
   return crypto.createHash("sha256").update(value).digest("hex").slice(0, 16);
+}
+
+function migrateDb(database: any): void {
+  const columns = new Set(database.prepare("PRAGMA table_info(usage_events)").all().map((row: any) => String(row.name)));
+  if (!columns.has("project_id")) {
+    database.exec("ALTER TABLE usage_events ADD COLUMN project_id TEXT");
+  }
+  database.exec("CREATE INDEX IF NOT EXISTS idx_usage_events_project_id ON usage_events(project_id)");
 }
 
 function finiteInt(value: unknown): number {
@@ -171,6 +215,7 @@ CREATE TABLE IF NOT EXISTS usage_events (
   cache_write_cost REAL NOT NULL DEFAULT 0,
   total_cost REAL NOT NULL DEFAULT 0,
   cwd TEXT,
+  project_id TEXT,
   session_file TEXT,
   session_entry_id TEXT,
   created_at_ms INTEGER NOT NULL

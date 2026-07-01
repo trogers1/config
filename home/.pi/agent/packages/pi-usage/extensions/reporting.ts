@@ -34,6 +34,16 @@ export function renderReport(filters: Filters): string {
   `).all(params);
   const daily = fillMissingDays(dailyRows, filters.range.startMs, Math.min(filters.range.endMs - 1, Date.now()));
 
+  const projects = db.prepare(`
+    SELECT COALESCE(project_id, cwd, 'unknown') AS project_id,
+      SUM(total_cost) AS total_cost,
+      SUM(total_tokens) AS total_tokens
+    FROM usage_events
+    WHERE ${where}
+    GROUP BY COALESCE(project_id, cwd, 'unknown')
+    ORDER BY total_cost DESC, total_tokens DESC
+  `).all(params);
+
   const totalCost = summary.reduce((sum: number, row: any) => sum + Number(row.total_cost ?? 0), 0);
   const totalTokens = summary.reduce((sum: number, row: any) => sum + Number(row.total_tokens ?? 0), 0);
   const titleBits = [`Usage: ${filters.range.label}`];
@@ -48,8 +58,11 @@ export function renderReport(filters: Filters): string {
     "",
     renderCoverageLine(daily),
     "",
-    "Daily cost",
-    barChart(daily, "total_cost", "day", { formatValue: formatCurrency }),
+    "Daily usage",
+    barChart(daily, "total_cost", "day", { formatValue: formatDailyUsage }),
+    "",
+    "By project",
+    renderProjectTable(projects),
   ].join("\n");
 }
 
@@ -61,7 +74,7 @@ export function exportCsv(filters: Filters, outputPath?: string, cwd = process.c
     SELECT timestamp_ms, day, provider, model, api,
       input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, total_tokens,
       input_cost, output_cost, cache_read_cost, cache_write_cost, total_cost,
-      cwd, session_file, session_entry_id, source
+      cwd, project_id, session_file, session_entry_id, source
     FROM usage_events
     WHERE ${where}
     ORDER BY timestamp_ms ASC
@@ -71,7 +84,7 @@ export function exportCsv(filters: Filters, outputPath?: string, cwd = process.c
     "timestamp", "day", "provider", "model", "api",
     "input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens", "total_tokens",
     "input_cost", "output_cost", "cache_read_cost", "cache_write_cost", "total_cost",
-    "cwd", "session_file", "session_entry_id", "source",
+    "cwd", "project_id", "session_file", "session_entry_id", "source",
   ];
   const csv = [headers.join(",")].concat(rows.map((row: any) => headers.map((header) => csvCell(valueForCsv(row, header))).join(","))).join("\n") + "\n";
   const finalPath = outputPath
@@ -97,6 +110,23 @@ function renderSummaryTable(rows: any[]): string {
   const widths = headers.map((header, index) => Math.max(header.length, ...tableRows.map((row) => row[index].length)));
   const formatRow = (row: string[]) => row.map((cell, index) => cell.padEnd(widths[index])).join("  ").trimEnd();
   return [formatRow(headers), formatRow(widths.map((w) => "─".repeat(w))), ...tableRows.map(formatRow)].join("\n");
+}
+
+function renderProjectTable(rows: any[]): string {
+  if (rows.length === 0) return "No usage recorded for this range.";
+  const tableRows = rows.map((row) => [
+    String(row.project_id ?? "unknown"),
+    formatTokens(row.total_tokens),
+    formatCurrency(row.total_cost),
+  ]);
+  const headers = ["Project", "Tokens", "Cost"];
+  const widths = headers.map((header, index) => Math.max(header.length, ...tableRows.map((row) => row[index].length)));
+  const formatRow = (row: string[]) => row.map((cell, index) => cell.padEnd(widths[index])).join("  ").trimEnd();
+  return [formatRow(headers), formatRow(widths.map((w) => "─".repeat(w))), ...tableRows.map(formatRow)].join("\n");
+}
+
+function formatDailyUsage(value: unknown, row: Record<string, unknown>): string {
+  return `${formatCurrency(value)}  ${formatTokens(row.total_tokens)} tokens`;
 }
 
 function renderCoverageLine(rows: any[]): string {
