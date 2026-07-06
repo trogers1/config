@@ -6,7 +6,8 @@
       "name": "OpenAI",
       "provider": "openai-codex",
       "period": "week",
-      "tokens": 1400000
+      "tokens": 1400000,
+      "shouldAlwaysDisplay": true
     },
     {
       "name": "Moonshot",

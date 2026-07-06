@@ -9,16 +9,17 @@
       "cost": 10
     },
     {
-      "name": "OpenAI Codex Tokens",
+      "name": "Codex Tokens",
       "provider": "openai-codex",
       "period": "day",
       "tokens": 130000
     },
     {
-      "name": "OpenAI Codex Cost",
+      "name": "Codex Cost",
       "provider": "openai-codex",
       "period": "day",
-      "cost": 50
+      "cost": 50,
+      "shouldAlwaysDisplay": true
     }
   ]
 }

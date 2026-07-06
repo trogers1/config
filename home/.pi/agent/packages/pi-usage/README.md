@@ -53,7 +53,8 @@ Example:
       "name": "OpenAI",
       "provider": "openai-codex",
       "period": "week",
-      "tokens": 1400000
+      "tokens": 1400000,
+      "shouldAlwaysDisplay": true
     },
     {
       "name": "Moonshot",
@@ -99,6 +100,7 @@ OpenAI: 89% (~1.2M/1.4M) | Moonshot: 15% (~30K/1M) | Anthropic Cost: 42% (~$21.0
 | `startDate` | string | no | Optional anchor date as `YYYY-MM-DD`. Periods repeat from this date. |
 | `yellowAt` | number | no | Per-limit warning threshold override. |
 | `redAt` | number | no | Per-limit critical threshold override. |
+| `shouldAlwaysDisplay` | boolean | no | If `true`, show this limit in the status footer even when it is below `yellowAt`. `/usage` always shows every configured limit regardless. |
 
 Each limit should specify either `tokens` or `cost`. If both are specified, `tokens` wins.
 
@@ -117,6 +119,8 @@ Colors are applied with ANSI escape codes:
 - below `yellowAt`: no color
 - at or above `yellowAt`: yellow
 - at or above `redAt`: red
+
+The status footer only shows limits at or above `yellowAt`, unless that limit has `"shouldAlwaysDisplay": true`. `/usage` output always includes all configured limits.
 
 Thresholds are fractions, not percentages:
 

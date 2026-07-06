@@ -12,6 +12,7 @@ export type UsageLimit = {
   cost?: number;
   yellowAt?: number;
   redAt?: number;
+  shouldAlwaysDisplay?: boolean;
 };
 
 type LimitsConfig = {
@@ -27,6 +28,7 @@ type LimitStatus = {
   kind: "tokens" | "cost";
   percent: number;
   color: "none" | "yellow" | "red";
+  shouldAlwaysDisplay: boolean;
 };
 
 const DEFAULT_FG = "\x1b[39m";
@@ -41,7 +43,7 @@ export function renderLimitsReport(now = Date.now(), resetColor = DEFAULT_FG): s
 }
 
 export function renderLimitsStatus(now = Date.now(), resetColor = DEFAULT_FG): string | undefined {
-  const statuses = limitStatuses(now).filter((status) => status.color !== "none");
+  const statuses = limitStatuses(now).filter((status) => status.color !== "none" || status.shouldAlwaysDisplay);
   if (statuses.length === 0) return undefined;
 
   return `limits: ${statuses.map((status) => formatLimitStatus(status, resetColor)).join(" | ")}`;
@@ -102,6 +104,7 @@ function limitStatus(limit: UsageLimit, config: LimitsConfig, now: number): Limi
     kind,
     percent,
     color,
+    shouldAlwaysDisplay: limit.shouldAlwaysDisplay === true,
   };
 }
 
