@@ -189,6 +189,14 @@ if [ -d "$pi_skills" ]; then
   fi
 fi
 
+pi_usage="$HOME_DIR/.pi/agent/usage"
+if [ -d "$pi_usage" ]; then
+  mkdir -p "$HOME/.pi/agent"
+  if ! safe_link "$pi_usage" "$HOME/.pi/agent/usage" "pi usage config"; then
+    failed=1
+  fi
+fi
+
 if [ "$symlinked" -eq 0 ]; then
   echo "No config files found to symlink."
 fi

@@ -18,13 +18,21 @@ Tracks pi assistant token usage and cost in a local SQLite database and provides
 
 ## Storage
 
-Usage data is stored at:
+Usage data is runtime state and is stored at:
 
 ```text
-~/.pi/agent/usage/usage.sqlite
+~/.local/state/pi/agent/pi-usage/usage.sqlite
 ```
 
-Limit configuration is read from:
+If `XDG_STATE_HOME` is set, pi-usage uses:
+
+```text
+$XDG_STATE_HOME/pi/agent/pi-usage/usage.sqlite
+```
+
+SQLite may also create adjacent runtime files such as `usage.sqlite-wal` and `usage.sqlite-shm`.
+
+Limit configuration is user config and is read from:
 
 ```text
 ~/.pi/agent/usage/limits.json

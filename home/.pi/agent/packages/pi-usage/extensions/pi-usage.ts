@@ -7,9 +7,16 @@ import { parseUsageArgs, usageHelp } from "./args";
 import { importSessions } from "./importer";
 import { exportCsv, renderReport } from "./reporting";
 import { usageEventFromMessage } from "./importer";
+import { renderLimitsStatus } from "./limits";
+import { usageFooter } from "./footer";
 
 export default function piUsageExtension(pi: ExtensionAPI) {
   let liveInsertCount = 0;
+
+  pi.on("session_start", async (_event, ctx: ExtensionContext) => {
+    ctx.ui.setFooter(usageFooter(ctx));
+    updateLimitsStatus(ctx);
+  });
 
   pi.on("message_end", async (event: any, ctx: ExtensionContext) => {
     const message = event.message;
@@ -27,13 +34,16 @@ export default function piUsageExtension(pi: ExtensionAPI) {
       if (!usageEvent) return;
       const result = recordUsage(usageEvent);
       if (result === "inserted") liveInsertCount++;
+      updateLimitsStatus(ctx);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       ctx.ui.notify(`pi-usage failed to record usage: ${message}`, "error");
     }
   });
 
-  pi.on("session_shutdown", async () => {
+  pi.on("session_shutdown", async (_event, ctx: ExtensionContext) => {
+    ctx.ui.setStatus("usage-limits", undefined);
+    ctx.ui.setFooter(undefined);
     closeDb();
   });
 
@@ -118,6 +128,7 @@ export default function piUsageExtension(pi: ExtensionAPI) {
               ].join("\n"),
               summary.errors > 0 ? "warning" : "info",
             );
+            updateLimitsStatus(ctx);
           } finally {
             clearInterval(reminder);
           }
@@ -184,6 +195,14 @@ function usageSignature(usage: any): string {
     number(usage?.totalTokens),
     number(cost.total),
   ].join(":");
+}
+
+function updateLimitsStatus(ctx: ExtensionContext): void {
+  try {
+    ctx.ui.setStatus("usage-limits", renderLimitsStatus());
+  } catch {
+    ctx.ui.setStatus("usage-limits", undefined);
+  }
 }
 
 function number(value: unknown): number {

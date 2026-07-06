@@ -1,0 +1,24 @@
+{
+  "yellowAt": 0.5,
+  "redAt": 0.8,
+  "limits": [
+    {
+      "name": "OpenAI Cost",
+      "provider": "openai",
+      "period": "day",
+      "cost": 10
+    },
+    {
+      "name": "OpenAI Codex Tokens",
+      "provider": "openai-codex",
+      "period": "day",
+      "tokens": 130000
+    },
+    {
+      "name": "OpenAI Codex Cost",
+      "provider": "openai-codex",
+      "period": "day",
+      "cost": 50
+    }
+  ]
+}

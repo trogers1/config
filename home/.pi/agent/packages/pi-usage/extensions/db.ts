@@ -40,7 +40,11 @@ export function getAgentDir(): string {
 }
 
 export function getDbPath(): string {
-  return path.join(getAgentDir(), "usage", "usage.sqlite");
+  return path.join(getStateHome(), "pi", "agent", "pi-usage", "usage.sqlite");
+}
+
+function getStateHome(): string {
+  return process.env.XDG_STATE_HOME || path.join(process.env.HOME ?? process.cwd(), ".local", "state");
 }
 
 export function getDb(): any {

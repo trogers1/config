@@ -34,18 +34,27 @@ const YELLOW = "\x1b[33m";
 const RED = "\x1b[31m";
 
 export function renderLimitsReport(now = Date.now()): string | undefined {
-  const config = readLimitsConfig();
-  const limits = config?.limits?.filter(isValidLimit) ?? [];
-  if (limits.length === 0) return undefined;
-
-  const statuses = limits.map((limit) => limitStatus(limit, config, now));
+  const statuses = limitStatuses(now);
   if (statuses.length === 0) return undefined;
 
   return `Limits:\n${statuses.map(formatLimitStatus).join(" | ")}`;
 }
 
+export function renderLimitsStatus(now = Date.now()): string | undefined {
+  const statuses = limitStatuses(now);
+  if (statuses.length === 0) return undefined;
+
+  return `limits: ${statuses.map(formatLimitStatus).join(" | ")}`;
+}
+
 export function getLimitsPath(): string {
   return path.join(getAgentDir(), "usage", "limits.json");
+}
+
+function limitStatuses(now: number): LimitStatus[] {
+  const config = readLimitsConfig();
+  const limits = config?.limits?.filter(isValidLimit) ?? [];
+  return limits.map((limit) => limitStatus(limit, config ?? {}, now));
 }
 
 function readLimitsConfig(): LimitsConfig | undefined {
