@@ -3,6 +3,7 @@ import path from "node:path";
 import { getDb } from "./db";
 import type { Range } from "./args";
 import { barChart, formatCurrency, formatTokens } from "./charts";
+import { renderLimitsReport } from "./limits";
 
 export type Filters = { range: Range; provider?: string; model?: string };
 
@@ -50,9 +51,13 @@ export function renderReport(filters: Filters): string {
   if (filters.provider) titleBits.push(`provider ${filters.provider}`);
   if (filters.model) titleBits.push(`model ${filters.model}`);
 
-  return [
+  const sections = [
     titleBits.join(" — "),
     `Total: ${formatTokens(totalTokens)} tokens, ${formatCurrency(totalCost)}`,
+  ];
+  const limitsReport = renderLimitsReport();
+  if (limitsReport) sections.push("", limitsReport);
+  sections.push(
     "",
     renderSummaryTable(summary),
     "",
@@ -63,7 +68,8 @@ export function renderReport(filters: Filters): string {
     "",
     "By project",
     renderProjectTable(projects),
-  ].join("\n");
+  );
+  return sections.join("\n");
 }
 
 export function exportCsv(filters: Filters, outputPath?: string, cwd = process.cwd()): string {
