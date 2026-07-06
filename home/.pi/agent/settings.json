@@ -8,6 +8,6 @@
     "./packages/pi-webfetch",
     "./packages/pi-usage"
   ],
-  "lastChangelogVersion": "0.79.4",
+  "lastChangelogVersion": "0.80.3",
   "theme": "dark"
 }

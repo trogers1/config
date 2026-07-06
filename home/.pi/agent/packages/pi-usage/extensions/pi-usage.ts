@@ -1,4 +1,7 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type {
+  ExtensionAPI,
+  ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 import { closeDb, getDbPath, recordUsage } from "./db";
 import { parseUsageArgs, usageHelp } from "./args";
 import { importSessions } from "./importer";
@@ -35,43 +38,107 @@ export default function piUsageExtension(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("usage", {
-    description: "Show token usage and cost reports, import history, or export CSV",
+    description:
+      "Show token usage and cost reports, import history, or export CSV",
     getArgumentCompletions: (prefix: string) => {
-      const values = ["today", "week", "month", "7d", "30d", "1 month", "since ", "provider ", "model ", "import", "export "];
-      return values.filter((value) => value.startsWith(prefix)).map((value) => ({ value, label: value.trim() }));
+      const values = [
+        "today",
+        "week",
+        "month",
+        "7d",
+        "30d",
+        "1 month",
+        "since ",
+        "provider ",
+        "model ",
+        "import",
+        "export ",
+      ];
+      return values
+        .filter((value) => value.startsWith(prefix))
+        .map((value) => ({ value, label: value.trim() }));
     },
     handler: async (args: string, ctx: any) => {
       let command;
       try {
         command = parseUsageArgs(args);
       } catch (error) {
-        ctx.ui.notify(error instanceof Error ? error.message : usageHelp, "error");
+        ctx.ui.notify(
+          error instanceof Error ? error.message : usageHelp,
+          "error",
+        );
         return;
       }
 
       try {
         if (command.kind === "import") {
-          const summary = await importSessions();
-          ctx.ui.notify([
-            "Usage import complete",
-            `Files scanned: ${summary.filesScanned}`,
-            `Assistant usage events found: ${summary.eventsFound}`,
-            `Inserted: ${summary.inserted}`,
-            `Already present: ${summary.alreadyPresent}`,
-            `Errors: ${summary.errors}`,
-            `DB: ${getDbPath()}`,
-          ].join("\n"), summary.errors > 0 ? "warning" : "info");
+          let latestProgress =
+            "Finding session files... Do not close this window.";
+          const notifyProgress = () => ctx.ui.notify(latestProgress, "info");
+          notifyProgress();
+          const reminder = setInterval(notifyProgress, 5000);
+
+          try {
+            let lastProgressNotifyMs = 0;
+            let lastNotifiedFilesScanned = -1;
+            const summary = await importSessions(undefined, (progress) => {
+              const lines = [
+                "Importing usage history... Do not close this window.",
+                `Files scanned: ${progress.filesScanned}/${progress.totalFiles}`,
+                `Assistant usage events found: ${progress.eventsFound}`,
+                `Inserted: ${progress.inserted}`,
+                `Already present: ${progress.alreadyPresent}`,
+                `Errors: ${progress.errors}`,
+              ];
+              if (progress.currentFile) {
+                lines.push(`Current file: ${basename(progress.currentFile)}`);
+              }
+              latestProgress = lines.join("\n");
+
+              const now = Date.now();
+              const shouldNotify =
+                lastProgressNotifyMs === 0 ||
+                progress.filesScanned !== lastNotifiedFilesScanned ||
+                now - lastProgressNotifyMs >= 5000;
+              if (shouldNotify) {
+                lastProgressNotifyMs = now;
+                lastNotifiedFilesScanned = progress.filesScanned;
+                notifyProgress();
+              }
+            });
+            ctx.ui.notify(
+              [
+                "Usage import complete",
+                `Files scanned: ${summary.filesScanned}`,
+                `Assistant usage events found: ${summary.eventsFound}`,
+                `Inserted: ${summary.inserted}`,
+                `Already present: ${summary.alreadyPresent}`,
+                `Errors: ${summary.errors}`,
+                `DB: ${getDbPath()}`,
+              ].join("\n"),
+              summary.errors > 0 ? "warning" : "info",
+            );
+          } finally {
+            clearInterval(reminder);
+          }
           return;
         }
 
         if (command.kind === "export") {
-          const outputPath = exportCsv(command, command.path, ctx.cwd ?? process.cwd());
+          const outputPath = exportCsv(
+            command,
+            command.path,
+            ctx.cwd ?? process.cwd(),
+          );
           ctx.ui.notify(`Usage CSV exported: ${outputPath}`, "info");
           return;
         }
 
         const report = renderReport(command);
-        const footer = liveInsertCount > 0 ? `\n\nLive events recorded this runtime: ${liveInsertCount}` : "";
+        const footer =
+          liveInsertCount > 0
+            ? `\n\nLive events recorded this runtime: ${liveInsertCount}`
+            : "";
         ctx.ui.notify(`${report}${footer}\n\nDB: ${getDbPath()}`, "info");
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -81,7 +148,10 @@ export default function piUsageExtension(pi: ExtensionAPI) {
   });
 }
 
-function findEntryIdForMessage(ctx: ExtensionContext, message: any): string | undefined {
+function findEntryIdForMessage(
+  ctx: ExtensionContext,
+  message: any,
+): string | undefined {
   const entries = ctx.sessionManager.getEntries?.() ?? [];
   for (let i = entries.length - 1; i >= 0; i--) {
     const entry = entries[i] as any;
@@ -122,4 +192,8 @@ function number(value: unknown): number {
 
 function string(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function basename(file: string): string {
+  return file.split(/[\\/]/).pop() || file;
 }

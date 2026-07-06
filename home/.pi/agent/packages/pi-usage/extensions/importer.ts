@@ -11,7 +11,16 @@ export type ImportSummary = {
   errors: number;
 };
 
-export async function importSessions(sessionRoot = path.join(getAgentDir(), "sessions")): Promise<ImportSummary> {
+export type ImportProgress = ImportSummary & {
+  totalFiles: number;
+  currentFile?: string;
+  currentFileLines?: number;
+};
+
+export async function importSessions(
+  sessionRoot = path.join(getAgentDir(), "sessions"),
+  onProgress?: (progress: ImportProgress) => void,
+): Promise<ImportSummary> {
   const summary: ImportSummary = {
     filesScanned: 0,
     eventsFound: 0,
@@ -22,26 +31,38 @@ export async function importSessions(sessionRoot = path.join(getAgentDir(), "ses
 
   if (!fs.existsSync(sessionRoot)) return summary;
 
-  for (const file of walkJsonl(sessionRoot)) {
+  const files = Array.from(walkJsonl(sessionRoot));
+  const emitProgress = (currentFile?: string, currentFileLines?: number) => {
+    onProgress?.({ ...summary, totalFiles: files.length, currentFile, currentFileLines });
+  };
+  emitProgress();
+
+  for (const file of files) {
+    emitProgress(file, 0);
+    await importFile(file, summary, (currentFileLines) => emitProgress(file, currentFileLines));
     summary.filesScanned++;
-    await importFile(file, summary);
+    emitProgress(file);
   }
 
   return summary;
 }
 
-async function importFile(file: string, summary: ImportSummary): Promise<void> {
+async function importFile(file: string, summary: ImportSummary, onProgress?: (currentFileLines: number) => void): Promise<void> {
   const stream = fs.createReadStream(file, { encoding: "utf8" });
   const lines = readline.createInterface({ input: stream, crlfDelay: Infinity });
   let headerCwd: string | undefined;
+  let lineCount = 0;
 
   for await (const line of lines) {
+    lineCount++;
+    if (lineCount % 500 === 0) onProgress?.(lineCount);
     if (!line.trim()) continue;
     let entry: any;
     try {
       entry = JSON.parse(line);
     } catch {
       summary.errors++;
+      onProgress?.(lineCount);
       continue;
     }
 
@@ -57,10 +78,13 @@ async function importFile(file: string, summary: ImportSummary): Promise<void> {
       const result = recordUsage(event);
       if (result === "inserted") summary.inserted++;
       else summary.alreadyPresent++;
+      onProgress?.(lineCount);
     } catch {
       summary.errors++;
+      onProgress?.(lineCount);
     }
   }
+  onProgress?.(lineCount);
 }
 
 export function usageEventFromEntry(entry: any, sessionFile: string, cwd?: string): UsageEvent | undefined {
