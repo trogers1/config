@@ -8,13 +8,11 @@ import { importSessions } from "./importer";
 import { exportCsv, renderReport } from "./reporting";
 import { usageEventFromMessage } from "./importer";
 import { renderLimitsStatus } from "./limits";
-import { usageFooter } from "./footer";
 
 export default function piUsageExtension(pi: ExtensionAPI) {
   let liveInsertCount = 0;
 
   pi.on("session_start", async (_event, ctx: ExtensionContext) => {
-    ctx.ui.setFooter(usageFooter(ctx));
     updateLimitsStatus(ctx);
   });
 
@@ -43,7 +41,6 @@ export default function piUsageExtension(pi: ExtensionAPI) {
 
   pi.on("session_shutdown", async (_event, ctx: ExtensionContext) => {
     ctx.ui.setStatus("usage-limits", undefined);
-    ctx.ui.setFooter(undefined);
     closeDb();
   });
 
