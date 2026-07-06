@@ -145,7 +145,7 @@ export default function piUsageExtension(pi: ExtensionAPI) {
           return;
         }
 
-        const report = renderReport(command);
+        const report = renderReport(command, { limitResetColor: themeFgStart(ctx.ui?.theme, "dim") });
         const footer =
           liveInsertCount > 0
             ? `\n\nLive events recorded this runtime: ${liveInsertCount}`
@@ -199,9 +199,21 @@ function usageSignature(usage: any): string {
 
 function updateLimitsStatus(ctx: ExtensionContext): void {
   try {
-    ctx.ui.setStatus("usage-limits", renderLimitsStatus());
+    ctx.ui.setStatus("usage-limits", renderLimitsStatus(Date.now(), themeFgStart(ctx.ui?.theme, "dim")));
   } catch {
     ctx.ui.setStatus("usage-limits", undefined);
+  }
+}
+
+function themeFgStart(theme: any, color: string): string {
+  const marker = "__pi_usage_marker__";
+  if (!theme?.fg) return "\x1b[39m";
+  try {
+    const text = String(theme.fg(color, marker));
+    const index = text.indexOf(marker);
+    return index >= 0 ? text.slice(0, index) : "\x1b[39m";
+  } catch {
+    return "\x1b[39m";
   }
 }
 

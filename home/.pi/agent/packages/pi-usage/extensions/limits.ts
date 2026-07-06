@@ -29,22 +29,22 @@ type LimitStatus = {
   color: "none" | "yellow" | "red";
 };
 
-const RESET = "\x1b[0m";
+const DEFAULT_FG = "\x1b[39m";
 const YELLOW = "\x1b[33m";
 const RED = "\x1b[31m";
 
-export function renderLimitsReport(now = Date.now()): string | undefined {
+export function renderLimitsReport(now = Date.now(), resetColor = DEFAULT_FG): string | undefined {
   const statuses = limitStatuses(now);
   if (statuses.length === 0) return undefined;
 
-  return `Limits:\n${statuses.map(formatLimitStatus).join(" | ")}`;
+  return `Limits:\n${statuses.map((status) => formatLimitStatus(status, resetColor)).join(" | ")}`;
 }
 
-export function renderLimitsStatus(now = Date.now()): string | undefined {
-  const statuses = limitStatuses(now);
+export function renderLimitsStatus(now = Date.now(), resetColor = DEFAULT_FG): string | undefined {
+  const statuses = limitStatuses(now).filter((status) => status.color !== "none");
   if (statuses.length === 0) return undefined;
 
-  return `limits: ${statuses.map(formatLimitStatus).join(" | ")}`;
+  return `limits: ${statuses.map((status) => formatLimitStatus(status, resetColor)).join(" | ")}`;
 }
 
 export function getLimitsPath(): string {
@@ -147,13 +147,13 @@ function parseLocalDate(dateText: string): number | undefined {
   return Number.isFinite(value) ? value : undefined;
 }
 
-function formatLimitStatus(status: LimitStatus): string {
+function formatLimitStatus(status: LimitStatus, resetColor: string): string {
   const percent = `${Math.round(status.percent * 100)}%`;
   const used = status.kind === "tokens" ? formatTokens(status.used) : formatCurrency(status.used);
   const max = status.kind === "tokens" ? formatTokens(status.limit) : formatCurrency(status.limit);
   const text = `${status.label}: ${percent} (~${used}/${max})`;
-  if (status.color === "red") return `${RED}${text}${RESET}`;
-  if (status.color === "yellow") return `${YELLOW}${text}${RESET}`;
+  if (status.color === "red") return `${RED}${text}${resetColor}`;
+  if (status.color === "yellow") return `${YELLOW}${text}${resetColor}`;
   return text;
 }
 

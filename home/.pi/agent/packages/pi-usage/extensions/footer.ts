@@ -65,14 +65,14 @@ function renderStatusLines(statuses: Map<string, string>, theme: any, width: num
   const profile = statuses.get("permissions");
   const limits = statuses.get("usage-limits");
 
-  if (profile) lines.push(truncateToWidth(sanitizeStatusText(profile), width, theme.fg("dim", "...")));
-  if (limits) lines.push(truncateToWidth(sanitizeStatusText(limits), width, theme.fg("dim", "...")));
+  if (profile) lines.push(truncateToWidth(theme.fg("dim", sanitizeStatusText(profile)), width, theme.fg("dim", "...")));
+  if (limits) lines.push(truncateToWidth(theme.fg("dim", sanitizeStatusText(limits)), width, theme.fg("dim", "...")));
 
   const remaining = Array.from(statuses.entries())
     .filter(([key]) => key !== "permissions" && key !== "usage-limits")
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([, text]) => sanitizeStatusText(text));
-  if (remaining.length > 0) lines.push(truncateToWidth(remaining.join(" "), width, theme.fg("dim", "...")));
+  if (remaining.length > 0) lines.push(truncateToWidth(theme.fg("dim", remaining.join(" ")), width, theme.fg("dim", "...")));
 
   return lines;
 }

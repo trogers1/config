@@ -7,7 +7,7 @@ import { renderLimitsReport } from "./limits";
 
 export type Filters = { range: Range; provider?: string; model?: string };
 
-export function renderReport(filters: Filters): string {
+export function renderReport(filters: Filters, options: { limitResetColor?: string } = {}): string {
   const db = getDb();
   const params = queryParams(filters);
   const where = whereClause(filters);
@@ -55,7 +55,7 @@ export function renderReport(filters: Filters): string {
     titleBits.join(" — "),
     `Total: ${formatTokens(totalTokens)} tokens, ${formatCurrency(totalCost)}`,
   ];
-  const limitsReport = renderLimitsReport();
+  const limitsReport = renderLimitsReport(Date.now(), options.limitResetColor);
   if (limitsReport) sections.push("", limitsReport);
   sections.push(
     "",
