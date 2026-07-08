@@ -37,6 +37,13 @@
       },
     },
   },
+  "mcp": {
+    "lightcast": {
+      "type": "remote",
+      "enabled": true,
+      "url": "https://mcp.ai.api.lightcast.io/mcp",
+    },
+  },
   "permission": {
     "task": {
       // do not allow running subagents with edit permissions by default without user confirmation
