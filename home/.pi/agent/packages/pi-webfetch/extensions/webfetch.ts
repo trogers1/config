@@ -61,9 +61,29 @@ function restoreApprovedOrigins(ctx: ExtensionContext): Set<string> {
 
 export default function webfetchExtension(pi: ExtensionAPI) {
   let approvedOrigins = new Set<string>();
+  let approvalQueue: Promise<void> = Promise.resolve();
+
+  async function withApprovalLock<T>(fn: () => Promise<T>): Promise<T> {
+    const previous = approvalQueue;
+    let release: () => void = () => undefined;
+    approvalQueue = previous.then(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+
+    await previous;
+    try {
+      return await fn();
+    } finally {
+      release();
+    }
+  }
 
   pi.on("session_start", async (_event, ctx) => {
     approvedOrigins = restoreApprovedOrigins(ctx);
+    approvalQueue = Promise.resolve();
   });
 
   pi.registerTool(
@@ -97,32 +117,47 @@ export default function webfetchExtension(pi: ExtensionAPI) {
         const settleMs = clamp(params.settleMs, DEFAULT_SETTLE_MS, MAX_SETTLE_MS);
 
         if (!approvedOrigins.has(url.origin)) {
-          if (!ctx.hasUI) {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: `webfetch requires interactive approval before first access to ${url.origin}. Re-run this in interactive Pi and approve the origin.`,
-                },
-              ],
-              details: { url: url.toString(), origin: url.origin, approved: false },
-            };
-          }
+          const approvalResult = await withApprovalLock(async () => {
+            // Another parallel webfetch may have obtained approval while this
+            // call was waiting for the UI prompt lock.
+            if (approvedOrigins.has(url.origin)) return undefined;
 
-          const approved = await ctx.ui.confirm(
-            "Allow webfetch origin?",
-            `Allow the webfetch tool to access:\n${url.origin}\n\nRequested URL:\n${url.toString()}\n\nThis approval is remembered for the current session.`,
-          );
+            if (!ctx.hasUI) {
+              return {
+                content: [
+                  {
+                    type: "text" as const,
+                    text: `webfetch requires interactive approval before first access to ${url.origin}. Re-run this in interactive Pi and approve the origin.`,
+                  },
+                ],
+                details: { url: url.toString(), origin: url.origin, approved: false },
+              };
+            }
 
-          if (!approved) {
-            return {
-              content: [{ type: "text", text: `webfetch was not approved for origin: ${url.origin}` }],
-              details: { url: url.toString(), origin: url.origin, approved: false },
-            };
-          }
+            const setWorkingVisible = ctx.ui.setWorkingVisible?.bind(ctx.ui);
+            setWorkingVisible?.(false);
+            try {
+              const approved = await ctx.ui.confirm(
+                "Allow webfetch origin?",
+                `Allow the webfetch tool to access:\n${url.origin}\n\nRequested URL:\n${url.toString()}\n\nThis approval is remembered for the current session.`,
+              );
 
-          approvedOrigins.add(url.origin);
-          pi.appendEntry(APPROVED_ORIGIN_ENTRY, { origin: url.origin });
+              if (!approved) {
+                return {
+                  content: [{ type: "text" as const, text: `webfetch was not approved for origin: ${url.origin}` }],
+                  details: { url: url.toString(), origin: url.origin, approved: false },
+                };
+              }
+
+              approvedOrigins.add(url.origin);
+              pi.appendEntry(APPROVED_ORIGIN_ENTRY, { origin: url.origin });
+              return undefined;
+            } finally {
+              setWorkingVisible?.(true);
+            }
+          });
+
+          if (approvalResult) return approvalResult;
         }
 
         let browser;
