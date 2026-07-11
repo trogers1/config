@@ -168,6 +168,14 @@ if [ -f "$pi_settings" ]; then
   fi
 fi
 
+pi_models="$HOME_DIR/.pi/agent/models.json"
+if [ -f "$pi_models" ]; then
+  mkdir -p "$HOME/.pi/agent"
+  if ! safe_link "$pi_models" "$HOME/.pi/agent/models.json" "pi models"; then
+    failed=1
+  fi
+fi
+
 pi_packages_dir="$HOME_DIR/.pi/agent/packages"
 if [ -d "$pi_packages_dir" ]; then
   mkdir -p "$HOME/.pi/agent/packages"
