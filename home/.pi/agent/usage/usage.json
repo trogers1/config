@@ -1,24 +1,36 @@
 {
   "yellowAt": 0.5,
   "redAt": 0.8,
+  "rateCards": {},
   "limits": [
     {
       "name": "OpenAI Cost",
       "provider": "openai",
+      "meter": "cost",
       "period": "day",
-      "cost": 10
+      "maximum": 10
     },
     {
       "name": "Codex Tokens",
       "provider": "openai-codex",
+      "meter": "tokens",
       "period": "day",
-      "tokens": 130000
+      "maximum": 130000
     },
     {
       "name": "Codex Cost",
       "provider": "openai-codex",
+      "meter": "cost",
       "period": "day",
-      "cost": 50,
+      "maximum": 50,
+      "shouldAlwaysDisplay": true
+    },
+    {
+      "name": "ZAI Cost",
+      "provider": "zai",
+      "meter": "cost",
+      "period": "month",
+      "maximum": 5,
       "shouldAlwaysDisplay": true
     }
   ]
