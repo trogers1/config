@@ -6,7 +6,7 @@
 		"experimentalDecorators": true,
 		"emitDecoratorMetadata": true,
 		"outDir": "./dist",
-		"rootDir": "./extensions",
+		"rootDir": ".",
 		"strict": true,
 		"isolatedModules": true,
 		"esModuleInterop": true,
@@ -19,6 +19,6 @@
 		"resolveJsonModule": true,
 		"types": ["node", "vitest/globals"]
 	},
-	"include": ["extensions/**/*"],
+	"include": ["extensions/**/*", "tests/**/*"],
 	"exclude": ["node_modules", "dist"]
 }

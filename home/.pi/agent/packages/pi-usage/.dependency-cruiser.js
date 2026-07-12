@@ -175,6 +175,8 @@ module.exports = {
 			from: {},
 			to: {
 				dependencyTypes: ['npm-peer'],
+				// Pi supplies TypeBox to extensions; it intentionally remains a peer dependency.
+				pathNot: ['node_modules/typebox/'],
 			},
 		},
 	],
