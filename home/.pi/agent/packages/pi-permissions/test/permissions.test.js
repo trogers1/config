@@ -175,6 +175,58 @@ test("denied bash result includes raw command and parsed command preview", async
   assert.match(result.reason, /\x1b\[31mdeny\x1b\[0m/);
 });
 
+test("explicit deny automatically returns policy guidance and alternatives", async () => {
+  const steeringPolicy = {
+    ...policy,
+    tools: {
+      ...policy.tools,
+      bash: [
+        ...policy.tools.bash,
+        {
+          pattern: "npx vitest *",
+          decision: "deny",
+          guidance: "Use the repository test script instead of invoking Vitest through npx.",
+          alternatives: ["npm test -- <requested test filters>", "npm test"],
+        },
+      ],
+    },
+  };
+
+  const result = await permissions.gateBash(
+    "npx vitest src/example.test.ts",
+    process.cwd(),
+    ctx(),
+    steeringPolicy,
+  );
+
+  assert.equal(result.block, true);
+  assert.match(result.reason, /Policy guidance:\nUse the repository test script/);
+  assert.match(result.reason, /Suggested alternatives:\n- npm test -- <requested test filters>\n- npm test/);
+});
+
+test("only the latest matching rule supplies automatic steering", async () => {
+  const steeringPolicy = {
+    ...policy,
+    tools: {
+      ...policy.tools,
+      bash: [
+        { pattern: "*", decision: "deny", guidance: "Generic guidance." },
+        { pattern: "npx prettier *", decision: "deny", guidance: "Use the edit tool instead." },
+      ],
+    },
+  };
+
+  const result = await permissions.gateBash(
+    "npx prettier --write src/example.ts",
+    process.cwd(),
+    ctx(),
+    steeringPolicy,
+  );
+
+  assert.match(result.reason, /Policy guidance:\nUse the edit tool instead\./);
+  assert.doesNotMatch(result.reason, /Generic guidance/);
+});
+
 test("bash confirmation shows raw command before parsed command preview", async () => {
   const messages = [];
   await permissions.gateBash("python scripts/build.py", process.cwd(), {

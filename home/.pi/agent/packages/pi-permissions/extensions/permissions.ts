@@ -20,6 +20,15 @@ type Approval = {
 export type Rule = {
   pattern: string;
   decision: Decision;
+  /** Instructions automatically returned to the model when this rule denies a call. */
+  guidance?: string;
+  /** Concrete alternatives automatically returned to the model when this rule denies a call. */
+  alternatives?: string[];
+};
+
+type PolicyDecision = {
+  decision: Decision;
+  rule?: Rule;
 };
 
 const ansi = {
@@ -257,21 +266,24 @@ export default function (pi: ExtensionAPI) {
       ctx.cwd ?? startupCwd,
     );
     const matchPath = policyMatchPath(absolutePath, startupCwd);
-    const decision = decideByPattern(
+    const policyDecision = evaluateByPattern(
       matchPath,
       rules,
       "allow",
       matchesGlobPattern,
     );
 
-    if (decision === "deny") {
+    if (policyDecision.decision === "deny") {
       return {
         block: true,
-        reason: `${event.toolName} denied by policy for path: ${displayPath(absolutePath, startupCwd)}`,
+        reason: appendPolicySteering(
+          `${event.toolName} denied by policy for path: ${displayPath(absolutePath, startupCwd)}`,
+          [policyDecision.rule],
+        ),
       };
     }
 
-    if (decision === "ask") {
+    if (policyDecision.decision === "ask") {
       const approval = await confirmOrBlock(
         ctx,
         `Allow ${event.toolName}?`,
@@ -302,13 +314,18 @@ export async function gateBash(
     .filter(Boolean);
   const decisions =
     commands.length > 0
-      ? commands.map((cmd) => decideBash(cmd, activePolicy))
-      : [decideBash("", activePolicy)];
+      ? commands.map((cmd) => evaluateBash(cmd, activePolicy))
+      : [evaluateBash("", activePolicy)];
 
-  if (decisions.includes("deny")) {
+  if (decisions.some(({ decision }) => decision === "deny")) {
     return {
       block: true,
-      reason: `Command denied by explicit rule.\n\nRaw command:\n${command}\n\nParsed command segments:\n${formatParsedCommands(command, activePolicy)}`,
+      reason: appendPolicySteering(
+        `Command denied by explicit rule.\n\nRaw command:\n${command}\n\nParsed command segments:\n${formatParsedCommands(command, activePolicy)}`,
+        decisions
+          .filter(({ decision }) => decision === "deny")
+          .map(({ rule }) => rule),
+      ),
     };
   }
 
@@ -321,7 +338,10 @@ export async function gateBash(
   if (pathDecision?.decision === "deny") {
     return {
       block: true,
-      reason: `Bash path reference denied by policy.\n\nRaw command:\n${command}\n\nParsed command segments:\n${formatParsedCommands(command, activePolicy)}\n\nPath:\n${pathDecision.path}\n\nMatched policy path:\n${pathDecision.matchPath}`,
+      reason: appendPolicySteering(
+        `Bash path reference denied by policy.\n\nRaw command:\n${command}\n\nParsed command segments:\n${formatParsedCommands(command, activePolicy)}\n\nPath:\n${pathDecision.path}\n\nMatched policy path:\n${pathDecision.matchPath}`,
+        [pathDecision.rule],
+      ),
     };
   }
   if (pathDecision?.decision === "ask") {
@@ -340,7 +360,7 @@ export async function gateBash(
       };
   }
 
-  if (decisions.includes("ask")) {
+  if (decisions.some(({ decision }) => decision === "ask")) {
     const approval = await confirmOrBlock(
       ctx,
       "Allow bash command?",
@@ -363,7 +383,14 @@ export function decideBash(
   command: string,
   activePolicy = defaultPolicy,
 ): Decision {
-  return decideByPattern(
+  return evaluateBash(command, activePolicy).decision;
+}
+
+function evaluateBash(
+  command: string,
+  activePolicy: ProfilePolicy,
+): PolicyDecision {
+  return evaluateByPattern(
     command,
     activePolicy.tools.bash ?? [],
     "ask",
@@ -578,17 +605,20 @@ export function matchesGlobPattern(pattern: string, value: string): boolean {
   return regex.test(normalizedValue);
 }
 
-function decideByPattern(
+function evaluateByPattern(
   value: string,
   rules: Rule[],
   defaultDecision: Decision,
   matches: (pattern: string, value: string) => boolean,
-): Decision {
-  let decision: Decision = defaultDecision;
+): PolicyDecision {
+  let matchedRule: Rule | undefined;
   for (const rule of rules) {
-    if (matches(rule.pattern, value)) decision = rule.decision;
+    if (matches(rule.pattern, value)) matchedRule = rule;
   }
-  return decision;
+  return {
+    decision: matchedRule?.decision ?? defaultDecision,
+    rule: matchedRule,
+  };
 }
 
 function decideBashPathReferences(
@@ -596,21 +626,21 @@ function decideBashPathReferences(
   startupCwd: string,
   cwd: string,
   activePolicy: ProfilePolicy,
-): { decision: Decision; path: string; matchPath: string } | undefined {
+): (PolicyDecision & { path: string; matchPath: string }) | undefined {
   let simulatedCwd = cwd;
   for (const segment of commandSegments) {
     for (const token of shellishTokens(segment)) {
       if (!looksLikePath(token)) continue;
       const absolutePath = resolveRequestedPath(token, simulatedCwd);
       const matchPath = policyMatchPath(absolutePath, startupCwd);
-      const decision = decideByPattern(
+      const policyDecision = evaluateByPattern(
         matchPath,
         activePolicy.bashPathReferences,
         "allow",
         matchesGlobPattern,
       );
-      if (decision !== "allow")
-        return { decision, path: absolutePath, matchPath };
+      if (policyDecision.decision !== "allow")
+        return { ...policyDecision, path: absolutePath, matchPath };
     }
 
     const cdTarget = extractCdTarget(segment);
@@ -898,6 +928,38 @@ function appendUserGuidance(
 ): string {
   if (!guidance) return reason;
   return `${reason}\n\nUser steering after denial:\n${guidance}`;
+}
+
+function appendPolicySteering(
+  reason: string,
+  rules: Array<Rule | undefined>,
+): string {
+  const guidance = uniqueNonEmpty(rules.map((rule) => rule?.guidance));
+  const alternatives = uniqueNonEmpty(
+    rules.flatMap((rule) => rule?.alternatives ?? []),
+  );
+  if (guidance.length === 0 && alternatives.length === 0) return reason;
+
+  const sections = [reason];
+  if (guidance.length > 0) {
+    sections.push(`Policy guidance:\n${guidance.join("\n")}`);
+  }
+  if (alternatives.length > 0) {
+    sections.push(
+      `Suggested alternatives:\n${alternatives.map((value) => `- ${value}`).join("\n")}`,
+    );
+  }
+  return sections.join("\n\n");
+}
+
+function uniqueNonEmpty(values: Array<string | undefined>): string[] {
+  return [
+    ...new Set(
+      values
+        .map((value) => value?.trim())
+        .filter((value): value is string => Boolean(value)),
+    ),
+  ];
 }
 
 function shellishTokens(command: string): string[] {

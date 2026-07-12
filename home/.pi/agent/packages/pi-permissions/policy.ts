@@ -58,8 +58,34 @@ const baseProfile: ProfilePolicy = {
       { pattern: "pwd", decision: "allow" },
       { pattern: "cd", decision: "allow" },
       { pattern: "grep *", decision: "allow" },
-      { pattern: "npx vitest", decision: "allow" },
-      { pattern: "npx vitest *", decision: "allow" },
+      {
+        pattern: "npx prettier",
+        decision: "deny",
+        guidance:
+          "Do not invoke Prettier through npx. Use the repository's configured formatter or make targeted edits with Pi's edit tool.",
+        alternatives: ["npm run format", "Use the edit tool for targeted changes"],
+      },
+      {
+        pattern: "npx prettier *",
+        decision: "deny",
+        guidance:
+          "Do not invoke Prettier through npx. Use the repository's configured formatter or make targeted edits with Pi's edit tool.",
+        alternatives: ["npm run format", "Use the edit tool for targeted changes"],
+      },
+      {
+        pattern: "npx vitest",
+        decision: "deny",
+        guidance:
+          "Do not invoke Vitest through npx. Inspect package.json and use the repository's configured test script instead.",
+        alternatives: ["npm test", "npm test -- <requested test filters>"],
+      },
+      {
+        pattern: "npx vitest *",
+        decision: "deny",
+        guidance:
+          "Do not invoke Vitest through npx. Inspect package.json and use the repository's configured test script instead.",
+        alternatives: ["npm test -- <requested test filters>"],
+      },
       { pattern: "find *", decision: "allow" },
       { pattern: "sort *", decision: "allow" },
       { pattern: "sort", decision: "allow" },
@@ -249,8 +275,32 @@ export const policyConfig = definePolicyConfig({
           { pattern: "pwd", decision: "allow" },
           { pattern: "cd", decision: "allow" },
           { pattern: "grep *", decision: "allow" },
-          { pattern: "npx vitest", decision: "allow" },
-          { pattern: "npx vitest *", decision: "allow" },
+          {
+            pattern: "npx prettier",
+            decision: "deny",
+            guidance:
+              "Do not invoke Prettier through npx. Use the edit tool for targeted formatting changes.",
+            alternatives: ["Use the edit tool for targeted changes"],
+          },
+          {
+            pattern: "npx prettier *",
+            decision: "deny",
+            guidance:
+              "Do not invoke Prettier through npx. Use the edit tool for targeted formatting changes.",
+            alternatives: ["Use the edit tool for targeted changes"],
+          },
+          {
+            pattern: "npx vitest",
+            decision: "deny",
+            guidance:
+              "Do not run tests in the Socrates profile; continue by inspecting and reasoning about the code.",
+          },
+          {
+            pattern: "npx vitest *",
+            decision: "deny",
+            guidance:
+              "Do not run tests in the Socrates profile; continue by inspecting and reasoning about the code.",
+          },
           { pattern: "find *", decision: "allow" },
           { pattern: "sort *", decision: "allow" },
           { pattern: "sort", decision: "allow" },
