@@ -1,0 +1,6 @@
+{
+	"$schema": "https://unpkg.com/knip@latest/schema.json",
+	"entry": ["extensions/pi-usage.ts"],
+	"project": ["extensions/**/*.ts"],
+	"ignoreExportsUsedInFile": true,
+}

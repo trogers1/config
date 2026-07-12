@@ -1,22 +1,43 @@
 {
-  "name": "pi-usage",
-  "version": "0.1.0",
-  "private": true,
-  "keywords": [
-    "pi-package"
-  ],
-  "pi": {
-    "extensions": [
-      "./extensions/pi-usage.ts"
-    ]
-  },
-  "dependencies": {
-    "better-sqlite3": "latest"
-  },
-  "peerDependencies": {
-    "@earendil-works/pi-ai": "*",
-    "@earendil-works/pi-coding-agent": "*",
-    "@earendil-works/pi-tui": "*",
-    "typebox": "*"
-  }
+	"name": "pi-usage",
+	"version": "0.1.0",
+	"private": true,
+	"keywords": [
+		"pi-package"
+	],
+	"scripts": {
+		"pretest": "npm run check:types && npm run check:lint && npm run check:prettier && npm run check:deps && npm run check:knip",
+		"test": "vitest run",
+		"test:watch": "vitest",
+		"check:types": "tsc --noEmit",
+		"check:lint": "eslint .",
+		"check:prettier": "prettier --check .",
+		"check:deps": "depcruise --config .dependency-cruiser.js extensions",
+		"check:knip": "knip --config knip.jsonc",
+		"fix:prettier": "prettier --write ."
+	},
+	"pi": {
+		"extensions": [
+			"./extensions/pi-usage.ts"
+		]
+	},
+	"dependencies": {
+		"better-sqlite3": "latest",
+		"prettier": "^3.9.5"
+	},
+	"peerDependencies": {
+		"@earendil-works/pi-ai": "*",
+		"@earendil-works/pi-coding-agent": "*",
+		"@earendil-works/pi-tui": "*",
+		"typebox": "*"
+	},
+	"devDependencies": {
+		"@eslint/js": "^10.0.1",
+		"dependency-cruiser": "^18.0.0",
+		"eslint": "^10.7.0",
+		"knip": "^6.26.0",
+		"typescript": "^5.9.3",
+		"typescript-eslint": "^8.63.0",
+		"vitest": "^4.1.10"
+	}
 }
