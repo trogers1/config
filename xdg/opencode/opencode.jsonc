@@ -41,7 +41,7 @@
     "lightcast": {
       "type": "remote",
       "enabled": true,
-      "url": "https://mcp.ai.api.lightcast.io/mcp",
+      "url": "https://mcp.ai.api.lightcast.io",
     },
   },
   "permission": {
