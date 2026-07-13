@@ -24,7 +24,8 @@ Given an MR URL:
 - Group discussions that share a theme or reference each other into one cohesive resolution group when appropriate.
 - Make the smallest reasonable code/test/doc change for actionable discussions or resolution groups.
 - Run targeted verification for changed code.
-- Commit each complete, atomic fix separately with discussion links in the commit body.
+- Keep each resolution group coherent in the working tree; do not commit changes.
+- When the final changes warrant a new or materially revised commit message, write one suggested message for all resolved changes to `committ_msg.md`.
 - Append a `Robot` note to every discussion in `comments.md`, marking it `RESOLVED` or `UNRESOLVED` and explaining why.
 
 ## Rules
@@ -37,9 +38,9 @@ Given an MR URL:
 - Only use human comments where `system == false` when deciding what needs action.
 - Prefer the smallest correct code change.
 - If multiple comments point at the same underlying issue, share a theme, or reference each other by comment links, treat them as one resolution group.
-- For each resolution group, make one coherent fix and one commit covering all discussions in that group.
+- For each resolution group, make one coherent fix covering all discussions in that group.
 - Add one full canonical `Robot` note for the group, then add short `Robot` notes on the other grouped discussions that point back to the canonical note/discussion.
-- After each complete, atomic fix for a discussion section or resolution group, commit immediately — do not batch unrelated sections into one commit.
+- Do not commit while addressing discussions. Complete all feasible resolution groups in the working tree so Taylor can review the full diff and manually amend or create the single commit.
 - If a comment only asks for test structure, comments, naming, or assertion quality, keep the change narrow to that scope.
 - If a discussion is answerable without a code change, add a `RESOLVED` Robot note with the answer and do not commit anything for that discussion.
 - If a discussion cannot be reasonably resolved without product direction, missing context, failing verification, or unsafe assumptions, add an `UNRESOLVED` Robot note explaining exactly what is needed next.
@@ -106,7 +107,7 @@ For each discussion or resolution group:
 3. If actionable, make the smallest reasonable change that resolves the whole group.
 4. Prefer behavior assertions over implementation-detail assertions in tests when practical.
 5. Run targeted verification for changed code.
-6. If verification passes, commit the code/test/doc change before moving to unrelated work.
+6. If verification passes, continue to the next resolution group without committing.
 7. Append Robot notes:
    - On the primary discussion, add the full `Robot — RESOLVED` or `Robot — UNRESOLVED` note.
    - On other discussions in the group, add a short `Robot — RESOLVED` or `Robot — UNRESOLVED` note that references the primary discussion's Robot note.
@@ -121,9 +122,13 @@ Typical examples:
 - Add a concise explanatory comment for confusing but necessary logic.
 - Add a tiny helper like `sleep(ms)` if it removes repeated async boilerplate.
 
-## Commits
+## Proposed Commit Message
 
-One commit per complete, atomic discussion section (or per batched group of related sections). Commit only code/test/doc changes that resolve the review feedback; exclude `comments.md`. Keep the subject very short (about 50 characters). Put discussion links in the commit **body**, copied from the `Thread:` / `comment` links in `comments.md`.
+Do not commit changes. Taylor will review the complete working-tree diff and manually amend the existing commit or create a new one.
+
+Inspect the current commit message before drafting a replacement. Do not create or modify `committ_msg.md` merely because review fixes were made: when the existing message still accurately describes the resulting commit, leave it alone.
+
+Write `committ_msg.md` only when there is no commit to amend, or when the accumulated changes make the existing message inaccurate, incomplete, or materially less useful. The draft must cover all resolved changes, use a concise subject (about 50 characters), and include relevant discussion links copied from `Thread:` / `comment` links in `comments.md`.
 
 ```text
 extract fakeCache helper
@@ -133,7 +138,7 @@ Addresses:
 - https://gitlab.economicmodeling.com/group/project/-/merge_requests/125#note_989896
 ```
 
-Do not commit until verification for that section passes. Do not commit sections you did not change or left unresolved. Do not include `comments.md` in any commit.
+`comments.md` and `committ_msg.md` are local working notes and must not be included in the eventual commit.
 
 ## Verification
 
@@ -147,7 +152,7 @@ If tests fail:
 
 - Fix the test or implementation and rerun the same narrow command, if feasible.
 - If verification still fails or the fix must be reverted, mark the discussion `UNRESOLVED` in the Robot note and explain the failure.
-- Do not commit failing or reverted changes.
+- Do not treat failing or reverted changes as resolved.
 
 ## `Robot` Note Format
 
@@ -160,8 +165,6 @@ Resolved with code change:
 **Robot — RESOLVED**
 
 I've made the requested change by <specific summary>. Verification: `<command>` passed.
-
-Commit: <commit-hash>
 
 Files changed:
 
@@ -199,7 +202,7 @@ Grouped discussion cross-reference:
 ---
 **Robot — RESOLVED**
 
-Handled as part of the same resolution group as <Discussion N / thread link>. See that Robot note for the full explanation, commit, verification, and files changed.
+Handled as part of the same resolution group as <Discussion N / thread link>. See that Robot note for the full explanation, verification, and files changed.
 ```
 
 Use `Robot — UNRESOLVED` for the cross-reference instead when the group remains unresolved.
@@ -207,8 +210,7 @@ Use `Robot — UNRESOLVED` for the cross-reference instead when the group remain
 ## `Robot` Note Guidance
 
 - Be specific about what changed or what you investigated.
-- For grouped discussions, put the detailed explanation, commit, verification, and files changed in the canonical note only; keep the other grouped notes short and refer back to it.
-- Include the commit hash only when a commit was made for that discussion or group.
+- For grouped discussions, put the detailed explanation, verification, and files changed in the canonical note only; keep the other grouped notes short and refer back to it.
 - Mention any tradeoff or limitation briefly.
 - Use pseudocode when the real code is too long.
 - Keep snippets focused on the idea that resolved the comment.
@@ -220,9 +222,9 @@ Use `Robot — UNRESOLVED` for the cross-reference instead when the group remain
 - `comments.md` refreshed via `refresh-robot-comments-md.sh <mr-url> [output-file]`.
 - Every Robot-marked discussion has a `Robot — RESOLVED` or `Robot — UNRESOLVED` note, either full or a grouped cross-reference.
 - Requested code/test/comment changes applied where feasible.
-- Targeted verification passed for committed changes.
-- One atomic commit per section (or related batch), with discussion links in the commit body, excluding `comments.md`.
-- `comments.md` remains uncommitted.
+- Targeted verification passed for all resolved changes.
+- `committ_msg.md` was written only when a new or materially revised commit message is warranted; if written, it covers all resolved changes and relevant discussion links.
+- `comments.md` and `committ_msg.md` remain uncommitted.
 
 ## Related skill
 
