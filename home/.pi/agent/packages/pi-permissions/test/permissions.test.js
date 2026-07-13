@@ -4,7 +4,15 @@ const { test } = require("node:test");
 const { createRequire } = require("node:module");
 
 const piRequire = createRequire(
-  path.join(path.dirname(process.execPath), "..", "lib", "node_modules", "@earendil-works", "pi-coding-agent", "package.json"),
+  path.join(
+    path.dirname(process.execPath),
+    "..",
+    "lib",
+    "node_modules",
+    "@earendil-works",
+    "pi-coding-agent",
+    "package.json",
+  ),
 );
 const { createJiti } = piRequire("jiti");
 const jiti = createJiti(__dirname + "/");
@@ -56,36 +64,61 @@ test("more specific later deny overrides less specific allow", () => {
 });
 
 test("default ask catches unspecified commands", () => {
-  assert.equal(permissions.decideBash("python scripts/build.py", policy), "ask");
+  assert.equal(
+    permissions.decideBash("python scripts/build.py", policy),
+    "ask",
+  );
 });
 
 test("quoted separators do not split commands", () => {
-  assert.deepEqual(permissions.splitShellCommands('printf "a;b && c || d | e" && git status --short'), [
-    'printf "a;b && c || d | e"',
-    "git status --short",
-  ]);
+  assert.deepEqual(
+    permissions.splitShellCommands(
+      'printf "a;b && c || d | e" && git status --short',
+    ),
+    ['printf "a;b && c || d | e"', "git status --short"],
+  );
 });
 
 test("compound command with denied segment is denied", async () => {
-  const result = await permissions.gateBash("git status --short && git checkout main", process.cwd(), ctx(), policy);
+  const result = await permissions.gateBash(
+    "git status --short && git checkout main",
+    process.cwd(),
+    ctx(),
+    policy,
+  );
   assert.equal(result.block, true);
   assert.match(result.reason, /denied/i);
 });
 
 test("command substitution with denied command is denied", async () => {
-  const result = await permissions.gateBash('echo "branch $(git checkout main)"', process.cwd(), ctx(), policy);
+  const result = await permissions.gateBash(
+    'echo "branch $(git checkout main)"',
+    process.cwd(),
+    ctx(),
+    policy,
+  );
   assert.equal(result.block, true);
   assert.match(result.reason, /denied/i);
 });
 
 test("backtick command substitution with denied command is denied", async () => {
-  const result = await permissions.gateBash("echo `git checkout main`", process.cwd(), ctx(), policy);
+  const result = await permissions.gateBash(
+    "echo `git checkout main`",
+    process.cwd(),
+    ctx(),
+    policy,
+  );
   assert.equal(result.block, true);
   assert.match(result.reason, /denied/i);
 });
 
 test("single quotes are treated as inert text, not command substitution", async () => {
-  const result = await permissions.gateBash("printf '$(git checkout main)'", process.cwd(), ctx(), policy);
+  const result = await permissions.gateBash(
+    "printf '$(git checkout main)'",
+    process.cwd(),
+    ctx(),
+    policy,
+  );
   assert.equal(result, undefined);
 });
 
@@ -155,22 +188,39 @@ test("outside path in bash asks before running", async () => {
 test("glob patterns support protected root and nested paths", () => {
   assert.equal(permissions.matchesGlobPattern("**/.env", ".env"), true);
   assert.equal(permissions.matchesGlobPattern("**/.env", "app/.env"), true);
-  assert.equal(permissions.matchesGlobPattern("**/.git/**", ".git/config"), true);
-  assert.equal(permissions.matchesGlobPattern("../**", "../other/file.txt"), true);
+  assert.equal(
+    permissions.matchesGlobPattern("**/.git/**", ".git/config"),
+    true,
+  );
+  assert.equal(
+    permissions.matchesGlobPattern("../**", "../other/file.txt"),
+    true,
+  );
 });
 
 test("parsed command preview shows numbered colorized decisions", () => {
-  const preview = permissions.formatParsedCommands("git status --short && npm publish --dry-run", policy);
+  const preview = permissions.formatParsedCommands(
+    "git status --short && npm publish --dry-run",
+    policy,
+  );
 
   assert.match(preview, /1\. \[\x1b\[34mallow\x1b\[0m\] git status --short/);
   assert.match(preview, /2\. \[\x1b\[31mdeny\x1b\[0m\] npm publish --dry-run/);
 });
 
 test("denied bash result includes raw command and parsed command preview", async () => {
-  const result = await permissions.gateBash("git status --short && npm publish --dry-run", process.cwd(), ctx(), policy);
+  const result = await permissions.gateBash(
+    "git status --short && npm publish --dry-run",
+    process.cwd(),
+    ctx(),
+    policy,
+  );
 
   assert.equal(result.block, true);
-  assert.match(result.reason, /^Command denied by explicit rule\.\n\nRaw command:\ngit status --short && npm publish --dry-run\n\nParsed command segments:/);
+  assert.match(
+    result.reason,
+    /^Command denied by explicit rule\.\n\nRaw command:\ngit status --short && npm publish --dry-run\n\nParsed command segments:/,
+  );
   assert.match(result.reason, /\x1b\[34mallow\x1b\[0m/);
   assert.match(result.reason, /\x1b\[31mdeny\x1b\[0m/);
 });
@@ -185,7 +235,8 @@ test("explicit deny automatically returns policy guidance and alternatives", asy
         {
           pattern: "npx vitest *",
           decision: "deny",
-          guidance: "Use the repository test script instead of invoking Vitest through npx.",
+          guidance:
+            "Use the repository test script instead of invoking Vitest through npx.",
           alternatives: ["npm test -- <requested test filters>", "npm test"],
         },
       ],
@@ -200,8 +251,14 @@ test("explicit deny automatically returns policy guidance and alternatives", asy
   );
 
   assert.equal(result.block, true);
-  assert.match(result.reason, /Policy guidance:\nUse the repository test script/);
-  assert.match(result.reason, /Suggested alternatives:\n- npm test -- <requested test filters>\n- npm test/);
+  assert.match(
+    result.reason,
+    /Policy guidance:\nUse the repository test script/,
+  );
+  assert.match(
+    result.reason,
+    /Suggested alternatives:\n- npm test -- <requested test filters>\n- npm test/,
+  );
 });
 
 test("only the latest matching rule supplies automatic steering", async () => {
@@ -211,7 +268,11 @@ test("only the latest matching rule supplies automatic steering", async () => {
       ...policy.tools,
       bash: [
         { pattern: "*", decision: "deny", guidance: "Generic guidance." },
-        { pattern: "npx prettier *", decision: "deny", guidance: "Use the edit tool instead." },
+        {
+          pattern: "npx prettier *",
+          decision: "deny",
+          guidance: "Use the edit tool instead.",
+        },
       ],
     },
   };
@@ -229,49 +290,76 @@ test("only the latest matching rule supplies automatic steering", async () => {
 
 test("bash confirmation shows raw command before parsed command preview", async () => {
   const messages = [];
-  await permissions.gateBash("python scripts/build.py", process.cwd(), {
-    ...ctx(),
-    ui: {
-      confirm: async (_title, message) => {
-        messages.push(message);
-        return false;
+  await permissions.gateBash(
+    "python scripts/build.py",
+    process.cwd(),
+    {
+      ...ctx(),
+      ui: {
+        confirm: async (_title, message) => {
+          messages.push(message);
+          return false;
+        },
       },
     },
-  }, policy);
+    policy,
+  );
 
-  assert.match(messages[0], /^Raw command:\npython scripts\/build\.py\n\nParsed command segments:/);
+  assert.match(
+    messages[0],
+    /^Raw command:\npython scripts\/build\.py\n\nParsed command segments:/,
+  );
   assert.match(messages[0], /\x1b\[33mask\x1b\[0m/);
 });
 
 test("denied bash confirmation can include optional user steering", async () => {
-  const result = await permissions.gateBash("python scripts/build.py", process.cwd(), {
-    ...ctx(),
-    ui: {
-      confirm: async () => false,
-      editor: async (title, prefill) => {
-        assert.match(title, /optional steering/i);
-        assert.equal(prefill, "");
-        return "Use npm test instead; do not run the custom build script.";
+  const result = await permissions.gateBash(
+    "python scripts/build.py",
+    process.cwd(),
+    {
+      ...ctx(),
+      ui: {
+        confirm: async () => false,
+        editor: async (title, prefill) => {
+          assert.match(title, /optional steering/i);
+          assert.equal(prefill, "");
+          return "Use npm test instead; do not run the custom build script.";
+        },
       },
     },
-  }, policy);
+    policy,
+  );
 
   assert.equal(result.block, true);
-  assert.match(result.reason, /Command was not approved: python scripts\/build\.py/);
-  assert.match(result.reason, /User steering after denial:\nUse npm test instead; do not run the custom build script\./);
+  assert.match(
+    result.reason,
+    /Command was not approved: python scripts\/build\.py/,
+  );
+  assert.match(
+    result.reason,
+    /User steering after denial:\nUse npm test instead; do not run the custom build script\./,
+  );
 });
 
 test("empty denied bash steering is omitted", async () => {
-  const result = await permissions.gateBash("python scripts/build.py", process.cwd(), {
-    ...ctx(),
-    ui: {
-      confirm: async () => false,
-      editor: async () => "   ",
+  const result = await permissions.gateBash(
+    "python scripts/build.py",
+    process.cwd(),
+    {
+      ...ctx(),
+      ui: {
+        confirm: async () => false,
+        editor: async () => "   ",
+      },
     },
-  }, policy);
+    policy,
+  );
 
   assert.equal(result.block, true);
-  assert.match(result.reason, /Command was not approved: python scripts\/build\.py/);
+  assert.match(
+    result.reason,
+    /Command was not approved: python scripts\/build\.py/,
+  );
   assert.doesNotMatch(result.reason, /User steering after denial:/);
 });
 

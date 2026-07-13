@@ -2,14 +2,38 @@
   "name": "taylor-pi-permissions",
   "version": "0.1.0",
   "private": true,
-  "keywords": ["pi-package"],
+  "keywords": [
+    "pi-package"
+  ],
   "scripts": {
+    "check:all": "npm run check:types && npm run check:lint && npm run check:deps && npm run check:knip && npm run check:prettier",
+    "check:deps": "depcruise extensions policy.ts policy-helpers.ts test --config .dependency-cruiser.cjs",
+    "check:knip": "knip",
+    "check:lint": "eslint .",
+    "check:prettier": "prettier --check .",
+    "check:types": "tsc --noEmit",
+    "fix:prettier": "prettier --write .",
+    "pretest": "npm run check:all",
     "test": "node --test test/*.test.js"
   },
+  "engines": {
+    "node": ">=22.19.0"
+  },
   "pi": {
-    "extensions": ["./extensions"]
+    "extensions": [
+      "./extensions"
+    ]
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "dependency-cruiser": "^18.1.0",
+    "eslint": "^10.7.0",
+    "knip": "^6.26.0",
+    "prettier": "^3.9.5",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.63.0"
   }
 }

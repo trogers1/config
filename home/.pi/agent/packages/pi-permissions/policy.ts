@@ -2,7 +2,7 @@ import {
   extendProfile,
   definePolicyConfig,
   type ProfilePolicy,
-} from "./extensions/permissions";
+} from "./policy-helpers";
 
 // ─── Shared base profile ──────────────────────────────────────────────
 //
@@ -66,14 +66,20 @@ const baseProfile: ProfilePolicy = {
         decision: "deny",
         guidance:
           "Do not invoke Prettier through npx. Use the repository's configured formatter or make targeted edits with Pi's edit tool.",
-        alternatives: ["npm run format", "Use the edit tool for targeted changes"],
+        alternatives: [
+          "npm run format",
+          "Use the edit tool for targeted changes",
+        ],
       },
       {
         pattern: "npx prettier *",
         decision: "deny",
         guidance:
           "Do not invoke Prettier through npx. Use the repository's configured formatter or make targeted edits with Pi's edit tool.",
-        alternatives: ["npm run format", "Use the edit tool for targeted changes"],
+        alternatives: [
+          "npm run format",
+          "Use the edit tool for targeted changes",
+        ],
       },
       {
         pattern: "npx vitest",

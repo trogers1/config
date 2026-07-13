@@ -5,25 +5,24 @@ import {
   type ExtensionAPI,
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import {
+  definePolicyConfig,
+  extendProfile,
+  type Decision,
+  type ProfileColor,
+  type ProfilePolicy,
+  type Rule,
+} from "../policy-helpers";
 import { policyConfig } from "../policy";
 
-// ─── Types ────────────────────────────────────────────────────────────
+export { definePolicyConfig, extendProfile };
+export type { Decision, ProfileColor, ProfilePolicy, Rule };
 
-const decisionValues = ["allow", "ask", "deny"] as const;
-export type Decision = (typeof decisionValues)[number];
+// ─── Types ────────────────────────────────────────────────────────────
 
 type Approval = {
   approved: boolean;
   guidance?: string;
-};
-
-export type Rule = {
-  pattern: string;
-  decision: Decision;
-  /** Instructions automatically returned to the model when this rule denies a call. */
-  guidance?: string;
-  /** Concrete alternatives automatically returned to the model when this rule denies a call. */
-  alternatives?: string[];
 };
 
 type PolicyDecision = {
@@ -44,31 +43,17 @@ const ansi = {
   dim: (value: string) => `\x1b[2m${value}\x1b[0m`,
 } as const;
 
-const profileColorFormatters = {
-  black: ansi.black,
-  red: ansi.red,
-  green: ansi.green,
-  yellow: ansi.yellow,
-  blue: ansi.blue,
-  magenta: ansi.magenta,
-  cyan: ansi.cyan,
-  white: ansi.white,
-} as const;
-
-type ProfileColor = keyof typeof profileColorFormatters;
-
-export type ProfilePolicy = {
-  promptFile?: string | null;
-  color?: ProfileColor;
-  emoji?: string;
-  tools: Record<string, Rule[]>;
-  bashPathReferences: [Rule, ...Rule[]];
-};
-
-export type PolicyConfig<Names extends string = string> = {
-  defaultProfile: Names;
-  profiles: Record<Names, ProfilePolicy>;
-};
+const profileColorFormatters: Record<ProfileColor, (value: string) => string> =
+  {
+    black: ansi.black,
+    red: ansi.red,
+    green: ansi.green,
+    yellow: ansi.yellow,
+    blue: ansi.blue,
+    magenta: ansi.magenta,
+    cyan: ansi.cyan,
+    white: ansi.white,
+  };
 
 const defaultPolicy: ProfilePolicy = {
   tools: {
@@ -76,47 +61,6 @@ const defaultPolicy: ProfilePolicy = {
   },
   bashPathReferences: [{ pattern: "*", decision: "allow" }],
 };
-
-// ─── Compile-time helpers ─────────────────────────────────────────────
-
-export function definePolicyConfig<
-  Profiles extends Record<string, ProfilePolicy>,
->(config: {
-  defaultProfile: keyof Profiles & string;
-  profiles: Profiles;
-}): PolicyConfig<keyof Profiles & string> {
-  return config;
-}
-
-// ─── Composition helpers ──────────────────────────────────────────────
-
-export function extendProfile(
-  base: ProfilePolicy,
-  override: Partial<Omit<ProfilePolicy, "tools">> & {
-    tools?: Record<string, Rule[]>;
-  },
-): ProfilePolicy {
-  const mergedTools: Record<string, Rule[]> = structuredClone(base.tools);
-
-  // Append override rules (later rules win by position)
-  for (const [tool, rules] of Object.entries(override.tools ?? {})) {
-    if (!rules) continue;
-    if (rules.length === 0) {
-      delete mergedTools[tool];
-    } else {
-      mergedTools[tool] = [...(mergedTools[tool] ?? []), ...rules];
-    }
-  }
-
-  return {
-    ...base,
-    ...override,
-    tools: mergedTools,
-    bashPathReferences: override.bashPathReferences ?? [
-      ...base.bashPathReferences,
-    ],
-  };
-}
 
 const moduleDir = typeof __dirname === "string" ? __dirname : process.cwd();
 const profileEntryType = "pi-permissions-profile";
