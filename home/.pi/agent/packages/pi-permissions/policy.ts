@@ -57,6 +57,9 @@ const baseProfile: ProfilePolicy = {
       // Common low-risk commands.
       { pattern: "pwd", decision: "allow" },
       { pattern: "cd", decision: "allow" },
+      // Allow changing into child directories; bashPathReferences below still
+      // gates path arguments and asks/blocks when the target leaves startup cwd.
+      { pattern: "cd *", decision: "allow" },
       { pattern: "grep *", decision: "allow" },
       {
         pattern: "npx prettier",
@@ -274,6 +277,9 @@ export const policyConfig = definePolicyConfig({
           // Common Read-only commands.
           { pattern: "pwd", decision: "allow" },
           { pattern: "cd", decision: "allow" },
+          // Allow changing into child directories; bashPathReferences below still
+          // gates path arguments and asks/blocks when the target leaves startup cwd.
+          { pattern: "cd *", decision: "allow" },
           { pattern: "grep *", decision: "allow" },
           {
             pattern: "npx prettier",
