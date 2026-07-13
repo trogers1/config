@@ -22,9 +22,9 @@ The baseline. Every TS repo should have these as named `check:*` scripts so they
 
 - `check:types` — `tsc --noEmit`. Strict mode in `tsconfig.json` (`strict`, `noUnusedLocals`, `noUnusedParameters`, `isolatedModules`, `forceConsistentCasingInFileNames`).
 - `check:lint` — `eslint .` with `typescript-eslint` recommended. Add repo-specific architecture rules as custom ESLint rules (see §5).
-- `check:prettier` — `prettier --check .`. Shared `.prettierrc`.
+- `check:prettier` — `prettier --check .`. Shared `.prettierrc`. If an auto-fix command is useful, name it `fix:prettier` (`prettier --write .`), not `format`; keep `check:*` scripts read-only/fail-loud and `fix:*` scripts mutating.
 - `check:deps` — `depcruise` against a `.dependency-cruiser.{js,cjs}` config. Enforces no-circular, no-orphans, no-deprecated, not-to-unresolvable, not-to-dev-dep (production code must not depend on devDependencies), and peer/optional dep awareness.
-- `check:knip` — `knip` with an explicit `entry` + `project` so unused exports/dependencies fail loudly. Keeps the surface honest.
+- `check:knip` — `knip` with an explicit `entry` + `project` so unused exports/dependencies fail loudly. Keeps the surface honest. Do not add broad suppressions such as `ignoreExportsUsedInFile` unless you have a specific documented false positive; first try fixing the export surface or tightening `entry`/`project`.
 
 Wire them all into `pretest` so `npm test` cannot run against a broken tree:
 
@@ -47,7 +47,7 @@ If a repo has generated artifacts but no generation step in its lifecycle script
 
 Checks that the world the code is about to run in is actually ready. Especially important for apps with external dependencies. Examples of the shape these take:
 
-- **Node version** — `.nvmrc` pins the version; a small script (e.g. `scripts/check-node-version.ts`) asserts the running Node — and, optionally, the Docker base image — matches it. Run in `pretest`. Catches "works on my machine" version skew across local/CI/Docker.
+- **Node version** — only pin and assert an exact `.nvmrc` when version skew is a real failure mode (apps, CLIs, repos with Docker/CI/runtime parity concerns, or code relying on a specific Node release). For small libraries or pi extensions that run inside Pi's own supported Node runtime, prefer an `engines.node` lower bound matching the host package requirement; don't add an exact `check:node` guardrail by default.
 - **External-service connectivity** — for any dependency the code needs at runtime (cache, DB, queue), a preflight check does a real round-trip (e.g. set/get/delete against a cache) before tests run, with a timeout. Run in `pretest`. Catches "tests fail because the service is down" vs "tests fail because the code is wrong."
 - **Secrets/env** — `.env.template` is the source of truth for required env vars; a script materializes `.env` from a secrets store (e.g. AWS Secrets Manager, Vault), failing loud if a required key is missing. Catches missing config before runtime, not during a request.
 - **Patched dependencies** — if the repo patches deps, `postinstall` runs `patch-package` so patches are guaranteed present after every install.
@@ -114,7 +114,7 @@ Report findings as: ✅ present / ⚠️ present but weak / ❌ missing, each wi
 ## Adding Guardrails
 
 - Add one guardrail per atomic change. Run the relevant `check:*` after each.
-- Prefer composing existing `check:*` scripts over inlining commands — keep each check independently runnable.
+- Prefer composing existing `check:*` scripts over inlining commands — keep each check independently runnable. Keep `check:*` scripts non-mutating and fail-loud; use `fix:*` scripts for mutating repair commands (for example `fix:prettier`, `fix:lint`) and avoid ambiguous names like `format`.
 - Set severity deliberately: `error` for rules that mean "this is wrong," `warn` for "look at this." Don't make everything an error or developers learn to ignore the noise.
 - Document *why* a non-obvious rule exists, in its `comment` (dep-cruiser) or `message` (ESLint) or a short `docs/` note explaining the convention it enforces. A rule with no rationale gets deleted.
 - When adding a boundary rule as part of an incremental migration (e.g. "only this module is migrated for now; broaden later"), scope it narrowly to the affected paths and leave a comment saying so.
