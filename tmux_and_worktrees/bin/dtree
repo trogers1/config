@@ -8,6 +8,44 @@ log() {
     printf "[dtree] %s\n" "$*"
 }
 
+default_primary_branch() {
+    local remote_head=""
+
+    remote_head="$(git -C "$repo_root" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)"
+    if [ -n "$remote_head" ]; then
+        printf '%s\n' "${remote_head#origin/}"
+    elif git -C "$repo_root" show-ref --verify --quiet refs/heads/main; then
+        printf '%s\n' "main"
+    elif git -C "$repo_root" show-ref --verify --quiet refs/heads/master; then
+        printf '%s\n' "master"
+    else
+        printf '%s\n' ""
+    fi
+}
+
+prompt_to_convert_main_checkout() {
+    local primary_branch="$1"
+    local response=""
+
+    printf '\n[dtree] %s is already checked out in the primary checkout: %s\n' "$branch" "$repo_root" >&2
+    printf '[dtree] Turn it into a worktree at %s? The primary checkout will switch to %s. [y/N] ' "$default_wt_path" "$primary_branch" >&2
+
+    if ! read -r response </dev/tty; then
+        printf '\n[dtree] Cannot read a confirmation; leaving the branch in the primary checkout.\n' >&2
+        return 1
+    fi
+
+    case "$response" in
+        y|Y|yes|YES|Yes)
+            return 0
+            ;;
+        *)
+            printf '[dtree] Leaving the branch in the primary checkout.\n' >&2
+            return 1
+            ;;
+    esac
+}
+
 run_bootstrap() {
     local repo_root="$1"
     local wt_path="$2"
@@ -77,6 +115,31 @@ default_wt_path="$(tmux_worktree_default_path "$repo_root" "$branch")"
 
 existing_wt_path="$(tmux_worktree_path_for_branch "$repo_root" "$branch")"
 created_worktree=false
+
+# A branch checked out in the primary checkout cannot also be added as a
+# worktree. Offer to move the primary checkout to its default branch first.
+if [ "$existing_wt_path" = "$repo_root" ] && [ "$current_branch" = "$branch" ]; then
+    primary_branch="$(default_primary_branch)"
+
+    if [ -z "$primary_branch" ] || [ "$primary_branch" = "$branch" ]; then
+        echo "[dtree] Cannot choose a primary branch. Set origin/HEAD or create main/master before rerunning." >&2
+        exit 1
+    fi
+
+    if [ -n "$(git -C "$repo_root" status --porcelain)" ]; then
+        echo "[dtree] Cannot turn $branch into a worktree because the primary checkout has uncommitted changes. Commit or stash them first." >&2
+        exit 1
+    fi
+
+    if prompt_to_convert_main_checkout "$primary_branch"; then
+        main_session_name="$(tmux_worktree_find_session_for_worktree_path "$repo_root" || true)"
+        git -C "$repo_root" checkout "$primary_branch"
+        if [ -n "$main_session_name" ]; then
+            tmux_worktree_set_session_metadata "$main_session_name" "$repo_root" "$primary_branch"
+        fi
+        existing_wt_path=""
+    fi
+fi
 
 if [ -n "$existing_wt_path" ]; then
     wt_path="$existing_wt_path"

@@ -82,7 +82,12 @@ Prefix is `M-Space` (Meta+Space), then:
 /path/to/project-name-worktrees   # worktrees
 ----
 
-`dtree` creates worktrees under `<repo-name>-worktrees/<branch>`.
+`dtree` creates worktrees under `<repo-name>-worktrees/<branch>`. If the
+requested branch is currently checked out in the primary checkout, `dtree` warns
+and offers to move it into that directory. Confirming requires a clean primary
+checkout; `dtree` checks out the repository's `origin/HEAD` (or `main`/
+`master`) there before creating the worktree. The optional base argument keeps
+its usual meaning: the base for a newly created branch.
 
 When creating a new branch, `dtree` bases it on your current branch by default.
 If your current HEAD is detached, it falls back to `main`.
