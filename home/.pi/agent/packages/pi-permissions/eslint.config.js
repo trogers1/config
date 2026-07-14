@@ -12,6 +12,11 @@ module.exports = tseslint.config(
         "error",
         { prefer: "type-imports" },
       ],
+    },
+  },
+  {
+    files: ["*.ts", "extensions/**/*.ts"],
+    rules: {
       "no-restricted-imports": [
         "error",
         {

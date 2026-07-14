@@ -6,6 +6,7 @@ import {
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import {
+  assertPolicyConfig,
   definePolicyConfig,
   extendProfile,
   type Decision,
@@ -15,7 +16,7 @@ import {
 } from "../policy-helpers";
 import { policyConfig } from "../policy";
 
-export { definePolicyConfig, extendProfile };
+export { assertPolicyConfig, definePolicyConfig, extendProfile };
 export type { Decision, ProfileColor, ProfilePolicy, Rule };
 
 // ─── Types ────────────────────────────────────────────────────────────
@@ -91,6 +92,8 @@ function activePolicy(profile: ProfileName): ProfilePolicy {
 }
 
 export default function (pi: ExtensionAPI) {
+  assertPolicyConfig(policyConfig);
+
   const startupCwd = path.resolve(process.cwd());
   let activeProfile: ProfileName = policyConfig.defaultProfile;
 
