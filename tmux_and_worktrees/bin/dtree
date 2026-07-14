@@ -23,6 +23,27 @@ default_primary_branch() {
     fi
 }
 
+prompt_to_check_remote_branch() {
+    local remote_name="$1"
+    local response=""
+
+    printf '[dtree] No local branch named %s. Fetch %s and look for %s/%s? [y/N] (N creates it from %s) ' "$branch" "$remote_name" "$remote_name" "$branch" "$base_branch" >&2
+
+    if ! read -r response </dev/tty; then
+        printf '\n[dtree] Cannot read a confirmation; creating the branch from %s.\n' "$base_branch" >&2
+        return 1
+    fi
+
+    case "$response" in
+        y|Y|yes|YES|Yes)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
 prompt_to_convert_main_checkout() {
     local primary_branch="$1"
     local response=""
@@ -153,7 +174,33 @@ else
         if git -C "$repo_root" show-ref --verify --quiet "refs/heads/$branch"; then
             git -C "$repo_root" worktree add "$wt_path" "$branch"
         else
-            git -C "$repo_root" worktree add -b "$branch" "$wt_path" "$base_branch"
+            remote_name="origin"
+            remote_branch=""
+            checked_remote=false
+
+            if git -C "$repo_root" remote get-url "$remote_name" >/dev/null 2>&1; then
+                if prompt_to_check_remote_branch "$remote_name"; then
+                    checked_remote=true
+                    git -C "$repo_root" fetch "$remote_name"
+                    if git -C "$repo_root" show-ref --verify --quiet "refs/remotes/$remote_name/$branch"; then
+                        remote_branch="$remote_name/$branch"
+                    fi
+                fi
+            else
+                log "No $remote_name remote configured; creating $branch from $base_branch"
+            fi
+
+            if [ -n "$remote_branch" ]; then
+                log "Found remote branch $remote_branch; creating local branch $branch tracking it"
+                git -C "$repo_root" worktree add --track -b "$branch" "$wt_path" "$remote_branch"
+            else
+                if [ "$checked_remote" = true ]; then
+                    log "No remote branch $remote_name/$branch found; creating $branch from $base_branch"
+                elif git -C "$repo_root" remote get-url "$remote_name" >/dev/null 2>&1; then
+                    log "Skipped remote lookup; creating $branch from $base_branch"
+                fi
+                git -C "$repo_root" worktree add -b "$branch" "$wt_path" "$base_branch"
+            fi
         fi
         created_worktree=true
     fi

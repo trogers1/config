@@ -90,7 +90,10 @@ checkout; `dtree` checks out the repository's `origin/HEAD` (or `main`/
 its usual meaning: the base for a newly created branch.
 
 When creating a new branch, `dtree` bases it on your current branch by default.
-If your current HEAD is detached, it falls back to `main`.
+If your current HEAD is detached, it falls back to `main`. If no matching local
+branch exists and the repository has an `origin` remote, `dtree` asks before
+fetching `origin`. When `origin/<branch>` exists after that fetch, it creates a
+local branch that tracks it; otherwise it creates the new branch from the base.
 `dtree` now reuses tmux sessions by matching the resolved worktree path, so `dtree B`
 from worktree `A` reconnects only to the session already bound to the same worktree path.
 If a session named for branch `B` already exists but points at some other checkout,
