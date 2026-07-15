@@ -21,6 +21,16 @@ Taylor's testing preferences, in priority order:
 4. **Lower-level only when justified.** Drop to a unit/inner-module test only when the logic is genuinely complex (parsing, state machines, finance, algorithms) and isolating it materially improves signal. Default to the top; descend only with reason.
 5. **The guiding star: implementation-independence.** The test suite should help validate a *full rewrite* of the implementation, not entangle itself in the current one. If you could swap the implementation entirely and the tests still meaningfully validate behavior, the design is right. If the tests would fight a rewrite, the design is wrong.
 
+## Why Behavioral Tests Are More Valuable
+
+A direct unit test of a hook, handler, or private function verifies its local branching, but it also bakes in assumptions: hand-built inputs, type casts, mocked values, and a particular wiring arrangement. It can pass while production is broken because context was not attached as expected, the component was not registered at the real boundary, data was transformed differently before reaching the caller, or configuration was not applied. Conversely, a legitimate replacement of that function can fail the unit test despite preserving user-visible behavior; a removed-but-still-tested old function can keep passing after the production path no longer uses it.
+
+A behavioral, end-to-end test exercises those integration points together and verifies the actual contract a caller receives. Prefer calling the real public boundary—such as an HTTP endpoint, CLI, UI, queue consumer, or package API—with realistic identity, configuration, and data. Assert what the caller can observe and do, not which internal component produced it.
+
+Derive expected outcomes from the declared configuration, permissions, schemas, or other sources of truth that define the system, rather than duplicating hard-coded values in a test. This allows coverage to evolve with supported inputs, policy, and contracts while still detecting a mismatch between what is declared and what is exposed.
+
+Focused unit tests remain appropriate for important edge cases that cannot be reproduced reliably through the real boundary (for example, malformed or absent context that a real credential cannot produce), as well as genuinely complex isolated logic. They complement behavioral tests; they do not substitute for them.
+
 ## Drift Protection
 
 Behavioral, entry-point tests only stay valuable if the contract they exercise matches what production actually receives. Keep them honest by validating the runtime context/inputs against an explicit, declared shape:
