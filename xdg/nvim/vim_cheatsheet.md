@@ -40,6 +40,17 @@
 | `@<letter>` | Play recorded macro |
 | `<C-a` | Increment a number under the cursor 🤯 |
 
+### Folding
+| Command | Description |
+|---------|-------------|
+| `zf%` | Create a fold from a bracket under the cursor through its matching bracket (e.g. a JSON array: place cursor on `[` or `]`) |
+| `zf` | Create a fold over a Visual selection |
+| `za` | Toggle the fold under the cursor |
+| `zc` / `zo` | Close / open the fold under the cursor |
+| `zM` / `zR` | Close / open all folds in the buffer |
+
+Your config uses manual folds, so folds normally disappear when the file is reopened.
+
 ---
 
 ## 🔍 Navigation & Search
