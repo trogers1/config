@@ -67,7 +67,8 @@ const baseProfile: ProfilePolicy = {
         guidance:
           "Do not invoke Prettier through npx. Use the repository's configured formatter or make targeted edits with Pi's edit tool.",
         alternatives: [
-          "npm run format",
+          "npm run prettier:write",
+          "npm run fix:prettier",
           "Use the edit tool for targeted changes",
         ],
       },
@@ -77,7 +78,8 @@ const baseProfile: ProfilePolicy = {
         guidance:
           "Do not invoke Prettier through npx. Use the repository's configured formatter or make targeted edits with Pi's edit tool.",
         alternatives: [
-          "npm run format",
+          "npm run prettier:write",
+          "npm run fix:prettier",
           "Use the edit tool for targeted changes",
         ],
       },
