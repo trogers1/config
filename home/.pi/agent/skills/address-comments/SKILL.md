@@ -212,7 +212,7 @@ Use `Robot — UNRESOLVED` for the cross-reference instead when the group remain
 - Be specific about what changed or what you investigated.
 - For grouped discussions, put the detailed explanation, verification, and files changed in the canonical note only; keep the other grouped notes short and refer back to it.
 - Mention any tradeoff or limitation briefly.
-- Use pseudocode when the real code is too long.
+- Use pseudocode when the real code is too long, otherwise give actual code snippets.
 - Keep snippets focused on the idea that resolved the comment.
 - Do not claim a discussion is resolved if verification failed, changes were reverted, or product direction is still needed.
 - If the discussion only needs advice or an answer, provide a concise recommended response and mark it `RESOLVED`.
