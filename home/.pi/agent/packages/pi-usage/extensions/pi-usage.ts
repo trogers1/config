@@ -29,7 +29,7 @@ export default function piUsageExtension(pi: ExtensionAPI) {
 				schema: sessionStartContextSchema,
 				boundary: 'session_start context',
 			});
-			sessionContext.modelRegistry.refresh();
+			await sessionContext.modelRegistry.refresh();
 			updateLimitsStatus(sessionContext);
 		} catch (error) {
 			notifyCompatibilityError({ value: ctx, error });
@@ -126,7 +126,7 @@ export default function piUsageExtension(pi: ExtensionAPI) {
 					boundary: '/usage command context',
 				});
 				if (command.kind === 'import') {
-					commandContext.modelRegistry.refresh();
+					await commandContext.modelRegistry.refresh();
 					let latestProgress = 'Finding session files... Do not close this window.';
 					const notifyProgress = () => commandContext.ui.notify(latestProgress, 'info');
 					notifyProgress();
