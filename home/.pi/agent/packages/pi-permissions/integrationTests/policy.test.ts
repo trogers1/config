@@ -3,6 +3,7 @@ import { policyConfig } from "../modules/policy";
 import {
   assertPolicyConfig,
   extendProfile,
+  withProtectedPathPatterns,
   type ProfilePolicy,
 } from "../modules/policyHelpers";
 
@@ -14,6 +15,8 @@ const baseProfile = {
       { pattern: "git *", decision: "deny" },
     ],
     read: [{ pattern: "*", decision: "allow" }],
+    edit: [{ pattern: "*", decision: "allow" }],
+    write: [{ pattern: "*", decision: "allow" }],
   },
   bashPathReferences: [{ pattern: "*", decision: "allow" }],
 } satisfies ProfilePolicy;
@@ -21,6 +24,47 @@ const baseProfile = {
 describe("policy configuration contract", () => {
   it("accepts the production policy", () => {
     expect(() => assertPolicyConfig(policyConfig)).not.toThrow();
+  });
+
+  it("applies profile protected path patterns to path tools and Bash", () => {
+    const policy = withProtectedPathPatterns({
+      ...baseProfile,
+      protectedPathPatterns: ["**/.db"],
+    });
+
+    expect(policy.tools.read.at(-1)).toMatchObject({
+      pattern: "**/.db",
+      decision: "deny",
+    });
+    expect(policy.tools.edit.at(-1)).toMatchObject({
+      pattern: "**/.db",
+      decision: "deny",
+    });
+    expect(policy.tools.write.at(-1)).toMatchObject({
+      pattern: "**/.db",
+      decision: "deny",
+    });
+    expect(policy.bashPathReferences.at(-1)).toMatchObject({
+      pattern: "**/.db",
+      decision: "deny",
+    });
+  });
+
+  it("does not let protected exceptions weaken ordinary profile denies", () => {
+    const policy = withProtectedPathPatterns({
+      ...baseProfile,
+      tools: {
+        ...baseProfile.tools,
+        edit: [{ pattern: "*", decision: "deny" }],
+      },
+      protectedPathPatterns: ["**/.env*"],
+      protectedPathExceptions: ["**/.env.template"],
+    });
+
+    expect(policy.tools.edit.at(-1)).toEqual({
+      pattern: "**/.env.template",
+      decision: "deny",
+    });
   });
 
   it("reports the path of an invalid decision", () => {

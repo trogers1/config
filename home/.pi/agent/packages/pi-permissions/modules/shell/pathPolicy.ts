@@ -49,7 +49,17 @@ export function decideBashPathReferences(
         extractInlineOutputRedirectionTarget(token)
       )
         continue;
-      if (!looksLikePath(token)) continue;
+      // Basename-only protected expressions (for example `.env` and `.env*`)
+      // must reach policy evaluation too; generic path appearance is insufficient.
+      if (
+        !looksLikePath(token) &&
+        !isProtectedPathExpression(
+          token,
+          activePolicy.protectedPathPatterns,
+          activePolicy.protectedPathExceptions,
+        )
+      )
+        continue;
       const absolutePath = resolveRequestedPath(token, simulatedCwd);
       const policyDecision = evaluatePathByPattern(
         absolutePath,
@@ -244,6 +254,28 @@ function globToRegExpSource(pattern: string): string {
     }
   }
   return source;
+}
+
+/** True when a literal or glob expression can name a protected path. */
+export function isProtectedPathExpression(
+  token: string,
+  patterns: readonly string[] = [],
+  exceptions: readonly string[] = [],
+): boolean {
+  const normalized = token.replace(/\\/g, "/");
+  let protectedExpression = false;
+  for (const pattern of patterns) {
+    if (matchesGlobPattern(pattern, normalized)) protectedExpression = true;
+  }
+  // Exceptions are intentionally ordered after denies. Only a concrete path
+  // can use an exception; a glob may match protected paths as well.
+  if (!/[?*[\]]/.test(normalized)) {
+    for (const exception of exceptions) {
+      if (matchesGlobPattern(exception, normalized))
+        protectedExpression = false;
+    }
+  }
+  return protectedExpression;
 }
 
 function looksLikePath(token: string): boolean {

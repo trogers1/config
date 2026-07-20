@@ -18,6 +18,10 @@ export type ProfilePolicy = {
   emoji?: string;
   tools: Record<string, Rule[]>;
   bashPathReferences: [Rule, ...Rule[]];
+  /** Glob patterns protected from both disclosure and mutation. */
+  protectedPathPatterns?: readonly string[];
+  /** Narrow allow patterns applied after protectedPathPatterns. */
+  protectedPathExceptions?: readonly string[];
   bashOutputRedirections?: [Rule, ...Rule[]];
 };
 
@@ -63,6 +67,8 @@ const profileSchema = Type.Object(
     emoji: Type.Optional(Type.String()),
     tools: Type.Record(Type.String(), Type.Array(ruleSchema)),
     bashPathReferences: Type.Array(ruleSchema, { minItems: 1 }),
+    protectedPathPatterns: Type.Optional(Type.Array(Type.String())),
+    protectedPathExceptions: Type.Optional(Type.Array(Type.String())),
     bashOutputRedirections: Type.Optional(
       Type.Array(ruleSchema, { minItems: 1 }),
     ),
@@ -103,6 +109,69 @@ export function definePolicyConfig<
   profiles: Profiles;
 }): PolicyConfig<keyof Profiles & string> {
   return config;
+}
+
+export function withProtectedPathPatterns(
+  policy: ProfilePolicy,
+): ProfilePolicy {
+  if (
+    !policy.protectedPathPatterns ||
+    policy.protectedPathPatterns.length === 0
+  )
+    return policy;
+
+  const denyRules: Rule[] = policy.protectedPathPatterns.map((pattern) => ({
+    pattern,
+    decision: "deny",
+    guidance:
+      "This path is protected from disclosure and mutation by the active profile.",
+    alternatives: [
+      "Use an explicitly approved file instead",
+      "Ask the user for a redacted or safe-to-share value",
+    ],
+  }));
+  const tools = structuredClone(policy.tools);
+  // Discovery can disclose sensitive names, while edit/write can damage secret
+  // material. Keep every path surface aligned with Bash path references.
+  for (const tool of ["read", "grep", "find", "ls", "edit", "write"]) {
+    const baseRules = tools[tool];
+    if (baseRules)
+      tools[tool] = [
+        ...baseRules,
+        ...denyRules,
+        ...protectedExceptionRules(policy, baseRules),
+      ];
+  }
+
+  return {
+    ...policy,
+    tools,
+    bashPathReferences: [
+      ...policy.bashPathReferences,
+      ...denyRules,
+      ...protectedExceptionRules(policy, policy.bashPathReferences),
+    ],
+  };
+}
+
+function protectedExceptionRules(
+  policy: ProfilePolicy,
+  baseRules: Rule[],
+): Rule[] {
+  // An exception removes only the generated protection. It must not weaken the
+  // profile's ordinary boundary (for example, read-only edit remains denied).
+  let fallbackDecision: Decision = "deny";
+  for (let index = baseRules.length - 1; index >= 0; index--) {
+    const rule = baseRules[index];
+    if (rule.pattern === "*") {
+      fallbackDecision = rule.decision;
+      break;
+    }
+  }
+  return (policy.protectedPathExceptions ?? []).map((pattern) => ({
+    pattern,
+    decision: fallbackDecision,
+  }));
 }
 
 export function extendProfile(

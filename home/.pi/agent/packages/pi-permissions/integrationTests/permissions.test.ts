@@ -98,6 +98,22 @@ describe("shell policy parser", () => {
     }
   });
 
+  it("enforces profile-configured protected path patterns for Bash readers", async () => {
+    const policy = {
+      ...parserPolicy,
+      protectedPathPatterns: ["**/.db"],
+    } satisfies ProfilePolicy;
+
+    const result = await gateBash(
+      "cat .db",
+      process.cwd(),
+      context(process.cwd()),
+      policy,
+    );
+    expect(result).toMatchObject({ block: true });
+    expect(result?.reason).toContain("protected from disclosure and mutation");
+  });
+
   it("simulates cwd changes before evaluating later path references", async () => {
     const startupCwd = path.join(process.cwd(), "project");
     const ctx = context(startupCwd);

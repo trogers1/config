@@ -53,6 +53,7 @@ describe("shell path policy", () => {
       { pattern: "*", decision: "allow" },
       { pattern: "**/.env*", decision: "deny" },
     ],
+    protectedPathPatterns: ["**/.env*"],
     bashOutputRedirections: [
       { pattern: "**", decision: "deny" },
       { pattern: "/tmp/**", decision: "allow" },
@@ -82,7 +83,7 @@ describe("shell path policy", () => {
     expect(displayPath("/workspace/other", root)).toBe("/workspace/other");
     expect(
       decideBashPathReferences(["cat .env"], root, root, policy),
-    ).toBeUndefined();
+    ).toMatchObject({ decision: "deny", path: `${root}/.env` });
   });
 
   it("evaluates output redirection targets", () => {

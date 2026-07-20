@@ -1,14 +1,10 @@
-import type { Rule } from "./policyHelpers";
+/** Default secret and repository-metadata paths configured by standard profiles. */
+export const defaultProtectedPathPatterns = [
+  "**/.env*",
+  "**/.env*/**",
+  "**/.git",
+  "**/.git/**",
+] as const;
 
-/**
- * Ordered protected-path rules shared by every profile. Later exceptions are
- * intentional and must remain narrow.
- */
-export const protectedPathRules: Rule[] = [
-  { pattern: "**/.env*", decision: "deny" },
-  { pattern: "**/.env*/**", decision: "deny" },
-  // Templates are safe to inspect and are intentionally the sole .env* exception.
-  { pattern: "**/.env.template", decision: "allow" },
-  { pattern: "**/.git", decision: "deny" },
-  { pattern: "**/.git/**", decision: "deny" },
-];
+/** Narrow readable exceptions applied after the default protected patterns. */
+export const defaultProtectedPathExceptions = ["**/.env.template"] as const;

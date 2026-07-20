@@ -4,6 +4,7 @@ import {
   createExtensionHarness,
   lastCallArgument,
 } from "./support/extensionHarness";
+import { policyConfig } from "../modules/policy";
 
 describe("permissions extension", () => {
   it("starts in the configured default profile and clears its status on shutdown", async () => {
@@ -208,6 +209,110 @@ describe("permissions extension", () => {
     ).resolves.toBeUndefined();
   });
 
+  it("validates shell reader inputs before broad command allow rules", async () => {
+    const harness = createExtensionHarness();
+
+    for (const command of [
+      "cat .env",
+      "cat .env.local",
+      "head .env.production",
+      "tail nested/.env.local",
+      "sed -n '1,20p' .env",
+      "nl .env",
+      "sort .env.test",
+      "wc -l .env",
+      "file .env",
+      "cat .env*",
+      "head */.env*",
+      "sed -n '1,20p' **/.env*",
+      'f=.env; cat "$f"',
+      'cat "$(printf .env)"',
+      "head `printf .env`",
+      "find . -type f -print0 | xargs -0 cat",
+      "bash -c 'cat .env'",
+      "eval 'tail .env'",
+      'for f in .env*; do cat "$f"; done',
+    ]) {
+      const denied = await harness.callTool({
+        toolName: "bash",
+        input: { command },
+      });
+      expect(denied).toMatchObject({ block: true });
+      expect(harness.ui.confirm).not.toHaveBeenCalled();
+    }
+
+    for (const profile of ["read-only", "socrates"] as const) {
+      await harness.runCommand("profile", profile);
+      const denied = await harness.callTool({
+        toolName: "bash",
+        input: { command: "cat .env" },
+      });
+      expect(denied).toMatchObject({ block: true });
+    }
+    const nonInteractive = createExtensionHarness({ hasUI: false });
+    await expect(
+      nonInteractive.callTool({
+        toolName: "bash",
+        input: { command: "cat .env" },
+      }),
+    ).resolves.toMatchObject({ block: true });
+
+    // Return to the default profile for safe-reader allow checks.
+    await harness.runCommand("profile", "default");
+    for (const command of [
+      "cat README.md",
+      "head -n 20 README.md",
+      "tail --lines=20 src/example.ts",
+      "sed -n '1,20p' src/example.ts",
+      "nl src/example.ts",
+      "sort fixtures/names.txt",
+      "wc -l README.md",
+      "file README.md",
+      "cat .env.template",
+      "head nested/.env.template",
+    ]) {
+      await expect(
+        harness.callTool({ toolName: "bash", input: { command } }),
+      ).resolves.toBeUndefined();
+    }
+  });
+
+  it("changes protected read and edit access when switching profiles", async () => {
+    const unprotectedProfile = policyConfig.profiles["performance-review"];
+    const originalPatterns = unprotectedProfile.protectedPathPatterns;
+    const originalExceptions = unprotectedProfile.protectedPathExceptions;
+    unprotectedProfile.protectedPathPatterns = [];
+    unprotectedProfile.protectedPathExceptions = [];
+
+    try {
+      const harness = createExtensionHarness();
+      const readInput = { path: ".env" };
+      const editInput = {
+        path: ".env",
+        edits: [{ oldText: "PLACEHOLDER", newText: "REDACTED" }],
+      };
+
+      await expect(
+        harness.callTool({ toolName: "read", input: readInput }),
+      ).resolves.toMatchObject({ block: true });
+      await expect(
+        harness.callTool({ toolName: "edit", input: editInput }),
+      ).resolves.toMatchObject({ block: true });
+
+      await harness.runCommand("profile", "performance-review");
+
+      await expect(
+        harness.callTool({ toolName: "read", input: readInput }),
+      ).resolves.toBeUndefined();
+      await expect(
+        harness.callTool({ toolName: "edit", input: editInput }),
+      ).resolves.toBeUndefined();
+    } finally {
+      unprotectedProfile.protectedPathPatterns = originalPatterns;
+      unprotectedProfile.protectedPathExceptions = originalExceptions;
+    }
+  });
+
   it("automatically excludes env files from searches", async () => {
     const harness = createExtensionHarness();
 
@@ -219,7 +324,9 @@ describe("permissions extension", () => {
     await expect(
       harness.callTool({ toolName: "grep", input: builtInGrepInput }),
     ).resolves.toBeUndefined();
-    expect(builtInGrepInput.glob).toBe("!**/.env*");
+    expect(builtInGrepInput.glob).toBe(
+      "!{**/.env*,**/.env*/**,**/.git,**/.git/**}",
+    );
 
     const safeGlobInput = {
       path: ".",
@@ -236,14 +343,14 @@ describe("permissions extension", () => {
       input: { path: ".", pattern: "DATABASE_URL", glob: "**/*" },
     });
     expect(unsafeGlob).toMatchObject({ block: true });
-    expect(unsafeGlob?.reason).toContain("protected .env files");
+    expect(unsafeGlob?.reason).toContain("protected by the active profile");
 
     const ripgrepInput = { command: "rg DATABASE_URL ." };
     await expect(
       harness.callTool({ toolName: "bash", input: ripgrepInput }),
     ).resolves.toBeUndefined();
     expect(ripgrepInput.command).toBe(
-      "rg --glob '!**/.env*' --glob '**/.env.template' DATABASE_URL .",
+      "rg --glob '!**/.env*' --glob '!**/.env*/**' --glob '!**/.git' --glob '!**/.git/**' --glob '**/.env.template' DATABASE_URL .",
     );
 
     for (const command of [

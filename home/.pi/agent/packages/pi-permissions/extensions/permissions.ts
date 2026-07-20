@@ -16,10 +16,15 @@ import {
   resolveRequestedPath,
 } from "../modules/shell/pathPolicy";
 import {
-  injectGrepEnvExclusion,
-  injectRipgrepEnvExclusions,
+  injectGrepProtectedPathGlob,
+  injectRipgrepProtectedPathGlobs,
   validateRipgrepGlobOverrides,
 } from "../modules/shell/searchPolicy";
+import {
+  isReadCommand,
+  parseReadCommand,
+  validateReadCommands,
+} from "../modules/shell/readCommands";
 import {
   isToolCallEventType,
   type ExtensionAPI,
@@ -29,6 +34,7 @@ import {
   assertPolicyConfig,
   definePolicyConfig,
   extendProfile,
+  withProtectedPathPatterns,
   type Decision,
   type ProfileColor,
   type ProfilePolicy,
@@ -36,7 +42,12 @@ import {
 } from "../modules/policyHelpers";
 import { policyConfig } from "../modules/policy";
 
-export { assertPolicyConfig, definePolicyConfig, extendProfile };
+export {
+  assertPolicyConfig,
+  definePolicyConfig,
+  extendProfile,
+  withProtectedPathPatterns,
+};
 export type { Decision, ProfileColor, ProfilePolicy, Rule };
 
 // ─── Types ────────────────────────────────────────────────────────────
@@ -234,19 +245,31 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("tool_call", async (event, ctx) => {
-    const policy = activePolicy(activeProfile);
+    const policy = withProtectedPathPatterns(activePolicy(activeProfile));
 
     if (isToolCallEventType("bash", event)) {
       const command = event.input.command ?? "";
-      const ripgrepGlobError = validateRipgrepGlobOverrides(command);
+      const ripgrepGlobError = validateRipgrepGlobOverrides(
+        command,
+        policy.protectedPathPatterns ?? [],
+        policy.protectedPathExceptions,
+      );
       if (ripgrepGlobError) return { block: true, reason: ripgrepGlobError };
 
-      event.input.command = injectRipgrepEnvExclusions(command);
+      event.input.command = injectRipgrepProtectedPathGlobs(
+        command,
+        policy.protectedPathPatterns ?? [],
+        policy.protectedPathExceptions,
+      );
       return await gateBash(event.input.command, startupCwd, ctx, policy);
     }
 
     if (isToolCallEventType("grep", event)) {
-      const reason = injectGrepEnvExclusion(event.input);
+      const reason = injectGrepProtectedPathGlob(
+        event.input,
+        policy.protectedPathPatterns ?? [],
+        policy.protectedPathExceptions,
+      );
       if (reason) return { block: true, reason };
     }
 
@@ -302,9 +325,18 @@ export async function gateBash(
   ctx: ExtensionContext,
   activePolicy = defaultPolicy,
 ) {
+  activePolicy = withProtectedPathPatterns(activePolicy);
   const commands = extractShellCommands(command)
     .map(normalizeCommandForDecision)
     .filter(Boolean);
+  const readValidationError = validateReadCommands(command, commands);
+  if (readValidationError) {
+    return {
+      block: true,
+      reason: `Shell read command denied: ${readValidationError}\n\nUse Pi's read tool for concrete files, grep for content searches, or find followed by explicit read calls.`,
+    };
+  }
+
   const decisions =
     commands.length > 0
       ? commands.map((cmd) => evaluateBash(cmd, activePolicy))
@@ -320,6 +352,38 @@ export async function gateBash(
           .map(({ rule }) => rule),
       ),
     };
+  }
+
+  const readPathDecision = decideReadCommandPaths(
+    commands,
+    startupCwd,
+    ctx.cwd ?? startupCwd,
+    activePolicy,
+  );
+  if (readPathDecision?.decision === "deny") {
+    return {
+      block: true,
+      reason: appendPolicySteering(
+        `Bash read input denied by policy.\n\nPath:\n${readPathDecision.path}\n\nMatched policy path:\n${readPathDecision.matchPath}`,
+        [readPathDecision.rule],
+      ),
+    };
+  }
+  if (readPathDecision?.decision === "ask") {
+    const approval = await confirmOrBlock(
+      ctx,
+      "Bash read command references a gated path?",
+      `Path:\n${readPathDecision.path}\n\nMatched policy path:\n${readPathDecision.matchPath}`,
+    );
+    if (!approval.approved) {
+      return {
+        block: true,
+        reason: appendUserGuidance(
+          `Bash read path was not approved: ${readPathDecision.path}`,
+          approval.guidance,
+        ),
+      };
+    }
   }
 
   const pathDecision = decideBashPathReferences(
@@ -400,6 +464,31 @@ export async function gateBash(
       };
   }
 
+  return undefined;
+}
+
+function decideReadCommandPaths(
+  commands: string[],
+  startupCwd: string,
+  cwd: string,
+  policy: ProfilePolicy,
+): (PolicyDecision & { path: string; matchPath: string }) | undefined {
+  for (const command of commands) {
+    if (!isReadCommand(command)) continue;
+    const parsed = parseReadCommand(command);
+    if (parsed.status !== "safe") continue;
+    for (const requestedPath of parsed.paths) {
+      const absolutePath = resolveRequestedPath(requestedPath, cwd);
+      const decision = evaluatePathByPattern(
+        absolutePath,
+        startupCwd,
+        policy.bashPathReferences,
+        "allow",
+      );
+      if (decision.decision !== "allow")
+        return { ...decision, path: absolutePath };
+    }
+  }
   return undefined;
 }
 

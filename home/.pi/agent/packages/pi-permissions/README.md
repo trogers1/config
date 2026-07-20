@@ -61,8 +61,39 @@ Because later matching rules win, steering comes only from the rule that made th
 
 `bashPathReferences` separately gates path-looking tokens inside bash commands, because bash input is both command text and possible path access.
 
+Each profile defines its protected glob patterns with `protectedPathPatterns`; these are the source of truth rather than an additional hard-coded `.env` policy. Narrow readable exceptions can follow them through `protectedPathExceptions`:
+
+```ts
+{
+  protectedPathPatterns: ["**/.env*", "**/.db", "**/credentials.json"],
+  protectedPathExceptions: ["**/.env.template"],
+}
+```
+
+Patterns use the same path glob syntax and ordered last-match behavior as other policy rules. They apply to `read`, `grep`, `find`, `ls`, `edit`, and `write`, as well as Bash path references: discovery can disclose secrets, while mutation can damage them. A profile that omits a pattern does not protect that path beyond its ordinary tool rules. Dynamic or unrecognized shell reader forms still fail closed.
+
 `bashOutputRedirections` gates shell output redirection targets. Absolute patterns such as `/tmp/**` match absolute target paths; other patterns match paths relative to Pi's startup directory. The default profile denies shell output redirection except to `/tmp/**`, so scratch output stays outside the project and intentional project writes go through Pi's write/edit tools.
 
-All path tools deny `.env*` files and directories, except for a directly requested `.env.template`. The built-in `grep` tool automatically injects a `.env*` exclusion when no `glob` is supplied; a caller-supplied glob must be demonstrably unable to match protected env files. Bash `rg`/`ripgrep` commands receive equivalent exclusion globs. Raw `grep` and `git grep` are denied because their recursive behavior cannot be safely rewritten across supported platforms.
+The standard profiles configure `.env*` files and directories as protected and `.env.template` as an explicit exception. Search safeguards are derived from the active profile rather than hard-coded to `.env`: the built-in `grep` tool combines all configured protected patterns into one exclusion glob, while Bash `rg`/`ripgrep` receives one exclusion per pattern followed by configured exceptions. Caller-supplied globs must be demonstrably unable to match any protected path. Raw `grep` and `git grep` are denied because their recursive behavior cannot be safely rewritten across supported platforms.
 
 In non-interactive contexts where confirmation is unavailable, `ask` decisions are blocked by default.
+
+## Protected shell reads
+
+Bash protects `.env*` basename and glob expressions as well as paths with a
+slash. This includes forms such as `cat .env`, `head .env.local`, and
+`sed -n '1,20p' **/.env*`; a direct `.env.template` path is the sole intended
+exception.
+
+`cat`, `head`, `tail`, `sed`, `nl`, `sort`, `wc`, and `file` are permitted only
+when their supported syntax identifies every input as a concrete, policy-approved
+path. Dynamic operands, globs (other than a protected expression that is denied),
+pipelines, substitutions, loops, `xargs`, `eval`, and shell interpreter `-c`
+forms fail closed without a confirmation prompt. Use Pi's `read` tool (with its
+`offset` and `limit` options), `grep`, or `find` followed by explicit `read`
+calls instead.
+
+These checks are guardrails against accidental exposure, not a security boundary
+for arbitrary process execution. Keep secrets unavailable to the agent process
+with filesystem permissions, environment isolation, or sandboxing when strict
+isolation is required.

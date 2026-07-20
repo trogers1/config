@@ -4,7 +4,10 @@ import {
   type ProfilePolicy,
   type Rule,
 } from "./policyHelpers";
-import { protectedPathRules } from "./protectedPaths";
+import {
+  defaultProtectedPathExceptions,
+  defaultProtectedPathPatterns,
+} from "./protectedPaths";
 
 // ─── Shared base profile ──────────────────────────────────────────────
 //
@@ -14,6 +17,8 @@ import { protectedPathRules } from "./protectedPaths";
 const baseProfile: ProfilePolicy = {
   color: "blue",
   emoji: "🛠️",
+  protectedPathPatterns: defaultProtectedPathPatterns,
+  protectedPathExceptions: defaultProtectedPathExceptions,
   // No promptFile means: keep Pi's normal system prompt unchanged.
   // Tool policies are ordered: later matching rules override earlier ones.
   // For bash, patterns match normalized command segments.
@@ -148,13 +153,17 @@ const baseProfile: ProfilePolicy = {
         alternatives: ["npm test -- <requested test filters>"],
       },
       { pattern: "find *", decision: "allow" },
+      { pattern: "cat", decision: "allow" },
+      { pattern: "cat *", decision: "allow" },
       { pattern: "sort *", decision: "allow" },
       { pattern: "sort", decision: "allow" },
+      { pattern: "sed", decision: "allow" },
       { pattern: "sed *", decision: "allow" },
       { pattern: "ls", decision: "allow" },
       { pattern: "ls *", decision: "allow" },
       { pattern: "wc", decision: "allow" },
       { pattern: "wc *", decision: "allow" },
+      { pattern: "file", decision: "allow" },
       { pattern: "file *", decision: "allow" },
       { pattern: "npm *", decision: "allow" },
       { pattern: "go *", decision: "allow" },
@@ -239,13 +248,13 @@ const baseProfile: ProfilePolicy = {
         pattern: "grep *",
         decision: "deny",
         guidance:
-          "Raw grep can recursively expose .env contents. Use Pi's grep tool or ripgrep, which automatically exclude protected .env files.",
+          "Raw grep cannot be safely augmented with the active profile's protected-path exclusions. Use Pi's grep tool or ripgrep, which apply profile-derived exclusions automatically.",
       },
       {
         pattern: "git grep *",
         decision: "deny",
         guidance:
-          "git grep can expose tracked .env contents. Use Pi's grep tool or ripgrep, which automatically exclude protected .env files.",
+          "git grep cannot be safely augmented with the active profile's protected-path exclusions. Use Pi's grep tool or ripgrep, which apply profile-derived exclusions automatically.",
       },
     ],
 
@@ -262,40 +271,34 @@ const baseProfile: ProfilePolicy = {
         pattern: "../**/@earendil-works/pi-coding-agent/docs/*.md",
         decision: "allow",
       },
-      ...protectedPathRules,
     ],
 
     grep: [
       { pattern: "*", decision: "allow" },
       { pattern: "../**", decision: "ask" },
       { pattern: "/tmp/**", decision: "allow" },
-      ...protectedPathRules,
     ],
 
     find: [
       { pattern: "*", decision: "allow" },
       { pattern: "../**", decision: "allow" },
       { pattern: "/tmp/**", decision: "allow" },
-      ...protectedPathRules,
     ],
 
     ls: [
       { pattern: "*", decision: "allow" },
       { pattern: "../**", decision: "ask" },
       { pattern: "/tmp/**", decision: "allow" },
-      ...protectedPathRules,
     ],
 
     edit: [
       { pattern: "*", decision: "allow" },
       { pattern: "../**", decision: "ask" },
-      ...protectedPathRules,
     ],
 
     write: [
       { pattern: "*", decision: "allow" },
       { pattern: "../**", decision: "ask" },
-      ...protectedPathRules,
     ],
   },
 
@@ -315,7 +318,6 @@ const baseProfile: ProfilePolicy = {
       pattern: "../**/.pi/agent/skills/address-comments/*",
       decision: "allow",
     },
-    ...protectedPathRules,
   ],
 
   // Output redirection can truncate/create files. Scratch output is allowed in
@@ -349,12 +351,13 @@ const readOnlyPathRules: [Rule, ...Rule[]] = [
   { pattern: "/tmp/**", decision: "allow" },
   { pattern: "/private/tmp", decision: "allow" },
   { pattern: "/private/tmp/**", decision: "allow" },
-  ...protectedPathRules,
 ];
 
 const readOnlyProfile: ProfilePolicy = {
   color: "green",
   emoji: "🔎",
+  protectedPathPatterns: defaultProtectedPathPatterns,
+  protectedPathExceptions: defaultProtectedPathExceptions,
   tools: {
     bash: [
       {
@@ -372,6 +375,12 @@ const readOnlyProfile: ProfilePolicy = {
       { pattern: "ls *", decision: "allow" },
       { pattern: "find *", decision: "allow" },
       { pattern: "grep *", decision: "allow" },
+      { pattern: "cat", decision: "allow" },
+      { pattern: "cat *", decision: "allow" },
+      { pattern: "sed", decision: "allow" },
+      { pattern: "sed *", decision: "allow" },
+      { pattern: "sort", decision: "allow" },
+      { pattern: "sort *", decision: "allow" },
       { pattern: "rg *", decision: "allow" },
       { pattern: "ripgrep *", decision: "allow" },
       { pattern: "head", decision: "allow" },
@@ -382,6 +391,7 @@ const readOnlyProfile: ProfilePolicy = {
       { pattern: "nl *", decision: "allow" },
       { pattern: "wc", decision: "allow" },
       { pattern: "wc *", decision: "allow" },
+      { pattern: "file", decision: "allow" },
       { pattern: "file *", decision: "allow" },
 
       // Non-destructive git commands for inspecting the working tree, refs,
@@ -597,13 +607,13 @@ const readOnlyProfile: ProfilePolicy = {
         pattern: "grep *",
         decision: "deny",
         guidance:
-          "Raw grep can recursively expose .env contents. Use Pi's grep tool or ripgrep, which automatically exclude protected .env files.",
+          "Raw grep cannot be safely augmented with the active profile's protected-path exclusions. Use Pi's grep tool or ripgrep, which apply profile-derived exclusions automatically.",
       },
       {
         pattern: "git grep *",
         decision: "deny",
         guidance:
-          "git grep can expose tracked .env contents. Use Pi's grep tool or ripgrep, which automatically exclude protected .env files.",
+          "git grep cannot be safely augmented with the active profile's protected-path exclusions. Use Pi's grep tool or ripgrep, which apply profile-derived exclusions automatically.",
       },
     ],
 
@@ -676,6 +686,8 @@ export const policyConfig = definePolicyConfig({
       promptFile: "./prompts/socrates.md",
       color: "cyan",
       emoji: "🧠",
+      protectedPathPatterns: defaultProtectedPathPatterns,
+      protectedPathExceptions: defaultProtectedPathExceptions,
       tools: {
         bash: [
           { pattern: "*", decision: "deny" },
@@ -713,12 +725,18 @@ export const policyConfig = definePolicyConfig({
               "Do not run tests in the Socrates profile; continue by inspecting and reasoning about the code.",
           },
           { pattern: "find *", decision: "allow" },
+          { pattern: "cat", decision: "allow" },
+          { pattern: "cat *", decision: "allow" },
           { pattern: "sort *", decision: "allow" },
           { pattern: "sort", decision: "allow" },
+          { pattern: "sed", decision: "allow" },
           { pattern: "sed *", decision: "allow" },
           { pattern: "ls", decision: "allow" },
           { pattern: "ls *", decision: "allow" },
+          { pattern: "file", decision: "allow" },
           { pattern: "file *", decision: "allow" },
+          { pattern: "wc", decision: "allow" },
+          { pattern: "wc *", decision: "allow" },
           { pattern: "npx tsc --noEmit", decision: "allow" },
           { pattern: "printf *", decision: "allow" },
           { pattern: "true", decision: "allow" },
@@ -736,25 +754,21 @@ export const policyConfig = definePolicyConfig({
         read: [
           { pattern: "*", decision: "ask" },
           { pattern: "../**", decision: "ask" },
-          ...protectedPathRules,
         ],
 
         grep: [
           { pattern: "*", decision: "allow" },
           { pattern: "../**", decision: "ask" },
-          ...protectedPathRules,
         ],
 
         find: [
           { pattern: "*", decision: "allow" },
           { pattern: "../**", decision: "allow" },
-          ...protectedPathRules,
         ],
 
         ls: [
           { pattern: "*", decision: "allow" },
           { pattern: "../**", decision: "ask" },
-          ...protectedPathRules,
         ],
 
         edit: [{ pattern: "*", decision: "deny" }],
