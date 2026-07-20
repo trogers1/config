@@ -3,6 +3,7 @@
 Pi package that mirrors the curated opencode permission posture and adds switchable profiles:
 
 - `default`: normal Pi system prompt with the current curated permissions
+- `read-only`: no edit/write tools and only inspection-oriented bash plus non-destructive git history commands
 - `socrates`: Socratic coaching prompt with read-only / no-edit permissions
 - optional per-profile `color` and `emoji` metadata for the status line
 - explicit deny rules for destructive git operations and protected paths
@@ -17,6 +18,7 @@ Policy lives in `policy.ts`. The Socrates prompt lives in `prompts/socrates.md`.
 
 - `/profile` shows the active profile and available profiles.
 - `/profile <name>` switches to a profile.
+- `/read-only` switches to the read-only permissions profile.
 - `/socrates` switches to the Socrates coaching profile.
 - `/socrates-off` switches back to the configured default profile.
 

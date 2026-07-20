@@ -243,6 +243,274 @@ const baseProfile: ProfilePolicy = {
   ],
 };
 
+const readOnlyProfile: ProfilePolicy = {
+  color: "green",
+  emoji: "🔎",
+  tools: {
+    bash: [
+      {
+        pattern: "*",
+        decision: "deny",
+        guidance:
+          "The read-only profile only permits inspection commands and non-destructive git history queries. Switch profiles before editing files or changing repository state.",
+      },
+
+      // Navigation and read-only shell inspection.
+      { pattern: "pwd", decision: "allow" },
+      { pattern: "cd", decision: "allow" },
+      { pattern: "cd *", decision: "allow" },
+      { pattern: "ls", decision: "allow" },
+      { pattern: "ls *", decision: "allow" },
+      { pattern: "find *", decision: "allow" },
+      { pattern: "grep *", decision: "allow" },
+      { pattern: "rg *", decision: "allow" },
+      { pattern: "ripgrep *", decision: "allow" },
+      { pattern: "head", decision: "allow" },
+      { pattern: "head *", decision: "allow" },
+      { pattern: "tail", decision: "allow" },
+      { pattern: "tail *", decision: "allow" },
+      { pattern: "nl", decision: "allow" },
+      { pattern: "nl *", decision: "allow" },
+      { pattern: "wc", decision: "allow" },
+      { pattern: "wc *", decision: "allow" },
+      { pattern: "file *", decision: "allow" },
+
+      // Non-destructive git commands for inspecting the working tree, refs,
+      // objects, and history. Commands that update refs, the index, worktrees,
+      // or files are intentionally left denied by the catch-all rule above.
+      { pattern: "git", decision: "allow" },
+      { pattern: "git version", decision: "allow" },
+      { pattern: "git help", decision: "allow" },
+      { pattern: "git help *", decision: "allow" },
+      { pattern: "git status", decision: "allow" },
+      { pattern: "git status *", decision: "allow" },
+      { pattern: "git log", decision: "allow" },
+      { pattern: "git log *", decision: "allow" },
+      { pattern: "git show", decision: "allow" },
+      { pattern: "git show *", decision: "allow" },
+      { pattern: "git diff", decision: "allow" },
+      { pattern: "git diff *", decision: "allow" },
+      { pattern: "git grep *", decision: "allow" },
+      { pattern: "git blame *", decision: "allow" },
+      { pattern: "git annotate *", decision: "allow" },
+      { pattern: "git rev-parse", decision: "allow" },
+      { pattern: "git rev-parse *", decision: "allow" },
+      { pattern: "git rev-list", decision: "allow" },
+      { pattern: "git rev-list *", decision: "allow" },
+      { pattern: "git show-ref", decision: "allow" },
+      { pattern: "git show-ref *", decision: "allow" },
+      { pattern: "git merge-base *", decision: "allow" },
+      { pattern: "git merge-tree *", decision: "allow" },
+      { pattern: "git reflog", decision: "allow" },
+      { pattern: "git reflog show", decision: "allow" },
+      { pattern: "git reflog show *", decision: "allow" },
+      { pattern: "git reflog list", decision: "allow" },
+      { pattern: "git reflog list *", decision: "allow" },
+      { pattern: "git reflog exists *", decision: "allow" },
+      { pattern: "git shortlog", decision: "allow" },
+      { pattern: "git shortlog *", decision: "allow" },
+      { pattern: "git whatchanged", decision: "allow" },
+      { pattern: "git whatchanged *", decision: "allow" },
+      { pattern: "git range-diff *", decision: "allow" },
+      { pattern: "git cherry", decision: "allow" },
+      { pattern: "git cherry *", decision: "allow" },
+      { pattern: "git describe", decision: "allow" },
+      { pattern: "git describe *", decision: "allow" },
+      { pattern: "git name-rev *", decision: "allow" },
+      { pattern: "git ls-files", decision: "allow" },
+      { pattern: "git ls-files *", decision: "allow" },
+      { pattern: "git ls-tree *", decision: "allow" },
+      { pattern: "git cat-file", decision: "allow" },
+      { pattern: "git cat-file *", decision: "allow" },
+      { pattern: "git for-each-ref", decision: "allow" },
+      { pattern: "git for-each-ref *", decision: "allow" },
+      { pattern: "git branch", decision: "allow" },
+      { pattern: "git branch --show-current", decision: "allow" },
+      { pattern: "git branch --list", decision: "allow" },
+      { pattern: "git branch --list *", decision: "allow" },
+      { pattern: "git branch --contains *", decision: "allow" },
+      { pattern: "git branch --merged *", decision: "allow" },
+      { pattern: "git branch --no-merged *", decision: "allow" },
+      { pattern: "git branch --points-at *", decision: "allow" },
+      { pattern: "git branch --all", decision: "allow" },
+      { pattern: "git branch --remotes", decision: "allow" },
+      { pattern: "git branch -a", decision: "allow" },
+      { pattern: "git branch -r", decision: "allow" },
+      { pattern: "git branch -v", decision: "allow" },
+      { pattern: "git branch -vv", decision: "allow" },
+      { pattern: "git branch -av", decision: "allow" },
+      { pattern: "git branch -avv", decision: "allow" },
+      { pattern: "git branch -rv", decision: "allow" },
+      { pattern: "git branch -rvv", decision: "allow" },
+      { pattern: "git tag", decision: "allow" },
+      { pattern: "git tag --list", decision: "allow" },
+      { pattern: "git tag --list *", decision: "allow" },
+      { pattern: "git tag --contains *", decision: "allow" },
+      { pattern: "git tag --merged *", decision: "allow" },
+      { pattern: "git tag --no-merged *", decision: "allow" },
+      { pattern: "git tag --points-at *", decision: "allow" },
+      { pattern: "git tag --sort *", decision: "allow" },
+      { pattern: "git tag -l", decision: "allow" },
+      { pattern: "git tag -l *", decision: "allow" },
+      { pattern: "git remote", decision: "allow" },
+      { pattern: "git remote -v", decision: "allow" },
+      { pattern: "git remote show *", decision: "allow" },
+      { pattern: "git remote get-url *", decision: "allow" },
+      { pattern: "git config --get *", decision: "allow" },
+      { pattern: "git config --get-regexp *", decision: "allow" },
+      { pattern: "git config --list", decision: "allow" },
+      { pattern: "git config --list *", decision: "allow" },
+      { pattern: "git config * --list", decision: "allow" },
+      { pattern: "git config * --list *", decision: "allow" },
+      { pattern: "git config -l", decision: "allow" },
+      { pattern: "git config -l *", decision: "allow" },
+      { pattern: "git stash list", decision: "allow" },
+      { pattern: "git stash list *", decision: "allow" },
+      { pattern: "git stash show *", decision: "allow" },
+      { pattern: "git submodule status", decision: "allow" },
+      { pattern: "git submodule status *", decision: "allow" },
+      { pattern: "git worktree list", decision: "allow" },
+      { pattern: "git worktree list *", decision: "allow" },
+      { pattern: "git sparse-checkout list", decision: "allow" },
+      { pattern: "git count-objects", decision: "allow" },
+      { pattern: "git count-objects *", decision: "allow" },
+      { pattern: "git fsck", decision: "allow" },
+      { pattern: "git fsck *", decision: "allow" },
+      { pattern: "git verify-commit *", decision: "allow" },
+      { pattern: "git verify-tag *", decision: "allow" },
+      { pattern: "git diff-tree *", decision: "allow" },
+      { pattern: "git diff-index *", decision: "allow" },
+      { pattern: "git diff-files", decision: "allow" },
+      { pattern: "git diff-files *", decision: "allow" },
+      { pattern: "git show-branch", decision: "allow" },
+      { pattern: "git show-branch *", decision: "allow" },
+      { pattern: "git symbolic-ref HEAD", decision: "allow" },
+      { pattern: "git symbolic-ref --short HEAD", decision: "allow" },
+
+      // Keep the read-only profile from writing through otherwise-readable
+      // commands or through find/git options with write side effects.
+      {
+        pattern: "*>*",
+        decision: "deny",
+        guidance:
+          "The read-only profile blocks shell redirection because it can write files. Inspect output directly instead.",
+      },
+      {
+        pattern: "find * -delete*",
+        decision: "deny",
+        guidance: "find -delete modifies the filesystem and is not read-only.",
+      },
+      {
+        pattern: "find * -exec *",
+        decision: "deny",
+        guidance:
+          "find -exec can run destructive commands; use Pi's find/read/grep tools for inspection instead.",
+      },
+      {
+        pattern: "find * -execdir *",
+        decision: "deny",
+        guidance:
+          "find -execdir can run destructive commands; use Pi's find/read/grep tools for inspection instead.",
+      },
+      {
+        pattern: "git * --output*",
+        decision: "deny",
+        guidance:
+          "The read-only profile blocks git options that write command output to files.",
+      },
+      {
+        pattern: "git fsck *--lost-found*",
+        decision: "deny",
+        guidance:
+          "git fsck --lost-found writes recovered objects and is not read-only.",
+      },
+      {
+        pattern: "git reflog delete *",
+        decision: "deny",
+        guidance: "Deleting reflog entries changes repository metadata.",
+      },
+      {
+        pattern: "git reflog drop *",
+        decision: "deny",
+        guidance: "Dropping reflogs changes repository metadata.",
+      },
+      {
+        pattern: "git reflog expire *",
+        decision: "deny",
+        guidance: "Expiring reflogs changes repository metadata.",
+      },
+      {
+        pattern: "git branch * -d *",
+        decision: "deny",
+        guidance: "Deleting branches changes repository refs.",
+      },
+      {
+        pattern: "git branch * -D *",
+        decision: "deny",
+        guidance: "Deleting branches changes repository refs.",
+      },
+      {
+        pattern: "git branch * --delete *",
+        decision: "deny",
+        guidance: "Deleting branches changes repository refs.",
+      },
+      {
+        pattern: "git branch * -m *",
+        decision: "deny",
+        guidance: "Renaming branches changes repository refs.",
+      },
+      {
+        pattern: "git branch * --move *",
+        decision: "deny",
+        guidance: "Renaming branches changes repository refs.",
+      },
+      {
+        pattern: "git branch * -c *",
+        decision: "deny",
+        guidance: "Copying branches changes repository refs.",
+      },
+      {
+        pattern: "git branch * --copy *",
+        decision: "deny",
+        guidance: "Copying branches changes repository refs.",
+      },
+      {
+        pattern: "git tag * -d *",
+        decision: "deny",
+        guidance: "Deleting tags changes repository refs.",
+      },
+      {
+        pattern: "git tag * --delete *",
+        decision: "deny",
+        guidance: "Deleting tags changes repository refs.",
+      },
+    ],
+
+    read: baseProfile.tools.read,
+    grep: baseProfile.tools.grep,
+    find: baseProfile.tools.find,
+    ls: baseProfile.tools.ls,
+
+    edit: [
+      {
+        pattern: "*",
+        decision: "deny",
+        guidance: "The read-only profile does not permit editing files.",
+      },
+    ],
+
+    write: [
+      {
+        pattern: "*",
+        decision: "deny",
+        guidance: "The read-only profile does not permit writing files.",
+      },
+    ],
+  },
+
+  bashPathReferences: baseProfile.bashPathReferences,
+};
+
 // ─── Exported policy config ───────────────────────────────────────────
 
 export const policyConfig = definePolicyConfig({
@@ -250,6 +518,7 @@ export const policyConfig = definePolicyConfig({
 
   profiles: {
     default: baseProfile,
+    "read-only": readOnlyProfile,
 
     "performance-review": extendProfile(baseProfile, {
       color: "red",

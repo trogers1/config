@@ -115,6 +115,53 @@ describe("permissions extension", () => {
     ).resolves.toBeUndefined();
   });
 
+  it("provides a read-only profile for non-destructive git history inspection", async () => {
+    const harness = createExtensionHarness();
+
+    await harness.runCommand("read-only");
+    expect(harness.entries.at(-1)).toMatchObject({
+      customType: "pi-permissions-profile",
+      data: { profile: "read-only" },
+    });
+    expect(lastCallArgument(harness.ui.setStatus, 1)).toContain("🔎");
+    expect(lastCallArgument(harness.ui.setStatus, 1)).toContain("read-only");
+
+    await expect(
+      harness.callTool({
+        toolName: "bash",
+        input: { command: "git log --all --graph --oneline" },
+      }),
+    ).resolves.toBeUndefined();
+
+    await expect(
+      harness.callTool({
+        toolName: "bash",
+        input: { command: "git show HEAD~3:src/example.ts" },
+      }),
+    ).resolves.toBeUndefined();
+
+    for (const command of [
+      "git pull",
+      "git checkout main",
+      "git bisect start",
+      "git log --oneline > history.txt",
+    ]) {
+      const denied = await harness.callTool({
+        toolName: "bash",
+        input: { command },
+      });
+      expect(denied).toMatchObject({ block: true });
+    }
+
+    for (const toolName of ["edit", "write"]) {
+      const denied = await harness.callTool({
+        toolName,
+        input: { path: "notes.md", content: "not allowed" },
+      });
+      expect(denied).toMatchObject({ block: true });
+    }
+  });
+
   it("asks for unspecified commands and fails closed without a UI", async () => {
     const interactive = createExtensionHarness({ confirm: true });
     await expect(

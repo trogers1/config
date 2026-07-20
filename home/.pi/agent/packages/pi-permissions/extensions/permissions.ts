@@ -160,6 +160,20 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
+  pi.registerCommand("read-only", {
+    description: "Switch to the read-only permissions profile",
+    handler: async (_args, ctx) => {
+      if (!policyConfig.profiles["read-only"]) {
+        ctx.ui.notify("No 'read-only' profile is configured", "error");
+        return;
+      }
+
+      setActiveProfile("read-only");
+      ctx.ui.setStatus("permissions", formatProfileStatus(activeProfile));
+      ctx.ui.notify("Read-only profile enabled", "info");
+    },
+  });
+
   pi.registerCommand("socrates", {
     description: "Switch to the Socrates coaching profile",
     handler: async (_args, ctx) => {
