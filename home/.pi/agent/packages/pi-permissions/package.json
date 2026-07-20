@@ -7,7 +7,7 @@
   ],
   "scripts": {
     "check:all": "npm run check:types && npm run check:lint && npm run check:deps && npm run check:knip && npm run check:prettier",
-    "check:deps": "depcruise extensions policy.ts policy-helpers.ts test --config .dependency-cruiser.cjs",
+    "check:deps": "depcruise extensions modules integrationTests --config .dependency-cruiser.cjs",
     "check:knip": "knip",
     "check:lint": "eslint .",
     "check:prettier": "prettier --check .",
@@ -20,6 +20,13 @@
   "engines": {
     "node": ">=22.19.0"
   },
+  "files": [
+    "extensions/",
+    "modules/",
+    "!modules/**/*.test.ts",
+    "prompts/",
+    "README.md"
+  ],
   "pi": {
     "extensions": [
       "./extensions"

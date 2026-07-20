@@ -8,7 +8,7 @@ import {
   matchesGlobPattern,
   splitShellCommands,
 } from "../extensions/permissions";
-import type { ProfilePolicy } from "../policy-helpers";
+import type { ProfilePolicy } from "../modules/policyHelpers";
 
 const parserPolicy = {
   tools: {
@@ -110,7 +110,7 @@ describe("shell policy parser", () => {
         parserPolicy,
       ),
     ).resolves.toBeUndefined();
-    expect(ctx.ui.confirm).toHaveBeenCalledOnce();
+    expect(vi.mocked(ctx.ui.confirm).mock.calls).toHaveLength(1);
   });
 
   it("supports root, nested, and outside glob paths", () => {

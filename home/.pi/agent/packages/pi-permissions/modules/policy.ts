@@ -3,16 +3,8 @@ import {
   definePolicyConfig,
   type ProfilePolicy,
   type Rule,
-} from "./policy-helpers";
-
-const protectedPathRules: Rule[] = [
-  { pattern: "**/.env*", decision: "deny" },
-  { pattern: "**/.env*/**", decision: "deny" },
-  // Templates are safe to inspect and are intentionally the sole .env* exception.
-  { pattern: "**/.env.template", decision: "allow" },
-  { pattern: "**/.git", decision: "deny" },
-  { pattern: "**/.git/**", decision: "deny" },
-];
+} from "./policyHelpers";
+import { protectedPathRules } from "./protectedPaths";
 
 // ─── Shared base profile ──────────────────────────────────────────────
 //

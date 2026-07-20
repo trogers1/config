@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { policyConfig } from "../policy";
+import { policyConfig } from "../modules/policy";
 import {
   assertPolicyConfig,
   extendProfile,
   type ProfilePolicy,
-} from "../policy-helpers";
+} from "../modules/policyHelpers";
 
 const baseProfile = {
   color: "blue",

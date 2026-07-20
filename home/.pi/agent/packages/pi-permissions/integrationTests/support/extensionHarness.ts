@@ -3,19 +3,14 @@ import {
   type BeforeAgentStartEventResult,
   type ExtensionAPI,
   type ExtensionCommandContext,
-  type ExtensionContext,
   type ExtensionEvent,
+  type ExtensionHandler,
   type SessionStartEvent,
   type ToolCallEvent,
   type ToolCallEventResult,
 } from "@earendil-works/pi-coding-agent";
 import { vi, type Mock } from "vitest";
 import permissionsExtension from "../../extensions/permissions";
-
-type EventHandler = (
-  event: ExtensionEvent,
-  ctx: ExtensionContext,
-) => unknown | Promise<unknown>;
 
 type CommandRegistration = {
   handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> | void;
@@ -43,7 +38,10 @@ export function createExtensionHarness(
 ) {
   const cwd = options.cwd ?? process.cwd();
   const entries = [...(options.entries ?? [])];
-  const handlers = new Map<string, EventHandler[]>();
+  const handlers = new Map<
+    string,
+    Array<ExtensionHandler<ExtensionEvent, unknown>>
+  >();
   const commands = new Map<string, CommandRegistration>();
 
   const ui = {
@@ -65,7 +63,7 @@ export function createExtensionHarness(
   } as unknown as ExtensionCommandContext;
 
   const pi = {
-    on(event: string, handler: EventHandler) {
+    on(event: string, handler: ExtensionHandler<ExtensionEvent, unknown>) {
       handlers.set(event, [...(handlers.get(event) ?? []), handler]);
     },
     registerCommand(name: string, registration: CommandRegistration) {
@@ -99,7 +97,7 @@ export function createExtensionHarness(
         ...event,
         type: "tool_call",
         toolCallId: "test-tool-call",
-      } as ToolCallEvent);
+      });
       return result as ToolCallEventResult | undefined;
     },
     async beforeAgent(systemPrompt = "Base system prompt") {

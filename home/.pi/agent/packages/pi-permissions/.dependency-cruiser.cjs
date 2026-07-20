@@ -26,16 +26,25 @@ module.exports = {
     {
       name: "not-to-test",
       severity: "error",
-      comment: "Runtime extension code must never depend on tests.",
-      from: { pathNot: "^test/" },
-      to: { path: "^test/" },
+      comment:
+        "Runtime code must never depend on integration or colocated unit tests.",
+      from: { pathNot: "(^integrationTests/|\\.test\\.ts$)" },
+      to: { path: "(^integrationTests/|\\.test\\.ts$)" },
     },
     {
-      name: "policy-files-do-not-import-extension-entrypoints",
+      name: "not-to-dev-dependency",
       severity: "error",
       comment:
-        "Shared policy helpers live in policy-helpers.ts; importing extension entrypoints from policy files recreates a load-time cycle.",
-      from: { path: "^(policy|policy-helpers)\\.ts$" },
+        "Pi runtime code must not depend on packages declared only for development.",
+      from: { path: "^(extensions|modules)/", pathNot: "\\.test\\.ts$" },
+      to: { dependencyTypes: ["npm-dev"] },
+    },
+    {
+      name: "modules-do-not-import-extension-entrypoints",
+      severity: "error",
+      comment:
+        "Runtime modules must remain reusable and must not import Pi extension entrypoints.",
+      from: { path: "^modules/" },
       to: { path: "^extensions/" },
     },
   ],

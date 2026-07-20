@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   createExtensionHarness,
   lastCallArgument,
-} from "./support/extension-harness";
+} from "./support/extensionHarness";
 
 describe("permissions extension", () => {
   it("starts in the configured default profile and clears its status on shutdown", async () => {

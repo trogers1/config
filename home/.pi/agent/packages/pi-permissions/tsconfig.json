@@ -13,5 +13,9 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["extensions/**/*.ts", "test/**/*.ts", "*.ts"]
+  "include": [
+    "extensions/**/*.ts",
+    "modules/**/*.ts",
+    "integrationTests/**/*.ts"
+  ]
 }

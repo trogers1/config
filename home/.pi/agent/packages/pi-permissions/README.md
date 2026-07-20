@@ -12,7 +12,7 @@ Pi package that mirrors the curated opencode permission posture and adds switcha
 - confirmation for every unspecified bash command
 - confirmation before configured tools access paths outside the directory where pi was started
 
-Policy lives in `policy.ts`. The Socrates prompt lives in `prompts/socrates.md`.
+The policy lives in `modules/policy.ts`; reusable runtime helpers also live in `modules/`. Pi discovers only the extension entrypoint in `extensions/`. The Socrates prompt lives in `prompts/socrates.md`.
 
 ## Commands
 

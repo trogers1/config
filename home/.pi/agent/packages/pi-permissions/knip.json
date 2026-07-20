@@ -1,5 +1,14 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
-  "entry": ["extensions/permissions.ts", "policy.ts", "test/*.test.ts"],
-  "project": ["*.ts", "extensions/**/*.ts", "test/**/*.ts", "*.config.js"]
+  "entry": [
+    "extensions/permissions.ts",
+    "modules/policy.ts",
+    "integrationTests/*.test.ts"
+  ],
+  "project": [
+    "extensions/**/*.ts",
+    "modules/**/*.ts",
+    "integrationTests/**/*.ts",
+    "*.config.js"
+  ]
 }
