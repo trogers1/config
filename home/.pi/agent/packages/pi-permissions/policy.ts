@@ -2,7 +2,17 @@ import {
   extendProfile,
   definePolicyConfig,
   type ProfilePolicy,
+  type Rule,
 } from "./policy-helpers";
+
+const protectedPathRules: Rule[] = [
+  { pattern: "**/.env*", decision: "deny" },
+  { pattern: "**/.env*/**", decision: "deny" },
+  // Templates are safe to inspect and are intentionally the sole .env* exception.
+  { pattern: "**/.env.template", decision: "allow" },
+  { pattern: "**/.git", decision: "deny" },
+  { pattern: "**/.git/**", decision: "deny" },
+];
 
 // ─── Shared base profile ──────────────────────────────────────────────
 //
@@ -42,6 +52,21 @@ const baseProfile: ProfilePolicy = {
       { pattern: "git show-ref", decision: "allow" },
       { pattern: "git show-ref *", decision: "allow" },
       { pattern: "git merge-base *", decision: "allow" },
+      { pattern: "git blame *", decision: "allow" },
+      { pattern: "git rev-list", decision: "allow" },
+      { pattern: "git rev-list *", decision: "allow" },
+      { pattern: "git ls-tree *", decision: "allow" },
+      { pattern: "git cat-file", decision: "allow" },
+      { pattern: "git cat-file *", decision: "allow" },
+      { pattern: "git for-each-ref", decision: "allow" },
+      { pattern: "git for-each-ref *", decision: "allow" },
+      { pattern: "git remote", decision: "allow" },
+      { pattern: "git remote -v", decision: "allow" },
+      { pattern: "git remote show *", decision: "allow" },
+      { pattern: "git remote get-url *", decision: "allow" },
+      { pattern: "git stash list", decision: "allow" },
+      { pattern: "git stash list *", decision: "allow" },
+      { pattern: "git stash show *", decision: "allow" },
 
       // Git destructive / workflow-changing commands.
       { pattern: "git branch *", decision: "deny" },
@@ -53,6 +78,39 @@ const baseProfile: ProfilePolicy = {
       { pattern: "git checkout *", decision: "deny" },
       { pattern: "git add *", decision: "deny" },
       { pattern: "git worktree *", decision: "deny" },
+
+      // Safe git branch/tag/worktree listing forms. These appear after the
+      // broad branch/tag/worktree denies so they can be used for inspection
+      // without opening up mutating forms such as delete, move, or add.
+      { pattern: "git branch", decision: "allow" },
+      { pattern: "git branch --show-current", decision: "allow" },
+      { pattern: "git branch --list", decision: "allow" },
+      { pattern: "git branch --list *", decision: "allow" },
+      { pattern: "git branch --contains *", decision: "allow" },
+      { pattern: "git branch --merged *", decision: "allow" },
+      { pattern: "git branch --no-merged *", decision: "allow" },
+      { pattern: "git branch --points-at *", decision: "allow" },
+      { pattern: "git branch --all", decision: "allow" },
+      { pattern: "git branch --remotes", decision: "allow" },
+      { pattern: "git branch -a", decision: "allow" },
+      { pattern: "git branch -r", decision: "allow" },
+      { pattern: "git branch -v", decision: "allow" },
+      { pattern: "git branch -vv", decision: "allow" },
+      { pattern: "git branch -av", decision: "allow" },
+      { pattern: "git branch -avv", decision: "allow" },
+      { pattern: "git branch -rv", decision: "allow" },
+      { pattern: "git branch -rvv", decision: "allow" },
+      { pattern: "git tag", decision: "allow" },
+      { pattern: "git tag --list", decision: "allow" },
+      { pattern: "git tag --list *", decision: "allow" },
+      { pattern: "git tag --contains *", decision: "allow" },
+      { pattern: "git tag --merged *", decision: "allow" },
+      { pattern: "git tag --no-merged *", decision: "allow" },
+      { pattern: "git tag --points-at *", decision: "allow" },
+      { pattern: "git tag -l", decision: "allow" },
+      { pattern: "git tag -l *", decision: "allow" },
+      { pattern: "git worktree list", decision: "allow" },
+      { pattern: "git worktree list *", decision: "allow" },
 
       // Common low-risk commands.
       { pattern: "pwd", decision: "allow" },
@@ -155,12 +213,55 @@ const baseProfile: ProfilePolicy = {
           "bash *skills/address-comments/scripts/refresh-all-comments-md.sh*",
         decision: "allow",
       },
+
+      // Guard write-capable flags/forms on otherwise allowed inspection tools.
+      {
+        pattern: "find * -delete*",
+        decision: "deny",
+        guidance: "find -delete modifies the filesystem.",
+      },
+      {
+        pattern: "find * -exec *",
+        decision: "deny",
+        guidance:
+          "find -exec can run destructive commands; inspect results first and use targeted tool calls instead.",
+      },
+      {
+        pattern: "find * -execdir *",
+        decision: "deny",
+        guidance:
+          "find -execdir can run destructive commands; inspect results first and use targeted tool calls instead.",
+      },
+      {
+        pattern: "git * --output*",
+        decision: "deny",
+        guidance:
+          "Git --output writes files. Use shell redirection to /tmp for scratch output, or Pi's write/edit tools for intentional project changes.",
+      },
+      {
+        pattern: "git fsck *--lost-found*",
+        decision: "deny",
+        guidance: "git fsck --lost-found writes recovered objects.",
+      },
+      {
+        pattern: "grep *",
+        decision: "deny",
+        guidance:
+          "Raw grep can recursively expose .env contents. Use Pi's grep tool or ripgrep, which automatically exclude protected .env files.",
+      },
+      {
+        pattern: "git grep *",
+        decision: "deny",
+        guidance:
+          "git grep can expose tracked .env contents. Use Pi's grep tool or ripgrep, which automatically exclude protected .env files.",
+      },
     ],
 
     read: [
       { pattern: "*", decision: "allow" },
       { pattern: "..", decision: "ask" },
       { pattern: "../**", decision: "ask" },
+      { pattern: "/tmp/**", decision: "allow" },
       // Allow reading installed Pi skills even when Pi starts inside a project/worktree.
       { pattern: "../.pi/agent/skills/**", decision: "allow" },
       { pattern: "../**/.pi/agent/skills/**", decision: "allow" },
@@ -169,55 +270,40 @@ const baseProfile: ProfilePolicy = {
         pattern: "../**/@earendil-works/pi-coding-agent/docs/*.md",
         decision: "allow",
       },
-      { pattern: "**/.env", decision: "deny" },
-      { pattern: "**/.env/**", decision: "deny" },
-      { pattern: "**/.git", decision: "deny" },
-      { pattern: "**/.git/**", decision: "deny" },
+      ...protectedPathRules,
     ],
 
     grep: [
       { pattern: "*", decision: "allow" },
       { pattern: "../**", decision: "ask" },
-      { pattern: "**/.env", decision: "deny" },
-      { pattern: "**/.env/**", decision: "deny" },
-      { pattern: "**/.git", decision: "deny" },
-      { pattern: "**/.git/**", decision: "deny" },
+      { pattern: "/tmp/**", decision: "allow" },
+      ...protectedPathRules,
     ],
 
     find: [
       { pattern: "*", decision: "allow" },
       { pattern: "../**", decision: "allow" },
-      { pattern: "**/.env", decision: "deny" },
-      { pattern: "**/.env/**", decision: "deny" },
-      { pattern: "**/.git", decision: "deny" },
-      { pattern: "**/.git/**", decision: "deny" },
+      { pattern: "/tmp/**", decision: "allow" },
+      ...protectedPathRules,
     ],
 
     ls: [
       { pattern: "*", decision: "allow" },
       { pattern: "../**", decision: "ask" },
-      { pattern: "**/.env", decision: "deny" },
-      { pattern: "**/.env/**", decision: "deny" },
-      { pattern: "**/.git", decision: "deny" },
-      { pattern: "**/.git/**", decision: "deny" },
+      { pattern: "/tmp/**", decision: "allow" },
+      ...protectedPathRules,
     ],
 
     edit: [
       { pattern: "*", decision: "allow" },
       { pattern: "../**", decision: "ask" },
-      { pattern: "**/.env", decision: "deny" },
-      { pattern: "**/.env/**", decision: "deny" },
-      { pattern: "**/.git", decision: "deny" },
-      { pattern: "**/.git/**", decision: "deny" },
+      ...protectedPathRules,
     ],
 
     write: [
       { pattern: "*", decision: "allow" },
       { pattern: "../**", decision: "ask" },
-      { pattern: "**/.env", decision: "deny" },
-      { pattern: "**/.env/**", decision: "deny" },
-      { pattern: "**/.git", decision: "deny" },
-      { pattern: "**/.git/**", decision: "deny" },
+      ...protectedPathRules,
     ],
   },
 
@@ -227,6 +313,7 @@ const baseProfile: ProfilePolicy = {
     { pattern: "*", decision: "allow" },
     { pattern: "..", decision: "ask" },
     { pattern: "../**", decision: "ask" },
+    { pattern: "/tmp/**", decision: "allow" },
     // Allow fixed address-comments skill helper scripts even when Pi starts in a project.
     {
       pattern: "../**/.pi/agent/skills/address-comments/scripts/*.sh",
@@ -236,12 +323,42 @@ const baseProfile: ProfilePolicy = {
       pattern: "../**/.pi/agent/skills/address-comments/*",
       decision: "allow",
     },
-    { pattern: "**/.env", decision: "deny" },
-    { pattern: "**/.env/**", decision: "deny" },
-    { pattern: "**/.git", decision: "deny" },
-    { pattern: "**/.git/**", decision: "deny" },
+    ...protectedPathRules,
+  ],
+
+  // Output redirection can truncate/create files. Scratch output is allowed in
+  // /tmp, but project writes should go through Pi's write/edit tools instead.
+  bashOutputRedirections: [
+    {
+      pattern: "**",
+      decision: "deny",
+      guidance:
+        "Shell output redirection is only allowed to /tmp in the default profile. Use Pi's write/edit tools for intentional project changes.",
+    },
+    { pattern: "/tmp/**", decision: "allow" },
   ],
 };
+
+const readOnlyPathRules: [Rule, ...Rule[]] = [
+  { pattern: "*", decision: "allow" },
+  {
+    pattern: "..",
+    decision: "deny",
+    guidance:
+      "The read-only profile can only read inside the startup directory and /tmp.",
+  },
+  {
+    pattern: "../**",
+    decision: "deny",
+    guidance:
+      "The read-only profile can only read inside the startup directory and /tmp.",
+  },
+  { pattern: "/tmp", decision: "allow" },
+  { pattern: "/tmp/**", decision: "allow" },
+  { pattern: "/private/tmp", decision: "allow" },
+  { pattern: "/private/tmp/**", decision: "allow" },
+  ...protectedPathRules,
+];
 
 const readOnlyProfile: ProfilePolicy = {
   color: "green",
@@ -484,12 +601,24 @@ const readOnlyProfile: ProfilePolicy = {
         decision: "deny",
         guidance: "Deleting tags changes repository refs.",
       },
+      {
+        pattern: "grep *",
+        decision: "deny",
+        guidance:
+          "Raw grep can recursively expose .env contents. Use Pi's grep tool or ripgrep, which automatically exclude protected .env files.",
+      },
+      {
+        pattern: "git grep *",
+        decision: "deny",
+        guidance:
+          "git grep can expose tracked .env contents. Use Pi's grep tool or ripgrep, which automatically exclude protected .env files.",
+      },
     ],
 
-    read: baseProfile.tools.read,
-    grep: baseProfile.tools.grep,
-    find: baseProfile.tools.find,
-    ls: baseProfile.tools.ls,
+    read: readOnlyPathRules,
+    grep: readOnlyPathRules,
+    find: readOnlyPathRules,
+    ls: readOnlyPathRules,
 
     edit: [
       {
@@ -508,7 +637,14 @@ const readOnlyProfile: ProfilePolicy = {
     ],
   },
 
-  bashPathReferences: baseProfile.bashPathReferences,
+  bashPathReferences: readOnlyPathRules,
+  bashOutputRedirections: [
+    {
+      pattern: "**",
+      decision: "deny",
+      guidance: "The read-only profile blocks shell output redirection.",
+    },
+  ],
 };
 
 // ─── Exported policy config ───────────────────────────────────────────
@@ -608,37 +744,25 @@ export const policyConfig = definePolicyConfig({
         read: [
           { pattern: "*", decision: "ask" },
           { pattern: "../**", decision: "ask" },
-          { pattern: "**/.env", decision: "deny" },
-          { pattern: "**/.env/**", decision: "deny" },
-          { pattern: "**/.git", decision: "deny" },
-          { pattern: "**/.git/**", decision: "deny" },
+          ...protectedPathRules,
         ],
 
         grep: [
           { pattern: "*", decision: "allow" },
           { pattern: "../**", decision: "ask" },
-          { pattern: "**/.env", decision: "deny" },
-          { pattern: "**/.env/**", decision: "deny" },
-          { pattern: "**/.git", decision: "deny" },
-          { pattern: "**/.git/**", decision: "deny" },
+          ...protectedPathRules,
         ],
 
         find: [
           { pattern: "*", decision: "allow" },
           { pattern: "../**", decision: "allow" },
-          { pattern: "**/.env", decision: "deny" },
-          { pattern: "**/.env/**", decision: "deny" },
-          { pattern: "**/.git", decision: "deny" },
-          { pattern: "**/.git/**", decision: "deny" },
+          ...protectedPathRules,
         ],
 
         ls: [
           { pattern: "*", decision: "allow" },
           { pattern: "../**", decision: "ask" },
-          { pattern: "**/.env", decision: "deny" },
-          { pattern: "**/.env/**", decision: "deny" },
-          { pattern: "**/.git", decision: "deny" },
-          { pattern: "**/.git/**", decision: "deny" },
+          ...protectedPathRules,
         ],
 
         edit: [{ pattern: "*", decision: "deny" }],
@@ -647,6 +771,13 @@ export const policyConfig = definePolicyConfig({
       },
 
       bashPathReferences: [{ pattern: "*", decision: "deny" }],
+      bashOutputRedirections: [
+        {
+          pattern: "**",
+          decision: "deny",
+          guidance: "The Socrates profile blocks shell output redirection.",
+        },
+      ],
     },
   },
 });

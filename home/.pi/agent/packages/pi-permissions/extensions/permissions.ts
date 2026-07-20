@@ -215,7 +215,17 @@ export default function (pi: ExtensionAPI) {
     const policy = activePolicy(activeProfile);
 
     if (isToolCallEventType("bash", event)) {
-      return await gateBash(event.input.command ?? "", startupCwd, ctx, policy);
+      const command = event.input.command ?? "";
+      const ripgrepGlobError = validateRipgrepGlobOverrides(command);
+      if (ripgrepGlobError) return { block: true, reason: ripgrepGlobError };
+
+      event.input.command = injectRipgrepEnvExclusions(command);
+      return await gateBash(event.input.command, startupCwd, ctx, policy);
+    }
+
+    if (isToolCallEventType("grep", event)) {
+      const reason = injectGrepEnvExclusion(event.input);
+      if (reason) return { block: true, reason };
     }
 
     const rules = policy.tools[event.toolName];
@@ -226,13 +236,13 @@ export default function (pi: ExtensionAPI) {
       requestedPath,
       ctx.cwd ?? startupCwd,
     );
-    const matchPath = policyMatchPath(absolutePath, startupCwd);
-    const policyDecision = evaluateByPattern(
-      matchPath,
+    const policyDecision = evaluatePathByPattern(
+      absolutePath,
+      startupCwd,
       rules,
       "allow",
-      matchesGlobPattern,
     );
+    const matchPath = policyDecision.matchPath;
 
     if (policyDecision.decision === "deny") {
       return {
@@ -316,6 +326,37 @@ export async function gateBash(
         block: true,
         reason: appendUserGuidance(
           `Bash path reference was not approved: ${pathDecision.path}`,
+          approval.guidance,
+        ),
+      };
+  }
+
+  const redirectionDecision = decideBashOutputRedirections(
+    commands,
+    startupCwd,
+    ctx.cwd ?? startupCwd,
+    activePolicy,
+  );
+  if (redirectionDecision?.decision === "deny") {
+    return {
+      block: true,
+      reason: appendPolicySteering(
+        `Bash output redirection denied by policy.\n\nRaw command:\n${command}\n\nParsed command segments:\n${formatParsedCommands(command, activePolicy)}\n\nTarget:\n${redirectionDecision.path}\n\nMatched policy path:\n${redirectionDecision.matchPath}`,
+        [redirectionDecision.rule],
+      ),
+    };
+  }
+  if (redirectionDecision?.decision === "ask") {
+    const approval = await confirmOrBlock(
+      ctx,
+      "Bash command redirects output to a gated path?",
+      `Raw command:\n${command}\n\nParsed command segments:\n${formatParsedCommands(command, activePolicy)}\n\nTarget:\n${redirectionDecision.path}\n\nMatched policy path:\n${redirectionDecision.matchPath}`,
+    );
+    if (!approval.approved)
+      return {
+        block: true,
+        reason: appendUserGuidance(
+          `Bash output redirection was not approved: ${redirectionDecision.path}`,
           approval.guidance,
         ),
       };
@@ -590,18 +631,48 @@ function decideBashPathReferences(
 ): (PolicyDecision & { path: string; matchPath: string }) | undefined {
   let simulatedCwd = cwd;
   for (const segment of commandSegments) {
+    const redirectionsArePolicyGated = Boolean(
+      activePolicy.bashOutputRedirections,
+    );
+    let skipNextOutputRedirectionTarget = false;
+    let skipNextGlobPattern = false;
     for (const token of shellishTokens(segment)) {
+      if (skipNextOutputRedirectionTarget) {
+        skipNextOutputRedirectionTarget = false;
+        continue;
+      }
+      if (skipNextGlobPattern) {
+        skipNextGlobPattern = false;
+        continue;
+      }
+      // Ripgrep glob values can contain slashes but are patterns, not paths.
+      if (token === "--glob") {
+        skipNextGlobPattern = true;
+        continue;
+      }
+      if (token.startsWith("--glob=")) continue;
+      if (
+        redirectionsArePolicyGated &&
+        isStandaloneOutputRedirectionOperator(token)
+      ) {
+        skipNextOutputRedirectionTarget = true;
+        continue;
+      }
+      if (
+        redirectionsArePolicyGated &&
+        extractInlineOutputRedirectionTarget(token)
+      )
+        continue;
       if (!looksLikePath(token)) continue;
       const absolutePath = resolveRequestedPath(token, simulatedCwd);
-      const matchPath = policyMatchPath(absolutePath, startupCwd);
-      const policyDecision = evaluateByPattern(
-        matchPath,
+      const policyDecision = evaluatePathByPattern(
+        absolutePath,
+        startupCwd,
         activePolicy.bashPathReferences,
         "allow",
-        matchesGlobPattern,
       );
       if (policyDecision.decision !== "allow")
-        return { ...policyDecision, path: absolutePath, matchPath };
+        return { ...policyDecision, path: absolutePath };
     }
 
     const cdTarget = extractCdTarget(segment);
@@ -612,6 +683,103 @@ function decideBashPathReferences(
     }
   }
   return undefined;
+}
+
+function decideBashOutputRedirections(
+  commandSegments: string[],
+  startupCwd: string,
+  cwd: string,
+  activePolicy: ProfilePolicy,
+): (PolicyDecision & { path: string; matchPath: string }) | undefined {
+  const rules = activePolicy.bashOutputRedirections;
+  if (!rules) return undefined;
+
+  let simulatedCwd = cwd;
+  for (const segment of commandSegments) {
+    for (const target of extractOutputRedirectionTargets(segment)) {
+      const absolutePath = resolveRequestedPath(target, simulatedCwd);
+      const policyDecision = evaluatePathByPattern(
+        absolutePath,
+        startupCwd,
+        rules,
+        "allow",
+      );
+      if (policyDecision.decision !== "allow")
+        return { ...policyDecision, path: absolutePath };
+    }
+
+    const cdTarget = extractCdTarget(segment);
+    if (cdTarget !== undefined && cdTarget !== "-") {
+      simulatedCwd = resolveRequestedPath(cdTarget, simulatedCwd);
+    }
+  }
+  return undefined;
+}
+
+function evaluatePathByPattern(
+  absolutePath: string,
+  startupCwd: string,
+  rules: Rule[],
+  defaultDecision: Decision,
+): PolicyDecision & { matchPath: string } {
+  const relativeMatchPath = policyMatchPath(absolutePath, startupCwd);
+  let matchedRule: Rule | undefined;
+  let matchedPath = relativeMatchPath;
+
+  for (const rule of rules) {
+    const matchPath = rule.pattern.startsWith("/")
+      ? normalizePolicyPath(absolutePath)
+      : relativeMatchPath;
+    if (matchesGlobPattern(rule.pattern, matchPath)) {
+      matchedRule = rule;
+      matchedPath = matchPath;
+    }
+  }
+
+  return {
+    decision: matchedRule?.decision ?? defaultDecision,
+    rule: matchedRule,
+    matchPath: matchedPath,
+  };
+}
+
+function extractOutputRedirectionTargets(command: string): string[] {
+  const tokens = shellishTokens(command);
+  const targets: string[] = [];
+  let previousWasOutputRedirection = false;
+
+  for (const token of tokens) {
+    if (previousWasOutputRedirection) {
+      previousWasOutputRedirection = false;
+      if (!isFileDescriptorTarget(token)) targets.push(token);
+      continue;
+    }
+
+    if (isStandaloneOutputRedirectionOperator(token)) {
+      previousWasOutputRedirection = true;
+      continue;
+    }
+
+    const target = extractInlineOutputRedirectionTarget(token);
+    if (target && !isFileDescriptorTarget(target)) targets.push(target);
+  }
+
+  return targets;
+}
+
+function isStandaloneOutputRedirectionOperator(token: string): boolean {
+  return /^(?:\d*>>|\d*>\||\d*>|&>>|&>)$/.test(token);
+}
+
+function extractInlineOutputRedirectionTarget(
+  token: string,
+): string | undefined {
+  const match = /(?:\d*>>|\d*>\||\d*>|&>>|&>)(.+)$/.exec(token);
+  return match?.[1];
+}
+
+function isFileDescriptorTarget(target: string): boolean {
+  return /^&(?:\d+|-)$/.test(target);
 }
 
 function extractCdTarget(command: string): string | undefined {
@@ -715,6 +883,92 @@ export function stripJsonCommentsAndTrailingCommas(input: string): string {
   }
 
   return output.replace(/,\s*([}\]])/g, "$1");
+}
+
+function validateRipgrepGlobOverrides(command: string): string | undefined {
+  for (const segment of extractShellCommands(command)) {
+    const tokens = shellishTokens(segment);
+    const ripgrepIndex = tokens.findIndex(
+      (token) => token === "rg" || token === "ripgrep",
+    );
+    if (ripgrepIndex < 0) continue;
+
+    for (let index = ripgrepIndex + 1; index < tokens.length; index++) {
+      const token = tokens[index];
+      const glob =
+        token === "--glob"
+          ? tokens[++index]
+          : token.startsWith("--glob=")
+            ? token.slice("--glob=".length)
+            : undefined;
+      if (glob === undefined) continue;
+      if (!isSafeGrepGlob(glob)) {
+        return [
+          "ripgrep denied because its --glob could override the protected .env exclusion.",
+          "Use a specific non-.env --glob (for example, '**/*.ts'), use the built-in grep tool, or omit --glob to automatically exclude .env files.",
+        ].join("\n\n");
+      }
+    }
+  }
+  return undefined;
+}
+
+function injectRipgrepEnvExclusions(command: string): string {
+  // Ripgrep accepts multiple --glob options; later include rules preserve the
+  // intentionally readable .env.template files while excluding real env files.
+  return command.replace(
+    /(^|&&|\|\||[;|\n])(\s*)((?:command\s+)?)(rg|ripgrep)(?=\s|$)/gm,
+    (
+      _match,
+      separator: string,
+      spacing: string,
+      prefix: string,
+      tool: string,
+    ) =>
+      `${separator}${spacing}${prefix}${tool} --glob '!**/.env*' --glob '**/.env.template'`,
+  );
+}
+
+function injectGrepEnvExclusion(input: {
+  path?: string;
+  glob?: string;
+}): string | undefined {
+  // The built-in grep tool only accepts one glob. With no caller glob, make it
+  // a deny glob. A caller-supplied positive glob is retained only when it is
+  // demonstrably unable to match protected env files; a second exclusion glob
+  // cannot otherwise be added without replacing the built-in tool.
+  if (isEnvTemplatePath(input.path)) return undefined;
+  if (!input.glob) {
+    input.glob = "!**/.env*";
+    return undefined;
+  }
+  if (isSafeGrepGlob(input.glob)) return undefined;
+
+  return [
+    "grep denied because its glob could match protected .env files.",
+    "Use a specific non-.env glob (for example, '**/*.ts'), search .env.template directly, or omit glob to automatically exclude .env files.",
+  ].join("\n\n");
+}
+
+function isEnvTemplatePath(requestedPath: string | undefined): boolean {
+  if (!requestedPath) return false;
+  return path.basename(expandHome(requestedPath)) === ".env.template";
+}
+
+function isSafeGrepGlob(glob: string): boolean {
+  if (glob === "!**/.env*") return true;
+  if (glob === ".env.template" || glob === "**/.env.template") return true;
+  // Character classes and brace expansion are intentionally rejected: this
+  // matcher cannot prove whether those ripgrep glob forms include .env files.
+  if (glob.startsWith("!") || /[\[\]{}]/.test(glob)) return false;
+
+  return ![
+    ".env",
+    ".env.local",
+    ".env.production.local",
+    "nested/.env",
+    "nested/.env.local",
+  ].some((protectedPath) => matchesGlobPattern(glob, protectedPath));
 }
 
 function normalizeCommand(command: string): string {

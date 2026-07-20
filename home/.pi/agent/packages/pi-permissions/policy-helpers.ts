@@ -18,6 +18,7 @@ export type ProfilePolicy = {
   emoji?: string;
   tools: Record<string, Rule[]>;
   bashPathReferences: [Rule, ...Rule[]];
+  bashOutputRedirections?: [Rule, ...Rule[]];
 };
 
 export type PolicyConfig<Names extends string = string> = {
@@ -62,6 +63,9 @@ const profileSchema = Type.Object(
     emoji: Type.Optional(Type.String()),
     tools: Type.Record(Type.String(), Type.Array(ruleSchema)),
     bashPathReferences: Type.Array(ruleSchema, { minItems: 1 }),
+    bashOutputRedirections: Type.Optional(
+      Type.Array(ruleSchema, { minItems: 1 }),
+    ),
   },
   { additionalProperties: false },
 );
