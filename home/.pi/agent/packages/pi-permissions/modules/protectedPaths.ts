@@ -4,6 +4,7 @@ export const defaultProtectedPathPatterns = [
   "**/.env*/**",
   "**/.git",
   "**/.git/**",
+  "**/secrets/*.tfvars",
 ] as const;
 
 /** Narrow readable exceptions applied after the default protected patterns. */
