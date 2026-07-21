@@ -649,6 +649,8 @@ const readOnlyProfile: ProfilePolicy = {
         decision: "deny",
         guidance: "The read-only profile does not permit editing files.",
       },
+      { pattern: "handoff.md", decision: "allow" },
+      { pattern: "progress.md", decision: "allow" },
     ],
 
     write: [
@@ -657,6 +659,8 @@ const readOnlyProfile: ProfilePolicy = {
         decision: "deny",
         guidance: "The read-only profile does not permit writing files.",
       },
+      { pattern: "handoff.md", decision: "allow" },
+      { pattern: "progress.md", decision: "allow" },
     ],
   },
 
@@ -670,6 +674,8 @@ const readOnlyProfile: ProfilePolicy = {
     },
     { pattern: "/tmp/**", decision: "allow" },
     { pattern: "/private/tmp/**", decision: "allow" },
+    { pattern: "handoff.md", decision: "allow" },
+    { pattern: "progress.md", decision: "allow" },
   ],
 };
 

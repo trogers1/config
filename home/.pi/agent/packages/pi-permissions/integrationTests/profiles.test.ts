@@ -493,6 +493,29 @@ describe("permissions extension", () => {
       });
       expect(denied).toMatchObject({ block: true });
     }
+
+    for (const file of ["handoff.md", "progress.md"]) {
+      await expect(
+        harness.callTool({
+          toolName: "write",
+          input: { path: file, content: "allowed" },
+        }),
+      ).resolves.toBeUndefined();
+
+      await expect(
+        harness.callTool({
+          toolName: "edit",
+          input: { path: file, oldText: "allowed", newText: "updated" },
+        }),
+      ).resolves.toBeUndefined();
+    }
+
+    await expect(
+      harness.callTool({
+        toolName: "bash",
+        input: { command: "git log --oneline > handoff.md" },
+      }),
+    ).resolves.toBeUndefined();
   });
 
   it("asks for unspecified commands and fails closed without a UI", async () => {

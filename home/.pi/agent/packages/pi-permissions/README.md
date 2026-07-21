@@ -3,7 +3,7 @@
 Pi package that mirrors the curated opencode permission posture and adds switchable profiles:
 
 - `default`: normal Pi system prompt with the current curated permissions
-- `read-only`: no edit/write tools; read access is limited to the startup directory tree and `/tmp`; bash is limited to inspection commands and non-destructive git history commands
+- `read-only`: edit/write tools are only allowed for `./handoff.md` and `./progress.md`; read access is limited to the startup directory tree and `/tmp`; bash is limited to inspection commands, non-destructive git history commands, and output redirection to `/tmp`, `./handoff.md`, or `./progress.md`
 - `socrates`: Socratic coaching prompt with read-only / no-edit permissions
 - optional per-profile `color` and `emoji` metadata for the status line
 - explicit deny rules for destructive git operations and protected paths
