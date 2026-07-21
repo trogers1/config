@@ -438,6 +438,15 @@ describe("permissions extension", () => {
       }),
     ).resolves.toBeUndefined();
 
+    await expect(
+      harness.callTool({
+        toolName: "bash",
+        input: {
+          command: "git log --oneline > /tmp/pi-read-only-redirect.txt",
+        },
+      }),
+    ).resolves.toBeUndefined();
+
     const outsideRead = await harness.callTool({
       toolName: "read",
       input: { path: path.resolve(process.cwd(), "../outside.txt") },

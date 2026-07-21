@@ -166,6 +166,32 @@ const baseProfile: ProfilePolicy = {
       { pattern: "file", decision: "allow" },
       { pattern: "file *", decision: "allow" },
       { pattern: "npm *", decision: "allow" },
+      {
+        pattern: "npm exec",
+        decision: "deny",
+        guidance:
+          "Do not run one-off binaries with npm exec. Use the package.json scripts defined for this repository instead.",
+        alternatives: [
+          "npm run test",
+          "npm run test:watch",
+          "npm run check:all",
+          "npm run check:prettier",
+          "npm run fix:prettier",
+        ],
+      },
+      {
+        pattern: "npm exec *",
+        decision: "deny",
+        guidance:
+          "Do not run one-off binaries with npm exec. Use the package.json scripts defined for this repository instead.",
+        alternatives: [
+          "npm run test",
+          "npm run test:watch",
+          "npm run check:all",
+          "npm run check:prettier",
+          "npm run fix:prettier",
+        ],
+      },
       { pattern: "go *", decision: "allow" },
       { pattern: "openspec *", decision: "allow" },
       { pattern: "npx tsc --noEmit", decision: "allow" },
@@ -508,12 +534,7 @@ const readOnlyProfile: ProfilePolicy = {
 
       // Keep the read-only profile from writing through otherwise-readable
       // commands or through find/git options with write side effects.
-      {
-        pattern: "*>*",
-        decision: "deny",
-        guidance:
-          "The read-only profile blocks shell redirection because it can write files. Inspect output directly instead.",
-      },
+      // Shell redirection is gated separately by bashOutputRedirections.
       {
         pattern: "find * -delete*",
         decision: "deny",
@@ -644,8 +665,11 @@ const readOnlyProfile: ProfilePolicy = {
     {
       pattern: "**",
       decision: "deny",
-      guidance: "The read-only profile blocks shell output redirection.",
+      guidance:
+        "The read-only profile blocks shell output redirection except to /tmp.",
     },
+    { pattern: "/tmp/**", decision: "allow" },
+    { pattern: "/private/tmp/**", decision: "allow" },
   ],
 };
 
