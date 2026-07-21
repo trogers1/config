@@ -11,11 +11,13 @@ type RegisteredCommand = { handler: (args: string, ctx: ExtensionCommandContext)
 export function createPiUsageHarness({
 	cwd,
 	model,
+	selectedModel,
 	sessionFile,
 	entries = [],
 }: {
 	cwd: string;
 	model?: unknown;
+	selectedModel?: unknown;
 	sessionFile?: string;
 	entries?: unknown[];
 }) {
@@ -34,6 +36,7 @@ export function createPiUsageHarness({
 	};
 	const context = {
 		cwd,
+		model: selectedModel,
 		modelRegistry,
 		sessionManager: {
 			getSessionFile: vi.fn(() => sessionFile),

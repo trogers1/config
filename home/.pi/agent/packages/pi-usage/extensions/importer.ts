@@ -3,7 +3,13 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { buildUsageRecord, type ModelLookup } from './accounting';
 import type { UsageConfig } from './config';
-import { getAgentDir, recordUsage, type UsageEvent, type UsageRecord } from './db';
+import { getAgentDir, getDbPath, recordUsage, type UsageEvent, type UsageRecord } from './db';
+
+export type ImportErrorDetail = {
+	file: string;
+	line: number;
+	message: string;
+};
 
 export type ImportSummary = {
 	filesScanned: number;
@@ -12,6 +18,8 @@ export type ImportSummary = {
 	updated: number;
 	unchanged: number;
 	errors: number;
+	errorDetails: ImportErrorDetail[];
+	errorLogPath?: string;
 };
 
 export type ImportProgress = ImportSummary & {
@@ -41,6 +49,7 @@ export async function importSessions({
 		updated: 0,
 		unchanged: 0,
 		errors: 0,
+		errorDetails: [],
 	};
 
 	if (!fs.existsSync(sessionRoot)) return summary;
@@ -93,6 +102,7 @@ async function importFile({
 		crlfDelay: Infinity,
 	});
 	let headerCwd: string | undefined;
+	let activeModel: UsageModel | undefined;
 	let lineCount = 0;
 
 	for await (const line of lines) {
@@ -102,8 +112,13 @@ async function importFile({
 		let entry: any;
 		try {
 			entry = JSON.parse(line);
-		} catch {
-			summary.errors++;
+		} catch (error) {
+			recordImportError({
+				summary,
+				file,
+				line: lineCount,
+				message: `Invalid JSON: ${errorMessage(error)}`,
+			});
 			onProgress?.({ currentFileLines: lineCount });
 			continue;
 		}
@@ -113,11 +128,13 @@ async function importFile({
 			continue;
 		}
 
+		activeModel = modelForEntry({ entry, previous: activeModel });
 		const record = usageRecordFromEntry({
 			entry,
 			sessionFile: file,
 			accounting,
 			cwd: headerCwd,
+			model: activeModel,
 		});
 		if (!record) continue;
 		summary.eventsFound++;
@@ -125,39 +142,142 @@ async function importFile({
 			const result = recordUsage({ record });
 			summary[result]++;
 			onProgress?.({ currentFileLines: lineCount });
-		} catch {
-			summary.errors++;
+		} catch (error) {
+			recordImportError({
+				summary,
+				file,
+				line: lineCount,
+				message: `Could not store usage event: ${errorMessage(error)}`,
+			});
 			onProgress?.({ currentFileLines: lineCount });
 		}
 	}
 	onProgress?.({ currentFileLines: lineCount });
 }
 
+function recordImportError({
+	summary,
+	file,
+	line,
+	message,
+}: {
+	summary: ImportSummary;
+	file: string;
+	line: number;
+	message: string;
+}): void {
+	summary.errors++;
+	const detail = { file, line, message };
+	const errorLogPath = appendImportError({
+		detail,
+		errorLogPath: summary.errorLogPath ?? getImportErrorLogPath({ timestamp: new Date() }),
+	});
+	if (errorLogPath) summary.errorLogPath = errorLogPath;
+	if (summary.errorDetails.length >= 20) return;
+	summary.errorDetails.push(detail);
+}
+
+export function getImportErrorLogPath({ timestamp }: { timestamp: Date }): string {
+	const suffix = timestamp.toISOString().replace(/[:.]/g, '-');
+	return path.join(path.dirname(getDbPath()), `import-errors-${suffix}.jsonl`);
+}
+
+function appendImportError({
+	detail,
+	errorLogPath,
+}: {
+	detail: ImportErrorDetail;
+	errorLogPath: string;
+}): string | undefined {
+	try {
+		fs.mkdirSync(path.dirname(errorLogPath), { recursive: true });
+		fs.appendFileSync(
+			errorLogPath,
+			JSON.stringify({ timestamp: new Date().toISOString(), ...detail }) + '\n',
+			'utf8'
+		);
+		return errorLogPath;
+	} catch {
+		return undefined;
+	}
+}
+
+function errorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
+export type UsageModel = { provider: string; model: string };
+
 export function usageRecordFromEntry({
 	entry,
 	sessionFile,
 	accounting,
 	cwd,
+	model,
+	source = 'import',
 }: {
 	entry: any;
-	sessionFile: string;
+	sessionFile?: string;
 	accounting: AccountingOptions;
 	cwd?: string;
+	model?: UsageModel;
+	source?: 'live' | 'import';
 }): UsageRecord | undefined {
-	if (entry?.type !== 'message') return undefined;
-	const message = entry.message;
-	if (message?.role !== 'assistant' || !message.usage) return undefined;
+	const message = messageWithUsage({ entry, model });
+	if (!message) return undefined;
 	return usageRecordFromMessage({
 		message,
 		accounting,
 		options: {
-			source: 'import',
+			source,
 			sessionFile,
-			sessionEntryId: typeof entry.id === 'string' ? entry.id : undefined,
-			entryTimestamp: typeof entry.timestamp === 'string' ? Date.parse(entry.timestamp) : undefined,
+			sessionEntryId: typeof entry?.id === 'string' ? entry.id : undefined,
+			entryTimestamp:
+				typeof entry?.timestamp === 'string' ? Date.parse(entry.timestamp) : undefined,
 			cwd,
 		},
 	});
+}
+
+function messageWithUsage({ entry, model }: { entry: any; model?: UsageModel }): any | undefined {
+	if (entry?.type === 'message') {
+		const message = entry.message;
+		return message?.role === 'assistant' && message.usage ? message : undefined;
+	}
+	if (entry?.type !== 'compaction' && entry?.type !== 'branch_summary') return undefined;
+	if (!entry.usage) return undefined;
+	return {
+		role: 'assistant',
+		provider: model?.provider ?? 'unknown',
+		model: model?.model ?? 'unknown',
+		timestamp: typeof entry.timestamp === 'string' ? Date.parse(entry.timestamp) : undefined,
+		usage: entry.usage,
+	};
+}
+
+function modelForEntry({
+	entry,
+	previous,
+}: {
+	entry: any;
+	previous?: UsageModel;
+}): UsageModel | undefined {
+	if (
+		entry?.type === 'model_change' &&
+		typeof entry.provider === 'string' &&
+		typeof entry.modelId === 'string'
+	) {
+		return { provider: entry.provider, model: entry.modelId };
+	}
+	const message = entry?.type === 'message' ? entry.message : undefined;
+	if (
+		message?.role === 'assistant' &&
+		typeof message.provider === 'string' &&
+		typeof message.model === 'string'
+	) {
+		return { provider: message.provider, model: message.model };
+	}
+	return previous;
 }
 
 export function usageRecordFromMessage({

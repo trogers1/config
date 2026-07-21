@@ -6,7 +6,13 @@ import type {
 } from '@earendil-works/pi-coding-agent';
 import { closeDb, getDbPath, recordUsage } from './db';
 import { parseUsageArgs, usageHelp } from './args';
-import { importSessions, usageRecordFromMessage, type AccountingOptions } from './importer';
+import {
+	importSessions,
+	usageRecordFromEntry,
+	usageRecordFromMessage,
+	type AccountingOptions,
+	type UsageModel,
+} from './importer';
 import { exportCsv, renderReport } from './reporting';
 import { renderLimitsStatus } from './limits';
 import { readUsageConfig } from './config';
@@ -89,6 +95,33 @@ export default function piUsageExtension(pi: ExtensionAPI) {
 			if (ctx.hasUI === false) {
 				process.stderr.write(`pi-usage: failed to record usage: ${errorMessage}\n`);
 			}
+		}
+	});
+
+	pi.on('session_compact', async (event: unknown, ctx: ExtensionContext) => {
+		try {
+			const entry = sessionUsageEntry({ event, key: 'compactionEntry' });
+			if (!entry) return;
+			const result = recordUsageEntry({ entry, ctx });
+			if (result === 'inserted') liveInsertCount++;
+			updateLimitsStatus(ctx);
+		} catch (error) {
+			ctx.ui.notify(`pi-usage failed to record compaction usage: ${errorMessage(error)}`, 'error');
+		}
+	});
+
+	pi.on('session_tree', async (event: unknown, ctx: ExtensionContext) => {
+		try {
+			const entry = sessionUsageEntry({ event, key: 'summaryEntry' });
+			if (!entry) return;
+			const result = recordUsageEntry({ entry, ctx });
+			if (result === 'inserted') liveInsertCount++;
+			updateLimitsStatus(ctx);
+		} catch (error) {
+			ctx.ui.notify(
+				`pi-usage failed to record branch-summary usage: ${errorMessage(error)}`,
+				'error'
+			);
 		}
 	});
 
@@ -176,6 +209,12 @@ export default function piUsageExtension(pi: ExtensionAPI) {
 								}
 							},
 						});
+						const errorDetails = summary.errorDetails.map(
+							({ file, line, message }) => `- ${basename(file)}:${line}: ${message}`
+						);
+						if (summary.errors > errorDetails.length) {
+							errorDetails.push(`- …and ${summary.errors - errorDetails.length} more`);
+						}
 						commandContext.ui.notify(
 							[
 								'Usage import complete',
@@ -185,6 +224,8 @@ export default function piUsageExtension(pi: ExtensionAPI) {
 								`Updated: ${summary.updated}`,
 								`Unchanged: ${summary.unchanged}`,
 								`Errors: ${summary.errors}`,
+								...(errorDetails.length > 0 ? ['', 'Import errors:', ...errorDetails] : []),
+								...(summary.errorLogPath ? [`Error log: ${summary.errorLogPath}`] : []),
 								`DB: ${getDbPath()}`,
 							].join('\n'),
 							summary.errors > 0 ? 'warning' : 'info'
@@ -221,6 +262,38 @@ function accountingFor(ctx: ExtensionContext): AccountingOptions {
 		config: readUsageConfig(),
 		modelLookup: ({ provider, model }) => ctx.modelRegistry.find(provider, model),
 	};
+}
+
+function recordUsageEntry({ entry, ctx }: { entry: unknown; ctx: ExtensionContext }) {
+	const usageRecord = usageRecordFromEntry({
+		entry,
+		accounting: accountingFor(ctx),
+		source: 'live',
+		sessionFile: ctx.sessionManager.getSessionFile(),
+		cwd: ctx.cwd,
+		model: currentModel(ctx),
+	});
+	return usageRecord ? recordUsage({ record: usageRecord }) : undefined;
+}
+
+function sessionUsageEntry({ event, key }: { event: unknown; key: string }): unknown {
+	if (!event || typeof event !== 'object') return undefined;
+	const entry = (event as Record<string, unknown>)[key];
+	if (!entry || typeof entry !== 'object') return undefined;
+	return (entry as { usage?: unknown }).usage ? entry : undefined;
+}
+
+function currentModel(ctx: ExtensionContext): UsageModel | undefined {
+	const model = (ctx as { model?: unknown }).model;
+	if (!model || typeof model !== 'object') return undefined;
+	const provider = (model as { provider?: unknown }).provider;
+	const id = (model as { id?: unknown }).id;
+	if (typeof provider !== 'string' || typeof id !== 'string') return undefined;
+	return { provider, model: id };
+}
+
+function errorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
 }
 
 function findEntryIdForMessage(ctx: ExtensionContext, message: any): string | undefined {

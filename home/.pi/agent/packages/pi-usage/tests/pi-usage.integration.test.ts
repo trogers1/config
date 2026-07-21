@@ -290,6 +290,135 @@ describe('pi-usage extension', () => {
 		).toHaveLength(3);
 	});
 
+	it('reports import errors with the session file, line, and cause', async () => {
+		const sessionRoot = path.join(home, '.pi', 'agent', 'sessions');
+		fs.mkdirSync(sessionRoot, { recursive: true });
+		fs.writeFileSync(
+			path.join(sessionRoot, 'malformed.jsonl'),
+			`${JSON.stringify({ type: 'session', cwd: home })}\nnot json\n`
+		);
+		const harness = createPiUsageHarness({ cwd: home });
+		piUsageExtension(harness.api);
+
+		await harness.command('usage', 'import');
+
+		expect(harness.notifications.at(-1)).toEqual(
+			expect.objectContaining({
+				type: 'warning',
+				message: expect.stringMatching(
+					/Errors: 1\n\nImport errors:\n- malformed\.jsonl:2: Invalid JSON:/
+				),
+			})
+		);
+		const errorLogPath = harness.notifications.at(-1)?.message.match(/Error log: (.+)/)?.[1];
+		expect(errorLogPath).toMatch(/import-errors-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z\.jsonl/);
+		expect(fs.readFileSync(errorLogPath!, 'utf8')).toContain(
+			'"file":"' + path.join(sessionRoot, 'malformed.jsonl') + '"'
+		);
+	});
+
+	it('imports and captures live compaction and branch-summary model usage once', async () => {
+		const sessionRoot = path.join(home, '.pi', 'agent', 'sessions');
+		fs.mkdirSync(sessionRoot, { recursive: true });
+		const sessionFile = path.join(sessionRoot, 'session.jsonl');
+		const summaryUsage = {
+			input: 1000,
+			output: 500,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 1500,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		};
+		fs.writeFileSync(
+			sessionFile,
+			[
+				JSON.stringify({ type: 'session', cwd: home }),
+				JSON.stringify({ type: 'model_change', provider: 'zai', modelId: 'glm-5.2' }),
+				JSON.stringify({
+					type: 'compaction',
+					id: 'imported-compaction',
+					timestamp: '2026-07-21T00:00:00.000Z',
+					usage: summaryUsage,
+				}),
+				JSON.stringify({
+					type: 'branch_summary',
+					id: 'imported-branch-summary',
+					timestamp: '2026-07-21T00:01:00.000Z',
+					usage: summaryUsage,
+				}),
+			].join('\n') + '\n'
+		);
+		const harness = createPiUsageHarness({
+			cwd: home,
+			sessionFile,
+			model: { cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 } },
+			selectedModel: { provider: 'zai', id: 'glm-5.2' },
+		});
+		piUsageExtension(harness.api);
+
+		await harness.command('usage', 'import');
+		await harness.emit('session_compact', {
+			compactionEntry: {
+				type: 'compaction',
+				id: 'live-compaction',
+				timestamp: '2026-07-21T00:02:00.000Z',
+				usage: summaryUsage,
+			},
+		});
+		await harness.emit('session_tree', {
+			summaryEntry: {
+				type: 'branch_summary',
+				id: 'live-branch-summary',
+				timestamp: '2026-07-21T00:03:00.000Z',
+				usage: summaryUsage,
+			},
+		});
+		await harness.emit('session_compact', {
+			compactionEntry: {
+				type: 'compaction',
+				id: 'live-compaction',
+				timestamp: '2026-07-21T00:02:00.000Z',
+				usage: summaryUsage,
+			},
+		});
+
+		const events = getDb()
+			.prepare(
+				'SELECT session_entry_id, provider, model, total_tokens FROM usage_events ORDER BY timestamp_ms'
+			)
+			.all();
+		expect(events).toEqual([
+			{
+				session_entry_id: 'imported-compaction',
+				provider: 'zai',
+				model: 'glm-5.2',
+				total_tokens: 1500,
+			},
+			{
+				session_entry_id: 'imported-branch-summary',
+				provider: 'zai',
+				model: 'glm-5.2',
+				total_tokens: 1500,
+			},
+			{
+				session_entry_id: 'live-compaction',
+				provider: 'zai',
+				model: 'glm-5.2',
+				total_tokens: 1500,
+			},
+			{
+				session_entry_id: 'live-branch-summary',
+				provider: 'zai',
+				model: 'glm-5.2',
+				total_tokens: 1500,
+			},
+		]);
+		const total = getDb()
+			.prepare("SELECT SUM(total_amount) AS total FROM usage_charges WHERE meter = 'cost'")
+			.get() as { total: number };
+		expect(total.total).toBeCloseTo(0.008);
+	});
+
 	it('reports an actionable error when Pi no longer supplies a required capability', async () => {
 		const harness = createPiUsageHarness({ cwd: home });
 		Reflect.deleteProperty(harness.context.modelRegistry, 'refresh');
