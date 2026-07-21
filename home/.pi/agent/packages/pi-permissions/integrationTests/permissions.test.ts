@@ -8,6 +8,7 @@ import {
   matchesGlobPattern,
   splitShellCommands,
 } from "../extensions/permissions";
+import { policyConfig } from "../modules/policy";
 import type { ProfilePolicy } from "../modules/policyHelpers";
 
 const parserPolicy = {
@@ -134,5 +135,27 @@ describe("shell policy parser", () => {
     expect(matchesGlobPattern("**/.env", "app/.env")).toBe(true);
     expect(matchesGlobPattern("**/.git/**", ".git/config")).toBe(true);
     expect(matchesGlobPattern("../**", "../other/file.txt")).toBe(true);
+  });
+});
+
+describe("default profile bash policy", () => {
+  it.each([
+    "git tag --sort=version:refname",
+    "git tag --sort version:refname",
+    "git tag -l",
+    "git tag --list",
+    "git tag --contains v1.0.0",
+    "git tag --merged main",
+  ])("allows %s", (command) => {
+    expect(decideBash(command, policyConfig.profiles.default)).toBe("allow");
+  });
+
+  it.each([
+    "git tag -a v1.0.0",
+    "git tag -d v1.0.0",
+    "git tag -m 'message' v1.0.0",
+    "git tag --delete v1.0.0",
+  ])("denies %s", (command) => {
+    expect(decideBash(command, policyConfig.profiles.default)).toBe("deny");
   });
 });

@@ -106,6 +106,7 @@ const baseProfile: ProfilePolicy = {
       { pattern: "git tag --points-at *", decision: "allow" },
       { pattern: "git tag -l", decision: "allow" },
       { pattern: "git tag -l *", decision: "allow" },
+      { pattern: "git tag --sort*", decision: "allow" },
       { pattern: "git worktree list", decision: "allow" },
       { pattern: "git worktree list *", decision: "allow" },
 
@@ -494,7 +495,7 @@ const readOnlyProfile: ProfilePolicy = {
       { pattern: "git tag --merged *", decision: "allow" },
       { pattern: "git tag --no-merged *", decision: "allow" },
       { pattern: "git tag --points-at *", decision: "allow" },
-      { pattern: "git tag --sort *", decision: "allow" },
+      { pattern: "git tag --sort*", decision: "allow" },
       { pattern: "git tag -l", decision: "allow" },
       { pattern: "git tag -l *", decision: "allow" },
       { pattern: "git remote", decision: "allow" },
