@@ -17,6 +17,11 @@ export type ProfilePolicy = {
   color?: ProfileColor;
   emoji?: string;
   tools: Record<string, Rule[]>;
+  /**
+   * Gates path-looking tokens inside bash commands (reach: which parts of the
+   * filesystem bash may touch). protectedPathPatterns marks sensitive paths
+   * across every tool instead.
+   */
   bashPathReferences: [Rule, ...Rule[]];
   /** Glob patterns protected from both disclosure and mutation. */
   protectedPathPatterns?: readonly string[];

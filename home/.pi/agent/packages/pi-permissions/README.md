@@ -59,7 +59,7 @@ For example:
 
 Because later matching rules win, steering comes only from the rule that made the final deny decision. For compound bash commands, steering from each denied segment is combined and deduplicated.
 
-`bashPathReferences` separately gates path-looking tokens inside bash commands, because bash input is both command text and possible path access.
+`bashPathReferences` separately gates path-looking tokens inside bash commands, because bash input is both command text and possible path access. Where `protectedPathPatterns` marks specific paths as sensitive across every tool, `bashPathReferences` controls reach: which parts of the filesystem bash commands may touch at all (for example, `../**` keeps bash inside the startup directory).
 
 Each profile defines its protected glob patterns with `protectedPathPatterns`; these are the source of truth rather than an additional hard-coded `.env` policy. Narrow readable exceptions can follow them through `protectedPathExceptions`:
 
