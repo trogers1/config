@@ -113,6 +113,8 @@ const baseProfile: ProfilePolicy = {
       // Common low-risk commands.
       { pattern: "pwd", decision: "allow" },
       { pattern: "cd", decision: "allow" },
+      { pattern: "echo", decision: "deny", guidance: "echo can reveal secrets. If you just want a separator use `echo \"---\""}
+      { pattern: "echo \"---\"", decision: "allow"}
       // Allow changing into child directories; bashPathReferences below still
       // gates path arguments and asks/blocks when the target leaves startup cwd.
       { pattern: "cd *", decision: "allow" },
