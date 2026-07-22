@@ -3,6 +3,7 @@
 Pi package that mirrors the curated opencode permission posture and adds switchable profiles:
 
 - `default`: normal Pi system prompt with the current curated permissions
+- `worker`: default-like non-interactive subagent policy; rules that normally ask for confirmation deny with guidance instead
 - `read-only`: edit/write tools are only allowed for `./handoff.md` and `./progress.md`; read access is limited to the startup directory tree and `/tmp`; bash is limited to inspection commands, non-destructive git history commands, and output redirection to `/tmp`, `./handoff.md`, or `./progress.md`
 - `socrates`: Socratic coaching prompt with read-only / no-edit permissions
 - optional per-profile `color` and `emoji` metadata for the status line
@@ -23,6 +24,15 @@ The policy lives in `modules/policy.ts`; reusable runtime helpers also live in `
 - `/socrates-off` switches back to the configured default profile.
 
 Profile changes are persisted in the Pi session, so resumed sessions restore their last selected profile.
+
+## Subagent environment
+
+The package consumes the environment variables exported by `pi-permissions-subagents`:
+
+- `PI_SUBAGENT_PROFILE` selects the initial profile and overrides a profile persisted in a resumed worker session. An unknown profile fails startup rather than silently granting the default policy.
+- `PI_SUBAGENT_WRITE_GLOBS` is a comma-separated list of paths or glob patterns relative to Pi's startup directory. When present, `edit`, `write`, and path references in Bash commands are denied outside the declared scopes. Plain paths include their descendants; for example, `src` permits both `src` and `src/**`.
+
+The write-scope layer is additional to the selected profile, so protected-path and command restrictions still apply inside an allowed scope. Pi's dedicated read tools retain the profile's normal read access.
 
 Profile status metadata is configured per profile:
 

@@ -1,5 +1,5 @@
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createExtensionHarness,
   lastCallArgument,
@@ -7,6 +7,96 @@ import {
 import { policyConfig } from "../modules/policy";
 
 describe("permissions extension", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("selects the subagent profile from the environment", async () => {
+    vi.stubEnv("PI_SUBAGENT_PROFILE", "read-only");
+    const harness = createExtensionHarness();
+
+    await harness.start();
+
+    expect(lastCallArgument(harness.ui.setStatus, 1)).toContain("read-only");
+    await expect(
+      harness.callTool({
+        toolName: "write",
+        input: { path: "notes.md", content: "blocked" },
+      }),
+    ).resolves.toMatchObject({ block: true });
+  });
+
+  it("provides a non-interactive worker profile", async () => {
+    vi.stubEnv("PI_SUBAGENT_PROFILE", "worker");
+    const harness = createExtensionHarness({ hasUI: false });
+    await harness.start();
+
+    await expect(
+      harness.callTool({
+        toolName: "bash",
+        input: { command: "npm test" },
+      }),
+    ).resolves.toBeUndefined();
+
+    const unspecified = await harness.callTool({
+      toolName: "bash",
+      input: { command: "python scripts/build.py" },
+    });
+    expect(unspecified).toMatchObject({ block: true });
+    expect(unspecified?.reason).toContain("non-interactive worker");
+  });
+
+  it("enforces subagent write scopes for tools and Bash paths", async () => {
+    vi.stubEnv("PI_SUBAGENT_PROFILE", "worker");
+    vi.stubEnv("PI_SUBAGENT_WRITE_GLOBS", "modules/allowed.ts,tests/unit");
+    const harness = createExtensionHarness({ hasUI: false });
+    await harness.start();
+
+    await expect(
+      harness.callTool({
+        toolName: "write",
+        input: { path: "modules/allowed.ts", content: "allowed" },
+      }),
+    ).resolves.toBeUndefined();
+    await expect(
+      harness.callTool({
+        toolName: "edit",
+        input: { path: "tests/unit/example.test.ts", edits: [] },
+      }),
+    ).resolves.toBeUndefined();
+
+    for (const event of [
+      {
+        toolName: "write",
+        input: { path: "modules/outside.ts", content: "blocked" },
+      },
+      {
+        toolName: "bash",
+        input: { command: "npm test -- tests/integration/example.test.ts" },
+      },
+    ]) {
+      const denied = await harness.callTool(event);
+      expect(denied).toMatchObject({ block: true });
+      expect(denied?.reason).toContain("PI_SUBAGENT_WRITE_GLOBS");
+    }
+
+    // Scope restrictions do not weaken protected-path rules.
+    const protectedWrite = await harness.callTool({
+      toolName: "write",
+      input: { path: ".env", content: "blocked" },
+    });
+    expect(protectedWrite).toMatchObject({ block: true });
+  });
+
+  it("fails startup for an unknown subagent profile", async () => {
+    vi.stubEnv("PI_SUBAGENT_PROFILE", "missing");
+    const harness = createExtensionHarness();
+
+    await expect(harness.start()).rejects.toThrow(
+      "Unknown PI_SUBAGENT_PROFILE 'missing'",
+    );
+  });
+
   it("starts in the configured default profile and clears its status on shutdown", async () => {
     const harness = createExtensionHarness();
 
@@ -325,7 +415,7 @@ describe("permissions extension", () => {
       harness.callTool({ toolName: "grep", input: builtInGrepInput }),
     ).resolves.toBeUndefined();
     expect(builtInGrepInput.glob).toBe(
-      "!{**/.env*,**/.env*/**,**/.git,**/.git/**}",
+      "!{**/.env*,**/.env*/**,**/.git,**/.git/**,**/secrets/*.tfvars}",
     );
 
     const safeGlobInput = {
@@ -350,7 +440,7 @@ describe("permissions extension", () => {
       harness.callTool({ toolName: "bash", input: ripgrepInput }),
     ).resolves.toBeUndefined();
     expect(ripgrepInput.command).toBe(
-      "rg --glob '!**/.env*' --glob '!**/.env*/**' --glob '!**/.git' --glob '!**/.git/**' --glob '**/.env.template' DATABASE_URL .",
+      "rg --glob '!**/.env*' --glob '!**/.env*/**' --glob '!**/.git' --glob '!**/.git/**' --glob '!**/secrets/*.tfvars' --glob '**/.env.template' DATABASE_URL .",
     );
 
     for (const command of [

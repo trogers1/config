@@ -128,6 +128,10 @@ export default function (pi: ExtensionAPI) {
   assertPolicyConfig(policyConfig);
 
   const startupCwd = path.resolve(process.cwd());
+  const subagentProfile = process.env.PI_SUBAGENT_PROFILE?.trim();
+  const subagentWriteRules = parseSubagentWriteRules(
+    process.env.PI_SUBAGENT_WRITE_GLOBS,
+  );
   let activeProfile: ProfileName = policyConfig.defaultProfile;
 
   function restoreActiveProfile(ctx: ExtensionContext): void {
@@ -140,6 +144,17 @@ export default function (pi: ExtensionAPI) {
       if (isProfileName(profile)) {
         activeProfile = profile;
       }
+    }
+
+    // A subagent's declared profile is authoritative even when resuming a
+    // session that previously persisted a different interactive profile.
+    if (subagentProfile) {
+      if (!isProfileName(subagentProfile)) {
+        throw new Error(
+          `Unknown PI_SUBAGENT_PROFILE '${subagentProfile}'. Available: ${profileNames().join(", ")}`,
+        );
+      }
+      activeProfile = subagentProfile;
     }
   }
 
@@ -249,6 +264,15 @@ export default function (pi: ExtensionAPI) {
 
     if (isToolCallEventType("bash", event)) {
       const command = event.input.command ?? "";
+      const scopeDecision = decideSubagentBashScope(
+        command,
+        startupCwd,
+        ctx.cwd ?? startupCwd,
+        policy,
+        subagentWriteRules,
+      );
+      if (scopeDecision) return scopeDecision;
+
       const ripgrepGlobError = validateRipgrepGlobOverrides(
         command,
         policy.protectedPathPatterns ?? [],
@@ -281,6 +305,26 @@ export default function (pi: ExtensionAPI) {
       requestedPath,
       ctx.cwd ?? startupCwd,
     );
+    if (
+      (event.toolName === "edit" || event.toolName === "write") &&
+      subagentWriteRules
+    ) {
+      const scopeDecision = evaluatePathByPattern(
+        absolutePath,
+        startupCwd,
+        subagentWriteRules,
+        "deny",
+      );
+      if (scopeDecision.decision !== "allow") {
+        return {
+          block: true,
+          reason: appendPolicySteering(
+            `${event.toolName} denied: path is outside PI_SUBAGENT_WRITE_GLOBS: ${displayPath(absolutePath, startupCwd)}`,
+            [scopeDecision.rule],
+          ),
+        };
+      }
+    }
     const policyDecision = evaluatePathByPattern(
       absolutePath,
       startupCwd,
@@ -317,6 +361,62 @@ export default function (pi: ExtensionAPI) {
 
     return undefined;
   });
+}
+
+function parseSubagentWriteRules(
+  value: string | undefined,
+): Rule[] | undefined {
+  if (value === undefined) return undefined;
+
+  const scopes = value
+    .split(",")
+    .map((scope) =>
+      scope.trim().replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/$/, ""),
+    )
+    .filter(Boolean);
+  const guidance =
+    "This subagent may only modify or reference paths in its declared write scope.";
+  const rules: Rule[] = [{ pattern: "**", decision: "deny", guidance }];
+
+  for (const scope of scopes) {
+    if (scope === ".") {
+      rules.push({ pattern: "**", decision: "allow" });
+      rules.push({ pattern: "..", decision: "deny", guidance });
+      rules.push({ pattern: "../**", decision: "deny", guidance });
+    } else if (/[*?[]/.test(scope)) {
+      rules.push({ pattern: scope, decision: "allow" });
+    } else {
+      rules.push({ pattern: scope, decision: "allow" });
+      rules.push({ pattern: `${scope}/**`, decision: "allow" });
+    }
+  }
+  return rules;
+}
+
+function decideSubagentBashScope(
+  command: string,
+  startupCwd: string,
+  cwd: string,
+  policy: ProfilePolicy,
+  subagentWriteRules: Rule[] | undefined,
+) {
+  if (!subagentWriteRules) return undefined;
+  const commands = extractShellCommands(command)
+    .map(normalizeCommandForDecision)
+    .filter(Boolean);
+  const decision = decideBashPathReferences(commands, startupCwd, cwd, {
+    ...policy,
+    bashPathReferences: subagentWriteRules as [Rule, ...Rule[]],
+  });
+  if (decision?.decision !== "deny") return undefined;
+
+  return {
+    block: true,
+    reason: appendPolicySteering(
+      `Bash path reference denied: path is outside PI_SUBAGENT_WRITE_GLOBS.\n\nPath:\n${decision.path}\n\nMatched policy path:\n${decision.matchPath}`,
+      [decision.rule],
+    ),
+  };
 }
 
 export async function gateBash(

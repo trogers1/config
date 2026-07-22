@@ -367,6 +367,39 @@ const baseProfile: ProfilePolicy = {
   ],
 };
 
+function denyInteractiveDecisions(policy: ProfilePolicy): ProfilePolicy {
+  const denyAsk = (rule: Rule): Rule =>
+    rule.decision === "ask"
+      ? {
+          ...rule,
+          decision: "deny",
+          guidance:
+            rule.guidance ??
+            "This non-interactive worker cannot request permission. Use an explicitly allowed command or path.",
+        }
+      : { ...rule };
+
+  return {
+    ...policy,
+    color: "magenta",
+    emoji: "⚙️",
+    tools: Object.fromEntries(
+      Object.entries(policy.tools).map(([tool, rules]) => [
+        tool,
+        rules.map(denyAsk),
+      ]),
+    ),
+    bashPathReferences: policy.bashPathReferences.map(denyAsk) as [
+      Rule,
+      ...Rule[],
+    ],
+    bashOutputRedirections: policy.bashOutputRedirections?.map(denyAsk) as
+      [Rule, ...Rule[]] | undefined,
+  };
+}
+
+const workerProfile = denyInteractiveDecisions(baseProfile);
+
 const readOnlyPathRules: [Rule, ...Rule[]] = [
   { pattern: "*", decision: "allow" },
   {
@@ -694,6 +727,7 @@ export const policyConfig = definePolicyConfig({
 
   profiles: {
     default: baseProfile,
+    worker: workerProfile,
     "read-only": readOnlyProfile,
 
     "performance-review": extendProfile(baseProfile, {
