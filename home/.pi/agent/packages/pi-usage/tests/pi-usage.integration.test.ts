@@ -2,8 +2,16 @@ import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { Worker } from 'node:worker_threads';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { closeDb, getDb, getDbPath } from '../extensions/db';
+import {
+	closeDb,
+	getDb,
+	getDbPath,
+	insertEventSql,
+	recordUsage,
+	type UsageEventInsertParams,
+} from '../extensions/db';
 import piUsageExtension from '../extensions/pi-usage';
 import { createPiUsageHarness } from './pi-usage.harness';
 
@@ -296,6 +304,209 @@ describe('pi-usage extension', () => {
 				message: expect.stringContaining('pi-usage is incompatible with this Pi runtime'),
 			}),
 		]);
+	});
+
+	it('handles concurrent writers without errors or lost records', async () => {
+		const workerCount = 4;
+		const recordsPerWorker = 50;
+		const workerPath = new URL('./concurrent-writer.worker.mjs', import.meta.url);
+		const day = new Date().toISOString().slice(0, 10);
+
+		getDb();
+
+		const workers: Worker[] = [];
+		const results: Promise<number>[] = [];
+		for (let i = 0; i < workerCount; i++) {
+			const records: UsageEventInsertParams[] = [];
+			for (let j = 0; j < recordsPerWorker; j++) {
+				records.push({
+					unique_key: `worker-${i}:entry-${j}`,
+					source: 'live',
+					timestamp_ms: Date.now(),
+					day,
+					provider: 'concurrent-test',
+					model: `worker-${i}`,
+					api: null,
+					input_tokens: j,
+					output_tokens: 0,
+					cache_read_tokens: 0,
+					cache_write_tokens: 0,
+					total_tokens: j,
+					cwd: null,
+					project_id: 'NON-GIT PROJECT',
+					session_file: null,
+					session_entry_id: `entry-${j}`,
+					created_at_ms: Date.now(),
+				});
+			}
+			const worker = new Worker(workerPath, {
+				workerData: { sql: insertEventSql, records, dbPath: getDbPath() },
+			});
+			workers.push(worker);
+			results.push(
+				new Promise((resolve, reject) => {
+					worker.on('message', resolve);
+					worker.on('error', reject);
+					worker.on('exit', (code) => {
+						if (code !== 0) reject(new Error(`Worker exited with code ${code}`));
+					});
+				})
+			);
+		}
+
+		const workerResults = await Promise.all(results);
+		for (const worker of workers) await worker.terminate();
+
+		const totalInserted = workerResults.reduce((sum, value) => sum + value, 0);
+		const count = getDb().prepare('SELECT COUNT(*) AS count FROM usage_events').get() as {
+			count: number;
+		};
+		expect(totalInserted).toBe(workerCount * recordsPerWorker);
+		expect(count.count).toBe(totalInserted);
+	});
+
+	it('retries on transient database lock errors before giving up', () => {
+		const database = getDb();
+		let failures = 0;
+		const originalPrepare = database.prepare.bind(database);
+		database.prepare = function (sql: string) {
+			const statement = originalPrepare(sql);
+			if (!sql.includes('SELECT unique_key')) return statement;
+			return {
+				get: (...args: unknown[]) => {
+					failures++;
+					if (failures <= 2) throw new Error('database is locked (SQLITE_BUSY)');
+					return statement.get(...args);
+				},
+			};
+		};
+
+		const result = recordUsage({
+			record: {
+				event: {
+					source: 'live',
+					timestampMs: 1234567890123,
+					provider: 'retry',
+					model: 'test',
+					inputTokens: 10,
+					outputTokens: 5,
+					cacheReadTokens: 0,
+					cacheWriteTokens: 0,
+					totalTokens: 15,
+				},
+				charges: [],
+			},
+		});
+		expect(result).toBe('inserted');
+		expect(failures).toBe(3);
+	});
+
+	it('keeps ephemeral keys unique across parallel workers with identical token signatures', () => {
+		const base = {
+			source: 'live' as const,
+			timestampMs: 1234567890123,
+			provider: 'parallel',
+			model: 'same-model',
+			inputTokens: 100,
+			outputTokens: 50,
+			cacheReadTokens: 0,
+			cacheWriteTokens: 0,
+			totalTokens: 150,
+		};
+		expect(
+			recordUsage({
+				record: {
+					event: { ...base, sessionId: 'worker-a', sessionEntryId: 'entry-1' },
+					charges: [],
+				},
+			})
+		).toBe('inserted');
+		expect(
+			recordUsage({
+				record: {
+					event: { ...base, sessionId: 'worker-b', sessionEntryId: 'entry-1' },
+					charges: [],
+				},
+			})
+		).toBe('inserted');
+		const count = getDb().prepare('SELECT COUNT(*) AS count FROM usage_events').get() as {
+			count: number;
+		};
+		expect(count.count).toBe(2);
+	});
+
+	it('keeps the legacy fallback key shape when no identity fields are provided', () => {
+		const event = {
+			source: 'live' as const,
+			timestampMs: 1234567890123,
+			provider: 'legacy',
+			model: 'fallback',
+			inputTokens: 100,
+			outputTokens: 50,
+			cacheReadTokens: 0,
+			cacheWriteTokens: 0,
+			totalTokens: 150,
+		};
+		recordUsage({ record: { event, charges: [] } });
+		const row = getDb().prepare('SELECT unique_key FROM usage_events').get() as {
+			unique_key: string;
+		};
+		expect(row.unique_key).toBe('live:no-session:1234567890123:legacy:fallback:100:50:0:0');
+	});
+
+	it('deduplicates a live record against a later import of the same session entry', async () => {
+		const sessionRoot = path.join(home, '.pi', 'agent', 'sessions');
+		fs.mkdirSync(sessionRoot, { recursive: true });
+		const sessionFile = path.join(sessionRoot, 'session.jsonl');
+		const entryId = 'live-import-entry';
+		const timestamp = Date.parse('2026-07-11T00:00:00.000Z');
+		const message = {
+			role: 'assistant',
+			timestamp,
+			provider: 'zai',
+			model: 'glm-5.2',
+			usage: {
+				input: 1000,
+				output: 500,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 1500,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+		};
+		fs.writeFileSync(
+			sessionFile,
+			[
+				JSON.stringify({ type: 'session', cwd: home }),
+				JSON.stringify({
+					type: 'message',
+					id: entryId,
+					timestamp: '2026-07-11T00:00:00.000Z',
+					message,
+				}),
+			].join('\n') + '\n'
+		);
+
+		const liveHarness = createPiUsageHarness({
+			cwd: home,
+			sessionFile,
+			entries: [{ type: 'message', id: entryId, message }],
+			model: { cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 } },
+		});
+		piUsageExtension(liveHarness.api);
+		await liveHarness.emit('message_end', { message });
+
+		const importHarness = createPiUsageHarness({
+			cwd: home,
+			model: { cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 } },
+		});
+		piUsageExtension(importHarness.api);
+		await importHarness.command('usage', 'import');
+
+		const count = getDb().prepare('SELECT COUNT(*) AS count FROM usage_events').get() as {
+			count: number;
+		};
+		expect(count.count).toBe(1);
 	});
 });
 

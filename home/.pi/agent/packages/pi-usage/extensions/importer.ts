@@ -173,6 +173,8 @@ export function usageRecordFromMessage({
 		sessionEntryId?: string;
 		entryTimestamp?: number;
 		cwd?: string;
+		sessionId?: string;
+		processInstanceId?: string;
 	};
 }): UsageRecord | undefined {
 	const usage = message?.usage;
@@ -195,6 +197,8 @@ export function usageRecordFromMessage({
 		cwd: options.cwd,
 		sessionFile: options.sessionFile,
 		sessionEntryId: options.sessionEntryId,
+		sessionId: options.sessionId,
+		processInstanceId: options.processInstanceId,
 	};
 	const cost = usage.cost ?? {};
 	const storedCost = {

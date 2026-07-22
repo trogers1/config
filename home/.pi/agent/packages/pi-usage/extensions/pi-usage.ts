@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import type {
 	ExtensionAPI,
 	ExtensionCommandContext,
@@ -21,6 +22,7 @@ import {
 
 export default function piUsageExtension(pi: ExtensionAPI) {
 	let liveInsertCount = 0;
+	const processInstanceId = crypto.randomUUID();
 
 	pi.on('session_start', async (_event, ctx: ExtensionContext) => {
 		try {
@@ -33,6 +35,10 @@ export default function piUsageExtension(pi: ExtensionAPI) {
 			updateLimitsStatus(sessionContext);
 		} catch (error) {
 			notifyCompatibilityError({ value: ctx, error });
+			if (ctx.hasUI === false) {
+				const errorMessage = error instanceof Error ? error.message : String(error);
+				process.stderr.write(`pi-usage: ${errorMessage}\n`);
+			}
 			throw error;
 		}
 	});
@@ -59,6 +65,7 @@ export default function piUsageExtension(pi: ExtensionAPI) {
 				boundary: 'message_end context',
 			});
 			const sessionFile = liveContext.sessionManager.getSessionFile();
+			const sessionId = readSessionId(ctx);
 			const entryId = findEntryIdForMessage(liveContext, usageMessage);
 			const usageRecord = usageRecordFromMessage({
 				message: usageMessage,
@@ -68,6 +75,8 @@ export default function piUsageExtension(pi: ExtensionAPI) {
 					sessionFile,
 					sessionEntryId: entryId,
 					cwd: liveContext.cwd,
+					sessionId,
+					processInstanceId,
 				},
 			});
 			if (!usageRecord) return;
@@ -77,6 +86,9 @@ export default function piUsageExtension(pi: ExtensionAPI) {
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : String(error);
 			ctx.ui.notify(`pi-usage failed to record usage: ${errorMessage}`, 'error');
+			if (ctx.hasUI === false) {
+				process.stderr.write(`pi-usage: failed to record usage: ${errorMessage}\n`);
+			}
 		}
 	});
 
@@ -279,4 +291,16 @@ function string(value: unknown): string | undefined {
 
 function basename(file: string): string {
 	return file.split(/[\\/]/).pop() || file;
+}
+
+function readSessionId(ctx: ExtensionContext): string | undefined {
+	const sessionManager = (ctx as any).sessionManager;
+	if (sessionManager && typeof sessionManager.getSessionId === 'function') {
+		try {
+			return sessionManager.getSessionId();
+		} catch {
+			return undefined;
+		}
+	}
+	return undefined;
 }

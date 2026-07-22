@@ -26,6 +26,8 @@ export type UsageEvent = {
 	projectId?: string | null;
 	sessionFile?: string | null;
 	sessionEntryId?: string | null;
+	sessionId?: string | null;
+	processInstanceId?: string | null;
 };
 
 export type UsageCharge = {
@@ -42,6 +44,36 @@ export type UsageCharge = {
 
 export type UsageRecord = { event: UsageEvent; charges: UsageCharge[] };
 export type RecordResult = 'inserted' | 'updated' | 'unchanged';
+
+export type UsageEventInsertParams = {
+	unique_key: string;
+	source: UsageSource;
+	timestamp_ms: number;
+	day: string;
+	provider: string;
+	model: string;
+	api: string | null;
+	input_tokens: number;
+	output_tokens: number;
+	cache_read_tokens: number;
+	cache_write_tokens: number;
+	total_tokens: number;
+	cwd: string | null;
+	project_id: string;
+	session_file: string | null;
+	session_entry_id: string | null;
+	created_at_ms: number;
+};
+
+export const insertEventSql = `INSERT INTO usage_events (
+  unique_key, source, timestamp_ms, day, provider, model, api,
+  input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, total_tokens,
+  cwd, project_id, session_file, session_entry_id, created_at_ms
+) VALUES (
+  @unique_key, @source, @timestamp_ms, @day, @provider, @model, @api,
+  @input_tokens, @output_tokens, @cache_read_tokens, @cache_write_tokens, @total_tokens,
+  @cwd, @project_id, @session_file, @session_entry_id, @created_at_ms
+)`;
 
 let db: any | undefined;
 
@@ -66,6 +98,7 @@ export function getDb(): any {
 	backupIncompatibleDb({ dbPath });
 	db = new Database(dbPath);
 	db.pragma('journal_mode = WAL');
+	db.pragma('busy_timeout = 5000');
 	db.pragma('foreign_keys = ON');
 	db.exec(schemaSql);
 	return db;
@@ -80,19 +113,31 @@ export function closeDb(): void {
 export function recordUsage({ record }: { record: UsageRecord }): RecordResult {
 	const database = getDb();
 	const stored = storedRecord({ record });
-	const existing = readStoredRecord({
-		database,
-		uniqueKey: stored.event.unique_key,
-	});
-	if (existing && canonical({ record: existing }) === canonical({ record: stored }))
-		return 'unchanged';
+	const maxAttempts = 3;
+	for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+		try {
+			const existing = readStoredRecord({
+				database,
+				uniqueKey: stored.event.unique_key,
+			});
+			if (existing && canonical({ record: existing }) === canonical({ record: stored }))
+				return 'unchanged';
 
-	if (!existing) {
-		insertRecord({ database, record: stored });
-		return 'inserted';
+			if (!existing) {
+				insertRecord({ database, record: stored });
+				return 'inserted';
+			}
+			updateRecord({ database, record: stored });
+			return 'updated';
+		} catch (error: any) {
+			const isBusy =
+				typeof error?.message === 'string' &&
+				(error.message.includes('database is locked') || error.message.includes('SQLITE_BUSY'));
+			if (!isBusy || attempt === maxAttempts) throw error;
+			sleepMs(100 * attempt);
+		}
 	}
-	updateRecord({ database, record: stored });
-	return 'updated';
+	throw new Error('pi-usage recordUsage retry exhausted');
 }
 
 function storedRecord({ record }: { record: UsageRecord }): StoredRecord {
@@ -163,19 +208,7 @@ function readStoredRecord({
 
 function insertRecord({ database, record }: { database: any; record: StoredRecord }): void {
 	database.transaction(() => {
-		database
-			.prepare(
-				`INSERT INTO usage_events (
-      unique_key, source, timestamp_ms, day, provider, model, api,
-      input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, total_tokens,
-      cwd, project_id, session_file, session_entry_id, created_at_ms
-    ) VALUES (
-      @unique_key, @source, @timestamp_ms, @day, @provider, @model, @api,
-      @input_tokens, @output_tokens, @cache_read_tokens, @cache_write_tokens, @total_tokens,
-      @cwd, @project_id, @session_file, @session_entry_id, @created_at_ms
-    )`
-			)
-			.run({ ...record.event, created_at_ms: Date.now() });
+		database.prepare(insertEventSql).run({ ...record.event, created_at_ms: Date.now() });
 		insertCharges({
 			database,
 			eventKey: record.event.unique_key,
@@ -257,11 +290,32 @@ function removeIfPresent({ file }: { file: string }): void {
 function uniqueKeyForEvent({ event }: { event: UsageEvent }): string {
 	const sessionFile = event.sessionFile ?? '';
 	const entryId = event.sessionEntryId ?? '';
+	if (sessionFile && entryId) return `session:${hash({ value: sessionFile })}:${entryId}`;
+
+	// Ephemeral sessions (--no-session workers): identity from the in-memory
+	// session id (or a per-process id), so parallel workers can never collide.
+	const ephemeral = event.sessionId ?? event.processInstanceId;
+	if (!sessionFile && ephemeral) {
+		const suffix = entryId || fallbackSignature({ event });
+		return `ephemeral:${hash({ value: ephemeral })}:${suffix}`;
+	}
+
 	const sessionIdentity = sessionFile ? hash({ value: sessionFile }) : 'no-session';
-	if (sessionFile && entryId) return `session:${sessionIdentity}:${entryId}`;
 	return [
 		event.source,
 		sessionIdentity,
+		event.timestampMs,
+		event.provider,
+		event.model,
+		event.inputTokens,
+		event.outputTokens,
+		event.cacheReadTokens,
+		event.cacheWriteTokens,
+	].join(':');
+}
+
+function fallbackSignature({ event }: { event: UsageEvent }): string {
+	return [
 		event.timestampMs,
 		event.provider,
 		event.model,
@@ -336,6 +390,13 @@ function finiteInt({ value }: { value: unknown }): number {
 
 function finiteNumber({ value }: { value: unknown }): number {
 	return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+function sleepMs(ms: number): void {
+	const end = Date.now() + ms;
+	while (Date.now() < end) {
+		// busy-wait retry backoff for synchronous recordUsage
+	}
 }
 
 function stableJson({ value }: { value: unknown }): string {
