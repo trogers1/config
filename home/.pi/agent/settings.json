@@ -6,8 +6,10 @@
   "packages": [
     "./packages/pi-permissions",
     "./packages/pi-webfetch",
-    "./packages/pi-usage"
+    "./packages/pi-usage",
+    "./packages/pi-permissions-subagents"
   ],
   "lastChangelogVersion": "0.80.6",
   "theme": "dark"
 }
+
