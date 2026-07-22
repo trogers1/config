@@ -1,0 +1,8 @@
+- auto-select a profile based on cwd location array
+- versioning/releasing
+- Add 'yes -- add command to profile allow list' and 'yes -- add path to profile allow list'
+- Add 'yes -- add command to session allow list' and 'yes -- add path to session allow list'
+  - Not sure about this one
+- publish?
+- move policies so it's more outside-config-based with an example file?
+- Make sure the base policy is not node-specific and have MY default for /mcp and /config be node-specific
