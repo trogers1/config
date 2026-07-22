@@ -47,6 +47,22 @@ module.exports = {
       from: { path: "^modules/" },
       to: { path: "^extensions/" },
     },
+    {
+      name: "lib-public-entrypoint-only",
+      severity: "error",
+      comment:
+        "Code outside a *.lib/ directory may only import it through its public index.ts (docs/.lib_definition.md). Caveat: dependency-cruiser cannot correlate from/to paths, so deep imports from inside one lib into another lib's internals are not caught; refine per-lib if a second *.lib/ appears.",
+      from: { pathNot: "\\.lib/" },
+      to: { path: "\\.lib/", pathNot: "\\.lib/index\\.ts$" },
+    },
+    {
+      name: "lib-no-index-self-import",
+      severity: "error",
+      comment:
+        "Files inside a *.lib/ import siblings directly, never through an index.ts, so index stays a true public boundary and knip can flag unused exports (docs/.lib_definition.md). Exact only while one *.lib/ exists — it blocks lib files from importing ANY lib index; on adding a second lib, replace with per-lib rules so cross-lib imports via the public index stay legal. index.test.ts is exempt so the public entrypoint itself remains testable.",
+      from: { path: "\\.lib/", pathNot: "index\\.test\\.ts$" },
+      to: { path: "\\.lib/index\\.ts$" },
+    },
   ],
   options: {
     doNotFollow: { path: "node_modules" },
