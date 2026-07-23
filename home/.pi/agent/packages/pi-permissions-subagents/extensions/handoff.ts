@@ -61,18 +61,20 @@ export function extractFilesChanged(messages: Message[]): string[] {
 	const changed = new Set<string>();
 	for (const msg of messages) {
 		if (msg.role !== "assistant") continue;
-		for (const part of msg.content as any[]) {
-			if (part?.type === "toolCall" && (part.name === "write" || part.name === "edit")) {
-				const p = part.arguments?.path ?? part.arguments?.file_path;
-				if (typeof p === "string" && p.trim()) changed.add(p);
-			}
+		for (const part of msg.content) {
+			if (part.type !== "toolCall" || (part.name !== "write" && part.name !== "edit")) continue;
+			const p = part.arguments.path ?? part.arguments.file_path;
+			if (typeof p === "string" && p.trim()) changed.add(p);
 		}
 	}
 	return [...changed].sort();
 }
 
 function normalizePath(p: string): string {
-	return p.replace(/\\/g, "/").replace(/^\.\/+/, "").replace(/\/+$/, "");
+	return p
+		.replace(/\\/g, "/")
+		.replace(/^\.\/+/, "")
+		.replace(/\/+$/, "");
 }
 
 /**
@@ -146,7 +148,9 @@ export function writeHandoffFile(runDir: string, rec: HandoffRecord): string {
 	);
 	if (rec.writes?.length) lines.push(`- **Declared write scope**: ${rec.writes.map((w) => `\`${w}\``).join(", ")}`);
 	if (rec.filesChanged.length) {
-		lines.push(`- **Files changed** (write/edit + git status snapshot): ${rec.filesChanged.map((f) => `\`${f}\``).join(", ")}`);
+		lines.push(
+			`- **Files changed** (write/edit + git status snapshot): ${rec.filesChanged.map((f) => `\`${f}\``).join(", ")}`,
+		);
 	} else {
 		lines.push(`- **Files changed**: none observed via write/edit or git status snapshot`);
 	}

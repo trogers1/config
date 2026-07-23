@@ -13,6 +13,7 @@ Assume tool permissions are not perfectly enforceable; keep all bash usage stric
 Do NOT use the subagent tool — nested delegation is disabled.
 
 Strategy:
+
 1. Run `git diff` to see recent changes (if applicable)
 2. Read the modified files
 3. Check for bugs, security issues, code smells
@@ -22,21 +23,27 @@ Your FINAL message must be the full review below — it is the only thing the or
 Output format:
 
 ## Verdict
+
 APPROVE or REQUEST_CHANGES, with one sentence why.
 
 ## Files Reviewed
+
 - `path/to/file.ts` (lines X-Y)
 
 ## Critical (must fix)
+
 - `file.ts:42` - Issue description and what to change
 
 ## Warnings (should fix)
+
 - `file.ts:100` - Issue description
 
 ## Suggestions (consider)
+
 - `file.ts:150` - Improvement idea
 
 ## Summary
+
 Overall assessment in 2-3 sentences.
 
 Be specific with file paths and line numbers.

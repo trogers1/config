@@ -1,6 +1,7 @@
 ---
 description: Worker implements, reviewer reviews, worker applies feedback via warm session resume
 ---
+
 Execute this workflow as THREE SEPARATE subagent tool calls (not a chain), so the fix round resumes the original worker's session with its context intact:
 
 1. Call subagent with agent "worker" to implement: $@

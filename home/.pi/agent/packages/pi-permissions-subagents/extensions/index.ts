@@ -22,18 +22,18 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import type { Message } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Message, ToolResultMessage } from "@earendil-works/pi-ai";
 import { StringEnum } from "@earendil-works/pi-ai";
 import {
-	CONFIG_DIR_NAME,
 	type ExtensionAPI,
-	getAgentDir,
 	getMarkdownTheme,
 	SessionManager,
+	type ThemeColor,
 	withFileMutationQueue,
 } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import Value from "typebox/value";
 import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.ts";
 import {
 	checkScopeViolations,
@@ -48,6 +48,104 @@ const MAX_PARALLEL_TASKS = 8;
 const MAX_CONCURRENCY = 4;
 const COLLAPSED_ITEM_COUNT = 10;
 const PER_TASK_OUTPUT_CAP = 50 * 1024;
+
+const UsageSchema = Type.Object({
+	input: Type.Number(),
+	output: Type.Number(),
+	cacheRead: Type.Number(),
+	cacheWrite: Type.Number(),
+	totalTokens: Type.Number(),
+	cost: Type.Object({
+		input: Type.Number(),
+		output: Type.Number(),
+		cacheRead: Type.Number(),
+		cacheWrite: Type.Number(),
+		total: Type.Number(),
+	}),
+});
+const TextContentSchema = Type.Object({
+	type: Type.Literal("text"),
+	text: Type.String(),
+});
+const ImageContentSchema = Type.Object({
+	type: Type.Literal("image"),
+	data: Type.String(),
+	mimeType: Type.String(),
+});
+const AssistantMessageSchema = Type.Object({
+	role: Type.Literal("assistant"),
+	content: Type.Array(
+		Type.Union([
+			TextContentSchema,
+			Type.Object({
+				type: Type.Literal("thinking"),
+				thinking: Type.String(),
+				thinkingSignature: Type.Optional(Type.String()),
+				redacted: Type.Optional(Type.Boolean()),
+			}),
+			Type.Object({
+				type: Type.Literal("toolCall"),
+				id: Type.String(),
+				name: Type.String(),
+				arguments: Type.Record(Type.String(), Type.Unknown()),
+				thoughtSignature: Type.Optional(Type.String()),
+			}),
+		]),
+	),
+	api: Type.String(),
+	provider: Type.String(),
+	model: Type.String(),
+	responseModel: Type.Optional(Type.String()),
+	responseId: Type.Optional(Type.String()),
+	usage: UsageSchema,
+	stopReason: Type.Union([
+		Type.Literal("stop"),
+		Type.Literal("length"),
+		Type.Literal("toolUse"),
+		Type.Literal("error"),
+		Type.Literal("aborted"),
+	]),
+	errorMessage: Type.Optional(Type.String()),
+	timestamp: Type.Number(),
+});
+const ToolResultMessageSchema = Type.Object({
+	role: Type.Literal("toolResult"),
+	toolCallId: Type.String(),
+	toolName: Type.String(),
+	content: Type.Array(Type.Union([TextContentSchema, ImageContentSchema])),
+	details: Type.Optional(Type.Unknown()),
+	usage: Type.Optional(UsageSchema),
+	addedToolNames: Type.Optional(Type.Array(Type.String())),
+	isError: Type.Boolean(),
+	timestamp: Type.Number(),
+});
+const WorkerEventSchema = Type.Union([
+	Type.Object({
+		type: Type.Literal("message_end"),
+		message: AssistantMessageSchema,
+	}),
+	Type.Object({
+		type: Type.Literal("tool_result_end"),
+		message: ToolResultMessageSchema,
+	}),
+]);
+
+type WorkerEvent =
+	{ type: "message_end"; message: AssistantMessage } | { type: "tool_result_end"; message: ToolResultMessage };
+
+function parseWorkerEvent(line: string): WorkerEvent | undefined {
+	let value: unknown;
+	try {
+		value = JSON.parse(line);
+	} catch {
+		return undefined;
+	}
+	if (!Value.Check(WorkerEventSchema, value)) return undefined;
+
+	// Pi does not currently export its JSON-mode event schema. The local schema
+	// above validates every Message field this consumer stores or reads.
+	return value as WorkerEvent;
+}
 
 function formatTokens(count: number): string {
 	if (count < 1000) return count.toString();
@@ -85,7 +183,7 @@ function formatUsageStats(
 function formatToolCall(
 	toolName: string,
 	args: Record<string, unknown>,
-	themeFg: (color: any, text: string) => string,
+	themeFg: (color: ThemeColor, text: string) => string,
 ): string {
 	const shortenPath = (p: string) => {
 		const home = os.homedir();
@@ -137,9 +235,7 @@ function formatToolCall(
 			const pattern = (args.pattern || "") as string;
 			const rawPath = (args.path || ".") as string;
 			return (
-				themeFg("muted", "grep ") +
-				themeFg("accent", `/${pattern}/`) +
-				themeFg("dim", ` in ${shortenPath(rawPath)}`)
+				themeFg("muted", "grep ") + themeFg("accent", `/${pattern}/`) + themeFg("dim", ` in ${shortenPath(rawPath)}`)
 			);
 		}
 		default: {
@@ -183,7 +279,15 @@ interface SubagentDetails {
 }
 
 function emptyUsage(): UsageStats {
-	return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 };
+	return {
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		cost: 0,
+		contextTokens: 0,
+		turns: 0,
+	};
 }
 
 function getFinalOutput(messages: Message[]): string {
@@ -227,7 +331,11 @@ function shortId(id: string): string {
 /** Snapshot of dirty paths from `git status --short`. Best effort; returns [] if not a git repo. */
 function gitStatusShort(cwd: string): string[] {
 	try {
-		const out = execSync("git status --short", { cwd, encoding: "utf-8", timeout: 5000 });
+		const out = execSync("git status --short", {
+			cwd,
+			encoding: "utf-8",
+			timeout: 5000,
+		});
 		return out
 			.split("\n")
 			.map((l) => l.trim())
@@ -254,12 +362,14 @@ function resultMetaLines(r: SingleResult): string[] {
 		lines.push(`files changed (write/edit + git snapshot): ${shown.join(", ")}${more}`);
 	}
 	if (r.scopeViolations.length) {
-		lines.push(`⚠ OUT-OF-SCOPE EDITS (declared writes: ${(r.writes ?? []).join(", ")}): ${r.scopeViolations.join(", ")}`);
+		lines.push(
+			`⚠ OUT-OF-SCOPE EDITS (declared writes: ${(r.writes ?? []).join(", ")}): ${r.scopeViolations.join(", ")}`,
+		);
 	}
 	return lines;
 }
 
-type DisplayItem = { type: "text"; text: string } | { type: "toolCall"; name: string; args: Record<string, any> };
+type DisplayItem = { type: "text"; text: string } | { type: "toolCall"; name: string; args: Record<string, unknown> };
 
 function getDisplayItems(messages: Message[]): DisplayItem[] {
 	const items: DisplayItem[] = [];
@@ -267,7 +377,12 @@ function getDisplayItems(messages: Message[]): DisplayItem[] {
 		if (msg.role === "assistant") {
 			for (const part of msg.content) {
 				if (part.type === "text") items.push({ type: "text", text: part.text });
-				else if (part.type === "toolCall") items.push({ type: "toolCall", name: part.name, args: part.arguments });
+				else if (part.type === "toolCall")
+					items.push({
+						type: "toolCall",
+						name: part.name,
+						args: part.arguments,
+					});
 			}
 		}
 	}
@@ -299,7 +414,10 @@ async function writePromptToTempFile(agentName: string, prompt: string): Promise
 	const safeName = agentName.replace(/[^\w.-]+/g, "_");
 	const filePath = path.join(tmpDir, `prompt-${safeName}.md`);
 	await withFileMutationQueue(filePath, async () => {
-		await fs.promises.writeFile(filePath, prompt, { encoding: "utf-8", mode: 0o600 });
+		await fs.promises.writeFile(filePath, prompt, {
+			encoding: "utf-8",
+			mode: 0o600,
+		});
 	});
 	return { dir: tmpDir, filePath };
 }
@@ -420,7 +538,12 @@ async function runSingleAgent(
 	const emitUpdate = () => {
 		if (onUpdate) {
 			onUpdate({
-				content: [{ type: "text", text: getFinalOutput(currentResult.messages) || "(running...)" }],
+				content: [
+					{
+						type: "text",
+						text: getFinalOutput(currentResult.messages) || "(running...)",
+					},
+				],
 				details: makeDetails([currentResult]),
 			});
 		}
@@ -439,7 +562,10 @@ async function runSingleAgent(
 
 		const exitCode = await new Promise<number>((resolve) => {
 			const invocation = getPiInvocation(args);
-			const spawnEnv: NodeJS.ProcessEnv = { ...process.env, PI_SUBAGENT_DEPTH: "1" };
+			const spawnEnv: NodeJS.ProcessEnv = {
+				...process.env,
+				PI_SUBAGENT_DEPTH: "1",
+			};
 			if (agent.profile) spawnEnv.PI_SUBAGENT_PROFILE = agent.profile;
 			if (opts.writes?.length) spawnEnv.PI_SUBAGENT_WRITE_GLOBS = opts.writes.join(",");
 
@@ -453,15 +579,11 @@ async function runSingleAgent(
 
 			const processLine = (line: string) => {
 				if (!line.trim()) return;
-				let event: any;
-				try {
-					event = JSON.parse(line);
-				} catch {
-					return;
-				}
+				const event = parseWorkerEvent(line);
+				if (!event) return;
 
-				if (event.type === "message_end" && event.message) {
-					const msg = event.message as Message;
+				if (event.type === "message_end") {
+					const msg = event.message;
 					currentResult.messages.push(msg);
 
 					if (msg.role === "assistant") {
@@ -482,8 +604,8 @@ async function runSingleAgent(
 					emitUpdate();
 				}
 
-				if (event.type === "tool_result_end" && event.message) {
-					currentResult.messages.push(event.message as Message);
+				if (event.type === "tool_result_end") {
+					currentResult.messages.push(event.message);
 					emitUpdate();
 				}
 			};
@@ -597,21 +719,32 @@ const TaskItem = Type.Object({
 	),
 	sessionId: Type.Optional(
 		Type.String({
-			description: "Resume an existing worker session (from a previous subagent result) so it keeps its context. Use for correction rounds.",
+			description:
+				"Resume an existing worker session (from a previous subagent result) so it keeps its context. Use for correction rounds.",
 		}),
 	),
-	label: Type.Optional(Type.String({ description: "Short human label used in the session name and handoff file" })),
+	label: Type.Optional(
+		Type.String({
+			description: "Short human label used in the session name and handoff file",
+		}),
+	),
 });
 
 const ChainItem = Type.Object({
 	agent: Type.String({ description: "Name of the agent to invoke" }),
-	task: Type.String({ description: "Task with optional {previous} placeholder for prior output" }),
+	task: Type.String({
+		description: "Task with optional {previous} placeholder for prior output",
+	}),
 	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process" })),
 	writes: Type.Optional(
-		Type.Array(Type.String(), { description: "Declared write scope (path prefixes) for this step" }),
+		Type.Array(Type.String(), {
+			description: "Declared write scope (path prefixes) for this step",
+		}),
 	),
 	sessionId: Type.Optional(
-		Type.String({ description: "Resume an existing worker session, keeping its context" }),
+		Type.String({
+			description: "Resume an existing worker session, keeping its context",
+		}),
 	),
 	label: Type.Optional(Type.String({ description: "Short human label" })),
 });
@@ -623,17 +756,38 @@ const AgentScopeSchema = StringEnum(["builtin", "user", "project", "all"] as con
 });
 
 const SubagentParams = Type.Object({
-	agent: Type.Optional(Type.String({ description: "Name of the agent to invoke (for single mode)" })),
+	agent: Type.Optional(
+		Type.String({
+			description: "Name of the agent to invoke (for single mode)",
+		}),
+	),
 	task: Type.Optional(Type.String({ description: "Task to delegate (for single mode)" })),
-	tasks: Type.Optional(Type.Array(TaskItem, { description: "Array of {agent, task} for parallel execution" })),
-	chain: Type.Optional(Type.Array(ChainItem, { description: "Array of {agent, task} for sequential execution" })),
+	tasks: Type.Optional(
+		Type.Array(TaskItem, {
+			description: "Array of {agent, task} for parallel execution",
+		}),
+	),
+	chain: Type.Optional(
+		Type.Array(ChainItem, {
+			description: "Array of {agent, task} for sequential execution",
+		}),
+	),
 	agentScope: Type.Optional(AgentScopeSchema),
 	confirmProjectAgents: Type.Optional(
-		Type.Boolean({ description: "Prompt before running project-local agents. Default: true.", default: true }),
+		Type.Boolean({
+			description: "Prompt before running project-local agents. Default: true.",
+			default: true,
+		}),
 	),
-	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process (single mode)" })),
+	cwd: Type.Optional(
+		Type.String({
+			description: "Working directory for the agent process (single mode)",
+		}),
+	),
 	writes: Type.Optional(
-		Type.Array(Type.String(), { description: "Declared write scope (path prefixes) for single mode" }),
+		Type.Array(Type.String(), {
+			description: "Declared write scope (path prefixes) for single mode",
+		}),
 	),
 	sessionId: Type.Optional(
 		Type.String({
@@ -662,7 +816,8 @@ export default function (pi: ExtensionAPI) {
 			"Declare `writes` scopes per task to plan non-conflicting parallel work; out-of-scope edits are flagged.",
 			"Only delegate self-contained, well-specified tasks — delegation overhead is not worth it for trivial work.",
 		].join(" "),
-		promptSnippet: "Delegate focused tasks to isolated subagent workers (often cheaper models) with resumable sessions and handoff files",
+		promptSnippet:
+			"Delegate focused tasks to isolated subagent workers (often cheaper models) with resumable sessions and handoff files",
 		promptGuidelines: [
 			"Use the subagent tool for well-specified, self-contained chunks of work so cheaper worker models carry implementation and recon costs; do trivial tasks directly instead.",
 			"When calling the subagent tool with parallel tasks, declare disjoint `writes` scopes per task so workers cannot edit the same files.",
@@ -743,7 +898,12 @@ export default function (pi: ExtensionAPI) {
 					);
 					if (!ok)
 						return {
-							content: [{ type: "text", text: "Canceled: project-local agents not approved." }],
+							content: [
+								{
+									type: "text",
+									text: "Canceled: project-local agents not approved.",
+								},
+							],
 							details: makeDetails(hasChain ? "chain" : hasTasks ? "parallel" : "single")([]),
 						};
 				}
@@ -864,7 +1024,10 @@ export default function (pi: ExtensionAPI) {
 						const done = allResults.filter((r) => r.exitCode !== -1).length;
 						onUpdate({
 							content: [
-								{ type: "text", text: `Parallel: ${done}/${allResults.length} done, ${running} running...` },
+								{
+									type: "text",
+									text: `Parallel: ${done}/${allResults.length} done, ${running} running...`,
+								},
 							],
 							details: makeDetails("parallel")([...allResults]),
 						});
@@ -945,7 +1108,12 @@ export default function (pi: ExtensionAPI) {
 				if (isError) {
 					const errorMsg = getResultOutput(result);
 					return {
-						content: [{ type: "text", text: `Agent ${result.stopReason || "failed"}: ${errorMsg}\n\n${resultMetaLines(result).join("\n")}` }],
+						content: [
+							{
+								type: "text",
+								text: `Agent ${result.stopReason || "failed"}: ${errorMsg}\n\n${resultMetaLines(result).join("\n")}`,
+							},
+						],
 						details: makeDetails("single")([result]),
 						isError: true,
 					};
@@ -963,12 +1131,17 @@ export default function (pi: ExtensionAPI) {
 
 			const available = agents.map((a) => `${a.name} (${a.source})`).join(", ") || "none";
 			return {
-				content: [{ type: "text", text: `Invalid parameters. Available agents: ${available}` }],
+				content: [
+					{
+						type: "text",
+						text: `Invalid parameters. Available agents: ${available}`,
+					},
+				],
 				details: makeDetails("single")([]),
 			};
 		},
 
-		renderCall(args, theme, _context) {
+		renderCall(args, theme) {
 			const scope: AgentScope = args.agentScope ?? "user";
 			if (args.chain && args.chain.length > 0) {
 				let text =
@@ -1014,7 +1187,7 @@ export default function (pi: ExtensionAPI) {
 			return new Text(text, 0, 0);
 		},
 
-		renderResult(result, { expanded }, theme, _context) {
+		renderResult(result, { expanded }, theme) {
 			const details = result.details as SubagentDetails | undefined;
 			if (!details || details.results.length === 0) {
 				const text = result.content[0];
@@ -1049,9 +1222,7 @@ export default function (pi: ExtensionAPI) {
 			};
 
 			const violationLine = (r: SingleResult) =>
-				r.scopeViolations.length
-					? theme.fg("warning", `⚠ out-of-scope edits: ${r.scopeViolations.join(", ")}`)
-					: "";
+				r.scopeViolations.length ? theme.fg("warning", `⚠ out-of-scope edits: ${r.scopeViolations.join(", ")}`) : "";
 
 			if (details.mode === "single" && details.results.length === 1) {
 				const r = details.results[0];
@@ -1082,11 +1253,7 @@ export default function (pi: ExtensionAPI) {
 						for (const item of displayItems) {
 							if (item.type === "toolCall")
 								container.addChild(
-									new Text(
-										theme.fg("muted", "→ ") + formatToolCall(item.name, item.args, theme.fg.bind(theme)),
-										0,
-										0,
-									),
+									new Text(theme.fg("muted", "→ ") + formatToolCall(item.name, item.args, theme.fg.bind(theme)), 0, 0),
 								);
 						}
 						if (finalOutput) {
@@ -1126,7 +1293,14 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			const aggregateUsage = (results: SingleResult[]) => {
-				const total = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 };
+				const total = {
+					input: 0,
+					output: 0,
+					cacheRead: 0,
+					cacheWrite: 0,
+					cost: 0,
+					turns: 0,
+				};
 				for (const r of results) {
 					total.input += r.usage.input;
 					total.output += r.usage.output;
@@ -1162,11 +1336,7 @@ export default function (pi: ExtensionAPI) {
 
 						container.addChild(new Spacer(1));
 						container.addChild(
-							new Text(
-								`${theme.fg("muted", `─── Step ${r.step}: `) + theme.fg("accent", r.agent)} ${rIcon}`,
-								0,
-								0,
-							),
+							new Text(`${theme.fg("muted", `─── Step ${r.step}: `) + theme.fg("accent", r.agent)} ${rIcon}`, 0, 0),
 						);
 						container.addChild(new Text(theme.fg("muted", "Task: ") + theme.fg("dim", r.task), 0, 0));
 
@@ -1174,11 +1344,7 @@ export default function (pi: ExtensionAPI) {
 						for (const item of displayItems) {
 							if (item.type === "toolCall") {
 								container.addChild(
-									new Text(
-										theme.fg("muted", "→ ") + formatToolCall(item.name, item.args, theme.fg.bind(theme)),
-										0,
-										0,
-									),
+									new Text(theme.fg("muted", "→ ") + formatToolCall(item.name, item.args, theme.fg.bind(theme)), 0, 0),
 								);
 							}
 						}
@@ -1241,11 +1407,7 @@ export default function (pi: ExtensionAPI) {
 				if (expanded && !isRunning) {
 					const container = new Container();
 					container.addChild(
-						new Text(
-							`${icon} ${theme.fg("toolTitle", theme.bold("parallel "))}${theme.fg("accent", status)}`,
-							0,
-							0,
-						),
+						new Text(`${icon} ${theme.fg("toolTitle", theme.bold("parallel "))}${theme.fg("accent", status)}`, 0, 0),
 					);
 
 					for (const r of details.results) {
@@ -1254,20 +1416,14 @@ export default function (pi: ExtensionAPI) {
 						const finalOutput = getFinalOutput(r.messages);
 
 						container.addChild(new Spacer(1));
-						container.addChild(
-							new Text(`${theme.fg("muted", "─── ") + theme.fg("accent", r.agent)} ${rIcon}`, 0, 0),
-						);
+						container.addChild(new Text(`${theme.fg("muted", "─── ") + theme.fg("accent", r.agent)} ${rIcon}`, 0, 0));
 						container.addChild(new Text(theme.fg("muted", "Task: ") + theme.fg("dim", r.task), 0, 0));
 
 						// Show tool calls
 						for (const item of displayItems) {
 							if (item.type === "toolCall") {
 								container.addChild(
-									new Text(
-										theme.fg("muted", "→ ") + formatToolCall(item.name, item.args, theme.fg.bind(theme)),
-										0,
-										0,
-									),
+									new Text(theme.fg("muted", "→ ") + formatToolCall(item.name, item.args, theme.fg.bind(theme)), 0, 0),
 								);
 							}
 						}

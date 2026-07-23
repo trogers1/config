@@ -1,3 +1,4 @@
+import type { Message } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { checkScopeViolations, extractFilesChanged, slugify } from "../extensions/handoff.ts";
 
@@ -13,12 +14,20 @@ describe("handoff helpers", () => {
 				{
 					role: "assistant",
 					content: [
-						{ type: "toolCall", name: "write", arguments: { path: "src/a.ts" } },
+						{
+							type: "toolCall",
+							name: "write",
+							arguments: { path: "src/a.ts" },
+						},
 						{ type: "toolCall", name: "edit", arguments: { path: "src/b.ts" } },
-						{ type: "toolCall", name: "bash", arguments: { command: "sed -i 's/x/y/' src/c.ts" } },
+						{
+							type: "toolCall",
+							name: "bash",
+							arguments: { command: "sed -i 's/x/y/' src/c.ts" },
+						},
 					],
 				},
-			] as any;
+			] as unknown as Message[];
 
 			expect(extractFilesChanged(messages)).toEqual(["src/a.ts", "src/b.ts"]);
 		});
@@ -28,11 +37,15 @@ describe("handoff helpers", () => {
 				{
 					role: "assistant",
 					content: [
-						{ type: "toolCall", name: "write", arguments: { path: "src/a.ts" } },
+						{
+							type: "toolCall",
+							name: "write",
+							arguments: { path: "src/a.ts" },
+						},
 						{ type: "toolCall", name: "edit", arguments: { path: "src/a.ts" } },
 					],
 				},
-			] as any;
+			] as unknown as Message[];
 
 			expect(extractFilesChanged(messages)).toEqual(["src/a.ts"]);
 		});
@@ -48,18 +61,12 @@ describe("handoff helpers", () => {
 		});
 
 		it("supports trailing glob stars for prefix matching", () => {
-			const violations = checkScopeViolations(
-				["src/auth/a.ts", "src/auth/nested/b.ts"],
-				["src/auth/*"],
-			);
+			const violations = checkScopeViolations(["src/auth/a.ts", "src/auth/nested/b.ts"], ["src/auth/*"]);
 			expect(violations).toEqual([]);
 		});
 
 		it("does not false-positive on shared prefixes", () => {
-			const violations = checkScopeViolations(
-				["src/authentication.ts"],
-				["src/auth/*"],
-			);
+			const violations = checkScopeViolations(["src/authentication.ts"], ["src/auth/*"]);
 			expect(violations).toEqual(["src/authentication.ts"]);
 		});
 	});

@@ -1,27 +1,27 @@
 # pi-permissions-subagents
 
 Permission-aware subagent delegation for pi. This package bundles the `subagent`
-extension with planned integration against `pi-permissions`, so worker processes
-run under an explicit, auditable permission posture instead of just inheriting
-the main session's defaults.
+extension and integrates with `pi-permissions`, so worker processes run under an
+explicit, auditable permission posture instead of just inheriting the main
+session's defaults.
 
 Forked from pi's `examples/extensions/subagent` with additions:
 
 - **Persistent worker sessions.** Every worker runs under `--session-id <uuid>
-  --name subagent:<agent>:<label>`. The result tells you the id; inspect it live
+--name subagent:<agent>:<label>`. The result tells you the id; inspect it live
   afterwards with `pi --session <id>` from the same project directory, or
   `/resume` from within pi.
 - **Warm retries.** Pass a worker's `sessionId` back in a later call and it
-  resumes *with its full context* — correction rounds don't re-pay the ramp-up
+  resumes _with its full context_ — correction rounds don't re-pay the ramp-up
   (re-reading files, re-deriving approach).
 - **Handoff files.** Set `runDir` and each worker gets a markdown audit file
   (task, files changed, session id, timing, cost, final output) written by the
   extension, not the worker. Use `.pi/orchestration/<run-name>/` — that location
   is auto-gitignored.
 - **Declared write scopes.** Per-task `writes` path prefixes let you plan
-  non-conflicting parallel work; out-of-scope edits are flagged in the result
-  and handoff. (See Permission awareness below for the plan to hard-enforce
-  these via `pi-permissions`.)
+  non-conflicting parallel work. `pi-permissions` blocks out-of-scope
+  `write`/`edit` calls and Bash path references; results and handoffs retain an
+  additional audit check for observed out-of-scope changes.
 - **Nested-delegation guard.** Worker processes run with `PI_SUBAGENT_DEPTH=1`;
   the tool refuses to delegate from inside a worker, so costs can't fan out
   recursively.
@@ -51,12 +51,12 @@ pi-permissions-subagents/
 
 ## Agents
 
-| Agent | Purpose | Model | Profile | Tools |
-|-------|---------|-------|---------|-------|
-| `scout` | Fast recon, returns compressed context | `openai/gpt-5-nano` | `read-only` | read, grep, find, ls, bash |
-| `worker` | General-purpose implementation | `openai/gpt-5.4-mini` | `worker` | (all defaults) |
-| `planner` | Implementation plans | *(pi default)* | `read-only` | read, grep, find, ls |
-| `reviewer` | Code review | *(pi default)* | `read-only` | read, grep, find, ls, bash (read-only) |
+| Agent      | Purpose                                | Model                 | Profile     | Tools                                  |
+| ---------- | -------------------------------------- | --------------------- | ----------- | -------------------------------------- |
+| `scout`    | Fast recon, returns compressed context | `openai/gpt-5-nano`   | `read-only` | read, grep, find, ls, bash             |
+| `worker`   | General-purpose implementation         | `openai/gpt-5.4-mini` | `worker`    | (all defaults)                         |
+| `planner`  | Implementation plans                   | _(pi default)_        | `read-only` | read, grep, find, ls                   |
+| `reviewer` | Code review                            | _(pi default)_        | `read-only` | read, grep, find, ls, bash (read-only) |
 
 Agents with no `model:` frontmatter inherit your pi default model. To change a
 model or prompt, either edit the files here or drop a same-named file into
@@ -68,11 +68,11 @@ confirmation prompt.
 
 One of three modes per call:
 
-| Mode | Parameters | Behavior |
-|------|-----------|----------|
-| Single | `agent`, `task` | One worker |
-| Parallel | `tasks: [{agent, task, ...}]` | Up to 8 tasks, 4 concurrent |
-| Chain | `chain: [{agent, task, ...}]` | Sequential, `{previous}` placeholder |
+| Mode     | Parameters                    | Behavior                             |
+| -------- | ----------------------------- | ------------------------------------ |
+| Single   | `agent`, `task`               | One worker                           |
+| Parallel | `tasks: [{agent, task, ...}]` | Up to 8 tasks, 4 concurrent          |
+| Chain    | `chain: [{agent, task, ...}]` | Sequential, `{previous}` placeholder |
 
 Optional per call: `runDir`, `agentScope`, `confirmProjectAgents`.
 Optional per task/step (and single): `cwd`, `writes: string[]`, `sessionId`, `label`.
@@ -104,40 +104,34 @@ encodes the discipline.
 
 ## Permission awareness
 
-**Current state.** Workers are spawned as plain `pi` subprocesses, so they
-already load `pi-permissions` and run under its policy. But a worker session
-always starts on `pi-permissions`' configured default profile, and because
-workers are non-interactive (`pi -p`), any `ask` decision becomes a hard block.
-That means an unspecified bash command the worker tries will be denied with
-guidance rather than confirmed.
+Workers are spawned as `pi` subprocesses, so they load `pi-permissions` and run
+under its policy. The packages integrate through two environment variables:
 
-**Decided approach.** Two mechanisms working together:
+1. **Per-agent `profile:` frontmatter.** The extension exports the declared
+   profile as `PI_SUBAGENT_PROFILE`; `pi-permissions` selects it at session
+   start, including when a persisted worker session is resumed.
+   - `scout`, `planner`, `reviewer` → `read-only`.
+   - `worker` → `worker`, a default-like non-interactive profile where common
+     build/test commands are allowed and confirmation-gated actions become
+     deny-with-guidance.
 
-1. **Per-agent `profile:` frontmatter.** Each builtin agent declares the minimum
-   profile it needs. The extension passes it to the worker via an env var, and
-   `pi-permissions` selects that profile at session start.
-   - `scout`, `planner`, `reviewer` → existing `read-only` profile.
-   - `worker` → a new `worker` profile (default-like but tuned for
-     non-interactive execution: common build/test commands are allow-listed,
-     confirmation-gated actions become deny-with-guidance).
+2. **Per-task write-scope enforcement.** When a task declares `writes`, the
+   extension exports the entries as comma-separated
+   `PI_SUBAGENT_WRITE_GLOBS`. `pi-permissions` denies `edit`/`write` calls and
+   Bash path references outside those scopes. Plain path entries include their
+   descendants; glob entries are matched as written. If `writes` is omitted,
+   the selected profile's normal write policy applies.
 
-2. **Per-task `PI_SUBAGENT_WRITE_GLOBS` enforcement.** When a task declares
-   `writes`, the extension exports them as `PI_SUBAGENT_WRITE_GLOBS=...` in the
-   worker env. `pi-permissions` adds a rule layer that denies `edit`/`write`
-   and bash path references outside those globs. This turns the current
-   advisory out-of-scope warning into a hard wall, eliminating merge-mush from
-   `write`/`edit` calls.
+The extension also audits observed changes. Single and chain workers use both
+tool-call extraction and pre/post `git status --short` snapshots, so Bash-based
+changes appear in the handoff. Parallel workers sharing a cwd cannot reliably
+attribute a git snapshot, but still report `write`/`edit` calls and run under
+the hard permission scope.
 
-3. **Bash mutation tracking.** Even with enforcement, bash edits are invisible
-   to the files-changed extractor. The extension will snapshot
-   `git status --short` before/after each worker and include any new/modified
-   files in the handoff.
-
-The extension sets `PI_SUBAGENT_PROFILE` and `PI_SUBAGENT_WRITE_GLOBS` in the
-worker env; `pi-permissions` consumes them.
-
-Until those pieces land, treat `writes` as a planning/audit aid and review
-worker diffs before trusting parallel results.
+Write scopes are defense in depth, not a complete process sandbox: commands can
+have implicit filesystem effects that contain no path token for the Bash gate
+to inspect. Continue reviewing worker diffs. The planned OS sandbox in
+`pi-permissions` will provide kernel-level containment for subprocess trees.
 
 ## Workflow examples
 
@@ -174,7 +168,7 @@ mechanics:
 3. If changes requested:
    `subagent { agent: "worker", sessionId: "1f4e…", task: "Apply this review feedback verbatim: …" }`
 
-Step 3 resumes the *same* worker session — it already knows the files and its
+Step 3 resumes the _same_ worker session — it already knows the files and its
 own rationale, so the fix round costs a fraction of a fresh worker and produces
 better fixes.
 
@@ -226,7 +220,7 @@ Goal: split the monolithic settings module into per-domain modules.
    task — after that, report back to me instead of retrying.
 ```
 
-The plan/progress files are *for you and crash recovery*; the orchestrator gets
+The plan/progress files are _for you and crash recovery_; the orchestrator gets
 results directly from tool results, so don't have it re-read handoff files
 unless the session was interrupted.
 
@@ -241,8 +235,8 @@ unless the session was interrupted.
 ## Cost guidance
 
 - **Delegate chunky, well-specified work.** A worker pays ramp-up (system prompt
-  + orienting reads) every fresh session; below a few minutes of equivalent
-  main-model work, delegation loses money.
+  - orienting reads) every fresh session; below a few minutes of equivalent
+    main-model work, delegation loses money.
 - **Prefer warm resumes over fresh workers** for correction rounds — that's the
   biggest single lever.
 - **Review cheaply.** Scan the worker's structured summary + `git diff --stat`;
@@ -255,8 +249,8 @@ unless the session was interrupted.
 ## Security notes
 
 - Workers are spawned as `pi` subprocesses that **inherit your full extension
-  set** (permission gates etc. still apply) and your auth. The agent frontmatter
-  only changes model/tools/system prompt.
+  set** and auth. Agent frontmatter changes model/tools/system prompt and may
+  select a named `pi-permissions` profile; it cannot define arbitrary policy.
 - Project-local agents (`.pi/agents/`) are repo-controlled prompts; they're only
   loaded with `agentScope: "project"`/`"all"` and prompt for confirmation by
   default.

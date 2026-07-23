@@ -24,7 +24,7 @@ import { fileURLToPath } from "node:url";
 import { CONFIG_DIR_NAME, getAgentDir, parseFrontmatter } from "@earendil-works/pi-coding-agent";
 
 export type AgentScope = "builtin" | "user" | "project" | "all";
-export type AgentSource = "builtin" | "user" | "project";
+type AgentSource = "builtin" | "user" | "project";
 
 export interface AgentConfig {
 	name: string;

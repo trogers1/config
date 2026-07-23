@@ -1,50 +1,72 @@
 {
-  "name": "pi-permission-subagents",
-  "version": "0.1.0",
-  "private": true,
-  "keywords": [
-    "pi-package"
-  ],
-  "scripts": {
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "check:types": "tsc --noEmit"
-  },
-  "pi": {
-    "extensions": [
-      "./extensions"
-    ],
-    "prompts": [
-      "./prompts"
-    ]
-  },
-  "peerDependencies": {
-    "@earendil-works/pi-agent-core": "*",
-    "@earendil-works/pi-ai": "*",
-    "@earendil-works/pi-coding-agent": "*",
-    "@earendil-works/pi-tui": "*",
-    "typebox": "*"
-  },
-  "peerDependenciesMeta": {
-    "@earendil-works/pi-agent-core": {
-      "optional": true
-    },
-    "@earendil-works/pi-ai": {
-      "optional": true
-    },
-    "@earendil-works/pi-coding-agent": {
-      "optional": true
-    },
-    "@earendil-works/pi-tui": {
-      "optional": true
-    },
-    "typebox": {
-      "optional": true
-    }
-  },
-  "devDependencies": {
-    "@types/node": "^26.1.1",
-    "typescript": "^7.0.2",
-    "vitest": "^4.1.10"
-  }
+	"name": "pi-permission-subagents",
+	"version": "0.1.0",
+	"private": true,
+	"keywords": [
+		"pi-package"
+	],
+	"scripts": {
+		"check:all": "npm test",
+		"check:deps": "depcruise extensions tests vitest.config.ts --config .dependency-cruiser.cjs",
+		"check:knip": "knip",
+		"check:lint": "eslint .",
+		"check:prettier": "prettier --check .",
+		"check:static": "npm run check:types && npm run check:lint && npm run check:deps && npm run check:knip && npm run check:prettier",
+		"check:types": "tsc --noEmit",
+		"fix:all": "npm run fix:prettier",
+		"fix:prettier": "prettier --write .",
+		"pretest": "npm run check:static",
+		"test": "vitest run",
+		"test:watch": "vitest"
+	},
+	"engines": {
+		"node": ">=22.19.0"
+	},
+	"pi": {
+		"extensions": [
+			"./extensions"
+		],
+		"prompts": [
+			"./prompts"
+		]
+	},
+	"peerDependencies": {
+		"@earendil-works/pi-agent-core": "*",
+		"@earendil-works/pi-ai": "*",
+		"@earendil-works/pi-coding-agent": "*",
+		"@earendil-works/pi-tui": "*",
+		"typebox": "*"
+	},
+	"peerDependenciesMeta": {
+		"@earendil-works/pi-agent-core": {
+			"optional": true
+		},
+		"@earendil-works/pi-ai": {
+			"optional": true
+		},
+		"@earendil-works/pi-coding-agent": {
+			"optional": true
+		},
+		"@earendil-works/pi-tui": {
+			"optional": true
+		},
+		"typebox": {
+			"optional": true
+		}
+	},
+	"devDependencies": {
+		"@earendil-works/pi-agent-core": "^0.81.0",
+		"@earendil-works/pi-ai": "^0.81.0",
+		"@earendil-works/pi-coding-agent": "^0.81.0",
+		"@earendil-works/pi-tui": "^0.81.0",
+		"@types/node": "^26.1.1",
+		"dependency-cruiser": "^18.1.0",
+		"eslint": "^10.7.0",
+		"knip": "^6.29.0",
+		"prettier": "^3.9.5",
+		"typebox": "^1.1.38",
+		"typescript": "^6.0.3",
+		"typescript-eslint": "^8.65.0",
+		"vitest": "^4.1.10"
+	}
 }
