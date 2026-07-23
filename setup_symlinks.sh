@@ -205,6 +205,14 @@ if [ -d "$pi_usage" ]; then
   fi
 fi
 
+pi_permissions="$HOME_DIR/.pi/agent/permissions"
+if [ -d "$pi_permissions" ]; then
+  mkdir -p "$HOME/.pi/agent"
+  if ! safe_link "$pi_permissions" "$HOME/.pi/agent/permissions" "pi permissions config"; then
+    failed=1
+  fi
+fi
+
 if [ "$symlinked" -eq 0 ]; then
   echo "No config files found to symlink."
 fi

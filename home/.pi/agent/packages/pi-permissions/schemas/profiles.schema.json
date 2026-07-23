@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["profiles"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "defaultProfile": { "type": "string" },
+    "profiles": {
+      "type": "object",
+      "patternProperties": {
+        "^.*$": {
+          "type": "object",
+          "properties": {
+            "extends": { "type": "string" },
+            "promptFile": {
+              "anyOf": [{ "type": "string" }, { "type": "null" }]
+            },
+            "color": {
+              "anyOf": [
+                { "type": "string", "const": "black" },
+                { "type": "string", "const": "red" },
+                { "type": "string", "const": "green" },
+                { "type": "string", "const": "yellow" },
+                { "type": "string", "const": "blue" },
+                { "type": "string", "const": "magenta" },
+                { "type": "string", "const": "cyan" },
+                { "type": "string", "const": "white" }
+              ]
+            },
+            "emoji": { "type": "string" },
+            "directories": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 }
+            },
+            "tools": {
+              "type": "object",
+              "patternProperties": {
+                "^.*$": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["pattern", "decision"],
+                    "properties": {
+                      "pattern": { "type": "string" },
+                      "decision": {
+                        "anyOf": [
+                          { "type": "string", "const": "allow" },
+                          { "type": "string", "const": "ask" },
+                          { "type": "string", "const": "deny" }
+                        ]
+                      },
+                      "guidance": { "type": "string" },
+                      "alternatives": {
+                        "type": "array",
+                        "items": { "type": "string" }
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                }
+              }
+            },
+            "bashPathReferences": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["pattern", "decision"],
+                "properties": {
+                  "pattern": { "type": "string" },
+                  "decision": {
+                    "anyOf": [
+                      { "type": "string", "const": "allow" },
+                      { "type": "string", "const": "ask" },
+                      { "type": "string", "const": "deny" }
+                    ]
+                  },
+                  "guidance": { "type": "string" },
+                  "alternatives": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  }
+                },
+                "additionalProperties": false
+              },
+              "minItems": 1
+            },
+            "protectedPathPatterns": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "protectedPathExceptions": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "bashOutputRedirections": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["pattern", "decision"],
+                "properties": {
+                  "pattern": { "type": "string" },
+                  "decision": {
+                    "anyOf": [
+                      { "type": "string", "const": "allow" },
+                      { "type": "string", "const": "ask" },
+                      { "type": "string", "const": "deny" }
+                    ]
+                  },
+                  "guidance": { "type": "string" },
+                  "alternatives": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  }
+                },
+                "additionalProperties": false
+              },
+              "minItems": 1
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    }
+  },
+  "$id": "https://earendil.works/pi-permissions/profiles.schema.json",
+  "title": "pi-permissions profile configuration",
+  "additionalProperties": false
+}

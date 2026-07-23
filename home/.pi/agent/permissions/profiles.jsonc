@@ -1,0 +1,42 @@
+{
+  "$schema": "../../packages/pi-permissions/schemas/profiles.schema.json",
+  "profiles": {
+    "config-maintenance": {
+      "extends": "default",
+      "directories": ["~/Code/config", "~/code/config"],
+      "tools": {
+        "read": [
+          {
+            "pattern": "/Users/taylor.rogers/.pi/agent/packages",
+            "decision": "deny",
+            "guidance": "Pi packages here are symlinks to this configuration checkout. Read the source under home/.pi/agent/packages/... instead (use @home/.pi/agent/... for a Pi file reference)."
+          },
+          {
+            "pattern": "/Users/taylor.rogers/.pi/agent/packages/**",
+            "decision": "deny",
+            "guidance": "Pi packages here are symlinks to this configuration checkout. Read the source under home/.pi/agent/packages/... instead (use @home/.pi/agent/... for a Pi file reference)."
+          }
+        ]
+      },
+      "bashPathReferences": [
+        { "pattern": "*", "decision": "allow" },
+        {
+          "pattern": "/Users/taylor.rogers/.pi/agent/packages",
+          "decision": "deny",
+          "guidance": "Pi packages here are symlinks to this configuration checkout. Read the source under home/.pi/agent/packages/... instead (use @home/.pi/agent/... for a Pi file reference).",
+        },
+        {
+          "pattern": "/Users/taylor.rogers/.pi/agent/packages/**",
+          "decision": "deny",
+          "guidance": "Pi packages here are symlinks to this configuration checkout. Read the source under home/.pi/agent/packages/... instead (use @home/.pi/agent/... for a Pi file reference).",
+        },
+      ],
+    },
+    "socrates": {
+      "extends": "read-only",
+      "promptFile": "./prompts/socrates.md",
+      "color": "cyan",
+      "emoji": "🧠",
+    },
+  },
+}

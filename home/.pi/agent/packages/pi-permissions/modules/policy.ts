@@ -1,5 +1,3 @@
-import { homedir } from "node:os";
-import path from "node:path";
 import {
   extendProfile,
   definePolicyConfig,
@@ -16,8 +14,6 @@ import {
 // Most profiles build on the same core tool rules. Use the `baseProfile`
 // as a common set of permissions so we don't duplicate it everywhere.
 
-const linkedPiPackagesPath = path.join(homedir(), ".pi", "agent", "packages");
-
 // Pi documentation and node_modules is useful reference material even when it lives outside
 // the project. Package dependencies are similarly useful, but only inside the
 // checked-out local Pi packages—not below an arbitrary node_modules directory.
@@ -28,22 +24,7 @@ const piReferencePathRules: Rule[] = [
   },
 ];
 
-const symlinkedPiPackageRules: Rule[] = [
-  {
-    pattern: linkedPiPackagesPath,
-    decision: "deny",
-    guidance:
-      "Pi packages here are symlinks to the local configuration checkout. Read the source under `home/.pi/agent/packages/...` instead (use `@home/.pi/agent/...` for a Pi file reference).",
-  },
-  {
-    pattern: `${linkedPiPackagesPath}/**`,
-    decision: "deny",
-    guidance:
-      "Pi packages here are symlinks to the local configuration checkout. Read the source under `home/.pi/agent/packages/...` instead (use `@home/.pi/agent/...` for a Pi file reference).",
-  },
-];
-
-const baseProfile: ProfilePolicy = {
+export const baseProfile: ProfilePolicy = {
   color: "blue",
   emoji: "🛠️",
   protectedPathPatterns: defaultProtectedPathPatterns,
@@ -335,7 +316,6 @@ const baseProfile: ProfilePolicy = {
         decision: "allow",
       },
       ...piReferencePathRules,
-      ...symlinkedPiPackageRules,
     ],
 
     grep: [
@@ -384,7 +364,6 @@ const baseProfile: ProfilePolicy = {
       decision: "allow",
     },
     ...piReferencePathRules,
-    ...symlinkedPiPackageRules,
   ],
 
   // Output redirection can truncate/create files. Scratch output is allowed in
@@ -452,7 +431,6 @@ const readOnlyPathRules: [Rule, ...Rule[]] = [
   { pattern: "/private/tmp", decision: "allow" },
   { pattern: "/private/tmp/**", decision: "allow" },
   ...piReferencePathRules,
-  ...symlinkedPiPackageRules,
 ];
 
 const readOnlyProfile: ProfilePolicy = {
@@ -757,7 +735,7 @@ const readOnlyProfile: ProfilePolicy = {
 
 // ─── Exported policy config ───────────────────────────────────────────
 
-export const policyConfig = definePolicyConfig({
+const configuredPolicy = definePolicyConfig({
   defaultProfile: "default",
 
   profiles: {
@@ -893,4 +871,14 @@ export const policyConfig = definePolicyConfig({
       ],
     },
   },
+});
+
+const { socrates: localSocrates, ...genericProfiles } =
+  configuredPolicy.profiles;
+void localSocrates;
+
+/** Portable profiles shipped by the package. Local profiles live in user config. */
+export const policyConfig = definePolicyConfig({
+  defaultProfile: "default",
+  profiles: genericProfiles,
 });

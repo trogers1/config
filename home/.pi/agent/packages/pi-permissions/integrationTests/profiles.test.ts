@@ -26,6 +26,26 @@ describe("permissions extension", () => {
     ).resolves.toMatchObject({ block: true });
   });
 
+  it("uses the shipped base profile when no custom profile module exists", async () => {
+    vi.stubEnv(
+      "PI_PERMISSIONS_PROFILE_CONFIG",
+      "/tmp/pi-permissions-profile-config-does-not-exist.ts",
+    );
+    const harness = createExtensionHarness();
+    await harness.start();
+
+    expect(lastCallArgument(harness.ui.setStatus, 1)).toContain("default");
+    const completions = await harness
+      .command("profile")
+      .getArgumentCompletions?.("");
+    expect(completions?.map((completion) => completion.value)).toEqual(
+      expect.arrayContaining(["default", "worker", "read-only"]),
+    );
+    expect(completions?.map((completion) => completion.value)).not.toContain(
+      "socrates",
+    );
+  });
+
   it("does not require directories for a profile to be selected", async () => {
     const harness = createExtensionHarness();
     await harness.start();
@@ -35,11 +55,11 @@ describe("permissions extension", () => {
 
   it("selects the most-specific profile directory for a startup inside a descendant", async () => {
     const readOnly = policyConfig.profiles["read-only"];
-    const socrates = policyConfig.profiles.socrates;
+    const performanceReview = policyConfig.profiles["performance-review"];
     const originalReadOnlyDirectories = readOnly.directories;
-    const originalSocratesDirectories = socrates.directories;
+    const originalPerformanceReviewDirectories = performanceReview.directories;
     readOnly.directories = ["/workspace"];
-    socrates.directories = ["/workspace/coaching"];
+    performanceReview.directories = ["/workspace/coaching"];
 
     try {
       const harness = createExtensionHarness({
@@ -47,20 +67,19 @@ describe("permissions extension", () => {
       });
       await harness.start();
 
-      expect(lastCallArgument(harness.ui.setStatus, 1)).toContain("socrates");
-      expect((await harness.beforeAgent())?.systemPrompt).toContain(
-        "# Active profile: socrates",
+      expect(lastCallArgument(harness.ui.setStatus, 1)).toContain(
+        "performance-review",
       );
     } finally {
       readOnly.directories = originalReadOnlyDirectories;
-      socrates.directories = originalSocratesDirectories;
+      performanceReview.directories = originalPerformanceReviewDirectories;
     }
   });
 
   it("lets a configured profile directory override a persisted profile on resume", async () => {
-    const socrates = policyConfig.profiles.socrates;
-    const originalDirectories = socrates.directories;
-    socrates.directories = ["/workspace"];
+    const performanceReview = policyConfig.profiles["performance-review"];
+    const originalDirectories = performanceReview.directories;
+    performanceReview.directories = ["/workspace"];
 
     try {
       const harness = createExtensionHarness({
@@ -75,9 +94,11 @@ describe("permissions extension", () => {
       });
       await harness.start("resume");
 
-      expect(lastCallArgument(harness.ui.setStatus, 1)).toContain("socrates");
+      expect(lastCallArgument(harness.ui.setStatus, 1)).toContain(
+        "performance-review",
+      );
     } finally {
-      socrates.directories = originalDirectories;
+      performanceReview.directories = originalDirectories;
     }
   });
 
@@ -103,9 +124,9 @@ describe("permissions extension", () => {
   });
 
   it("lets PI_SUBAGENT_PROFILE override a configured profile directory", async () => {
-    const socrates = policyConfig.profiles.socrates;
-    const originalDirectories = socrates.directories;
-    socrates.directories = ["/workspace"];
+    const performanceReview = policyConfig.profiles["performance-review"];
+    const originalDirectories = performanceReview.directories;
+    performanceReview.directories = ["/workspace"];
     vi.stubEnv("PI_SUBAGENT_PROFILE", "worker");
 
     try {
@@ -123,7 +144,7 @@ describe("permissions extension", () => {
         }),
       ).resolves.toBeUndefined();
     } finally {
-      socrates.directories = originalDirectories;
+      performanceReview.directories = originalDirectories;
     }
   });
 
@@ -282,34 +303,36 @@ describe("permissions extension", () => {
       "error",
     );
 
-    await harness.runCommand("profile", "socrates");
+    await harness.runCommand("profile", "performance-review");
     expect(harness.entries.at(-1)).toMatchObject({
       customType: "pi-permissions-profile",
-      data: { profile: "socrates" },
+      data: { profile: "performance-review" },
     });
     const completions = await harness
       .command("profile")
-      .getArgumentCompletions?.("soc");
+      .getArgumentCompletions?.("performance");
     expect(completions?.map((completion) => completion.value)).toEqual([
-      "socrates",
+      "performance-review",
     ]);
-    expect(lastCallArgument(harness.ui.setStatus, 1)).toContain("🧠");
-    expect(lastCallArgument(harness.ui.setStatus, 1)).toContain("socrates");
+    expect(lastCallArgument(harness.ui.setStatus, 1)).toContain("📋");
+    expect(lastCallArgument(harness.ui.setStatus, 1)).toContain(
+      "performance-review",
+    );
   });
 
-  it("restores the persisted profile and applies its prompt and read-only policy", async () => {
+  it("restores the persisted read-only profile and its tool policy", async () => {
     const firstSession = createExtensionHarness();
     await firstSession.start();
-    await firstSession.runCommand("socrates");
+    await firstSession.runCommand("read-only");
 
     const resumedSession = createExtensionHarness({
       entries: firstSession.entries,
     });
     await resumedSession.start("resume");
 
-    const prompt = await resumedSession.beforeAgent();
-    expect(prompt?.systemPrompt).toContain("# Active profile: socrates");
-    expect(prompt?.systemPrompt).toContain("Base system prompt");
+    expect(lastCallArgument(resumedSession.ui.setStatus, 1)).toContain(
+      "read-only",
+    );
 
     const write = await resumedSession.callTool({
       toolName: "write",

@@ -6,13 +6,15 @@
     "pi-package"
   ],
   "scripts": {
-    "check:all": "npm run check:types && npm run check:lint && npm run check:deps && npm run check:knip && npm run check:prettier",
+    "check:all": "npm run check:types && npm run check:lint && npm run check:deps && npm run check:knip && npm run check:profile-schema && npm run check:prettier",
     "check:deps": "depcruise extensions modules integrationTests --config .dependency-cruiser.cjs",
     "check:knip": "knip",
     "check:lint": "eslint .",
     "check:prettier": "prettier --check .",
+    "check:profile-schema": "tsx scripts/generate-profile-schema.ts --check",
     "check:types": "tsc --noEmit",
     "fix:prettier": "prettier --write .",
+    "generate:profile-schema": "tsx scripts/generate-profile-schema.ts",
     "pretest": "npm run check:all",
     "test": "vitest run",
     "test:watch": "vitest"
@@ -20,9 +22,14 @@
   "engines": {
     "node": ">=22.19.0"
   },
+  "exports": {
+    "./config": "./modules/policyHelpers.ts",
+    "./profiles": "./modules/policy.ts"
+  },
   "files": [
     "extensions/",
     "modules/",
+    "schemas/",
     "!modules/**/*.test.ts",
     "prompts/",
     "README.md"
@@ -42,8 +49,12 @@
     "eslint": "^10.7.0",
     "knip": "^6.26.0",
     "prettier": "^3.9.5",
+    "tsx": "^4.23.1",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.63.0",
     "vitest": "^4.1.10"
+  },
+  "dependencies": {
+    "jsonc-parser": "^3.3.1"
   }
 }

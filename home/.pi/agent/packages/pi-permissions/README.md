@@ -34,25 +34,32 @@ later break a tie. This selection takes precedence over a profile saved in the
 session, so a resumed session receives the policy appropriate to its current
 directory.
 
-Configure directories directly on the applicable profiles in `modules/policy.ts`:
+The package ships portable profiles only. Add custom profiles and directory
+bindings in the user-owned JSON file
+`~/.pi/agent/permissions/profiles.jsonc`. The package reads it synchronously;
+configuration is data, not executable code. Add the bundled schema as
+`$schema` to get completion and validation in JSON-aware editors:
 
-```ts
-profiles: {
-  "performance-review": extendProfile(baseProfile, {
-    directories: ["~/Code/client"],
-    // ...
-  }),
-  socrates: {
-    directories: ["~/Code/client/docs"],
-    // ...
+```jsonc
+{
+  "$schema": "https://example.com/pi-permissions/profiles.schema.json",
+  "profiles": {
+    "client-work": {
+      "extends": "default",
+      "directories": ["~/Code/client"],
+    },
   },
 }
 ```
 
-Directories may be absolute, use `~`, or be relative to the directory where Pi
-was started. Omit `directories` when no automatic selection is wanted.
-`PI_SUBAGENT_PROFILE` remains authoritative and overrides both directory and
-persisted profile selection.
+`extends` is optional. When supplied, it names a built-in profile or another
+custom profile, and its rules are appended to inherited rules so later rules
+continue to override earlier matches. Without it, the profile is fully custom
+and must provide every required policy field. Directories may be absolute, use
+`~`, or be relative to the directory where Pi was started. Omit `directories`
+when no automatic selection is wanted. Invalid or missing configuration leaves
+the portable profiles active. `PI_SUBAGENT_PROFILE` remains authoritative and
+overrides both directory and persisted profile selection.
 
 ## Subagent environment
 

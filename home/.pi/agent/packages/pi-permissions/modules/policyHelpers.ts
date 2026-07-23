@@ -92,6 +92,49 @@ const policyConfigSchema = Type.Object(
   { additionalProperties: false },
 );
 
+const profileConfigProfileSchema = Type.Object(
+  {
+    extends: Type.Optional(Type.String()),
+    promptFile: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+    color: Type.Optional(
+      Type.Union([
+        Type.Literal("black"),
+        Type.Literal("red"),
+        Type.Literal("green"),
+        Type.Literal("yellow"),
+        Type.Literal("blue"),
+        Type.Literal("magenta"),
+        Type.Literal("cyan"),
+        Type.Literal("white"),
+      ]),
+    ),
+    emoji: Type.Optional(Type.String()),
+    directories: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+    tools: Type.Optional(Type.Record(Type.String(), Type.Array(ruleSchema))),
+    bashPathReferences: Type.Optional(Type.Array(ruleSchema, { minItems: 1 })),
+    protectedPathPatterns: Type.Optional(Type.Array(Type.String())),
+    protectedPathExceptions: Type.Optional(Type.Array(Type.String())),
+    bashOutputRedirections: Type.Optional(
+      Type.Array(ruleSchema, { minItems: 1 }),
+    ),
+  },
+  { additionalProperties: false },
+);
+
+/** JSON Schema source of truth for ~/.pi/agent/permissions/profiles.jsonc. */
+export const profileConfigFileSchema = Type.Object(
+  {
+    $schema: Type.Optional(Type.String()),
+    defaultProfile: Type.Optional(Type.String()),
+    profiles: Type.Record(Type.String(), profileConfigProfileSchema),
+  },
+  {
+    $id: "https://earendil.works/pi-permissions/profiles.schema.json",
+    title: "pi-permissions profile configuration",
+    additionalProperties: false,
+  },
+);
+
 export function assertPolicyConfig(
   config: unknown,
 ): asserts config is PolicyConfig {

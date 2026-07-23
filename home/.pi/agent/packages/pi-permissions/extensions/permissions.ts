@@ -37,10 +37,12 @@ import {
   withProtectedPathPatterns,
   type Decision,
   type ProfileColor,
+  type PolicyConfig,
   type ProfilePolicy,
   type Rule,
 } from "../modules/policyHelpers";
-import { policyConfig } from "../modules/policy";
+import { loadProfileConfig } from "../modules/profileConfig";
+import { policyConfig as genericPolicyConfig } from "../modules/policy";
 
 export {
   assertPolicyConfig,
@@ -101,7 +103,8 @@ const profileEntryType = "pi-permissions-profile";
 const pathToolNames = ["read", "grep", "find", "ls", "edit", "write"] as const;
 const pathToolNameSet: ReadonlySet<string> = new Set(pathToolNames);
 
-type ProfileName = keyof typeof policyConfig.profiles;
+let policyConfig: PolicyConfig = genericPolicyConfig;
+type ProfileName = string;
 type PathToolName = (typeof pathToolNames)[number];
 
 function typedKeys<T extends object>(value: T): Array<keyof T & string> {
@@ -139,8 +142,8 @@ function readStringProperty(value: unknown, key: string): string | undefined {
 
 const profileNames = () => typedKeys(policyConfig.profiles);
 
-function isProfileName(value: unknown): value is ProfileName {
-  return typeof value === "string" && value in policyConfig.profiles;
+function isProfileName(value: string): boolean {
+  return value in policyConfig.profiles;
 }
 
 function activePolicy(profile: ProfileName): ProfilePolicy {
@@ -148,6 +151,7 @@ function activePolicy(profile: ProfileName): ProfilePolicy {
 }
 
 export default function (pi: ExtensionAPI) {
+  policyConfig = loadProfileConfig(genericPolicyConfig);
   assertPolicyConfig(policyConfig);
 
   const startupCwd = path.resolve(process.cwd());
@@ -171,7 +175,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
       if (entry.type !== "custom" || entry.customType !== profileEntryType)
         continue;
       const profile = readStringProperty(entry.data, "profile");
-      if (isProfileName(profile)) {
+      if (profile && isProfileName(profile)) {
         activeProfile = profile;
       }
     }

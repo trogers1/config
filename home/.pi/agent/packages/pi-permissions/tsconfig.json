@@ -16,6 +16,7 @@
   "include": [
     "extensions/**/*.ts",
     "modules/**/*.ts",
-    "integrationTests/**/*.ts"
+    "integrationTests/**/*.ts",
+    "scripts/**/*.ts"
   ]
 }
