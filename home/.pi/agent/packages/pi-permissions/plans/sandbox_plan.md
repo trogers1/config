@@ -104,6 +104,7 @@ tool_call handler (existing gate — UNCHANGED)
 bash tool executes (overridden registration)
   • spawnHook fires with { command, cwd, env }
   • if active profile has sandbox config and backend available:
+      profile policy + PI_SUBAGENT_WRITE_GLOBS → effective sandbox spec
       command → sandbox-exec -f <rendered.sb> /bin/sh -c '<quoted command>'
     else:
       command unchanged (or blocked, per onUnavailable)
@@ -132,8 +133,9 @@ export type SandboxConfig = {
    * /tmp (resolved) and os.tmpdir() are always writable. When nothing
    * translates from edit/write ∪ bashOutputRedirections allow rules:
    * startupCwd is added only if the profile declares no edit/write rules
-   * at all; a profile whose rules allow nothing derives a /tmp-only
-   * writable set — never a startupCwd fallback — so an all-deny rule
+   * at all and no runtime subagent write scope is present; a profile whose
+   * rules allow nothing derives a /tmp-only writable set — never a
+   * startupCwd fallback — so an all-deny rule
    * layer cannot be re-widened by the default (fail-tight; see the
    * socrates bullet in §6). Supports ~ expansion, like other policy paths.
    */
@@ -169,12 +171,44 @@ Proposed initial per-profile posture (tunable at implementation time):
 | Profile     | sandbox                       | allowNetwork | Notes                                                                                              |
 | ----------- | ----------------------------- | ------------ | -------------------------------------------------------------------------------------------------- |
 | `default`   | seatbelt, writable cwd + /tmp | `true`       | everyday work; npm/curl keep working                                                               |
+| `worker`    | inherit default               | `true`       | runtime `PI_SUBAGENT_WRITE_GLOBS` narrows cwd writes to the task's declared scope                  |
 | `read-only` | seatbelt, writable /tmp only  | `false`      | strongest posture; cwd is read-only                                                                |
 | `socrates`  | same as `read-only`           | `false`      |                                                                                                    |
 | others      | inherit via `extendProfile`   | —            | `sandbox` flows through `extendProfile` like other non-`tools` fields; overrides replace wholesale |
 
 `extendProfile` already spreads non-`tools` fields, so `sandbox` inherits
 naturally; a derived profile replaces it by providing its own.
+
+### 4.1 Runtime subagent write constraints
+
+`PI_SUBAGENT_WRITE_GLOBS` is a runtime constraint, not profile configuration.
+When present, its normalized comma-separated scopes cap the sandbox's project
+writable set in addition to the gate-layer checks already implemented by
+`pi-permissions`:
+
+- Derive writable paths from the profile's `edit`/`write`, redirection allows,
+  and `sandbox.writablePaths` as usual.
+- Intersect that derived set with the declared subagent scopes. A scope may
+  narrow a broad profile root, but can never widen what the profile permits.
+- Keep resolved `/tmp` and `os.tmpdir()` writable as the sandbox's documented
+  scratch exception. Subagent scopes constrain project/host writes, not
+  sandbox runtime scratch space.
+- If no write-scope variable is present, preserve ordinary profile behavior.
+  If it is present but empty or no scope can be translated safely, derive no
+  project writable roots (fail tight).
+- Protected read rules and network posture remain profile-derived and are not
+  weakened by write scopes.
+
+Parsing and normalization must be shared with the existing gate implementation
+rather than independently reimplemented in the sandbox. Move the current scope
+parser/rule construction out of `extensions/permissions.ts` into a reusable
+module when implementing this plan. Commas in path names remain unsupported
+because the producer's environment format is comma-delimited.
+
+This closes an important gap for worker subprocesses: the gate catches explicit
+out-of-scope Bash path tokens, while Seatbelt prevents implicit writes from
+package scripts, compilers, and child processes whose target paths never appear
+in the original command.
 
 ---
 
@@ -208,8 +242,9 @@ export type SandboxSpec = {
   // (literals/subpaths — every path sandbox can express those); non-concrete
   // allow globs are candidates the backend may attempt to express.
   // writable derives from edit/write ∪ bashOutputRedirections allow rules ∪
-  // config.writablePaths ∪ /tmp (always) ∪ startupCwd (only when the
-  // profile declares no edit/write rules at all — §4).
+  // config.writablePaths, capped by runtime writeScopes when present, then
+  // unioned with /tmp (always). startupCwd is used only when the profile
+  // declares no edit/write rules and no runtime scope narrows it (§4/§4.1).
   writable: { literals: string[]; subpaths: string[] };
   candidateWritablePatterns: string[];
   allowNetwork: boolean;
@@ -219,7 +254,10 @@ export type SandboxSpec = {
   noSandboxMeaning: Array<{ construct: string; pattern: string }>;
 };
 
-translatePolicy(policy: ProfilePolicy, ctx: { startupCwd: string }): SandboxSpec
+translatePolicy(policy: ProfilePolicy, ctx: {
+  startupCwd: string;
+  writeScopes?: string[];
+}): SandboxSpec
 ```
 
 What the spec deliberately does NOT decide is _expressibility_: whether a
@@ -297,12 +335,14 @@ direction, never approximated.
   Detection results cached per session.
 - Profile cache: render the backend artifact (a `.sb` profile file for
   Seatbelt) into a `fs.mkdtempSync(join(os.tmpdir(), "pi-permissions-"))`
-  dir; reuse per (profile, sandbox config) for the session; delete the temp
-  dir on `session_shutdown`. Cached artifacts are opaque backend outputs (a
-  bwrap backend would cache argv, not a file), so the cache shape survives
-  a second backend. The startup profile translates eagerly at session start
-  (the coverage notify needs the result); profiles switched into mid-session
-  translate on first use.
+  dir; reuse per effective sandbox state — profile, sandbox config, and
+  normalized runtime write scopes — for the session; delete the temp dir on
+  `session_shutdown`. Including scopes in the key prevents an artifact rendered
+  for broad profile writes from being reused for a constrained subagent. Cached
+  artifacts are opaque backend outputs (a bwrap backend would cache argv, not a
+  file), so the cache shape survives a second backend. The startup profile
+  translates eagerly at session start (the coverage notify needs the result);
+  profiles switched into mid-session translate on first use.
 
 The module's public API — and the only thing the extension layer (§5.5)
 consumes, so wiring never names a backend (machine-enforced by the
@@ -310,7 +350,10 @@ lib-boundary dependency-cruiser rules, §5 intro):
 
 ```ts
 export type SandboxState = {
-  profile: string; policy: ProfilePolicy; startupCwd: string;
+  profile: string;
+  policy: ProfilePolicy;
+  startupCwd: string;
+  writeScopes?: string[]; // normalized PI_SUBAGENT_WRITE_GLOBS
 };
 export type SandboxResolution =
   | { kind: "none" }        // active profile declares no sandbox
@@ -349,6 +392,7 @@ resolveSandbox(state: SandboxState): SandboxResolution  // uses the caches above
      profile: activeProfile,
      policy: withProtectedPathPatterns(activePolicy(activeProfile)),
      startupCwd,
+     writeScopes: subagentWriteScopes,
    });
 
    pi.registerTool({
@@ -385,7 +429,7 @@ resolveSandbox(state: SandboxState): SandboxResolution  // uses the caches above
    `{ result: { output: "...blocked...", exitCode: 126, cancelled: false, truncated: false } }`.
 3. `before_agent_start`: when the active profile has a sandbox, append a
    short note to the system prompt _generated from the translated
-   `SandboxSpec.writable` set_ (already cached per profile, §5.4) — never a
+   `SandboxSpec.writable` set_ (already cached per effective state, §5.4) — never a
    hardcoded root list. A static "working directory and /tmp" sentence is
    wrong in both directions: it over-promises for `read-only`/`socrates`
    (whose cwd is read-only — the model would misread the resulting EPERMs as
@@ -444,8 +488,10 @@ ${allowReadRules}                     ;; from protectedPathExceptions (last-matc
 
 ;; Writes: only the translated writable set.
 ${writeRules}                         ;; from edit/write ∪ bashOutputRedirections allow rules
-                                      ;; ∪ config.writablePaths ∪ /tmp (always) ∪ startupCwd
-                                      ;; (only when no edit/write rules exist — §4)
+                                      ;; ∪ config.writablePaths, intersected with
+                                      ;; PI_SUBAGENT_WRITE_GLOBS when present,
+                                      ;; then ∪ /tmp (always); startupCwd fallback
+                                      ;; only when no edit/write rules or runtime scope exist
 
 ${networkRule}                        ;; (allow network*) OR nothing (denied by default)
 ```
@@ -468,7 +514,8 @@ gate semantics in `noSandboxMeaning`:
 | `bashOutputRedirections` **deny** rules (`**` deny)              | none — the kernel cannot distinguish `> f` from `tee f` or `sed -i`; gating writes by mechanism is gate-layer UX only                                                                                                                                                                                                                | ❌ `noSandboxMeaning`                               |
 | `bashPathReferences` **allow** rules                             | none — read-intent allows: a bare path token carries no read/write distinction at the gate, but the kernel distinguishes operations, and reads are already default-allowed. Unioning them into writable would re-widen the write surface the sandbox exists to narrow (read-only's `*` path allow would make the whole cwd writable) | ❌ `noSandboxMeaning`                               |
 | `bashPathReferences` **deny** rules (`../**` deny)               | the write half is inherited from the writable derivation (default-deny); the read half would require a per-profile read allow-list (breaks system/toolchain reads), which v1's default-allow read model rejects. Express bash read-restrictions as `protectedPathPatterns` instead — those translate (above)                         | ❌ `noSandboxMeaning`                               |
-| `config.writablePaths` / `config.denyReadPaths`                  | additive literals                                                                                                                                                                                                                                                                                                                    | ✅                                                  |
+| `config.writablePaths` / `config.denyReadPaths`                  | additive literals before runtime scope capping; write scopes may narrow `writablePaths`, while deny-read paths remain additive                                                                                                                                                                                                       | ✅                                                  |
+| `PI_SUBAGENT_WRITE_GLOBS`                                        | authoritative runtime cap on project writable literals/subpaths; intersect with all profile-derived writable roots, never union; unsupported scope globs fail tight and appear in `untranslatedAllows`                                                                                                                               | ✅ concrete paths/prefixes; others reported         |
 | bash command rules (`git push *`)                                | none — command semantics are invisible to a filesystem sandbox                                                                                                                                                                                                                                                                       | ❌ `noSandboxMeaning`                               |
 | `ask` decisions (any tool)                                       | none — the kernel cannot prompt; the sandbox only ever _narrows_ what `allow` permits                                                                                                                                                                                                                                                | ❌ `noSandboxMeaning`                               |
 | Globs outside the proven-equivalent subset                       | skipped, reported by direction — restriction globs → `uncovered`, allow globs → `untranslatedAllows`                                                                                                                                                                                                                                 | ❌                                                  |
@@ -498,6 +545,12 @@ Details that matter:
   (allow only `handoff.md` and `progress.md`) translate to a cwd that is
   read-only except those two literals — the kernel backstops the rule layer
   precisely, with no duplicated config.
+- **Subagent intersection example:** the `worker` profile may derive the whole
+  startup cwd as writable, but `PI_SUBAGENT_WRITE_GLOBS=src/auth,tests/auth`
+  renders only those two subtrees (plus sandbox scratch directories) writable.
+  A package script attempting to generate `src/billing/client.ts` receives
+  EPERM even though that target never appeared in the Bash command. A scope
+  cannot re-allow a path denied by the profile.
 - **All-deny profiles stay tight:** socrates's edit/write rules allow
   nothing, so nothing translates — and the fallback must be /tmp-only, not
   the §4 nothing-translates default including startupCwd. Otherwise an
@@ -570,7 +623,8 @@ sandbox denials).
 | Backend unavailable (binary missing, wrong platform, or smoke test fails) | `onUnavailable`: default `block` (spawned command exits 126 with explanation); `warn` runs unsandboxed + status hint + one-time session-start notify |
 | Rendered profile has a Seatbelt syntax error                              | caught by the session-start smoke test → same path as unavailable                                                                                    |
 | Sandboxed operation denied by kernel                                      | command fails with EPERM; optional `tool_result` steering appends the allowed roots (§5.5 item 4)                                                    |
-| Profile switched at runtime                                               | next spawn hook call reads new profile state; rendered profiles cached per profile                                                                   |
+| Profile switched at runtime                                               | next spawn hook call reads new profile state; rendered profiles cached per effective profile + runtime scope state                                   |
+| Subagent write scopes present                                             | project writable roots are the fail-tight intersection of profile-derived writes and normalized scopes; `/tmp` remains scratch                       |
 | Session ends                                                              | temp dir with `.sb` files removed in `session_shutdown`                                                                                              |
 | Non-interactive (`-p`, json/rpc)                                          | unchanged semantics: sandbox still applies (it is not a prompt); `block` mode just fails the command                                                 |
 
@@ -584,12 +638,15 @@ sandbox denials).
   - `renderSeatbeltProfile`: substitution, symlink resolution, `~` expansion,
     deny-order after allow, network on/off.
   - `translatePolicy` (backend-neutral): redirect allow targets union into
-    the writable set; all-deny edit/write profiles derive a /tmp-only
-    writable set (no startupCwd widening); direction tags travel with each
-    pattern bucket; command rules, ask decisions, redirect denies, and
-    `bashPathReferences` rules land in `noSandboxMeaning`;
-    `bashPathReferences` never widens writable (read-only's `*` path allow
-    keeps cwd read-only).
+    the profile-derived writable set; runtime write scopes intersect that set
+    before the `/tmp` scratch exception is added; absent scopes preserve normal
+    profile behavior, empty/untranslatable scopes produce no project writable
+    roots, and scopes never widen profile permissions. All-deny edit/write
+    profiles derive a /tmp-only writable set (no startupCwd widening);
+    direction tags travel with each pattern bucket; command rules, ask
+    decisions, redirect denies, and `bashPathReferences` rules land in
+    `noSandboxMeaning`; `bashPathReferences` never widens writable
+    (read-only's `*` path allow keeps cwd read-only).
   - `filterExpressible` (Seatbelt): proven-equivalent globs translate;
     non-concrete restriction globs → `uncovered`; non-concrete allow globs
     (any tool) → `untranslatedAllows`; nothing is approximated.
@@ -598,6 +655,10 @@ sandbox denials).
   - Registering the extension replaces `bash` in `pi.getAllTools()` and the
     spawn hook wraps commands only when the active profile declares a sandbox.
   - `/profile` switch changes wrap behavior on the next call.
+  - `PI_SUBAGENT_WRITE_GLOBS=src/auth,tests/auth` produces a rendered artifact
+    whose project write allows contain only those subtrees; an implicit child
+    process write outside them fails while `/tmp` remains writable. Cache tests
+    prove constrained and unconstrained states cannot share an artifact.
   - `user_bash` returns wrapped operations for sandboxed profiles, `undefined`
     otherwise.
   - Fail-closed: with detection forced unavailable, wrapped command is the
@@ -616,14 +677,16 @@ sandbox denials).
 ## 10. Rollout
 
 1. `policyHelpers.ts`: `SandboxConfig` type + schema + tests.
-2. `modules/sandbox.lib/translate.ts` (`SandboxSpec`) + unit tests (direction
-   tags, writable derivation incl. read-only literals, `noSandboxMeaning`
-   classification).
+2. Extract shared `PI_SUBAGENT_WRITE_GLOBS` parsing/normalization from the
+   extension, then add `modules/sandbox.lib/translate.ts` (`SandboxSpec`) + unit
+   tests (direction tags, writable derivation incl. read-only literals and
+   runtime-scope intersection, `noSandboxMeaning` classification).
 3. `modules/sandbox.lib/shell.ts` (`shellQuote`) + `modules/sandbox.lib/seatbelt.ts`
    (`filterExpressible`, `renderSeatbeltProfile`, `detectSeatbelt`,
    `wrapCommand`) + unit tests.
 4. `modules/sandbox.lib/index.ts`: backend dispatch, detection cache,
-   profile cache, `resolveSandbox`, `createSandboxSpawnHook`.
+   effective-state cache (profile + sandbox config + write scopes),
+   `resolveSandbox`, `createSandboxSpawnHook`.
 5. `extensions/permissions.ts`: tool override registration, `user_bash`
    handler, `/sandbox` coverage-report command, system-prompt note, status
    hints, warn-mode availability notify, shutdown cleanup.

@@ -1,5 +1,5 @@
 {
-  "defaultProvider": "openai-codex",
+  "defaultProvider": "openai",
   "defaultModel": "gpt-5.6-terra",
   "defaultThinkingLevel": "medium",
   "hideThinkingBlock": false,
@@ -12,4 +12,3 @@
   "lastChangelogVersion": "0.80.6",
   "theme": "dark"
 }
-

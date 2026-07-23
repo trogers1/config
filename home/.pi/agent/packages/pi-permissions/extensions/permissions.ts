@@ -133,6 +133,13 @@ export default function (pi: ExtensionAPI) {
     process.env.PI_SUBAGENT_WRITE_GLOBS,
   );
   let activeProfile: ProfileName = policyConfig.defaultProfile;
+  let configurationErrorReason: string | undefined;
+
+  function formatInvalidSubagentProfileReason(profile: string): string {
+    return `Invalid PI_SUBAGENT_PROFILE '${profile}'. Available: ${profileNames().join(", ")}
+
+The permissions gate remains loaded and will fail closed until the profile is corrected.`;
+  }
 
   function restoreActiveProfile(ctx: ExtensionContext): void {
     activeProfile = policyConfig.defaultProfile;
@@ -150,12 +157,16 @@ export default function (pi: ExtensionAPI) {
     // session that previously persisted a different interactive profile.
     if (subagentProfile) {
       if (!isProfileName(subagentProfile)) {
+        configurationErrorReason =
+          formatInvalidSubagentProfileReason(subagentProfile);
         throw new Error(
           `Unknown PI_SUBAGENT_PROFILE '${subagentProfile}'. Available: ${profileNames().join(", ")}`,
         );
       }
       activeProfile = subagentProfile;
     }
+
+    configurationErrorReason = undefined;
   }
 
   function setActiveProfile(profile: ProfileName): void {
@@ -260,6 +271,10 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("tool_call", async (event, ctx) => {
+    if (configurationErrorReason) {
+      return { block: true, reason: configurationErrorReason };
+    }
+
     const policy = withProtectedPathPatterns(activePolicy(activeProfile));
 
     if (isToolCallEventType("bash", event)) {
