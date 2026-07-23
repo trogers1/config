@@ -25,11 +25,40 @@ The policy lives in `modules/policy.ts`; reusable runtime helpers also live in `
 
 Profile changes are persisted in the Pi session, so resumed sessions restore their last selected profile.
 
+### Directory-selected profiles
+
+`directories` is an optional per-profile setting. When Pi starts or resumes in
+a configured directory (including one of its descendants), that profile is
+selected automatically. The most-specific directory wins; profiles declared
+later break a tie. This selection takes precedence over a profile saved in the
+session, so a resumed session receives the policy appropriate to its current
+directory.
+
+Configure directories directly on the applicable profiles in `modules/policy.ts`:
+
+```ts
+profiles: {
+  "performance-review": extendProfile(baseProfile, {
+    directories: ["~/Code/client"],
+    // ...
+  }),
+  socrates: {
+    directories: ["~/Code/client/docs"],
+    // ...
+  },
+}
+```
+
+Directories may be absolute, use `~`, or be relative to the directory where Pi
+was started. Omit `directories` when no automatic selection is wanted.
+`PI_SUBAGENT_PROFILE` remains authoritative and overrides both directory and
+persisted profile selection.
+
 ## Subagent environment
 
 The package consumes the environment variables exported by `pi-permissions-subagents`:
 
-- `PI_SUBAGENT_PROFILE` selects the initial profile and overrides a profile persisted in a resumed worker session. An unknown profile fails startup rather than silently granting the default policy.
+- `PI_SUBAGENT_PROFILE` selects the initial profile and overrides directory and persisted profile selection in a resumed worker session. An unknown profile fails startup rather than silently granting the default policy.
 - `PI_SUBAGENT_WRITE_GLOBS` is a comma-separated list of paths or glob patterns relative to Pi's startup directory. When present, `edit`, `write`, and path references in Bash commands are denied outside the declared scopes. Plain paths include their descendants; for example, `src` permits both `src` and `src/**`.
 
 The write-scope layer is additional to the selected profile, so protected-path and command restrictions still apply inside an allowed scope. Pi's dedicated read tools retain the profile's normal read access.

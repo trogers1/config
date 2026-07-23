@@ -26,6 +26,107 @@ describe("permissions extension", () => {
     ).resolves.toMatchObject({ block: true });
   });
 
+  it("does not require directories for a profile to be selected", async () => {
+    const harness = createExtensionHarness();
+    await harness.start();
+
+    expect(lastCallArgument(harness.ui.setStatus, 1)).toContain("default");
+  });
+
+  it("selects the most-specific profile directory for a startup inside a descendant", async () => {
+    const readOnly = policyConfig.profiles["read-only"];
+    const socrates = policyConfig.profiles.socrates;
+    const originalReadOnlyDirectories = readOnly.directories;
+    const originalSocratesDirectories = socrates.directories;
+    readOnly.directories = ["/workspace"];
+    socrates.directories = ["/workspace/coaching"];
+
+    try {
+      const harness = createExtensionHarness({
+        contextCwd: "/workspace/coaching/example",
+      });
+      await harness.start();
+
+      expect(lastCallArgument(harness.ui.setStatus, 1)).toContain("socrates");
+      expect((await harness.beforeAgent())?.systemPrompt).toContain(
+        "# Active profile: socrates",
+      );
+    } finally {
+      readOnly.directories = originalReadOnlyDirectories;
+      socrates.directories = originalSocratesDirectories;
+    }
+  });
+
+  it("lets a configured profile directory override a persisted profile on resume", async () => {
+    const socrates = policyConfig.profiles.socrates;
+    const originalDirectories = socrates.directories;
+    socrates.directories = ["/workspace"];
+
+    try {
+      const harness = createExtensionHarness({
+        contextCwd: "/workspace/project",
+        entries: [
+          {
+            type: "custom",
+            customType: "pi-permissions-profile",
+            data: { profile: "default" },
+          },
+        ],
+      });
+      await harness.start("resume");
+
+      expect(lastCallArgument(harness.ui.setStatus, 1)).toContain("socrates");
+    } finally {
+      socrates.directories = originalDirectories;
+    }
+  });
+
+  it("uses a later-declared profile to break equal directory matches", async () => {
+    const performanceReview = policyConfig.profiles["performance-review"];
+    const addressComments = policyConfig.profiles["address-comments"];
+    const originalPerformanceReviewDirectories = performanceReview.directories;
+    const originalAddressCommentsDirectories = addressComments.directories;
+    performanceReview.directories = ["/workspace"];
+    addressComments.directories = ["/workspace"];
+
+    try {
+      const harness = createExtensionHarness({ contextCwd: "/workspace" });
+      await harness.start();
+
+      expect(lastCallArgument(harness.ui.setStatus, 1)).toContain(
+        "address-comments",
+      );
+    } finally {
+      performanceReview.directories = originalPerformanceReviewDirectories;
+      addressComments.directories = originalAddressCommentsDirectories;
+    }
+  });
+
+  it("lets PI_SUBAGENT_PROFILE override a configured profile directory", async () => {
+    const socrates = policyConfig.profiles.socrates;
+    const originalDirectories = socrates.directories;
+    socrates.directories = ["/workspace"];
+    vi.stubEnv("PI_SUBAGENT_PROFILE", "worker");
+
+    try {
+      const harness = createExtensionHarness({
+        contextCwd: "/workspace/project",
+        hasUI: false,
+      });
+      await harness.start();
+
+      expect(lastCallArgument(harness.ui.setStatus, 1)).toContain("worker");
+      await expect(
+        harness.callToolWithoutPrompt({
+          toolName: "bash",
+          input: { command: "npm test" },
+        }),
+      ).resolves.toBeUndefined();
+    } finally {
+      socrates.directories = originalDirectories;
+    }
+  });
+
   it("does not let a permissive subagent write glob widen the selected profile", async () => {
     vi.stubEnv("PI_SUBAGENT_PROFILE", "read-only");
     vi.stubEnv("PI_SUBAGENT_WRITE_GLOBS", "**");

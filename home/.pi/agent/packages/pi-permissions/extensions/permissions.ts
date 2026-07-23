@@ -108,6 +108,29 @@ function typedKeys<T extends object>(value: T): Array<keyof T & string> {
   return Object.keys(value) as Array<keyof T & string>;
 }
 
+/**
+ * Select the most-specific profile directory that contains cwd. Later profiles
+ * break ties, matching the policy configuration's declaration order.
+ */
+function profileForDirectory(cwd: string): ProfileName | undefined {
+  const resolvedCwd = path.resolve(cwd);
+  let match: { profile: ProfileName; length: number } | undefined;
+
+  for (const profile of profileNames()) {
+    for (const configuredDirectory of activePolicy(profile).directories ?? []) {
+      const directory = path.resolve(expandHome(configuredDirectory));
+      const relative = path.relative(directory, resolvedCwd);
+      if (relative === ".." || relative.startsWith(`..${path.sep}`)) continue;
+
+      if (!match || directory.length >= match.length) {
+        match = { profile, length: directory.length };
+      }
+    }
+  }
+
+  return match?.profile;
+}
+
 function readStringProperty(value: unknown, key: string): string | undefined {
   if (typeof value !== "object" || value === null) return undefined;
   const property: unknown = Reflect.get(value, key);
@@ -153,8 +176,15 @@ The permissions gate remains loaded and will fail closed until the profile is co
       }
     }
 
+    // Directory selections are intentionally stronger than the persisted
+    // session choice: opening or resuming a session in a configured directory
+    // must get that directory's policy.
+    const directoryProfile = profileForDirectory(ctx.cwd ?? startupCwd);
+    if (directoryProfile) activeProfile = directoryProfile;
+
     // A subagent's declared profile is authoritative even when resuming a
-    // session that previously persisted a different interactive profile.
+    // session that previously persisted a different interactive or directory
+    // selected profile.
     if (subagentProfile) {
       if (!isProfileName(subagentProfile)) {
         configurationErrorReason =

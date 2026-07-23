@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -139,6 +140,94 @@ describe("shell policy parser", () => {
 });
 
 describe("default profile bash policy", () => {
+  it("denies the symlinked Pi package directory with steering to local source", async () => {
+    const result = await gateBash(
+      `find ${path.join(homedir(), ".pi", "agent", "packages")} -type f`,
+      process.cwd(),
+      context(process.cwd()),
+      policyConfig.profiles.default,
+    );
+
+    expect(result).toMatchObject({ block: true });
+    expect(result?.reason).toContain(
+      "symlinks to the local configuration checkout",
+    );
+    expect(result?.reason).toContain("@home/.pi/agent/");
+  });
+
+  it.each(["default", "read-only"] as const)(
+    "allows Pi documentation outside the startup directory in the %s profile",
+    async (profile) => {
+      const piDocs = path.join(
+        homedir(),
+        ".nvm",
+        "versions",
+        "node",
+        "vtest",
+        "lib",
+        "node_modules",
+        "@earendil-works",
+        "pi-coding-agent",
+        "docs",
+        "extensions.md",
+      );
+      const ctx = context(process.cwd());
+
+      await expect(
+        gateBash(
+          `cat ${piDocs}`,
+          process.cwd(),
+          ctx,
+          policyConfig.profiles[profile],
+        ),
+      ).resolves.toBeUndefined();
+      expect(vi.mocked(ctx.ui.confirm)).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["default", "read-only"] as const)(
+    "allows dependencies inside the local Pi packages in the %s profile",
+    async (profile) => {
+      const ctx = context(process.cwd());
+      const packageDependency = path.join(
+        process.cwd(),
+        "node_modules",
+        "vitest",
+        "package.json",
+      );
+
+      await expect(
+        gateBash(
+          `cat ${packageDependency}`,
+          path.join(process.cwd(), "test-project"),
+          ctx,
+          policyConfig.profiles[profile],
+        ),
+      ).resolves.toBeUndefined();
+      expect(vi.mocked(ctx.ui.confirm)).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not allow arbitrary node_modules directories", async () => {
+    const ctx = context(process.cwd(), false);
+    const unrelatedDependency = path.join(
+      homedir(),
+      "unrelated",
+      "node_modules",
+      "package.json",
+    );
+
+    await expect(
+      gateBash(
+        `cat ${unrelatedDependency}`,
+        process.cwd(),
+        ctx,
+        policyConfig.profiles.default,
+      ),
+    ).resolves.toMatchObject({ block: true });
+    expect(vi.mocked(ctx.ui.confirm)).toHaveBeenCalled();
+  });
+
   it.each([
     "git tag --sort=version:refname",
     "git tag --sort version:refname",

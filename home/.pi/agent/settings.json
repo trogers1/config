@@ -9,6 +9,6 @@
     "./packages/pi-usage",
     "./packages/pi-permissions-subagents"
   ],
-  "lastChangelogVersion": "0.80.6",
+  "lastChangelogVersion": "0.81.0",
   "theme": "dark"
 }

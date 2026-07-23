@@ -16,6 +16,8 @@ export type ProfilePolicy = {
   promptFile?: string | null;
   color?: ProfileColor;
   emoji?: string;
+  /** Directories that automatically select this profile, including descendants. */
+  directories?: readonly string[];
   tools: Record<string, Rule[]>;
   /**
    * Gates path-looking tokens inside bash commands (reach: which parts of the
@@ -70,6 +72,7 @@ const profileSchema = Type.Object(
       ]),
     ),
     emoji: Type.Optional(Type.String()),
+    directories: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
     tools: Type.Record(Type.String(), Type.Array(ruleSchema)),
     bashPathReferences: Type.Array(ruleSchema, { minItems: 1 }),
     protectedPathPatterns: Type.Optional(Type.Array(Type.String())),
