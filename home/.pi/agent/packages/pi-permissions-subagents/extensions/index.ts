@@ -567,7 +567,7 @@ async function runSingleAgent(
 				PI_SUBAGENT_DEPTH: "1",
 			};
 			if (agent.profile) spawnEnv.PI_SUBAGENT_PROFILE = agent.profile;
-			if (opts.writes?.length) spawnEnv.PI_SUBAGENT_WRITE_GLOBS = opts.writes.join(",");
+			if (opts.writes?.length) spawnEnv.PI_SUBAGENT_PERMISSIBLE_GLOBS = opts.writes.join(",");
 
 			const proc = spawn(invocation.command, invocation.args, {
 				cwd: workerCwd,

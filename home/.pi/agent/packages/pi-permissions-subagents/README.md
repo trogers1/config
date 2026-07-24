@@ -117,8 +117,8 @@ under its policy. The packages integrate through two environment variables:
 
 2. **Per-task write-scope enforcement.** When a task declares `writes`, the
    extension exports the entries as comma-separated
-   `PI_SUBAGENT_WRITE_GLOBS`. `pi-permissions` denies `edit`/`write` calls and
-   Bash path references outside those scopes. Plain path entries include their
+   `PI_SUBAGENT_PERMISSIBLE_GLOBS`. `pi-permissions` denies `edit`/`write`
+   calls, Bash path references, and Bash output redirections outside those scopes. Plain path entries include their
    descendants; glob entries are matched as written. If `writes` is omitted,
    the selected profile's normal write policy applies.
 

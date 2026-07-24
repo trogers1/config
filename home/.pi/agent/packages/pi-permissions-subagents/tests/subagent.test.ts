@@ -87,7 +87,7 @@ describe("subagent tool", () => {
 		const records = spawnRecord(projectDir);
 		expect(records).toHaveLength(1);
 		expect(records[0].env.PI_SUBAGENT_PROFILE).toBe("worker");
-		expect(records[0].env.PI_SUBAGENT_WRITE_GLOBS).toBe("src");
+		expect(records[0].env.PI_SUBAGENT_PERMISSIBLE_GLOBS).toBe("src");
 		expect(records[0].env.PI_SUBAGENT_DEPTH).toBe("1");
 	});
 
@@ -226,8 +226,8 @@ describe("subagent tool", () => {
 
 		const records = spawnRecord(projectDir);
 		expect(records).toHaveLength(2);
-		const writeGlobs = records.map((r) => r.env.PI_SUBAGENT_WRITE_GLOBS).sort();
-		expect(writeGlobs).toEqual(["src/a", "src/b"]);
+		const permissibleGlobs = records.map((r) => r.env.PI_SUBAGENT_PERMISSIBLE_GLOBS).sort();
+		expect(permissibleGlobs).toEqual(["src/a", "src/b"]);
 	});
 
 	it("chains sequential steps and substitutes the previous output", async () => {

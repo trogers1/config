@@ -45,7 +45,7 @@ if (recordPath) {
     args,
     env: {
       PI_SUBAGENT_PROFILE: process.env.PI_SUBAGENT_PROFILE,
-      PI_SUBAGENT_WRITE_GLOBS: process.env.PI_SUBAGENT_WRITE_GLOBS,
+      PI_SUBAGENT_PERMISSIBLE_GLOBS: process.env.PI_SUBAGENT_PERMISSIBLE_GLOBS,
       PI_SUBAGENT_DEPTH: process.env.PI_SUBAGENT_DEPTH,
     }
   }) + '\\n');
