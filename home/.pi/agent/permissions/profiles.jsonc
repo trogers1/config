@@ -4,37 +4,110 @@
     "config-maintenance": {
       "extends": "default",
       "directories": ["~/Code/config", "~/code/config"],
-      "tools": {
-        "read": [
-          {
-            "pattern": "/Users/taylor.rogers/.pi/agent/packages",
-            "decision": "deny",
-            "guidance": "Pi packages here are symlinks to this configuration checkout. Read the source under home/.pi/agent/packages/... instead (use @home/.pi/agent/... for a Pi file reference)."
-          },
-          {
-            "pattern": "/Users/taylor.rogers/.pi/agent/packages/**",
-            "decision": "deny",
-            "guidance": "Pi packages here are symlinks to this configuration checkout. Read the source under home/.pi/agent/packages/... instead (use @home/.pi/agent/... for a Pi file reference)."
-          }
-        ]
-      },
-      "bashPathReferences": [
-        { "pattern": "*", "decision": "allow" },
+      "readPaths": [
         {
-          "pattern": "/Users/taylor.rogers/.pi/agent/packages",
+          "pattern": "/Users/*/.pi/agent/packages",
           "decision": "deny",
-          "guidance": "Pi packages here are symlinks to this configuration checkout. Read the source under home/.pi/agent/packages/... instead (use @home/.pi/agent/... for a Pi file reference).",
+          "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Read the source under home/.pi/agent/... instead.",
         },
         {
-          "pattern": "/Users/taylor.rogers/.pi/agent/packages/**",
+          "pattern": "/Users/*/.pi/agent/packages/**",
           "decision": "deny",
-          "guidance": "Pi packages here are symlinks to this configuration checkout. Read the source under home/.pi/agent/packages/... instead (use @home/.pi/agent/... for a Pi file reference).",
+          "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Read the source under home/.pi/agent/... instead.",
+        },
+        {
+          "pattern": "/Users/*/.pi/agent/usage",
+          "decision": "deny",
+          "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Read the source under home/.pi/agent/... instead.",
+        },
+        {
+          "pattern": "/Users/*/.pi/agent/usage/**",
+          "decision": "deny",
+          "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Read the source under home/.pi/agent/... instead.",
+        },
+        {
+          "pattern": "/Users/*/.pi/agent/permissions",
+          "decision": "deny",
+          "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Read the source under home/.pi/agent/... instead.",
+        },
+        {
+          "pattern": "/Users/*/.pi/agent/permissions/**",
+          "decision": "deny",
+          "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Read the source under home/.pi/agent/... instead.",
+        },
+        {
+          "pattern": "/Users/*/.nvm/versions/**/lib/node_modules/@earendil-works/pi-coding-agent/**",
+          "decision": "allow",
+        },
+      ],
+      "writePaths": [
+        {
+          "pattern": "/Users/*/Code/config/**",
+          "decision": "allow",
+        },
+        {
+          "pattern": "/Users/*/code/config/**",
+          "decision": "allow",
+        },
+        {
+          "pattern": "/Users/*/.pi/agent/packages",
+          "decision": "deny",
+          "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Write to the source under home/.pi/agent/... instead.",
+        },
+        {
+          "pattern": "/Users/*/.pi/agent/packages/**",
+          "decision": "deny",
+          "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Write to the source under home/.pi/agent/... instead.",
+        },
+        {
+          "pattern": "/Users/*/.pi/agent/usage",
+          "decision": "deny",
+          "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Write to the source under home/.pi/agent/... instead.",
+        },
+        {
+          "pattern": "/Users/*/.pi/agent/usage/**",
+          "decision": "deny",
+          "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Write to the source under home/.pi/agent/... instead.",
+        },
+        {
+          "pattern": "/Users/*/.pi/agent/permissions",
+          "decision": "deny",
+          "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Write to the source under home/.pi/agent/... instead.",
+        },
+        {
+          "pattern": "/Users/*/.pi/agent/permissions/**",
+          "decision": "deny",
+          "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Write to the source under home/.pi/agent/... instead.",
         },
       ],
     },
+    "committer": {
+      "extends": "default",
+      "color": "red",
+      "emoji": "⚠️",
+      "writePaths": [
+        {
+          "pattern": "/dev/null",
+          "decision": "allow",
+        },
+      ],
+      "tools": {
+        "bash": [
+          { "pattern": "git add *", "decision": "allow" },
+          { "pattern": "git commit", "decision": "allow" },
+          { "pattern": "git commit *", "decision": "allow" },
+          { "pattern": "git reset *", "decision": "allow" },
+          { "pattern": "git restore *", "decision": "allow" },
+          { "pattern": "git checkout *", "decision": "allow" },
+          { "pattern": "git rebase *", "decision": "allow" },
+          { "pattern": "git cherry-pick *", "decision": "allow" },
+          { "pattern": "git worktree *", "decision": "allow" },
+        ],
+      },
+    },
     "socrates": {
       "extends": "read-only",
-      "promptFile": "./prompts/socrates.md",
+      "promptFile": "~/.pi/agent/permissions/prompts/socrates.md",
       "color": "cyan",
       "emoji": "🧠",
     },
