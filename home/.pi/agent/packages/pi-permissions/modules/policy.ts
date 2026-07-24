@@ -14,12 +14,15 @@ import {
 // Most profiles build on the same core tool rules. Use the `baseProfile`
 // as a common set of permissions so we don't duplicate it everywhere.
 
-// Pi documentation and node_modules is useful reference material even when it lives outside
-// the project. Package dependencies are similarly useful, but only inside the
-// checked-out local Pi packages—not below an arbitrary node_modules directory.
+// Pi documentation is useful reference material even when it lives outside
+// the project.
 const piReferencePathRules: Rule[] = [
   {
     pattern: "/**/node_modules/@earendil-works/pi-coding-agent/docs/**",
+    decision: "allow",
+  },
+  {
+    pattern: "/**/home/.pi/agent/packages/**/node_modules/**",
     decision: "allow",
   },
 ];
@@ -124,14 +127,20 @@ export const baseProfile: ProfilePolicy = {
       { pattern: "pwd", decision: "allow" },
       { pattern: "cd", decision: "allow" },
       {
+        pattern: "printf",
+        decision: "deny",
+        guidance:
+          'printing can reveal secrets. If you just want a separator use `echo "---"',
+      },
+      {
         pattern: "echo",
         decision: "deny",
         guidance:
           'echo can reveal secrets. If you just want a separator use `echo "---"',
       },
       { pattern: 'echo "---"', decision: "allow" },
-      // Allow changing into child directories; bashPathReferences below still
-      // gates path arguments and asks/blocks when the target leaves startup cwd.
+      // Allow changing into child directories; writePaths below still
+      // gates bash path arguments and asks/blocks when the target leaves startup cwd.
       { pattern: "cd *", decision: "allow" },
       { pattern: "grep *", decision: "allow" },
       {
@@ -150,6 +159,17 @@ export const baseProfile: ProfilePolicy = {
         decision: "deny",
         guidance:
           "Do not invoke Prettier through npx. Use the repository's configured formatter or make targeted edits with Pi's edit tool.",
+        alternatives: [
+          "npm run prettier:write",
+          "npm run fix:prettier",
+          "Use the edit tool for targeted changes",
+        ],
+      },
+      {
+        pattern: "*/node_modules/prettier/* *",
+        decision: "deny",
+        guidance:
+          "Do not invoke Prettier directly. Use the repository's configured formatter script or make targeted edits with Pi's edit tool.",
         alternatives: [
           "npm run prettier:write",
           "npm run fix:prettier",
@@ -211,9 +231,6 @@ export const baseProfile: ProfilePolicy = {
         ],
       },
       { pattern: "go *", decision: "allow" },
-      { pattern: "openspec *", decision: "allow" },
-      { pattern: "npx tsc --noEmit", decision: "allow" },
-      { pattern: "printf *", decision: "allow" },
       { pattern: "true", decision: "allow" },
       { pattern: "rg *", decision: "allow" },
       { pattern: "ripgrep *", decision: "allow" },
@@ -222,10 +239,6 @@ export const baseProfile: ProfilePolicy = {
       { pattern: "terraform validate *", decision: "allow" },
       { pattern: "terraform -chdir=* validate", decision: "allow" },
       { pattern: "terraform -chdir=* validate *", decision: "allow" },
-      { pattern: "head", decision: "allow" },
-      { pattern: "head *", decision: "allow" },
-      { pattern: "tail", decision: "allow" },
-      { pattern: "tail *", decision: "allow" },
       { pattern: "nl", decision: "allow" },
       { pattern: "nl *", decision: "allow" },
 
@@ -301,86 +314,69 @@ export const baseProfile: ProfilePolicy = {
           "git grep cannot be safely augmented with the active profile's protected-path exclusions. Use Pi's grep tool or ripgrep, which apply profile-derived exclusions automatically.",
       },
     ],
-
-    read: [
-      { pattern: "*", decision: "allow" },
-      { pattern: "..", decision: "ask" },
-      { pattern: "../**", decision: "ask" },
-      { pattern: "/tmp/**", decision: "allow" },
-      // Allow reading installed Pi skills even when Pi starts inside a project/worktree.
-      { pattern: "../.pi/agent/skills/**", decision: "allow" },
-      { pattern: "../**/.pi/agent/skills/**", decision: "allow" },
-      // Allow reading pi documentation
-      {
-        pattern: "../**/@earendil-works/pi-coding-agent/docs/*.md",
-        decision: "allow",
-      },
-      ...piReferencePathRules,
-    ],
-
-    grep: [
-      { pattern: "*", decision: "allow" },
-      { pattern: "../**", decision: "ask" },
-      { pattern: "/tmp/**", decision: "allow" },
-    ],
-
-    find: [
-      { pattern: "*", decision: "allow" },
-      { pattern: "../**", decision: "allow" },
-      { pattern: "/tmp/**", decision: "allow" },
-    ],
-
-    ls: [
-      { pattern: "*", decision: "allow" },
-      { pattern: "../**", decision: "ask" },
-      { pattern: "/tmp/**", decision: "allow" },
-    ],
-
-    edit: [
-      { pattern: "*", decision: "allow" },
-      { pattern: "../**", decision: "ask" },
-    ],
-
-    write: [
-      { pattern: "*", decision: "allow" },
-      { pattern: "../**", decision: "ask" },
-    ],
   },
 
-  // Bash is command-oriented, but shell commands can still reference paths.
-  // These glob rules gate those path references separately.
-  bashPathReferences: [
+  readPaths: [
     { pattern: "*", decision: "allow" },
-    { pattern: "..", decision: "ask" },
+    { pattern: "..", decision: "ask", contexts: ["read"] },
+    {
+      pattern: "../**",
+      decision: "ask",
+      contexts: ["read", "grep", "ls"],
+    },
+    { pattern: "/tmp/**", decision: "allow" },
+    // These exceptions belonged to the dedicated read tool before path rules
+    // were consolidated. Keep searches and directory discovery independently gated.
+    {
+      pattern: "../.pi/agent/skills/**",
+      decision: "allow",
+      contexts: ["read"],
+    },
+    {
+      pattern: "../**/.pi/agent/skills/**",
+      decision: "allow",
+      contexts: ["read"],
+    },
+    {
+      pattern: "../**/@earendil-works/pi-coding-agent/docs/*.md",
+      decision: "allow",
+      contexts: ["read"],
+    },
+    ...piReferencePathRules.map((rule) => ({
+      ...rule,
+      contexts: ["read" as const],
+    })),
+  ],
+
+  writePaths: [
+    { pattern: "*", decision: "allow" },
+    { pattern: "..", decision: "ask", contexts: ["bash"] },
     { pattern: "../**", decision: "ask" },
     { pattern: "/tmp/**", decision: "allow" },
-    // Allow fixed address-comments skill helper scripts even when Pi starts in a project.
+    // Bash-specific external references retained from the former shell path policy.
     {
       pattern: "../**/.pi/agent/skills/address-comments/scripts/*.sh",
       decision: "allow",
+      contexts: ["bash"],
     },
     {
       pattern: "../**/.pi/agent/skills/address-comments/*",
       decision: "allow",
+      contexts: ["bash"],
     },
-    ...piReferencePathRules,
-  ],
-
-  // Output redirection can truncate/create files. Scratch output is allowed in
-  // /tmp, but project writes should go through Pi's write/edit tools instead.
-  bashOutputRedirections: [
-    {
-      pattern: "**",
-      decision: "deny",
-      guidance:
-        "Shell output redirection is only allowed to /tmp in the default profile. Use Pi's write/edit tools for intentional project changes.",
-    },
-    { pattern: "/tmp/**", decision: "allow" },
+    ...piReferencePathRules.map((rule) => ({
+      ...rule,
+      contexts: ["bash" as const],
+    })),
   ],
 };
 
 function denyInteractiveDecisions(policy: ProfilePolicy): ProfilePolicy {
-  const denyAsk = (rule: Rule): Rule =>
+  const denyAsk = <
+    PolicyRule extends { decision: Rule["decision"]; guidance?: string },
+  >(
+    rule: PolicyRule,
+  ): PolicyRule =>
     rule.decision === "ask"
       ? {
           ...rule,
@@ -398,21 +394,17 @@ function denyInteractiveDecisions(policy: ProfilePolicy): ProfilePolicy {
     tools: Object.fromEntries(
       Object.entries(policy.tools).map(([tool, rules]) => [
         tool,
-        rules.map(denyAsk),
+        rules?.map((rule) => denyAsk(rule)) ?? [],
       ]),
     ),
-    bashPathReferences: policy.bashPathReferences.map(denyAsk) as [
-      Rule,
-      ...Rule[],
-    ],
-    bashOutputRedirections: policy.bashOutputRedirections?.map(denyAsk) as
-      [Rule, ...Rule[]] | undefined,
+    readPaths: policy.readPaths.map(denyAsk),
+    writePaths: policy.writePaths.map(denyAsk),
   };
 }
 
 const workerProfile = denyInteractiveDecisions(baseProfile);
 
-const readOnlyPathRules: [Rule, ...Rule[]] = [
+const readOnlyPathRules: ProfilePolicy["readPaths"] = [
   { pattern: "*", decision: "allow" },
   {
     pattern: "..",
@@ -444,7 +436,7 @@ const readOnlyProfile: ProfilePolicy = {
         pattern: "*",
         decision: "deny",
         guidance:
-          "The read-only profile only permits inspection commands and non-destructive git history queries. Switch profiles before editing files or changing repository state.",
+          "The read-only profile only permits inspection commands and non-destructive git history queries.",
       },
 
       // Navigation and read-only shell inspection.
@@ -588,7 +580,7 @@ const readOnlyProfile: ProfilePolicy = {
 
       // Keep the read-only profile from writing through otherwise-readable
       // commands or through find/git options with write side effects.
-      // Shell redirection is gated separately by bashOutputRedirections.
+      // Shell redirection is gated separately by writePaths.
       {
         pattern: "find * -delete*",
         decision: "deny",
@@ -691,45 +683,28 @@ const readOnlyProfile: ProfilePolicy = {
           "git grep cannot be safely augmented with the active profile's protected-path exclusions. Use Pi's grep tool or ripgrep, which apply profile-derived exclusions automatically.",
       },
     ],
-
-    read: readOnlyPathRules,
-    grep: readOnlyPathRules,
-    find: readOnlyPathRules,
-    ls: readOnlyPathRules,
-
-    edit: [
-      {
-        pattern: "*",
-        decision: "deny",
-        guidance: "The read-only profile does not permit editing files.",
-      },
-      { pattern: "handoff.md", decision: "allow" },
-      { pattern: "progress.md", decision: "allow" },
-    ],
-
-    write: [
-      {
-        pattern: "*",
-        decision: "deny",
-        guidance: "The read-only profile does not permit writing files.",
-      },
-      { pattern: "handoff.md", decision: "allow" },
-      { pattern: "progress.md", decision: "allow" },
-    ],
   },
 
-  bashPathReferences: readOnlyPathRules,
-  bashOutputRedirections: [
+  readPaths: readOnlyPathRules,
+  writePaths: [
     {
       pattern: "**",
       decision: "deny",
       guidance:
-        "The read-only profile blocks shell output redirection except to /tmp.",
+        "The read-only profile only permits writing /tmp, handoff.md, and progress.md.",
     },
+    { pattern: "/tmp", decision: "allow" },
     { pattern: "/tmp/**", decision: "allow" },
+    { pattern: "/private/tmp", decision: "allow" },
     { pattern: "/private/tmp/**", decision: "allow" },
     { pattern: "handoff.md", decision: "allow" },
     { pattern: "progress.md", decision: "allow" },
+    // The command policy permits inspection of these references; make them
+    // explicitly available to Bash without broadening the dedicated write tools.
+    ...piReferencePathRules.map((rule) => ({
+      ...rule,
+      contexts: ["bash" as const],
+    })),
   ],
 };
 
@@ -755,130 +730,8 @@ const configuredPolicy = definePolicyConfig({
         ],
       },
     }),
-    "address-comments": extendProfile(baseProfile, {
-      color: "red",
-      emoji: "🤖",
-      // Specific to comment-addressing profile only:
-      tools: {
-        bash: [
-          { pattern: "git commit *", decision: "allow" },
-          { pattern: "git add *", decision: "allow" },
-        ],
-      },
-    }),
-
-    socrates: {
-      promptFile: "./prompts/socrates.md",
-      color: "cyan",
-      emoji: "🧠",
-      protectedPathPatterns: defaultProtectedPathPatterns,
-      protectedPathExceptions: defaultProtectedPathExceptions,
-      tools: {
-        bash: [
-          { pattern: "*", decision: "deny" },
-          // Common Read-only commands.
-          { pattern: "pwd", decision: "allow" },
-          { pattern: "cd", decision: "allow" },
-          // Allow changing into child directories; bashPathReferences below still
-          // gates path arguments and asks/blocks when the target leaves startup cwd.
-          { pattern: "cd *", decision: "allow" },
-          { pattern: "grep *", decision: "allow" },
-          {
-            pattern: "npx prettier",
-            decision: "deny",
-            guidance:
-              "Do not invoke Prettier through npx. Use the edit tool for targeted formatting changes.",
-            alternatives: ["Use the edit tool for targeted changes"],
-          },
-          {
-            pattern: "npx prettier *",
-            decision: "deny",
-            guidance:
-              "Do not invoke Prettier through npx. Use the edit tool for targeted formatting changes.",
-            alternatives: ["Use the edit tool for targeted changes"],
-          },
-          {
-            pattern: "npx vitest",
-            decision: "deny",
-            guidance:
-              "Do not run tests in the Socrates profile; continue by inspecting and reasoning about the code.",
-          },
-          {
-            pattern: "npx vitest *",
-            decision: "deny",
-            guidance:
-              "Do not run tests in the Socrates profile; continue by inspecting and reasoning about the code.",
-          },
-          { pattern: "find *", decision: "allow" },
-          { pattern: "cat", decision: "allow" },
-          { pattern: "cat *", decision: "allow" },
-          { pattern: "sort *", decision: "allow" },
-          { pattern: "sort", decision: "allow" },
-          { pattern: "sed", decision: "allow" },
-          { pattern: "sed *", decision: "allow" },
-          { pattern: "ls", decision: "allow" },
-          { pattern: "ls *", decision: "allow" },
-          { pattern: "file", decision: "allow" },
-          { pattern: "file *", decision: "allow" },
-          { pattern: "wc", decision: "allow" },
-          { pattern: "wc *", decision: "allow" },
-          { pattern: "npx tsc --noEmit", decision: "allow" },
-          { pattern: "printf *", decision: "allow" },
-          { pattern: "true", decision: "allow" },
-          { pattern: "rg *", decision: "allow" },
-          { pattern: "ripgrep *", decision: "allow" },
-          { pattern: "terraform validate *", decision: "allow" },
-          { pattern: "head", decision: "allow" },
-          { pattern: "head *", decision: "allow" },
-          { pattern: "tail", decision: "allow" },
-          { pattern: "tail *", decision: "allow" },
-          { pattern: "nl", decision: "allow" },
-          { pattern: "nl *", decision: "allow" },
-        ],
-
-        read: [
-          { pattern: "*", decision: "ask" },
-          { pattern: "../**", decision: "ask" },
-        ],
-
-        grep: [
-          { pattern: "*", decision: "allow" },
-          { pattern: "../**", decision: "ask" },
-        ],
-
-        find: [
-          { pattern: "*", decision: "allow" },
-          { pattern: "../**", decision: "allow" },
-        ],
-
-        ls: [
-          { pattern: "*", decision: "allow" },
-          { pattern: "../**", decision: "ask" },
-        ],
-
-        edit: [{ pattern: "*", decision: "deny" }],
-
-        write: [{ pattern: "*", decision: "deny" }],
-      },
-
-      bashPathReferences: [{ pattern: "*", decision: "deny" }],
-      bashOutputRedirections: [
-        {
-          pattern: "**",
-          decision: "deny",
-          guidance: "The Socrates profile blocks shell output redirection.",
-        },
-      ],
-    },
   },
 });
 
-const { socrates: localSocrates, ...genericProfiles } =
-  configuredPolicy.profiles;
-void localSocrates;
-
 /** Portable profiles shipped by the package. Local profiles live in user config. */
-export const policyConfig = definePolicyConfig({
-  defaultProfile: "default",
-  profiles: genericProfiles,
-});
+export const policyConfig = configuredPolicy;

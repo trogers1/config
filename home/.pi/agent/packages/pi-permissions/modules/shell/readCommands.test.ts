@@ -14,9 +14,13 @@ describe("shell read commands", () => {
     });
   });
 
-  it("rejects dynamic and ambiguous composition", () => {
+  it("defers dynamic paths to the path gate but rejects unsupported composition", () => {
+    const dynamicCommand = 'cat "$file"';
+    expect(
+      validateReadCommands(dynamicCommand, splitShellCommands(dynamicCommand)),
+    ).toBeUndefined();
+
     for (const command of [
-      'cat "$file"',
       "find . -type f | xargs cat",
       "bash -c 'cat README.md'",
       'for file in *; do cat "$file"; done',

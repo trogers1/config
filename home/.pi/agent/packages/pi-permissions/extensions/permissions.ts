@@ -6,8 +6,8 @@ import {
   normalizeCommandForDecision,
   splitShellCommands,
 } from "../modules/shell/parse";
+import { classifyShell } from "../modules/shell/classify";
 import {
-  decideBashOutputRedirections,
   decideBashPathReferences,
   displayPath,
   evaluatePathByPattern,
@@ -20,11 +20,7 @@ import {
   injectRipgrepProtectedPathGlobs,
   validateRipgrepGlobOverrides,
 } from "../modules/shell/searchPolicy";
-import {
-  isReadCommand,
-  parseReadCommand,
-  validateReadCommands,
-} from "../modules/shell/readCommands";
+import { validateReadCommands } from "../modules/shell/readCommands";
 import {
   isToolCallEventType,
   type ExtensionAPI,
@@ -32,25 +28,50 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import {
   assertPolicyConfig,
+  assertProfilePolicy,
   definePolicyConfig,
   extendProfile,
   withProtectedPathPatterns,
+  type CustomToolRule,
   type Decision,
+  type PathContext,
+  type PathRule,
   type ProfileColor,
   type PolicyConfig,
   type ProfilePolicy,
+  type ProfilePolicyOverride,
+  type ReadPathContext,
   type Rule,
+  type ToolPolicy,
+  type WritePathContext,
 } from "../modules/policyHelpers";
-import { loadProfileConfig } from "../modules/profileConfig";
+import {
+  loadProfileConfig,
+  ProfileConfigLoadError,
+} from "../modules/profileConfig";
 import { policyConfig as genericPolicyConfig } from "../modules/policy";
 
 export {
   assertPolicyConfig,
+  assertProfilePolicy,
   definePolicyConfig,
   extendProfile,
   withProtectedPathPatterns,
 };
-export type { Decision, ProfileColor, ProfilePolicy, Rule };
+export type {
+  CustomToolRule,
+  Decision,
+  PathContext,
+  PathRule,
+  ProfileColor,
+  PolicyConfig,
+  ProfilePolicy,
+  ProfilePolicyOverride,
+  ReadPathContext,
+  Rule,
+  ToolPolicy,
+  WritePathContext,
+};
 
 // ─── Types ────────────────────────────────────────────────────────────
 
@@ -95,13 +116,18 @@ const defaultPolicy: ProfilePolicy = {
   tools: {
     bash: [{ pattern: "*", decision: "ask" }],
   },
-  bashPathReferences: [{ pattern: "*", decision: "allow" }],
+  readPaths: [{ pattern: "*", decision: "allow" }],
+  writePaths: [{ pattern: "*", decision: "allow" }],
 };
 
 const moduleDir = typeof __dirname === "string" ? __dirname : process.cwd();
 const profileEntryType = "pi-permissions-profile";
-const pathToolNames = ["read", "grep", "find", "ls", "edit", "write"] as const;
+const readToolNames = ["read", "grep", "find", "ls"] as const;
+const writeToolNames = ["edit", "write"] as const;
+const pathToolNames = [...readToolNames, ...writeToolNames] as const;
 const pathToolNameSet: ReadonlySet<string> = new Set(pathToolNames);
+const readToolNameSet: ReadonlySet<string> = new Set(readToolNames);
+const writeToolNameSet: ReadonlySet<string> = new Set(writeToolNames);
 
 let policyConfig: PolicyConfig = genericPolicyConfig;
 type ProfileName = string;
@@ -151,16 +177,45 @@ function activePolicy(profile: ProfileName): ProfilePolicy {
 }
 
 export default function (pi: ExtensionAPI) {
-  policyConfig = loadProfileConfig(genericPolicyConfig);
-  assertPolicyConfig(policyConfig);
+  const profileConfigLoad: {
+    config: PolicyConfig;
+    error?: ProfileConfigLoadError;
+  } = (() => {
+    try {
+      return {
+        config: loadProfileConfig(
+          genericPolicyConfig,
+          process.env.PI_PERMISSIONS_PROFILE_CONFIG?.trim() || undefined,
+        ),
+      };
+    } catch (error) {
+      if (error instanceof ProfileConfigLoadError) {
+        return { config: genericPolicyConfig, error };
+      }
+      throw error;
+    }
+  })();
+
+  policyConfig = profileConfigLoad.config;
 
   const startupCwd = path.resolve(process.cwd());
   const subagentProfile = process.env.PI_SUBAGENT_PROFILE?.trim();
-  const subagentWriteRules = parseSubagentWriteRules(
-    process.env.PI_SUBAGENT_WRITE_GLOBS,
+  const subagentPermissibleRules = parseSubagentPermissibleRules(
+    process.env.PI_SUBAGENT_PERMISSIBLE_GLOBS,
   );
+  const profileConfigErrorReason = profileConfigLoad.error?.message;
+  let subagentProfileErrorReason: string | undefined;
   let activeProfile: ProfileName = policyConfig.defaultProfile;
-  let configurationErrorReason: string | undefined;
+  const configurationErrorReason = () =>
+    profileConfigErrorReason ?? subagentProfileErrorReason;
+
+  function preserveConfigurationErrorStatus(ctx: ExtensionContext): boolean {
+    const errorReason = configurationErrorReason();
+    if (!errorReason) return false;
+    ctx.ui.setStatus("permissions", "invalid-permissions");
+    if (ctx.hasUI) ctx.ui.notify(errorReason, "error");
+    return true;
+  }
 
   function formatInvalidSubagentProfileReason(profile: string): string {
     return `Invalid PI_SUBAGENT_PROFILE '${profile}'. Available: ${profileNames().join(", ")}
@@ -170,6 +225,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
 
   function restoreActiveProfile(ctx: ExtensionContext): void {
     activeProfile = policyConfig.defaultProfile;
+    subagentProfileErrorReason = undefined;
 
     for (const entry of ctx.sessionManager.getEntries()) {
       if (entry.type !== "custom" || entry.customType !== profileEntryType)
@@ -191,16 +247,12 @@ The permissions gate remains loaded and will fail closed until the profile is co
     // selected profile.
     if (subagentProfile) {
       if (!isProfileName(subagentProfile)) {
-        configurationErrorReason =
+        subagentProfileErrorReason =
           formatInvalidSubagentProfileReason(subagentProfile);
-        throw new Error(
-          `Unknown PI_SUBAGENT_PROFILE '${subagentProfile}'. Available: ${profileNames().join(", ")}`,
-        );
+        return;
       }
       activeProfile = subagentProfile;
     }
-
-    configurationErrorReason = undefined;
   }
 
   function setActiveProfile(profile: ProfileName): void {
@@ -210,6 +262,16 @@ The permissions gate remains loaded and will fail closed until the profile is co
 
   pi.on("session_start", (_event, ctx) => {
     restoreActiveProfile(ctx);
+
+    const errorReason = configurationErrorReason();
+    if (errorReason) {
+      ctx.ui.setStatus("permissions", "invalid-permissions");
+      if (ctx.hasUI) {
+        ctx.ui.notify(errorReason, "error");
+      }
+      return;
+    }
+
     ctx.ui.setStatus("permissions", formatProfileStatus(activeProfile));
   });
 
@@ -229,6 +291,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
         }));
     },
     handler: async (args, ctx) => {
+      if (preserveConfigurationErrorStatus(ctx)) return;
       const requested = args.trim();
 
       if (!requested) {
@@ -256,6 +319,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
   pi.registerCommand("read-only", {
     description: "Switch to the read-only permissions profile",
     handler: async (_args, ctx) => {
+      if (preserveConfigurationErrorStatus(ctx)) return;
       if (!policyConfig.profiles["read-only"]) {
         ctx.ui.notify("No 'read-only' profile is configured", "error");
         return;
@@ -270,6 +334,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
   pi.registerCommand("socrates", {
     description: "Switch to the Socrates coaching profile",
     handler: async (_args, ctx) => {
+      if (preserveConfigurationErrorStatus(ctx)) return;
       if (!policyConfig.profiles.socrates) {
         ctx.ui.notify("No 'socrates' profile is configured", "error");
         return;
@@ -284,6 +349,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
   pi.registerCommand("socrates-off", {
     description: "Switch back to the configured default permissions profile",
     handler: async (_args, ctx) => {
+      if (preserveConfigurationErrorStatus(ctx)) return;
       setActiveProfile(policyConfig.defaultProfile);
       ctx.ui.setStatus("permissions", formatProfileStatus(activeProfile));
       ctx.ui.notify(
@@ -305,11 +371,12 @@ The permissions gate remains loaded and will fail closed until the profile is co
   });
 
   pi.on("tool_call", async (event, ctx) => {
-    if (configurationErrorReason) {
-      return { block: true, reason: configurationErrorReason };
+    const errorReason = configurationErrorReason();
+    if (errorReason) {
+      return { block: true, reason: errorReason };
     }
 
-    const policy = withProtectedPathPatterns(activePolicy(activeProfile));
+    const policy = activePolicy(activeProfile);
 
     if (isToolCallEventType("bash", event)) {
       const command = event.input.command ?? "";
@@ -318,7 +385,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
         startupCwd,
         ctx.cwd ?? startupCwd,
         policy,
-        subagentWriteRules,
+        subagentPermissibleRules,
       );
       if (scopeDecision) return scopeDecision;
 
@@ -346,7 +413,22 @@ The permissions gate remains loaded and will fail closed until the profile is co
       if (reason) return { block: true, reason };
     }
 
-    const rules = policy.tools[event.toolName];
+    if (!isPathToolName(event.toolName)) {
+      const customRules = policy.tools[event.toolName];
+      if (!customRules) return undefined;
+      return await gateCustomTool(
+        event.toolName,
+        event.input,
+        customRules,
+        ctx,
+      );
+    }
+
+    const rules = isReadToolName(event.toolName)
+      ? policy.readPaths
+      : isWriteToolName(event.toolName)
+        ? policy.writePaths
+        : undefined;
     if (!rules) return undefined;
 
     const requestedPath = toolPath(event.toolName, event.input);
@@ -356,19 +438,22 @@ The permissions gate remains loaded and will fail closed until the profile is co
     );
     if (
       (event.toolName === "edit" || event.toolName === "write") &&
-      subagentWriteRules
+      subagentPermissibleRules
     ) {
       const scopeDecision = evaluatePathByPattern(
         absolutePath,
         startupCwd,
-        subagentWriteRules,
+        subagentPermissibleRules,
         "deny",
+        event.toolName,
+        policy.protectedPathPatterns,
+        policy.protectedPathExceptions,
       );
       if (scopeDecision.decision !== "allow") {
         return {
           block: true,
           reason: appendPolicySteering(
-            `${event.toolName} denied: path is outside PI_SUBAGENT_WRITE_GLOBS: ${displayPath(absolutePath, startupCwd)}`,
+            `${event.toolName} denied: path is outside PI_SUBAGENT_PERMISSIBLE_GLOBS: ${displayPath(absolutePath, startupCwd)}`,
             [scopeDecision.rule],
           ),
         };
@@ -379,6 +464,9 @@ The permissions gate remains loaded and will fail closed until the profile is co
       startupCwd,
       rules,
       "allow",
+      event.toolName,
+      policy.protectedPathPatterns,
+      policy.protectedPathExceptions,
     );
     const matchPath = policyDecision.matchPath;
 
@@ -412,7 +500,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
   });
 }
 
-function parseSubagentWriteRules(
+function parseSubagentPermissibleRules(
   value: string | undefined,
 ): Rule[] | undefined {
   if (value === undefined) return undefined;
@@ -424,7 +512,7 @@ function parseSubagentWriteRules(
     )
     .filter(Boolean);
   const guidance =
-    "This subagent may only modify or reference paths in its declared write scope.";
+    "This subagent may only access paths in its declared permissible scope.";
   const rules: Rule[] = [{ pattern: "**", decision: "deny", guidance }];
 
   for (const scope of scopes) {
@@ -442,27 +530,42 @@ function parseSubagentWriteRules(
   return rules;
 }
 
+function pathAnalysisSegments(command: string): string[] {
+  // A plain semicolon list has unconditional, current-shell CWD semantics.
+  // Keep structured constructs intact so the AST analyzer can preserve scope
+  // and reject uncertain control flow conservatively.
+  if (command.includes(";") && !/[(){}|&$`]/.test(command)) {
+    return splitShellCommands(command);
+  }
+  return [command];
+}
+
 function decideSubagentBashScope(
   command: string,
   startupCwd: string,
   cwd: string,
   policy: ProfilePolicy,
-  subagentWriteRules: Rule[] | undefined,
+  subagentPermissibleRules: Rule[] | undefined,
 ) {
-  if (!subagentWriteRules) return undefined;
-  const commands = extractShellCommands(command)
-    .map(normalizeCommandForDecision)
-    .filter(Boolean);
-  const decision = decideBashPathReferences(commands, startupCwd, cwd, {
+  if (!subagentPermissibleRules) return undefined;
+  const scopedPolicy = {
     ...policy,
-    bashPathReferences: subagentWriteRules as [Rule, ...Rule[]],
-  });
-  if (decision?.decision !== "deny") return undefined;
+    writePaths: subagentPermissibleRules as [Rule, ...Rule[]],
+  };
+  const decision = decideBashPathReferences(
+    pathAnalysisSegments(command),
+    startupCwd,
+    cwd,
+    scopedPolicy,
+    policy.protectedPathPatterns,
+    policy.protectedPathExceptions,
+  );
+  if (!decision || decision.decision === "allow") return undefined;
 
   return {
     block: true,
     reason: appendPolicySteering(
-      `Bash path reference denied: path is outside PI_SUBAGENT_WRITE_GLOBS.\n\nPath:\n${decision.path}\n\nMatched policy path:\n${decision.matchPath}`,
+      `Bash path reference denied: path is outside PI_SUBAGENT_PERMISSIBLE_GLOBS.\n\nPath:\n${decision.path}\n\nMatched policy path:\n${decision.matchPath}`,
       [decision.rule],
     ),
   };
@@ -474,7 +577,27 @@ export async function gateBash(
   ctx: ExtensionContext,
   activePolicy = defaultPolicy,
 ) {
-  activePolicy = withProtectedPathPatterns(activePolicy);
+  const parseErrors = classifyShell(command).errors;
+  if (parseErrors.length > 0) {
+    const details = parseErrors
+      .map((error) => `- offset ${error.pos}: ${error.message}`)
+      .join("\n");
+    const approval = await confirmOrBlock(
+      ctx,
+      "Allow Bash command with parse errors?",
+      `The command could not be classified completely.\n\n${details}\n\nRaw command:\n${command}`,
+    );
+    if (!approval.approved) {
+      return {
+        block: true,
+        reason: appendUserGuidance(
+          `Bash command was not approved because it could not be classified completely.\n\n${details}`,
+          approval.guidance,
+        ),
+      };
+    }
+  }
+
   const commands = extractShellCommands(command)
     .map(normalizeCommandForDecision)
     .filter(Boolean);
@@ -503,43 +626,13 @@ export async function gateBash(
     };
   }
 
-  const readPathDecision = decideReadCommandPaths(
-    commands,
-    startupCwd,
-    ctx.cwd ?? startupCwd,
-    activePolicy,
-  );
-  if (readPathDecision?.decision === "deny") {
-    return {
-      block: true,
-      reason: appendPolicySteering(
-        `Bash read input denied by policy.\n\nPath:\n${readPathDecision.path}\n\nMatched policy path:\n${readPathDecision.matchPath}`,
-        [readPathDecision.rule],
-      ),
-    };
-  }
-  if (readPathDecision?.decision === "ask") {
-    const approval = await confirmOrBlock(
-      ctx,
-      "Bash read command references a gated path?",
-      `Path:\n${readPathDecision.path}\n\nMatched policy path:\n${readPathDecision.matchPath}`,
-    );
-    if (!approval.approved) {
-      return {
-        block: true,
-        reason: appendUserGuidance(
-          `Bash read path was not approved: ${readPathDecision.path}`,
-          approval.guidance,
-        ),
-      };
-    }
-  }
-
   const pathDecision = decideBashPathReferences(
-    commands,
+    pathAnalysisSegments(command),
     startupCwd,
     ctx.cwd ?? startupCwd,
     activePolicy,
+    activePolicy.protectedPathPatterns,
+    activePolicy.protectedPathExceptions,
   );
   if (pathDecision?.decision === "deny") {
     return {
@@ -566,37 +659,6 @@ export async function gateBash(
       };
   }
 
-  const redirectionDecision = decideBashOutputRedirections(
-    commands,
-    startupCwd,
-    ctx.cwd ?? startupCwd,
-    activePolicy,
-  );
-  if (redirectionDecision?.decision === "deny") {
-    return {
-      block: true,
-      reason: appendPolicySteering(
-        `Bash output redirection denied by policy.\n\nRaw command:\n${command}\n\nParsed command segments:\n${formatParsedCommands(command, activePolicy)}\n\nTarget:\n${redirectionDecision.path}\n\nMatched policy path:\n${redirectionDecision.matchPath}`,
-        [redirectionDecision.rule],
-      ),
-    };
-  }
-  if (redirectionDecision?.decision === "ask") {
-    const approval = await confirmOrBlock(
-      ctx,
-      "Bash command redirects output to a gated path?",
-      `Raw command:\n${command}\n\nParsed command segments:\n${formatParsedCommands(command, activePolicy)}\n\nTarget:\n${redirectionDecision.path}\n\nMatched policy path:\n${redirectionDecision.matchPath}`,
-    );
-    if (!approval.approved)
-      return {
-        block: true,
-        reason: appendUserGuidance(
-          `Bash output redirection was not approved: ${redirectionDecision.path}`,
-          approval.guidance,
-        ),
-      };
-  }
-
   if (decisions.some(({ decision }) => decision === "ask")) {
     const approval = await confirmOrBlock(
       ctx,
@@ -613,31 +675,6 @@ export async function gateBash(
       };
   }
 
-  return undefined;
-}
-
-function decideReadCommandPaths(
-  commands: string[],
-  startupCwd: string,
-  cwd: string,
-  policy: ProfilePolicy,
-): (PolicyDecision & { path: string; matchPath: string }) | undefined {
-  for (const command of commands) {
-    if (!isReadCommand(command)) continue;
-    const parsed = parseReadCommand(command);
-    if (parsed.status !== "safe") continue;
-    for (const requestedPath of parsed.paths) {
-      const absolutePath = resolveRequestedPath(requestedPath, cwd);
-      const decision = evaluatePathByPattern(
-        absolutePath,
-        startupCwd,
-        policy.bashPathReferences,
-        "allow",
-      );
-      if (decision.decision !== "allow")
-        return { ...decision, path: absolutePath };
-    }
-  }
   return undefined;
 }
 
@@ -690,6 +727,87 @@ function formatProfileStatus(profileName: ProfileName): string {
   const emoji = profile.emoji ? `${profile.emoji} ` : "";
   const colorize = profileColorFormatters[color];
   return `profile: ${emoji}${colorize(ansi.bold(profileName))}`;
+}
+
+async function gateCustomTool(
+  toolName: string,
+  input: unknown,
+  rules: CustomToolRule[],
+  ctx: ExtensionContext,
+) {
+  const { decision, rule: matchedRule } = decideCustomTool(input, rules);
+
+  if (decision === "deny") {
+    return {
+      block: true,
+      reason: appendPolicySteering(
+        `${toolName} denied by custom tool policy.`,
+        [matchedRule],
+      ),
+    };
+  }
+  if (decision === "ask") {
+    const approval = await confirmOrBlock(
+      ctx,
+      `Allow ${toolName}?`,
+      `${toolName} matched a custom tool policy requiring confirmation.`,
+    );
+    if (!approval.approved) {
+      return {
+        block: true,
+        reason: appendUserGuidance(
+          `${toolName} was not approved.`,
+          approval.guidance,
+        ),
+      };
+    }
+  }
+  return undefined;
+}
+
+export function decideCustomTool(
+  input: unknown,
+  rules: CustomToolRule[],
+): { decision: Decision; rule?: CustomToolRule } {
+  let matchedRule: CustomToolRule | undefined;
+  for (const rule of rules) {
+    if (customToolRuleMatches(rule, input)) matchedRule = rule;
+  }
+  return { decision: matchedRule?.decision ?? "ask", rule: matchedRule };
+}
+
+function customToolRuleMatches(rule: CustomToolRule, input: unknown): boolean {
+  if (!rule.match) return true;
+  return Object.entries(rule.match).every(([propertyPath, pattern]) => {
+    const value = readInputPropertyPath(input, propertyPath);
+    return (
+      value.found &&
+      matchesGlobPattern(pattern, matchableInputValue(value.value))
+    );
+  });
+}
+
+function readInputPropertyPath(
+  input: unknown,
+  propertyPath: string,
+): { found: boolean; value?: unknown } {
+  let value = input;
+  for (const part of propertyPath.split(".")) {
+    if (typeof value !== "object" || value === null || !(part in value))
+      return { found: false };
+    value = Reflect.get(value, part);
+  }
+  return { found: true, value };
+}
+
+function matchableInputValue(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value === undefined) return "undefined";
+  try {
+    return JSON.stringify(value) ?? "";
+  } catch {
+    return "";
+  }
 }
 
 function evaluateByPattern(
@@ -770,6 +888,18 @@ function isPathToolName(toolName: string): toolName is PathToolName {
   return pathToolNameSet.has(toolName);
 }
 
+function isReadToolName(
+  toolName: string,
+): toolName is (typeof readToolNames)[number] {
+  return readToolNameSet.has(toolName);
+}
+
+function isWriteToolName(
+  toolName: string,
+): toolName is (typeof writeToolNames)[number] {
+  return writeToolNameSet.has(toolName);
+}
+
 function toolPath(toolName: string, input: unknown): string | undefined {
   const requestedPath = readStringProperty(input, "path");
   if (requestedPath) return requestedPath;
@@ -827,7 +957,7 @@ function appendUserGuidance(
 
 function appendPolicySteering(
   reason: string,
-  rules: Array<Rule | undefined>,
+  rules: Array<Pick<Rule, "guidance" | "alternatives"> | undefined>,
 ): string {
   const guidance = uniqueNonEmpty(rules.map((rule) => rule?.guidance));
   const alternatives = uniqueNonEmpty(

@@ -1,4 +1,4 @@
-import { shellishTokens } from "./parse";
+import { shellCommandWords } from "./parse";
 import { isProtectedPathExpression } from "./pathPolicy";
 
 export type ParsedReadCommand =
@@ -17,7 +17,7 @@ const readers = new Set([
   "file",
 ]);
 
-export function isReadCommand(command: string): boolean {
+function isReadCommand(command: string): boolean {
   return readers.has(executable(command));
 }
 
@@ -52,17 +52,15 @@ export function validateReadCommands(
 
 /**
  * Conservatively identifies file operands for the small, read-only command
- * surface we permit. This intentionally is not a shell parser: anything that
- * cannot be established from literal arguments is rejected.
+ * surface we permit. Unbash supplies the shell words; anything whose command
+ * semantics cannot be established from literal arguments is rejected.
  */
 export function parseReadCommand(command: string): ParsedReadCommand {
-  const tokens = shellishTokens(command);
+  const tokens = shellCommandWords(command);
   while (tokens[0] === "command") tokens.shift();
   const program = tokens.shift();
   if (!program || !readers.has(program))
     return unknown("not a supported read command");
-  if (tokens.some(isDynamic))
-    return unknown("dynamic shell input cannot be validated");
 
   switch (program) {
     case "cat":
@@ -245,18 +243,9 @@ function result(paths: string[]): ParsedReadCommand {
 }
 
 function executable(command: string): string {
-  const tokens = shellishTokens(command);
+  const tokens = shellCommandWords(command);
   while (tokens[0] === "command") tokens.shift();
   return tokens[0] ?? "";
-}
-
-function isDynamic(value: string): boolean {
-  return (
-    value.includes("$") ||
-    value.includes("`") ||
-    value.includes("{") ||
-    value.includes("}")
-  );
 }
 
 function unknown(reason: string): ParsedReadCommand {

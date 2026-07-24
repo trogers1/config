@@ -11,7 +11,6 @@
         "^.*$": {
           "type": "object",
           "properties": {
-            "extends": { "type": "string" },
             "promptFile": {
               "anyOf": [{ "type": "string" }, { "type": "null" }]
             },
@@ -34,8 +33,8 @@
             },
             "tools": {
               "type": "object",
-              "patternProperties": {
-                "^.*$": {
+              "properties": {
+                "bash": {
                   "type": "array",
                   "items": {
                     "type": "object",
@@ -58,9 +57,40 @@
                     "additionalProperties": false
                   }
                 }
-              }
+              },
+              "patternProperties": {
+                "^(?!(?:bash|read|grep|find|ls|edit|write)$).+$": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["decision"],
+                    "properties": {
+                      "decision": {
+                        "anyOf": [
+                          { "type": "string", "const": "allow" },
+                          { "type": "string", "const": "ask" },
+                          { "type": "string", "const": "deny" }
+                        ]
+                      },
+                      "guidance": { "type": "string" },
+                      "alternatives": {
+                        "type": "array",
+                        "items": { "type": "string" }
+                      },
+                      "match": {
+                        "type": "object",
+                        "patternProperties": { "^.+$": { "type": "string" } },
+                        "additionalProperties": false,
+                        "minProperties": 1
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "additionalProperties": false
             },
-            "bashPathReferences": {
+            "readPaths": {
               "type": "array",
               "items": {
                 "type": "object",
@@ -78,6 +108,55 @@
                   "alternatives": {
                     "type": "array",
                     "items": { "type": "string" }
+                  },
+                  "contexts": {
+                    "type": "array",
+                    "items": {
+                      "anyOf": [
+                        { "type": "string", "const": "read" },
+                        { "type": "string", "const": "grep" },
+                        { "type": "string", "const": "find" },
+                        { "type": "string", "const": "ls" }
+                      ]
+                    },
+                    "minItems": 1,
+                    "uniqueItems": true
+                  }
+                },
+                "additionalProperties": false
+              },
+              "minItems": 1
+            },
+            "writePaths": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["pattern", "decision"],
+                "properties": {
+                  "pattern": { "type": "string" },
+                  "decision": {
+                    "anyOf": [
+                      { "type": "string", "const": "allow" },
+                      { "type": "string", "const": "ask" },
+                      { "type": "string", "const": "deny" }
+                    ]
+                  },
+                  "guidance": { "type": "string" },
+                  "alternatives": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  },
+                  "contexts": {
+                    "type": "array",
+                    "items": {
+                      "anyOf": [
+                        { "type": "string", "const": "edit" },
+                        { "type": "string", "const": "write" },
+                        { "type": "string", "const": "bash" }
+                      ]
+                    },
+                    "minItems": 1,
+                    "uniqueItems": true
                   }
                 },
                 "additionalProperties": false
@@ -92,30 +171,7 @@
               "type": "array",
               "items": { "type": "string" }
             },
-            "bashOutputRedirections": {
-              "type": "array",
-              "items": {
-                "type": "object",
-                "required": ["pattern", "decision"],
-                "properties": {
-                  "pattern": { "type": "string" },
-                  "decision": {
-                    "anyOf": [
-                      { "type": "string", "const": "allow" },
-                      { "type": "string", "const": "ask" },
-                      { "type": "string", "const": "deny" }
-                    ]
-                  },
-                  "guidance": { "type": "string" },
-                  "alternatives": {
-                    "type": "array",
-                    "items": { "type": "string" }
-                  }
-                },
-                "additionalProperties": false
-              },
-              "minItems": 1
-            }
+            "extends": { "type": "string" }
           },
           "additionalProperties": false
         }

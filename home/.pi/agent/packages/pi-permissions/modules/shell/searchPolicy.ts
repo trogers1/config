@@ -1,4 +1,4 @@
-import { extractShellCommands, shellishTokens } from "./parse";
+import { extractShellCommands, shellCommandWords } from "./parse";
 import { expandHome, matchesGlobPattern } from "./pathPolicy";
 
 export function validateRipgrepGlobOverrides(
@@ -9,7 +9,7 @@ export function validateRipgrepGlobOverrides(
   if (protectedPathPatterns.length === 0) return undefined;
 
   for (const segment of extractShellCommands(command)) {
-    const tokens = shellishTokens(segment);
+    const tokens = shellCommandWords(segment);
     const ripgrepIndex = tokens.findIndex(
       (token) => token === "rg" || token === "ripgrep",
     );

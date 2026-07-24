@@ -1,136 +1,56 @@
+import {
+  parse,
+  type Command,
+  type CommandExpansionPart,
+  type Word,
+  type WordPart,
+} from "unbash";
+
 export function extractShellCommands(command: string): string[] {
-  const commands = splitShellCommands(command);
-  for (const substitution of extractCommandSubstitutions(command)) {
-    commands.push(...extractShellCommands(substitution));
-  }
-  return commands;
+  const script = parse(command);
+  const commands: Array<{ pos: number; value: string }> = [];
+  walkAst(script, (node) => {
+    if (isCommand(node)) {
+      commands.push({
+        pos: node.pos,
+        value: command.slice(node.pos, node.end),
+      });
+    }
+  });
+  return commands
+    .sort((left, right) => left.pos - right.pos)
+    .map(({ value }) => value.trim())
+    .filter(Boolean);
 }
 
 export function splitShellCommands(command: string): string[] {
-  const parts: string[] = [];
-  let current = "";
-  let quote: "single" | "double" | undefined;
-  let escaped = false;
-  let parenDepth = 0;
-  let braceDepth = 0;
-  let bracketDepth = 0;
-
-  for (let i = 0; i < command.length; i++) {
-    const char = command[i];
-    const next = command[i + 1];
-
-    if (escaped) {
-      current += char;
-      escaped = false;
-      continue;
-    }
-
-    if (char === "\\" && quote !== "single") {
-      current += char;
-      escaped = true;
-      continue;
-    }
-
-    if (quote) {
-      current += char;
-      if (
-        (quote === "single" && char === "'") ||
-        (quote === "double" && char === '"')
-      )
-        quote = undefined;
-      continue;
-    }
-
-    if (char === "'") {
-      quote = "single";
-      current += char;
-      continue;
-    }
-    if (char === '"') {
-      quote = "double";
-      current += char;
-      continue;
-    }
-
-    if (char === "(") parenDepth++;
-    else if (char === ")" && parenDepth > 0) parenDepth--;
-    else if (char === "{") braceDepth++;
-    else if (char === "}" && braceDepth > 0) braceDepth--;
-    else if (char === "[") bracketDepth++;
-    else if (char === "]" && bracketDepth > 0) bracketDepth--;
-
-    const atTopLevel =
-      parenDepth === 0 && braceDepth === 0 && bracketDepth === 0;
-    if (
-      atTopLevel &&
-      (char === ";" ||
-        char === "\n" ||
-        char === "|" ||
-        (char === "&" && next === "&"))
-    ) {
-      pushPart(parts, current);
-      current = "";
-      if ((char === "|" && next === "|") || (char === "&" && next === "&")) i++;
-      continue;
-    }
-
-    current += char;
-  }
-
-  pushPart(parts, current);
-  return parts;
+  return extractShellCommands(command);
 }
 
 export function extractCommandSubstitutions(command: string): string[] {
-  const substitutions: string[] = [];
-  let quote: "single" | "double" | undefined;
-  let escaped = false;
+  const script = parse(command);
+  const substitutions: Array<{ pos: number; value: string }> = [];
+  walkAst(script, (node) => {
+    if (isCommandExpansion(node) && node.script) {
+      substitutions.push({
+        pos: node.script.pos,
+        value:
+          node.inner ?? command.slice(node.script.pos, node.script.end).trim(),
+      });
+    }
+  });
+  return substitutions
+    .sort((left, right) => left.pos - right.pos)
+    .map(({ value }) => value);
+}
 
-  for (let i = 0; i < command.length; i++) {
-    const char = command[i];
-    const next = command[i + 1];
-
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-    if (char === "\\" && quote !== "single") {
-      escaped = true;
-      continue;
-    }
-    if (quote === "single") {
-      if (char === "'") quote = undefined;
-      continue;
-    }
-    if (quote === "double") {
-      if (char === '"') quote = undefined;
-    } else if (char === "'") {
-      quote = "single";
-      continue;
-    } else if (char === '"') {
-      quote = "double";
-      continue;
-    }
-
-    if (char === "$" && next === "(") {
-      const parsed = readBalanced(command, i + 2, "(", ")");
-      if (parsed) {
-        substitutions.push(parsed.content);
-        i = parsed.end;
-      }
-      continue;
-    }
-
-    if (char === "`") {
-      const end = readBacktick(command, i + 1);
-      if (end) {
-        substitutions.push(end.content);
-        i = end.end;
-      }
-    }
-  }
-
-  return substitutions;
+export function shellCommandWords(command: string): string[] {
+  const script = parse(command);
+  const node = script.commands[0]?.command;
+  if (!isCommand(node)) return [];
+  return [node.name, ...node.suffix]
+    .filter((word): word is Word => word !== undefined)
+    .map((word) => (isDynamicWord(word) ? word.text : word.value));
 }
 
 export function normalizeCommandForDecision(command: string): string {
@@ -165,131 +85,61 @@ export function matchesCommandPattern(
   return regex.test(command);
 }
 
-export function shellishTokens(command: string): string[] {
-  const tokens: string[] = [];
-  let current = "";
-  let quote: "single" | "double" | undefined;
-  let escaped = false;
-
-  for (const char of command) {
-    if (escaped) {
-      current += char;
-      escaped = false;
-      continue;
-    }
-    if (char === "\\" && quote !== "single") {
-      escaped = true;
-      continue;
-    }
-    if (quote) {
-      if (
-        (quote === "single" && char === "'") ||
-        (quote === "double" && char === '"')
-      )
-        quote = undefined;
-      else current += char;
-      continue;
-    }
-    if (char === "'") {
-      quote = "single";
-      continue;
-    }
-    if (char === '"') {
-      quote = "double";
-      continue;
-    }
-    if (/\s/.test(char) || char === ";" || char === "|" || char === "&") {
-      if (current) tokens.push(current);
-      current = "";
-      continue;
-    }
-    current += char;
-  }
-  if (current) tokens.push(current);
-  return tokens;
-}
-
 function normalizeCommand(command: string): string {
   return command.trim().replace(/\s+/g, " ");
 }
 
-function pushPart(parts: string[], value: string): void {
-  const trimmed = value.trim();
-  if (trimmed) parts.push(trimmed);
+function isCommand(value: unknown): value is Command {
+  return isRecord(value) && value.type === "Command";
 }
 
-function readBalanced(
-  input: string,
-  start: number,
-  open: string,
-  close: string,
-): { content: string; end: number } | undefined {
-  let depth = 1;
-  let quote: "single" | "double" | undefined;
-  let escaped = false;
-  let content = "";
-
-  for (let i = start; i < input.length; i++) {
-    const char = input[i];
-    if (escaped) {
-      content += char;
-      escaped = false;
-      continue;
-    }
-    if (char === "\\" && quote !== "single") {
-      content += char;
-      escaped = true;
-      continue;
-    }
-    if (quote) {
-      content += char;
-      if (
-        (quote === "single" && char === "'") ||
-        (quote === "double" && char === '"')
-      )
-        quote = undefined;
-      continue;
-    }
-    if (char === "'") {
-      quote = "single";
-      content += char;
-      continue;
-    }
-    if (char === '"') {
-      quote = "double";
-      content += char;
-      continue;
-    }
-    if (char === open) depth++;
-    if (char === close) depth--;
-    if (depth === 0) return { content, end: i };
-    content += char;
-  }
-  return undefined;
+function isCommandExpansion(value: unknown): value is CommandExpansionPart {
+  return isRecord(value) && value.type === "CommandExpansion";
 }
 
-function readBacktick(
-  input: string,
-  start: number,
-): { content: string; end: number } | undefined {
-  let escaped = false;
-  let content = "";
-  for (let i = start; i < input.length; i++) {
-    const char = input[i];
-    if (escaped) {
-      escaped = false;
-      content += char;
-      continue;
-    }
-    if (char === "\\") {
-      escaped = true;
-      content += char;
-      continue;
-    }
-    if (char === "`") return { content, end: i };
-    content += char;
+function isDynamicWord(word: Word): boolean {
+  return word.parts?.some(isDynamicPart) ?? false;
+}
+
+function isDynamicPart(part: WordPart): boolean {
+  switch (part.type) {
+    case "Literal":
+    case "SingleQuoted":
+    case "AnsiCQuoted":
+      return false;
+    case "DoubleQuoted":
+    case "LocaleString":
+      return part.parts.some(isDynamicPart);
+    default:
+      return true;
   }
-  return undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function walkAst(
+  value: unknown,
+  visit: (node: unknown) => void,
+  seen = new WeakSet<object>(),
+): void {
+  if (!isRecord(value) || seen.has(value)) return;
+  seen.add(value);
+  visit(value);
+
+  const wordParts = Reflect.get(value, "parts");
+  if (Array.isArray(wordParts)) {
+    for (const part of wordParts) walkAst(part, visit, seen);
+  }
+
+  for (const child of Object.values(value)) {
+    if (Array.isArray(child)) {
+      for (const item of child) walkAst(item, visit, seen);
+    } else {
+      walkAst(child, visit, seen);
+    }
+  }
 }
 
 function escapeRegExp(value: string): string {

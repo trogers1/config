@@ -1,126 +1,669 @@
 import path from "node:path";
-import type { Decision, ProfilePolicy, Rule } from "../policyHelpers";
-import { shellishTokens } from "./parse";
+import {
+  parse,
+  type CaseItem,
+  type Command,
+  type CommandExpansionPart,
+  type CompoundList,
+  type Node,
+  type ProcessSubstitutionPart,
+  type Script,
+  type Statement,
+  type Word,
+  type WordPart,
+} from "unbash";
+import type {
+  Decision,
+  PathContext,
+  PathRule,
+  ProfilePolicy,
+} from "../policyHelpers";
+import { classifyCommandTokens, type ShellTokenKind } from "./classify";
 
 export type PolicyDecision = {
   decision: Decision;
-  rule?: Rule;
+  rule?: PathRule;
 };
 
 export type PathPolicyDecision = PolicyDecision & { matchPath: string };
+
+type CwdState = {
+  cwd: string;
+  known: boolean;
+};
+
+type DecisionWithPath = PolicyDecision & { path: string; matchPath: string };
+
+type PathToken = {
+  kind: ShellTokenKind;
+  value: string;
+  dynamicRole?: "argument" | "filesystem-reference" | "redirection-target";
+  pos: number;
+  end: number;
+  command?: string;
+};
 
 export function decideBashPathReferences(
   commandSegments: string[],
   startupCwd: string,
   cwd: string,
   activePolicy: ProfilePolicy,
-): (PolicyDecision & { path: string; matchPath: string }) | undefined {
-  let simulatedCwd = cwd;
+  protectedPathPatterns: readonly string[] = [],
+  protectedPathExceptions: readonly string[] = [],
+): DecisionWithPath | undefined {
+  let state: CwdState = { cwd, known: true };
+
   for (const segment of commandSegments) {
-    const redirectionsArePolicyGated = Boolean(
-      activePolicy.bashOutputRedirections,
+    const script = parse(segment);
+    const result = analyzeScript(
+      script,
+      state,
+      startupCwd,
+      activePolicy,
+      protectedPathPatterns,
+      protectedPathExceptions,
     );
-    let skipNextOutputRedirectionTarget = false;
-    let skipNextGlobPattern = false;
-    for (const token of shellishTokens(segment)) {
-      if (skipNextOutputRedirectionTarget) {
-        skipNextOutputRedirectionTarget = false;
-        continue;
-      }
-      if (skipNextGlobPattern) {
-        skipNextGlobPattern = false;
-        continue;
-      }
-      // Ripgrep glob values can contain slashes but are patterns, not paths.
-      if (token === "--glob") {
-        skipNextGlobPattern = true;
-        continue;
-      }
-      if (token.startsWith("--glob=")) continue;
-      if (
-        redirectionsArePolicyGated &&
-        isStandaloneOutputRedirectionOperator(token)
-      ) {
-        skipNextOutputRedirectionTarget = true;
-        continue;
-      }
-      if (
-        redirectionsArePolicyGated &&
-        extractInlineOutputRedirectionTarget(token)
-      )
-        continue;
-      // Basename-only protected expressions (for example `.env` and `.env*`)
-      // must reach policy evaluation too; generic path appearance is insufficient.
-      if (
-        !looksLikePath(token) &&
-        !isProtectedPathExpression(
-          token,
-          activePolicy.protectedPathPatterns,
-          activePolicy.protectedPathExceptions,
-        )
-      )
-        continue;
-      const absolutePath = resolveRequestedPath(token, simulatedCwd);
-      const policyDecision = evaluatePathByPattern(
-        absolutePath,
-        startupCwd,
-        activePolicy.bashPathReferences,
-        "allow",
-      );
-      if (policyDecision.decision !== "allow")
-        return { ...policyDecision, path: absolutePath };
-    }
-
-    const cdTarget = extractCdTarget(segment);
-    if (cdTarget !== undefined && cdTarget !== "-") {
-      simulatedCwd = resolveRequestedPath(cdTarget, simulatedCwd);
-    }
+    state = result.state;
+    if (result.decision) return result.decision;
   }
-  return undefined;
-}
 
-export function decideBashOutputRedirections(
-  commandSegments: string[],
-  startupCwd: string,
-  cwd: string,
-  activePolicy: ProfilePolicy,
-): (PolicyDecision & { path: string; matchPath: string }) | undefined {
-  const rules = activePolicy.bashOutputRedirections;
-  if (!rules) return undefined;
-
-  let simulatedCwd = cwd;
-  for (const segment of commandSegments) {
-    for (const target of extractOutputRedirectionTargets(segment)) {
-      const absolutePath = resolveRequestedPath(target, simulatedCwd);
-      const policyDecision = evaluatePathByPattern(
-        absolutePath,
-        startupCwd,
-        rules,
-        "allow",
-      );
-      if (policyDecision.decision !== "allow")
-        return { ...policyDecision, path: absolutePath };
-    }
-
-    const cdTarget = extractCdTarget(segment);
-    if (cdTarget !== undefined && cdTarget !== "-") {
-      simulatedCwd = resolveRequestedPath(cdTarget, simulatedCwd);
-    }
-  }
   return undefined;
 }
 
 export function evaluatePathByPattern(
   absolutePath: string,
   startupCwd: string,
-  rules: Rule[],
+  rules: PathRule[],
   defaultDecision: Decision,
+  context: PathContext,
+  protectedPathPatterns: readonly string[] = [],
+  protectedPathExceptions: readonly string[] = [],
+): PathPolicyDecision {
+  const ordinaryDecision = evaluateRulesByPattern(
+    absolutePath,
+    startupCwd,
+    rules,
+    defaultDecision,
+    context,
+  );
+  const protectedPattern = matchProtectedPathPattern(
+    absolutePath,
+    startupCwd,
+    protectedPathPatterns,
+    protectedPathExceptions,
+  );
+  if (!protectedPattern) return ordinaryDecision;
+
+  return {
+    decision: "deny",
+    rule: {
+      pattern: protectedPattern.pattern,
+      decision: "deny",
+      guidance:
+        "This path is protected from disclosure and mutation by the active profile.",
+      alternatives: [
+        "Use an explicitly approved file instead",
+        "Ask the user for a redacted or safe-to-share value",
+      ],
+    },
+    matchPath: protectedPattern.matchPath,
+  };
+}
+
+export function matchesGlobPattern(pattern: string, value: string): boolean {
+  const normalizedPattern = normalizePolicyPath(pattern);
+  const normalizedValue = normalizePolicyPath(value);
+  const regex = new RegExp(`^${globToRegExpSource(normalizedPattern)}$`);
+  return regex.test(normalizedValue);
+}
+
+function analyzeScript(
+  script: Script,
+  state: CwdState,
+  startupCwd: string,
+  activePolicy: ProfilePolicy,
+  protectedPathPatterns: readonly string[],
+  protectedPathExceptions: readonly string[],
+): { state: CwdState; decision?: DecisionWithPath } {
+  let currentState = state;
+  for (const statement of script.commands) {
+    const previousState = currentState;
+    const result = analyzeStatement(
+      statement,
+      currentState,
+      startupCwd,
+      activePolicy,
+      protectedPathPatterns,
+      protectedPathExceptions,
+    );
+    currentState = applySimpleCdState(statement, previousState, result.state);
+    if (result.decision) return { ...result, state: currentState };
+  }
+  return { state: currentState };
+}
+
+function analyzeStatement(
+  statement: Statement,
+  state: CwdState,
+  startupCwd: string,
+  activePolicy: ProfilePolicy,
+  protectedPathPatterns: readonly string[],
+  protectedPathExceptions: readonly string[],
+): { state: CwdState; decision?: DecisionWithPath } {
+  return analyzeNode(
+    statement.command,
+    state,
+    startupCwd,
+    activePolicy,
+    protectedPathPatterns,
+    protectedPathExceptions,
+  );
+}
+
+function analyzeNode(
+  node: Node,
+  state: CwdState,
+  startupCwd: string,
+  activePolicy: ProfilePolicy,
+  protectedPathPatterns: readonly string[],
+  protectedPathExceptions: readonly string[],
+): { state: CwdState; decision?: DecisionWithPath } {
+  switch (node.type) {
+    case "Statement":
+      return analyzeNode(
+        node.command,
+        state,
+        startupCwd,
+        activePolicy,
+        protectedPathPatterns,
+        protectedPathExceptions,
+      );
+    case "Command":
+      return analyzeCommand(
+        node,
+        state,
+        startupCwd,
+        activePolicy,
+        protectedPathPatterns,
+        protectedPathExceptions,
+      );
+    case "CompoundList":
+      return analyzeCompoundList(
+        node,
+        state,
+        startupCwd,
+        activePolicy,
+        protectedPathPatterns,
+        protectedPathExceptions,
+      );
+    case "BraceGroup":
+      return analyzeCompoundList(
+        node.body,
+        state,
+        startupCwd,
+        activePolicy,
+        protectedPathPatterns,
+        protectedPathExceptions,
+      );
+    case "Subshell": {
+      const nested = analyzeCompoundList(
+        node.body,
+        { ...state },
+        startupCwd,
+        activePolicy,
+        protectedPathPatterns,
+        protectedPathExceptions,
+      );
+      return { state, decision: nested.decision };
+    }
+    case "Pipeline":
+      if (node.commands.length > 1 && containsCwdMutation(node)) {
+        return uncertainCwdDecision(state, "pipeline CWD");
+      }
+      if (node.commands.length === 1) {
+        return analyzeNode(
+          node.commands[0],
+          state,
+          startupCwd,
+          activePolicy,
+          protectedPathPatterns,
+          protectedPathExceptions,
+        );
+      }
+      return analyzeNestedNodes(
+        node.commands,
+        state,
+        startupCwd,
+        activePolicy,
+        protectedPathPatterns,
+        protectedPathExceptions,
+        containsCwdMutation(node) ? { ...state, known: false } : state,
+      );
+    case "AndOr":
+      if (node.commands.length > 1 && containsCwdMutation(node)) {
+        return uncertainCwdDecision(state, "conditional CWD");
+      }
+      if (node.commands.length === 1) {
+        return analyzeNode(
+          node.commands[0],
+          state,
+          startupCwd,
+          activePolicy,
+          protectedPathPatterns,
+          protectedPathExceptions,
+        );
+      }
+      return analyzeNestedNodes(
+        node.commands,
+        state,
+        startupCwd,
+        activePolicy,
+        protectedPathPatterns,
+        protectedPathExceptions,
+        { ...state, known: false },
+      );
+    case "If":
+    case "While":
+    case "For":
+    case "Select":
+    case "Case":
+    case "Function":
+    case "Coproc":
+    case "ArithmeticFor":
+    case "TestCommand":
+      return analyzeUnsupportedNode(
+        node,
+        state,
+        startupCwd,
+        activePolicy,
+        protectedPathPatterns,
+        protectedPathExceptions,
+      );
+    default:
+      return { state };
+  }
+}
+
+function uncertainCwdDecision(
+  state: CwdState,
+  description: string,
+): { state: CwdState; decision: DecisionWithPath } {
+  return {
+    state: { ...state, known: false },
+    decision: {
+      decision: "ask",
+      path: description,
+      matchPath: description,
+    },
+  };
+}
+
+function analyzeCompoundList(
+  list: CompoundList,
+  state: CwdState,
+  startupCwd: string,
+  activePolicy: ProfilePolicy,
+  protectedPathPatterns: readonly string[],
+  protectedPathExceptions: readonly string[],
+): { state: CwdState; decision?: DecisionWithPath } {
+  let currentState = state;
+  for (const statement of list.commands) {
+    const previousState = currentState;
+    const result = analyzeStatement(
+      statement,
+      currentState,
+      startupCwd,
+      activePolicy,
+      protectedPathPatterns,
+      protectedPathExceptions,
+    );
+    currentState = applySimpleCdState(statement, previousState, result.state);
+    if (result.decision) return { ...result, state: currentState };
+  }
+  return { state: currentState };
+}
+
+function applySimpleCdState(
+  node: Node,
+  previousState: CwdState,
+  analyzedState: CwdState,
+): CwdState {
+  const target = simpleStaticCdTarget(node);
+  if (!target || target === "-") return analyzedState;
+  return {
+    cwd: resolveRequestedPath(target, previousState.cwd),
+    known: true,
+  };
+}
+
+function simpleStaticCdTarget(node: Node): string | undefined {
+  if (node.type === "Statement") return simpleStaticCdTarget(node.command);
+  if (
+    (node.type === "Pipeline" || node.type === "AndOr") &&
+    node.commands.length === 1
+  ) {
+    return simpleStaticCdTarget(node.commands[0]);
+  }
+  if (node.type === "CompoundList" && node.commands.length === 1) {
+    return simpleStaticCdTarget(node.commands[0]);
+  }
+  if (node.type !== "Command" || staticWordValue(node.name) !== "cd") {
+    return undefined;
+  }
+  for (const word of node.suffix) {
+    const value = staticWordValue(word);
+    if (value !== undefined && !value.startsWith("-")) return value;
+  }
+  return "~";
+}
+
+function analyzeNestedNodes(
+  nodes: readonly Node[],
+  state: CwdState,
+  startupCwd: string,
+  activePolicy: ProfilePolicy,
+  protectedPathPatterns: readonly string[],
+  protectedPathExceptions: readonly string[],
+  finalState: CwdState,
+): { state: CwdState; decision?: DecisionWithPath } {
+  let currentState = { ...state };
+  for (const nested of nodes) {
+    const result = analyzeNode(
+      nested,
+      currentState,
+      startupCwd,
+      activePolicy,
+      protectedPathPatterns,
+      protectedPathExceptions,
+    );
+    currentState = result.state;
+    if (result.decision) return result;
+  }
+  return { state: finalState };
+}
+
+function analyzeUnsupportedNode(
+  node: Node,
+  state: CwdState,
+  startupCwd: string,
+  activePolicy: ProfilePolicy,
+  protectedPathPatterns: readonly string[],
+  protectedPathExceptions: readonly string[],
+): { state: CwdState; decision?: DecisionWithPath } {
+  const nestedNodes = collectNestedNodes(node);
+  const result = analyzeNestedNodes(
+    nestedNodes,
+    state,
+    startupCwd,
+    activePolicy,
+    protectedPathPatterns,
+    protectedPathExceptions,
+    containsCwdMutation(node) ? { ...state, known: false } : state,
+  );
+  return result;
+}
+
+function analyzeCommand(
+  command: Command,
+  state: CwdState,
+  startupCwd: string,
+  activePolicy: ProfilePolicy,
+  protectedPathPatterns: readonly string[],
+  protectedPathExceptions: readonly string[],
+): { state: CwdState; decision?: DecisionWithPath } {
+  const commandName = staticWordValue(command.name);
+  const tokens = classifyCommandTokens(command);
+  const cdTarget = commandName === "cd" ? findCdTarget(command) : undefined;
+
+  if (commandName === "cd" && cdTarget) {
+    const cdDecision = evaluateTokenAsPath(
+      cdTarget,
+      state,
+      startupCwd,
+      activePolicy,
+      protectedPathPatterns,
+      protectedPathExceptions,
+      "bash",
+    );
+    if (cdDecision?.decision !== "allow") {
+      return { state, decision: cdDecision };
+    }
+    state = {
+      cwd: resolveRequestedPath(cdTarget.value, state.cwd),
+      known: true,
+    };
+  }
+
+  for (const token of tokens) {
+    if (
+      commandName === "cd" &&
+      cdTarget &&
+      token.pos === cdTarget.pos &&
+      token.end === cdTarget.end
+    ) {
+      continue;
+    }
+    const decision = evaluateToken(
+      token,
+      state,
+      startupCwd,
+      activePolicy,
+      protectedPathPatterns,
+      protectedPathExceptions,
+      "bash",
+    );
+    if (decision) return { state, decision };
+  }
+
+  for (const nested of collectNestedCommandScripts(command)) {
+    const result = analyzeScript(
+      nested,
+      { ...state },
+      startupCwd,
+      activePolicy,
+      protectedPathPatterns,
+      protectedPathExceptions,
+    );
+    if (result.decision) return { state, decision: result.decision };
+  }
+
+  return { state };
+}
+
+function evaluateToken(
+  token: PathToken,
+  state: CwdState,
+  startupCwd: string,
+  activePolicy: ProfilePolicy,
+  protectedPathPatterns: readonly string[],
+  protectedPathExceptions: readonly string[],
+  context: PathContext,
+): DecisionWithPath | undefined {
+  if (
+    token.kind === "pattern" ||
+    token.kind === "repository-object" ||
+    token.kind === "proven-non-path"
+  ) {
+    return undefined;
+  }
+
+  if (token.kind === "dynamic") {
+    if (token.dynamicRole === "argument") return undefined;
+    return {
+      decision: "ask",
+      path: token.value,
+      matchPath: token.value,
+    };
+  }
+
+  // An unrecognized attached option may contain a path-valued operand. The
+  // command adapter must extract it before we can resolve it safely.
+  if (token.kind === "ambiguous" && token.value.startsWith("-")) {
+    return {
+      decision: "ask",
+      path: token.value,
+      matchPath: token.value,
+    };
+  }
+
+  return evaluateTokenAsPath(
+    token,
+    state,
+    startupCwd,
+    activePolicy,
+    protectedPathPatterns,
+    protectedPathExceptions,
+    context,
+  );
+}
+
+function evaluateTokenAsPath(
+  token: PathToken,
+  state: CwdState,
+  startupCwd: string,
+  activePolicy: ProfilePolicy,
+  protectedPathPatterns: readonly string[],
+  protectedPathExceptions: readonly string[],
+  context: PathContext,
+): DecisionWithPath | undefined {
+  if (token.kind === "dynamic") {
+    return { decision: "ask", path: token.value, matchPath: token.value };
+  }
+
+  if (!state.known && !isAbsoluteLike(token.value)) {
+    return { decision: "ask", path: token.value, matchPath: token.value };
+  }
+
+  const absolutePath = resolveRequestedPath(token.value, state.cwd);
+  const decision = evaluatePathByPattern(
+    absolutePath,
+    startupCwd,
+    activePolicy.writePaths,
+    "allow",
+    context,
+    protectedPathPatterns,
+    protectedPathExceptions,
+  );
+  if (decision.decision === "allow") return undefined;
+  return { ...decision, path: absolutePath };
+}
+
+function findCdTarget(command: Command): PathToken | undefined {
+  for (const word of command.suffix) {
+    const value = staticWordValue(word);
+    if (value === undefined) continue;
+    if (value === "-") {
+      return {
+        kind: "dynamic",
+        value,
+        dynamicRole: "filesystem-reference",
+        pos: word.pos,
+        end: word.end,
+      };
+    }
+    if (!value.startsWith("-")) {
+      const dynamic = isDynamicWord(word);
+      return {
+        kind: dynamic ? "dynamic" : "filesystem-reference",
+        value: dynamic ? word.text : word.value,
+        dynamicRole: dynamic ? "filesystem-reference" : undefined,
+        pos: word.pos,
+        end: word.end,
+      };
+    }
+  }
+  return undefined;
+}
+
+function collectNestedCommandScripts(command: Command): Script[] {
+  const scripts: Script[] = [];
+  for (const word of command.suffix) {
+    for (const part of word.parts ?? []) {
+      if (!isCommandScriptPart(part) || !part.script) continue;
+      scripts.push(part.script);
+    }
+  }
+  return scripts;
+}
+
+function containsCwdMutation(node: Node): boolean {
+  switch (node.type) {
+    case "Statement":
+      return containsCwdMutation(node.command);
+    case "Command":
+      return staticWordValue(node.name) === "cd";
+    case "Pipeline":
+    case "AndOr":
+      return node.commands.some((nested) => containsCwdMutation(nested));
+    case "Subshell":
+    case "BraceGroup":
+      return node.body.commands.some((statement) =>
+        containsCwdMutation(statement.command),
+      );
+    case "CompoundList":
+      return node.commands.some((statement) =>
+        containsCwdMutation(statement.command),
+      );
+    case "If":
+      return (
+        containsCwdMutation(node.clause) ||
+        containsCwdMutation(node.then) ||
+        (node.else ? containsCwdMutation(node.else) : false)
+      );
+    case "While":
+      return containsCwdMutation(node.clause) || containsCwdMutation(node.body);
+    case "For":
+    case "Select":
+    case "ArithmeticFor":
+      return containsCwdMutation(node.body);
+    case "Case":
+      return node.items.some((item) => containsCwdMutation(item.body));
+    case "Function":
+    case "Coproc":
+      return containsCwdMutation(node.body);
+    default:
+      return false;
+  }
+}
+
+function collectNestedNodes(node: Node): Node[] {
+  switch (node.type) {
+    case "Statement":
+      return [node.command];
+    case "If":
+      return [node.clause, node.then, ...(node.else ? [node.else] : [])];
+    case "While":
+      return [node.clause, node.body];
+    case "For":
+    case "Select":
+    case "ArithmeticFor":
+      return [node.body];
+    case "Case":
+      return node.items.map((item: CaseItem) => item.body);
+    case "Function":
+    case "Coproc":
+      return [node.body];
+    case "TestCommand":
+      return [];
+    default:
+      return [];
+  }
+}
+
+function evaluateRulesByPattern(
+  absolutePath: string,
+  startupCwd: string,
+  rules: PathRule[],
+  defaultDecision: Decision,
+  context: PathContext,
 ): PathPolicyDecision {
   const relativeMatchPath = policyMatchPath(absolutePath, startupCwd);
-  let matchedRule: Rule | undefined;
+  let matchedRule: PathRule | undefined;
   let matchedPath = relativeMatchPath;
 
   for (const rule of rules) {
+    const contexts: readonly PathContext[] | undefined = rule.contexts;
+    if (contexts && !contexts.includes(context)) continue;
     const matchPath = rule.pattern.startsWith("/")
       ? normalizePolicyPath(absolutePath)
       : relativeMatchPath;
@@ -137,11 +680,36 @@ export function evaluatePathByPattern(
   };
 }
 
-export function matchesGlobPattern(pattern: string, value: string): boolean {
-  const normalizedPattern = normalizePolicyPath(pattern);
-  const normalizedValue = normalizePolicyPath(value);
-  const regex = new RegExp(`^${globToRegExpSource(normalizedPattern)}$`);
-  return regex.test(normalizedValue);
+function matchProtectedPathPattern(
+  absolutePath: string,
+  startupCwd: string,
+  patterns: readonly string[],
+  exceptions: readonly string[],
+): { pattern: string; matchPath: string } | undefined {
+  if (patterns.length === 0) return undefined;
+
+  const relativeMatchPath = policyMatchPath(absolutePath, startupCwd);
+  let match: { pattern: string; matchPath: string } | undefined;
+
+  for (const pattern of patterns) {
+    const matchPath = pattern.startsWith("/")
+      ? normalizePolicyPath(absolutePath)
+      : relativeMatchPath;
+    if (matchesGlobPattern(pattern, matchPath)) {
+      match = { pattern, matchPath };
+    }
+  }
+
+  if (!match) return undefined;
+
+  for (const exception of exceptions) {
+    const exceptionMatchPath = exception.startsWith("/")
+      ? normalizePolicyPath(absolutePath)
+      : relativeMatchPath;
+    if (matchesGlobPattern(exception, exceptionMatchPath)) return undefined;
+  }
+
+  return match;
 }
 
 export function resolveRequestedPath(
@@ -170,58 +738,6 @@ export function displayPath(absolutePath: string, root: string): string {
   return isOutside(absolutePath, root)
     ? absolutePath
     : path.relative(root, absolutePath) || ".";
-}
-
-function extractOutputRedirectionTargets(command: string): string[] {
-  const tokens = shellishTokens(command);
-  const targets: string[] = [];
-  let previousWasOutputRedirection = false;
-
-  for (const token of tokens) {
-    if (previousWasOutputRedirection) {
-      previousWasOutputRedirection = false;
-      if (!isFileDescriptorTarget(token)) targets.push(token);
-      continue;
-    }
-
-    if (isStandaloneOutputRedirectionOperator(token)) {
-      previousWasOutputRedirection = true;
-      continue;
-    }
-
-    const target = extractInlineOutputRedirectionTarget(token);
-    if (target && !isFileDescriptorTarget(target)) targets.push(target);
-  }
-
-  return targets;
-}
-
-function isStandaloneOutputRedirectionOperator(token: string): boolean {
-  return /^(?:\d*>>|\d*>\||\d*>|&>>|&>)$/.test(token);
-}
-
-function extractInlineOutputRedirectionTarget(
-  token: string,
-): string | undefined {
-  const match = /(?:\d*>>|\d*>\||\d*>|&>>|&>)(.+)$/.exec(token);
-  return match?.[1];
-}
-
-function isFileDescriptorTarget(target: string): boolean {
-  return /^&(?:\d+|-)$/.test(target);
-}
-
-function extractCdTarget(command: string): string | undefined {
-  const tokens = shellishTokens(command);
-  if (tokens[0] !== "cd") return undefined;
-  let arg: string | undefined;
-  for (let i = 1; i < tokens.length; i++) {
-    const token = tokens[i];
-    if (token.startsWith("-")) continue;
-    arg = token;
-    break;
-  }
-  return arg ?? "~";
 }
 
 function policyMatchPath(absolutePath: string, root: string): string {
@@ -271,25 +787,49 @@ export function isProtectedPathExpression(
   // can use an exception; a glob may match protected paths as well.
   if (!/[?*[\]]/.test(normalized)) {
     for (const exception of exceptions) {
-      if (matchesGlobPattern(exception, normalized))
+      if (matchesGlobPattern(exception, normalized)) {
         protectedExpression = false;
+      }
     }
   }
   return protectedExpression;
 }
 
-function looksLikePath(token: string): boolean {
-  if (!token || token.startsWith("-")) return false;
-  if (token === "." || token === ".." || token === "~") return true;
-  return (
-    token.startsWith("/") ||
-    token.startsWith("./") ||
-    token.startsWith("../") ||
-    token.startsWith("~/") ||
-    token.includes("/")
-  );
-}
-
 function escapeRegExp(value: string): string {
   return value.replace(/[|\\{}()[\]^$+?.*]/g, "\\$&");
+}
+
+function isAbsoluteLike(value: string): boolean {
+  return path.isAbsolute(expandHome(value));
+}
+
+function staticWordValue(word: Word | undefined): string | undefined {
+  if (!word || isDynamicWord(word)) return undefined;
+  return word.value;
+}
+
+function isDynamicWord(word: Word): boolean {
+  return word.parts?.some(isDynamicPart) ?? false;
+}
+
+function isDynamicPart(part: WordPart): boolean {
+  switch (part.type) {
+    case "Literal":
+    case "SingleQuoted":
+    case "AnsiCQuoted":
+      return false;
+    case "DoubleQuoted":
+    case "LocaleString":
+      return part.parts.some(isDynamicPart);
+    default:
+      return true;
+  }
+}
+
+function isCommandScriptPart(
+  part: WordPart,
+): part is CommandExpansionPart | ProcessSubstitutionPart {
+  return (
+    part.type === "CommandExpansion" || part.type === "ProcessSubstitution"
+  );
 }

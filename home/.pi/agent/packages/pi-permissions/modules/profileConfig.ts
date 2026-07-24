@@ -2,15 +2,32 @@ import fs from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { parse, printParseErrorCode, type ParseError } from "jsonc-parser";
-import type { Static } from "typebox";
 import { Value } from "typebox/value";
 import {
   assertPolicyConfig,
   extendProfile,
   profileConfigFileSchema,
   type PolicyConfig,
+  type ProfileConfigFile,
   type ProfilePolicy,
 } from "./policyHelpers";
+
+export class ProfileConfigLoadError extends Error {
+  readonly configPath: string;
+  readonly details: string;
+
+  constructor(configPath: string, details: string) {
+    super(`Invalid pi-permissions profile config at ${configPath}: ${details}`);
+    this.name = "ProfileConfigLoadError";
+    Object.setPrototypeOf(this, new.target.prototype);
+    this.configPath = configPath;
+    this.details = details;
+  }
+}
+
+function throwProfileConfigError(configPath: string, details: string): never {
+  throw new ProfileConfigLoadError(configPath, details);
+}
 
 const defaultProfileConfigPath = path.join(
   homedir(),
@@ -19,8 +36,6 @@ const defaultProfileConfigPath = path.join(
   "permissions",
   "profiles.jsonc",
 );
-
-type ProfileConfigFile = Static<typeof profileConfigFileSchema>;
 
 /**
  * Read user-owned profile data synchronously. Configuration is deliberately
@@ -37,15 +52,23 @@ export function loadProfileConfig(
     const parsed: unknown = parse(fs.readFileSync(configPath, "utf8"), errors, {
       allowTrailingComma: true,
     });
-    if (errors.length > 0)
-      throw new Error(
-        errors.map((error) => printParseErrorCode(error.error)).join(", "),
+    if (errors.length > 0) {
+      throwProfileConfigError(
+        configPath,
+        `JSONC parse error: ${errors
+          .map((error) => printParseErrorCode(error.error))
+          .join(", ")}`,
       );
+    }
+
     const validationError = Value.Errors(profileConfigFileSchema, parsed)[0];
-    if (validationError)
-      throw new Error(
-        `${validationError.instancePath || "/"}: ${validationError.message}`,
+    if (validationError) {
+      throwProfileConfigError(
+        configPath,
+        `schema validation failed at ${validationError.instancePath || "/"}: ${validationError.message}`,
       );
+    }
+
     const profileFile = parsed as ProfileConfigFile;
 
     const profiles: Record<string, ProfilePolicy> = {
@@ -56,22 +79,27 @@ export function loadProfileConfig(
     const resolveProfile = (name: string): ProfilePolicy => {
       if (profiles[name]) return profiles[name];
       const definition = profileFile.profiles[name];
-      if (!definition) throw new Error(`unknown profile '${name}'`);
-      if (resolving.has(name))
-        throw new Error(`cyclic profile inheritance at '${name}'`);
+      if (!definition) {
+        throwProfileConfigError(
+          configPath,
+          `/profiles/${name}/extends: unknown inherited profile '${name}'`,
+        );
+      }
+      if (resolving.has(name)) {
+        throwProfileConfigError(
+          configPath,
+          `/profiles/${name}/extends: cyclic profile inheritance detected`,
+        );
+      }
       resolving.add(name);
 
       const { extends: inheritedProfile, ...override } = definition;
       if (inheritedProfile) {
-        // JSON Schema represents non-empty tuples as arrays. The schema's
-        // minItems constraints have already validated these values.
         profiles[name] = extendProfile(
           resolveProfile(inheritedProfile),
-          override as Parameters<typeof extendProfile>[1],
+          override,
         );
       } else {
-        // Fully custom profiles must satisfy ProfilePolicy during the final
-        // assertPolicyConfig call below.
         profiles[name] = override as ProfilePolicy;
       }
       resolving.delete(name);
@@ -84,12 +112,20 @@ export function loadProfileConfig(
       defaultProfile: profileFile.defaultProfile ?? fallback.defaultProfile,
       profiles,
     };
-    assertPolicyConfig(config);
+    try {
+      assertPolicyConfig(config);
+    } catch (error) {
+      throwProfileConfigError(
+        configPath,
+        error instanceof Error ? error.message : String(error),
+      );
+    }
     return config;
   } catch (error) {
-    console.warn(
-      `pi-permissions: ignoring invalid profile config '${configPath}': ${error instanceof Error ? error.message : String(error)}`,
+    if (error instanceof ProfileConfigLoadError) throw error;
+    throwProfileConfigError(
+      configPath,
+      `failed to read profile config: ${error instanceof Error ? error.message : String(error)}`,
     );
-    return fallback;
   }
 }

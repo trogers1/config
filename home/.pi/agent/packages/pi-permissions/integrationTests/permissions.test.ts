@@ -1,16 +1,18 @@
-import { homedir } from "node:os";
+import fs from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import {
+import permissionsExtension, {
   decideBash,
+  decideCustomTool,
   extractShellCommands,
   gateBash,
   matchesGlobPattern,
   splitShellCommands,
 } from "../extensions/permissions";
 import { policyConfig } from "../modules/policy";
-import type { ProfilePolicy } from "../modules/policyHelpers";
+import type { CustomToolRule, ProfilePolicy } from "../modules/policyHelpers";
 
 const parserPolicy = {
   tools: {
@@ -26,7 +28,12 @@ const parserPolicy = {
       { pattern: "printf *", decision: "allow" },
     ],
   },
-  bashPathReferences: [
+  readPaths: [
+    { pattern: "*", decision: "allow" },
+    { pattern: "..", decision: "ask" },
+    { pattern: "../**", decision: "ask" },
+  ],
+  writePaths: [
     { pattern: "*", decision: "allow" },
     { pattern: "..", decision: "ask" },
     { pattern: "../**", decision: "ask" },
@@ -43,6 +50,49 @@ function context(cwd: string, confirm = true) {
       setWorkingVisible: vi.fn(),
     },
   } as unknown as ExtensionContext;
+}
+
+function nonInteractiveContext(cwd: string) {
+  return {
+    cwd,
+    hasUI: false,
+    ui: {
+      setStatus: vi.fn(),
+      notify: vi.fn(),
+      confirm: vi.fn(),
+    },
+    sessionManager: {
+      getEntries: () => [],
+    },
+  } as unknown as ExtensionContext;
+}
+
+function createExtensionHarness() {
+  const handlers = new Map<
+    string,
+    (event: unknown, ctx: ExtensionContext) => unknown
+  >();
+  const commands = new Map<
+    string,
+    { handler?: (args: string, ctx: ExtensionContext) => unknown }
+  >();
+  const api = {
+    on(
+      event: string,
+      handler: (event: unknown, ctx: ExtensionContext) => unknown,
+    ) {
+      handlers.set(event, handler);
+    },
+    registerCommand(
+      name: string,
+      command: { handler?: (args: string, ctx: ExtensionContext) => unknown },
+    ) {
+      commands.set(name, command);
+    },
+    appendEntry: vi.fn(),
+  } as unknown as Parameters<typeof permissionsExtension>[0];
+
+  return { api, handlers, commands };
 }
 
 describe("shell policy parser", () => {
@@ -75,6 +125,23 @@ describe("shell policy parser", () => {
         (command) => command === "git checkout inert",
       ),
     ).toEqual([]);
+  });
+
+  it("fails closed when unbash reports a parse error", async () => {
+    const ctx = context(process.cwd(), false);
+    const result = await gateBash(
+      "git status 'unterminated",
+      process.cwd(),
+      ctx,
+      parserPolicy,
+    );
+
+    expect(result).toMatchObject({ block: true });
+    expect(result?.reason).toContain("could not be classified completely");
+    expect(vi.mocked(ctx.ui.confirm)).toHaveBeenCalledWith(
+      "Allow Bash command with parse errors?",
+      expect.stringContaining("unterminated"),
+    );
   });
 
   it("denies a compound command when any parsed segment is denied", async () => {
@@ -139,22 +206,45 @@ describe("shell policy parser", () => {
   });
 });
 
-describe("default profile bash policy", () => {
-  it("denies the symlinked Pi package directory with steering to local source", async () => {
-    const result = await gateBash(
-      `find ${path.join(homedir(), ".pi", "agent", "packages")} -type f`,
-      process.cwd(),
-      context(process.cwd()),
-      policyConfig.profiles.default,
-    );
+describe("custom tool policy", () => {
+  const rules: CustomToolRule[] = [
+    { decision: "ask" },
+    {
+      decision: "deny",
+      match: { environment: "production", "metadata.team": "platform-*" },
+      guidance: "Production deployments require approval.",
+    },
+    {
+      decision: "allow",
+      match: { environment: "staging" },
+    },
+  ];
 
-    expect(result).toMatchObject({ block: true });
-    expect(result?.reason).toContain(
-      "symlinks to the local configuration checkout",
+  it("uses property matches and lets later matching rules win", () => {
+    expect(
+      decideCustomTool(
+        { environment: "production", metadata: { team: "platform-api" } },
+        rules,
+      ),
+    ).toMatchObject({
+      decision: "deny",
+      rule: { guidance: "Production deployments require approval." },
+    });
+    expect(decideCustomTool({ environment: "staging" }, rules).decision).toBe(
+      "allow",
     );
-    expect(result?.reason).toContain("@home/.pi/agent/");
   });
 
+  it("falls back to ask when no custom tool rule matches", () => {
+    expect(
+      decideCustomTool({ action: "inspect" }, [
+        { decision: "deny", match: { action: "delete" } },
+      ]).decision,
+    ).toBe("ask");
+  });
+});
+
+describe("default profile bash policy", () => {
   it.each(["default", "read-only"] as const)(
     "allows Pi documentation outside the startup directory in the %s profile",
     async (profile) => {
@@ -208,6 +298,124 @@ describe("default profile bash policy", () => {
     },
   );
 
+  it("gates basename, dynamic, and Git object operands under restrictive write paths", async () => {
+    const restrictivePolicy = structuredClone(policyConfig.profiles.default);
+    restrictivePolicy.writePaths = [
+      { pattern: "**", decision: "deny" },
+      { pattern: "modules/**", decision: "allow" },
+      { pattern: "allowed", decision: "allow" },
+      { pattern: "allowed/**", decision: "allow" },
+      { pattern: "startup-file", decision: "allow" },
+    ];
+    const ctx = context(process.cwd(), false);
+
+    await expect(
+      gateBash(
+        "rg needle modules/allowed.ts",
+        process.cwd(),
+        ctx,
+        restrictivePolicy,
+      ),
+    ).resolves.toBeUndefined();
+    await expect(
+      gateBash(
+        "rg --glob 'modules/**' needle modules/allowed.ts",
+        process.cwd(),
+        ctx,
+        restrictivePolicy,
+      ),
+    ).resolves.toBeUndefined();
+
+    for (const command of [
+      "rg needle package.json",
+      "rg --ignore-file=../blocked needle modules/allowed.ts",
+      "rg --file=../blocked needle modules/allowed.ts",
+      "rg -f../blocked needle modules/allowed.ts",
+      "find modules -fprint ../blocked",
+      "cat credentials.txt",
+      "git diff package.json other.json",
+      "git blame private.txt",
+      "git show path:name",
+      "git diff --no-index ./allowed ../blocked:name",
+      "git log -- path:name",
+      "git blame -- path:name",
+      "true < input.json",
+      'true < "$INPUT"',
+      'git diff --no-index "$LEFT" "$RIGHT"',
+      'git log > "$OUTPUT"',
+    ]) {
+      await expect(
+        gateBash(command, process.cwd(), ctx, restrictivePolicy),
+        command,
+      ).resolves.toMatchObject({ block: true });
+    }
+
+    await expect(
+      gateBash(
+        "git show HEAD~3:src/example.ts",
+        process.cwd(),
+        ctx,
+        restrictivePolicy,
+      ),
+    ).resolves.toBeUndefined();
+    await expect(
+      gateBash("git show HEAD", process.cwd(), ctx, restrictivePolicy),
+    ).resolves.toBeUndefined();
+    await expect(
+      gateBash("git rev-parse HEAD~3", process.cwd(), ctx, restrictivePolicy),
+    ).resolves.toBeUndefined();
+  });
+
+  it("preserves cwd for subshells and blocks conditional or dynamic cwd control flow", async () => {
+    const restrictivePolicy = structuredClone(policyConfig.profiles.default);
+    restrictivePolicy.writePaths = [
+      { pattern: "*", decision: "deny" },
+      { pattern: "allowed", decision: "allow" },
+      { pattern: "allowed/file", decision: "allow" },
+      { pattern: "first", decision: "allow" },
+      { pattern: "first/**", decision: "allow" },
+      { pattern: "second", decision: "allow" },
+      { pattern: "second/**", decision: "allow" },
+      { pattern: "startup-file", decision: "allow" },
+    ];
+
+    await expect(
+      gateBash(
+        "cd allowed; cat ./file",
+        process.cwd(),
+        context(process.cwd()),
+        restrictivePolicy,
+      ),
+    ).resolves.toBeUndefined();
+
+    await expect(
+      gateBash(
+        "(cd allowed; cat ./file); cat ./startup-file",
+        process.cwd(),
+        context(process.cwd()),
+        restrictivePolicy,
+      ),
+    ).resolves.toBeUndefined();
+
+    await expect(
+      gateBash(
+        "cd first || cd second; cat ./startup-file",
+        process.cwd(),
+        nonInteractiveContext(process.cwd()),
+        restrictivePolicy,
+      ),
+    ).resolves.toMatchObject({ block: true });
+
+    await expect(
+      gateBash(
+        'cd "$TARGET"; cat ./startup-file',
+        process.cwd(),
+        nonInteractiveContext(process.cwd()),
+        restrictivePolicy,
+      ),
+    ).resolves.toMatchObject({ block: true });
+  });
+
   it("does not allow arbitrary node_modules directories", async () => {
     const ctx = context(process.cwd(), false);
     const unrelatedDependency = path.join(
@@ -246,5 +454,88 @@ describe("default profile bash policy", () => {
     "git tag --delete v1.0.0",
   ])("denies %s", (command) => {
     expect(decideBash(command, policyConfig.profiles.default)).toBe("deny");
+  });
+});
+
+describe("extension harness custom tool inheritance", () => {
+  it("prompts for an inherited empty custom tool and blocks without a UI", async () => {
+    const configPath = path.join(
+      fs.mkdtempSync(path.join(tmpdir(), "pi-permissions-")),
+      "profiles.jsonc",
+    );
+    fs.writeFileSync(
+      configPath,
+      `{
+        "defaultProfile": "default",
+        "profiles": {
+          "deployment-base": {
+            "extends": "default",
+            "tools": {
+              "deploy": [
+                { "decision": "deny", "match": { "environment": "production" } }
+              ]
+            }
+          },
+          "deployment-child": {
+            "extends": "deployment-base",
+            "tools": {
+              "deploy": []
+            }
+          }
+        }
+      }`,
+    );
+
+    const previousConfigPath = process.env.PI_PERMISSIONS_PROFILE_CONFIG;
+    const previousSubagentProfile = process.env.PI_SUBAGENT_PROFILE;
+    process.env.PI_PERMISSIONS_PROFILE_CONFIG = configPath;
+    process.env.PI_SUBAGENT_PROFILE = "deployment-child";
+
+    try {
+      const { api, handlers } = createExtensionHarness();
+      permissionsExtension(api);
+
+      const sessionStart = handlers.get("session_start");
+      expect(sessionStart).toBeDefined();
+      await sessionStart?.({ type: "session_start" }, {
+        cwd: process.cwd(),
+        hasUI: false,
+        ui: {
+          setStatus: vi.fn(),
+          notify: vi.fn(),
+          confirm: vi.fn(),
+        },
+        sessionManager: { getEntries: () => [] },
+      } as unknown as ExtensionContext);
+
+      const toolCall = handlers.get("tool_call");
+      expect(toolCall).toBeDefined();
+      const ctx = nonInteractiveContext(process.cwd());
+      const result = await toolCall?.(
+        {
+          type: "tool_call",
+          toolName: "deploy",
+          input: { environment: "production" },
+        },
+        ctx,
+      );
+
+      expect(result).toMatchObject({ block: true });
+      expect(String((result as { reason?: string }).reason)).toContain(
+        "deploy was not approved",
+      );
+      expect(vi.mocked(ctx.ui.confirm)).not.toHaveBeenCalled();
+    } finally {
+      if (previousConfigPath === undefined) {
+        delete process.env.PI_PERMISSIONS_PROFILE_CONFIG;
+      } else {
+        process.env.PI_PERMISSIONS_PROFILE_CONFIG = previousConfigPath;
+      }
+      if (previousSubagentProfile === undefined) {
+        delete process.env.PI_SUBAGENT_PROFILE;
+      } else {
+        process.env.PI_SUBAGENT_PROFILE = previousSubagentProfile;
+      }
+    }
   });
 });

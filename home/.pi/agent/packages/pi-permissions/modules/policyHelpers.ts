@@ -1,88 +1,120 @@
-import { Type } from "typebox";
+import { Type, type Static, type TSchema } from "typebox";
 import { Value } from "typebox/value";
 
-export type Decision = "allow" | "ask" | "deny";
-
-export type Rule = {
-  pattern: string;
-  decision: Decision;
-  /** Instructions automatically returned to the model when this rule denies a call. */
-  guidance?: string;
-  /** Concrete alternatives automatically returned to the model when this rule denies a call. */
-  alternatives?: string[];
-};
-
-export type ProfilePolicy = {
-  promptFile?: string | null;
-  color?: ProfileColor;
-  emoji?: string;
-  /** Directories that automatically select this profile, including descendants. */
-  directories?: readonly string[];
-  tools: Record<string, Rule[]>;
-  /**
-   * Gates path-looking tokens inside bash commands (reach: which parts of the
-   * filesystem bash may touch). protectedPathPatterns marks sensitive paths
-   * across every tool instead.
-   */
-  bashPathReferences: [Rule, ...Rule[]];
-  /** Glob patterns protected from both disclosure and mutation. */
-  protectedPathPatterns?: readonly string[];
-  /** Narrow allow patterns applied after protectedPathPatterns. */
-  protectedPathExceptions?: readonly string[];
-  bashOutputRedirections?: [Rule, ...Rule[]];
-};
-
-export type PolicyConfig<Names extends string = string> = {
-  defaultProfile: Names;
-  profiles: Record<Names, ProfilePolicy>;
-};
-
-export type ProfileColor =
-  "black" | "red" | "green" | "yellow" | "blue" | "magenta" | "cyan" | "white";
-
+const readPathContextSchema = Type.Union([
+  Type.Literal("read"),
+  Type.Literal("grep"),
+  Type.Literal("find"),
+  Type.Literal("ls"),
+]);
+const writePathContextSchema = Type.Union([
+  Type.Literal("edit"),
+  Type.Literal("write"),
+  Type.Literal("bash"),
+]);
 const decisionSchema = Type.Union([
   Type.Literal("allow"),
   Type.Literal("ask"),
   Type.Literal("deny"),
 ]);
+const profileColorSchema = Type.Union([
+  Type.Literal("black"),
+  Type.Literal("red"),
+  Type.Literal("green"),
+  Type.Literal("yellow"),
+  Type.Literal("blue"),
+  Type.Literal("magenta"),
+  Type.Literal("cyan"),
+  Type.Literal("white"),
+]);
+
+const decisionRuleProperties = {
+  decision: decisionSchema,
+  guidance: Type.Optional(Type.String()),
+  alternatives: Type.Optional(Type.Array(Type.String())),
+};
 
 const ruleSchema = Type.Object(
   {
     pattern: Type.String(),
-    decision: decisionSchema,
-    guidance: Type.Optional(Type.String()),
-    alternatives: Type.Optional(Type.Array(Type.String())),
+    ...decisionRuleProperties,
   },
   { additionalProperties: false },
 );
 
-const profileSchema = Type.Object(
+const customToolMatchSchema = Type.Unsafe<Record<string, string>>({
+  type: "object",
+  patternProperties: {
+    "^.+$": { type: "string" },
+  },
+  additionalProperties: false,
+  minProperties: 1,
+});
+
+const customToolRuleSchema = Type.Object(
   {
-    promptFile: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-    color: Type.Optional(
-      Type.Union([
-        Type.Literal("black"),
-        Type.Literal("red"),
-        Type.Literal("green"),
-        Type.Literal("yellow"),
-        Type.Literal("blue"),
-        Type.Literal("magenta"),
-        Type.Literal("cyan"),
-        Type.Literal("white"),
-      ]),
-    ),
-    emoji: Type.Optional(Type.String()),
-    directories: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
-    tools: Type.Record(Type.String(), Type.Array(ruleSchema)),
-    bashPathReferences: Type.Array(ruleSchema, { minItems: 1 }),
-    protectedPathPatterns: Type.Optional(Type.Array(Type.String())),
-    protectedPathExceptions: Type.Optional(Type.Array(Type.String())),
-    bashOutputRedirections: Type.Optional(
-      Type.Array(ruleSchema, { minItems: 1 }),
-    ),
+    ...decisionRuleProperties,
+    match: Type.Optional(customToolMatchSchema),
   },
   { additionalProperties: false },
 );
+
+type ToolPolicies = {
+  bash?: Static<typeof ruleSchema>[];
+  [toolName: string]:
+    | Static<typeof ruleSchema>[]
+    | Static<typeof customToolRuleSchema>[]
+    | undefined;
+};
+
+const toolsSchema = Type.Unsafe<ToolPolicies>({
+  type: "object",
+  properties: {
+    bash: { type: "array", items: ruleSchema },
+  },
+  patternProperties: {
+    "^(?!(?:bash|read|grep|find|ls|edit|write)$).+$": {
+      type: "array",
+      items: customToolRuleSchema,
+    },
+  },
+  additionalProperties: false,
+});
+
+const pathRuleSchema = <ContextSchema extends TSchema>(
+  contextSchema: ContextSchema,
+) =>
+  Type.Object(
+    {
+      pattern: Type.String(),
+      ...decisionRuleProperties,
+      contexts: Type.Optional(
+        Type.Array(contextSchema, { minItems: 1, uniqueItems: true }),
+      ),
+    },
+    { additionalProperties: false },
+  );
+
+const readPathRuleSchema = pathRuleSchema(readPathContextSchema);
+const writePathRuleSchema = pathRuleSchema(writePathContextSchema);
+
+const profileProperties = {
+  promptFile: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+  color: Type.Optional(profileColorSchema),
+  emoji: Type.Optional(Type.String()),
+  directories: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+  // Command and custom-tool policy remain separate from path policy.
+  // Dedicated path tools are governed exclusively by readPaths/writePaths.
+  tools: toolsSchema,
+  readPaths: Type.Array(readPathRuleSchema, { minItems: 1 }),
+  writePaths: Type.Array(writePathRuleSchema, { minItems: 1 }),
+  protectedPathPatterns: Type.Optional(Type.Array(Type.String())),
+  protectedPathExceptions: Type.Optional(Type.Array(Type.String())),
+};
+
+const profileSchema = Type.Object(profileProperties, {
+  additionalProperties: false,
+});
 
 const policyConfigSchema = Type.Object(
   {
@@ -94,32 +126,41 @@ const policyConfigSchema = Type.Object(
 
 const profileConfigProfileSchema = Type.Object(
   {
+    ...profileProperties,
     extends: Type.Optional(Type.String()),
-    promptFile: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-    color: Type.Optional(
-      Type.Union([
-        Type.Literal("black"),
-        Type.Literal("red"),
-        Type.Literal("green"),
-        Type.Literal("yellow"),
-        Type.Literal("blue"),
-        Type.Literal("magenta"),
-        Type.Literal("cyan"),
-        Type.Literal("white"),
-      ]),
-    ),
-    emoji: Type.Optional(Type.String()),
-    directories: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
-    tools: Type.Optional(Type.Record(Type.String(), Type.Array(ruleSchema))),
-    bashPathReferences: Type.Optional(Type.Array(ruleSchema, { minItems: 1 })),
-    protectedPathPatterns: Type.Optional(Type.Array(Type.String())),
-    protectedPathExceptions: Type.Optional(Type.Array(Type.String())),
-    bashOutputRedirections: Type.Optional(
-      Type.Array(ruleSchema, { minItems: 1 }),
-    ),
+    tools: Type.Optional(profileProperties.tools),
+    readPaths: Type.Optional(profileProperties.readPaths),
+    writePaths: Type.Optional(profileProperties.writePaths),
   },
   { additionalProperties: false },
 );
+
+export type Decision = Static<typeof decisionSchema>;
+export type Rule = Static<typeof ruleSchema>;
+export type CustomToolRule = Static<typeof customToolRuleSchema>;
+export type ToolPolicy = Static<typeof toolsSchema>;
+export type ReadPathContext = Static<typeof readPathContextSchema>;
+export type WritePathContext = Static<typeof writePathContextSchema>;
+export type PathContext = ReadPathContext | WritePathContext;
+export const readPathContexts: readonly ReadPathContext[] =
+  readPathContextSchema.anyOf.map((schema) => schema.const);
+export const writePathContexts: readonly WritePathContext[] =
+  writePathContextSchema.anyOf.map((schema) => schema.const);
+export type ReadPathRule = Static<typeof readPathRuleSchema>;
+export type WritePathRule = Static<typeof writePathRuleSchema>;
+export type PathRule = ReadPathRule | WritePathRule;
+export type ProfileColor = Static<typeof profileColorSchema>;
+export type ProfilePolicy = Static<typeof profileSchema>;
+type PolicyConfigShape = Static<typeof policyConfigSchema>;
+export type PolicyConfig<Names extends string = string> = Omit<
+  PolicyConfigShape,
+  "defaultProfile" | "profiles"
+> & {
+  defaultProfile: Names;
+  profiles: Record<Names, ProfilePolicy>;
+};
+export type ProfileConfigProfile = Static<typeof profileConfigProfileSchema>;
+export type ProfilePolicyOverride = Omit<ProfileConfigProfile, "extends">;
 
 /** JSON Schema source of truth for ~/.pi/agent/permissions/profiles.jsonc. */
 export const profileConfigFileSchema = Type.Object(
@@ -134,6 +175,18 @@ export const profileConfigFileSchema = Type.Object(
     additionalProperties: false,
   },
 );
+export type ProfileConfigFile = Static<typeof profileConfigFileSchema>;
+
+export function assertProfilePolicy(
+  policy: unknown,
+): asserts policy is ProfilePolicy {
+  const validationError = Value.Errors(profileSchema, policy)[0];
+  if (validationError) {
+    throw new Error(
+      `Invalid pi-permissions profile at ${validationError.instancePath || "/"}: ${validationError.message}`,
+    );
+  }
+}
 
 export function assertPolicyConfig(
   config: unknown,
@@ -159,96 +212,56 @@ export function definePolicyConfig<
   defaultProfile: keyof Profiles & string;
   profiles: Profiles;
 }): PolicyConfig<keyof Profiles & string> {
+  assertPolicyConfig(config);
   return config;
 }
 
 export function withProtectedPathPatterns(
   policy: ProfilePolicy,
 ): ProfilePolicy {
-  if (
-    !policy.protectedPathPatterns ||
-    policy.protectedPathPatterns.length === 0
-  )
-    return policy;
-
-  const denyRules: Rule[] = policy.protectedPathPatterns.map((pattern) => ({
-    pattern,
-    decision: "deny",
-    guidance:
-      "This path is protected from disclosure and mutation by the active profile.",
-    alternatives: [
-      "Use an explicitly approved file instead",
-      "Ask the user for a redacted or safe-to-share value",
-    ],
-  }));
-  const tools = structuredClone(policy.tools);
-  // Discovery can disclose sensitive names, while edit/write can damage secret
-  // material. Keep every path surface aligned with Bash path references.
-  for (const tool of ["read", "grep", "find", "ls", "edit", "write"]) {
-    const baseRules = tools[tool];
-    if (baseRules)
-      tools[tool] = [
-        ...baseRules,
-        ...denyRules,
-        ...protectedExceptionRules(policy, baseRules),
-      ];
-  }
-
-  return {
-    ...policy,
-    tools,
-    bashPathReferences: [
-      ...policy.bashPathReferences,
-      ...denyRules,
-      ...protectedExceptionRules(policy, policy.bashPathReferences),
-    ],
-  };
-}
-
-function protectedExceptionRules(
-  policy: ProfilePolicy,
-  baseRules: Rule[],
-): Rule[] {
-  // An exception removes only the generated protection. It must not weaken the
-  // profile's ordinary boundary (for example, read-only edit remains denied).
-  let fallbackDecision: Decision = "deny";
-  for (let index = baseRules.length - 1; index >= 0; index--) {
-    const rule = baseRules[index];
-    if (rule.pattern === "*") {
-      fallbackDecision = rule.decision;
-      break;
-    }
-  }
-  return (policy.protectedPathExceptions ?? []).map((pattern) => ({
-    pattern,
-    decision: fallbackDecision,
-  }));
+  // Protected-path semantics are now layered at evaluation time so the
+  // ordinary ordered decision remains intact.
+  return policy;
 }
 
 export function extendProfile(
   base: ProfilePolicy,
-  override: Partial<Omit<ProfilePolicy, "tools">> & {
-    tools?: Record<string, Rule[]>;
-  },
+  override: ProfilePolicyOverride,
 ): ProfilePolicy {
-  const mergedTools: Record<string, Rule[]> = structuredClone(base.tools);
+  const mergedTools: ProfilePolicy["tools"] = structuredClone(base.tools);
 
   // Append override rules (later rules win by position).
-  for (const [tool, rules] of Object.entries(override.tools ?? {})) {
-    if (!rules) continue;
-    if (rules.length === 0) {
-      delete mergedTools[tool];
-    } else {
-      mergedTools[tool] = [...(mergedTools[tool] ?? []), ...rules];
+  for (const [toolName, overrideRules] of Object.entries(
+    override.tools ?? {},
+  )) {
+    if (!overrideRules) continue;
+    if (overrideRules.length === 0) {
+      if (toolName === "bash") {
+        delete mergedTools[toolName];
+      } else {
+        mergedTools[toolName] = [];
+      }
+      continue;
     }
+    if (toolName === "bash") {
+      mergedTools.bash = [
+        ...(mergedTools.bash ?? []),
+        ...(overrideRules as Rule[]),
+      ];
+      continue;
+    }
+    const inheritedRules = (mergedTools[toolName] ?? []) as CustomToolRule[];
+    mergedTools[toolName] = [
+      ...inheritedRules,
+      ...(overrideRules as CustomToolRule[]),
+    ];
   }
 
   return {
     ...base,
     ...override,
     tools: mergedTools,
-    bashPathReferences: override.bashPathReferences ?? [
-      ...base.bashPathReferences,
-    ],
+    readPaths: [...base.readPaths, ...(override.readPaths ?? [])],
+    writePaths: [...base.writePaths, ...(override.writePaths ?? [])],
   };
 }

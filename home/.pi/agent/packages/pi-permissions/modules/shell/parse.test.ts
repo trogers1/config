@@ -7,7 +7,6 @@ import {
   splitShellCommands,
 } from "./parse";
 import {
-  decideBashOutputRedirections,
   decideBashPathReferences,
   displayPath,
   evaluatePathByPattern,
@@ -49,12 +48,12 @@ describe("shell parser", () => {
 describe("shell path policy", () => {
   const policy = {
     tools: {},
-    bashPathReferences: [
+    readPaths: [
       { pattern: "*", decision: "allow" },
       { pattern: "**/.env*", decision: "deny" },
     ],
     protectedPathPatterns: ["**/.env*"],
-    bashOutputRedirections: [
+    writePaths: [
       { pattern: "**", decision: "deny" },
       { pattern: "/tmp/**", decision: "allow" },
     ],
@@ -73,8 +72,9 @@ describe("shell path policy", () => {
     const decision: PathPolicyDecision = evaluatePathByPattern(
       protectedPath,
       root,
-      policy.bashPathReferences,
+      policy.readPaths,
       "allow",
+      "read",
     );
     const policyDecision: PolicyDecision = decision;
 
@@ -84,21 +84,81 @@ describe("shell path policy", () => {
     expect(
       decideBashPathReferences(["cat .env"], root, root, policy),
     ).toMatchObject({ decision: "deny", path: `${root}/.env` });
+    expect(
+      evaluatePathByPattern(
+        `${root}/docs/file.md`,
+        root,
+        policy.readPaths,
+        "allow",
+        "read",
+      ).decision,
+    ).toBe("allow");
+    expect(
+      decideBashPathReferences(["cat docs/file.md"], root, root, policy),
+    ).toMatchObject({ decision: "deny", path: `${root}/docs/file.md` });
   });
 
-  it("evaluates output redirection targets", () => {
+  it("applies path rules only to their selected tool contexts", () => {
+    const root = "/workspace/project";
+    const target = `${root}/generated/result.txt`;
+    const rules = [
+      { pattern: "**", decision: "allow" },
+      {
+        pattern: "generated/**",
+        decision: "deny",
+        contexts: ["grep"],
+      },
+    ] satisfies ProfilePolicy["readPaths"];
+
+    expect(
+      evaluatePathByPattern(target, root, rules, "allow", "read").decision,
+    ).toBe("allow");
+    expect(
+      evaluatePathByPattern(target, root, rules, "allow", "grep").decision,
+    ).toBe("deny");
+  });
+
+  it("uses AST command semantics for Git paths and repository objects", () => {
     const root = "/workspace/project";
 
     expect(
-      decideBashOutputRedirections(
-        ["git log > /tmp/history"],
+      decideBashPathReferences(
+        ["git -C /tmp/repository show HEAD~3:src/example.ts"],
         root,
         root,
         policy,
       ),
     ).toBeUndefined();
     expect(
-      decideBashOutputRedirections(["git log > history"], root, root, policy),
+      decideBashPathReferences(
+        ["git -C ../repository show HEAD~3:src/example.ts"],
+        root,
+        root,
+        policy,
+      ),
+    ).toMatchObject({
+      decision: "deny",
+      path: "/workspace/repository",
+    });
+  });
+
+  it("evaluates input and output redirection targets", () => {
+    const root = "/workspace/project";
+
+    expect(
+      decideBashPathReferences(["git log > /tmp/history"], root, root, policy),
+    ).toBeUndefined();
+    expect(
+      decideBashPathReferences(["git log > history"], root, root, policy),
     ).toMatchObject({ decision: "deny", path: `${root}/history` });
+    expect(
+      decideBashPathReferences(["node < ./input.json"], root, root, policy),
+    ).toMatchObject({ decision: "deny", path: `${root}/input.json` });
+    expect(
+      decideBashPathReferences(['node > "$OUTPUT"'], root, root, policy),
+    ).toMatchObject({
+      decision: "ask",
+      path: "$OUTPUT",
+    });
   });
 });

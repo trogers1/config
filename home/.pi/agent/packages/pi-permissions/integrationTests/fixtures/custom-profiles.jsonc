@@ -1,0 +1,22 @@
+{
+  "$schema": "https://earendil.works/pi-permissions/profiles.schema.json",
+  "profiles": {
+    "performance-review": {
+      "extends": "default",
+      "directories": ["/workspace"],
+      "tools": {
+        "bash": [
+          { "pattern": "glab *", "decision": "allow" },
+          { "pattern": "gh *", "decision": "allow" },
+        ],
+      },
+    },
+    "address-comments": {
+      "extends": "default",
+      "directories": ["/workspace"],
+      "tools": {
+        "bash": [{ "pattern": "git commit -m *", "decision": "allow" }],
+      },
+    },
+  },
+}
