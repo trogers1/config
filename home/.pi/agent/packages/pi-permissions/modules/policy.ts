@@ -166,7 +166,7 @@ export const baseProfile: ProfilePolicy = {
         ],
       },
       {
-        pattern: "*/node_modules/prettier/* *",
+        pattern: "**/node_modules/.bin/prettier *",
         decision: "deny",
         guidance:
           "Do not invoke Prettier directly. Use the repository's configured formatter script or make targeted edits with Pi's edit tool.",
@@ -708,6 +708,62 @@ const readOnlyProfile: ProfilePolicy = {
   ],
 };
 
+// ─── Test-focused profiles ───────────────────────────────────────────
+
+const testFilePatterns = [
+  "**/test",
+  "**/test/**",
+  "**/tests",
+  "**/tests/**",
+  "**/__tests__",
+  "**/__tests__/**",
+  "**/integrationTests",
+  "**/integrationTests/**",
+  "**/*.test.*",
+  "**/*.spec.*",
+  "**/*_test.*",
+  "**/*.cy.*",
+] as const;
+
+const testsDisallowedProfile = extendProfile(baseProfile, {
+  color: "yellow",
+  emoji: "🚫",
+  promptFile: "prompts/tests-disallowed.md",
+  // Protected patterns also make grep/ripgrep exclude tests during broad
+  // searches whose requested path is the repository root.
+  protectedPathPatterns: [...defaultProtectedPathPatterns, ...testFilePatterns],
+  readPaths: testFilePatterns.map((pattern) => ({
+    pattern,
+    decision: "deny" as const,
+    guidance:
+      "You are implementing only. Do not inspect test files; adjust the system from production code and test results instead.",
+  })),
+  writePaths: testFilePatterns.map((pattern) => ({
+    pattern,
+    decision: "deny" as const,
+    guidance:
+      "You are implementing only. Do not alter tests; adjust the system under test instead.",
+  })),
+});
+
+const testsOnlyProfile = extendProfile(baseProfile, {
+  color: "cyan",
+  emoji: "🧪",
+  promptFile: "prompts/tests-only.md",
+  writePaths: [
+    {
+      pattern: "**",
+      decision: "deny",
+      guidance:
+        "This profile may only edit test files. Read the implementation, then make the requested change in tests.",
+    },
+    ...testFilePatterns.map((pattern) => ({
+      pattern,
+      decision: "allow" as const,
+    })),
+  ],
+});
+
 // ─── Exported policy config ───────────────────────────────────────────
 
 const configuredPolicy = definePolicyConfig({
@@ -717,6 +773,8 @@ const configuredPolicy = definePolicyConfig({
     default: baseProfile,
     worker: workerProfile,
     "read-only": readOnlyProfile,
+    "tests-disallowed": testsDisallowedProfile,
+    "tests-only": testsOnlyProfile,
 
     "performance-review": extendProfile(baseProfile, {
       color: "red",
