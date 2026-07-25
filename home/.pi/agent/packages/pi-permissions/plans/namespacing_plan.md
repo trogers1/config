@@ -36,9 +36,9 @@ Built-ins are referenced by their canonical names everywhere:
   "defaultProfile": "client-work",
   "profiles": {
     "client-work": {
-      "extends": "builtin:default"
-    }
-  }
+      "extends": "builtin:default",
+    },
+  },
 }
 ```
 
@@ -305,9 +305,9 @@ Suggested example:
   "profiles": {
     "client-work": {
       "extends": "builtin:default",
-      "directories": ["~/Code/client"]
-    }
-  }
+      "directories": ["~/Code/client"],
+    },
+  },
 }
 ```
 

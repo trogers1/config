@@ -129,51 +129,16 @@ const pathToolNameSet: ReadonlySet<string> = new Set(pathToolNames);
 const readToolNameSet: ReadonlySet<string> = new Set(readToolNames);
 const writeToolNameSet: ReadonlySet<string> = new Set(writeToolNames);
 
-let policyConfig: PolicyConfig = genericPolicyConfig;
-type ProfileName = string;
 type PathToolName = (typeof pathToolNames)[number];
 
 function typedKeys<T extends object>(value: T): Array<keyof T & string> {
   return Object.keys(value) as Array<keyof T & string>;
 }
 
-/**
- * Select the most-specific profile directory that contains cwd. Later profiles
- * break ties, matching the policy configuration's declaration order.
- */
-function profileForDirectory(cwd: string): ProfileName | undefined {
-  const resolvedCwd = path.resolve(cwd);
-  let match: { profile: ProfileName; length: number } | undefined;
-
-  for (const profile of profileNames()) {
-    for (const configuredDirectory of activePolicy(profile).directories ?? []) {
-      const directory = path.resolve(expandHome(configuredDirectory));
-      const relative = path.relative(directory, resolvedCwd);
-      if (relative === ".." || relative.startsWith(`..${path.sep}`)) continue;
-
-      if (!match || directory.length >= match.length) {
-        match = { profile, length: directory.length };
-      }
-    }
-  }
-
-  return match?.profile;
-}
-
 function readStringProperty(value: unknown, key: string): string | undefined {
   if (typeof value !== "object" || value === null) return undefined;
   const property: unknown = Reflect.get(value, key);
   return typeof property === "string" ? property : undefined;
-}
-
-const profileNames = () => typedKeys(policyConfig.profiles);
-
-function isProfileName(value: string): boolean {
-  return value in policyConfig.profiles;
-}
-
-function activePolicy(profile: ProfileName): ProfilePolicy {
-  return policyConfig.profiles[profile];
 }
 
 export default function (pi: ExtensionAPI) {
@@ -196,7 +161,46 @@ export default function (pi: ExtensionAPI) {
     }
   })();
 
-  policyConfig = profileConfigLoad.config;
+  const policyConfig = profileConfigLoad.config;
+  type ProfileName = string;
+
+  const profileNames = () => typedKeys(policyConfig.profiles);
+
+  function profileForDirectory(cwd: string): ProfileName | undefined {
+    const resolvedCwd = path.resolve(cwd);
+    let match: { profile: ProfileName; length: number } | undefined;
+
+    for (const profile of profileNames()) {
+      for (const configuredDirectory of activePolicy(profile).directories ??
+        []) {
+        const directory = path.resolve(expandHome(configuredDirectory));
+        const relative = path.relative(directory, resolvedCwd);
+        if (relative === ".." || relative.startsWith(`..${path.sep}`)) continue;
+
+        if (!match || directory.length >= match.length) {
+          match = { profile, length: directory.length };
+        }
+      }
+    }
+
+    return match?.profile;
+  }
+
+  function isProfileName(value: string): boolean {
+    return value in policyConfig.profiles;
+  }
+
+  function activePolicy(profile: ProfileName): ProfilePolicy {
+    return policyConfig.profiles[profile];
+  }
+
+  function formatProfileStatus(profileName: ProfileName): string {
+    const profile = activePolicy(profileName);
+    const color = profile.color ?? "blue";
+    const emoji = profile.emoji ? `${profile.emoji} ` : "";
+    const colorize = profileColorFormatters[color];
+    return `profile: ${emoji}${colorize(ansi.bold(profileName))}`;
+  }
 
   const startupCwd = path.resolve(process.cwd());
   const subagentProfile = process.env.PI_SUBAGENT_PROFILE?.trim();
@@ -533,8 +537,15 @@ function parseSubagentPermissibleRules(
 function pathAnalysisSegments(command: string): string[] {
   // A plain semicolon list has unconditional, current-shell CWD semantics.
   // Keep structured constructs intact so the AST analyzer can preserve scope
-  // and reject uncertain control flow conservatively.
-  if (command.includes(";") && !/[(){}|&$`]/.test(command)) {
+  // and reject uncertain control flow conservatively. Structured constructs
+  // also use semicolons, so detect their keywords as well as their operators.
+  const structuredShellKeywords =
+    /\b(?:if|then|else|elif|fi|case|esac|for|select|while|until|do|done|function|time|coproc)\b/;
+  if (
+    command.includes(";") &&
+    !/[(){}|&$`]/.test(command) &&
+    !structuredShellKeywords.test(command)
+  ) {
     return splitShellCommands(command);
   }
   return [command];
@@ -719,14 +730,6 @@ function formatDecision(decision: Decision): string {
   if (decision === "allow") return ansi.blue("allow");
   if (decision === "ask") return ansi.yellow("ask");
   return ansi.red("deny");
-}
-
-function formatProfileStatus(profileName: ProfileName): string {
-  const profile = activePolicy(profileName);
-  const color = profile.color ?? "blue";
-  const emoji = profile.emoji ? `${profile.emoji} ` : "";
-  const colorize = profileColorFormatters[color];
-  return `profile: ${emoji}${colorize(ansi.bold(profileName))}`;
 }
 
 async function gateCustomTool(

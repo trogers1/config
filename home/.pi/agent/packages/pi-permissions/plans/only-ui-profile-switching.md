@@ -1,6 +1,5 @@
 I'm worried that agents can circumvent our permissions and guardrails by changing their own profile or by creating subagents with elevated priveleges.
 
-
 Here are thoughts on how to do this:
 
 - profiles should only be change-able via the ui mid-session

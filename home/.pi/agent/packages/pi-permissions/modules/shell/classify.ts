@@ -128,6 +128,15 @@ function classifyArgument(
 ): ClassifiedShellToken {
   const dynamic = isDynamicWord(word);
   const value = dynamic ? word.text : word.value;
+  if (value === "--") {
+    return {
+      kind: "proven-non-path",
+      value,
+      pos: word.pos,
+      end: word.end,
+      command,
+    };
+  }
   return {
     kind: dynamic
       ? "dynamic"
@@ -135,7 +144,7 @@ function classifyArgument(
         ? "proven-non-path"
         : "ambiguous",
     value,
-    dynamicRole: dynamic ? "argument" : undefined,
+    dynamicRole: undefined,
     pos: word.pos,
     end: word.end,
     command,
@@ -311,6 +320,29 @@ function classifyGitArguments(
       const configToken = tokens[index + 1];
       if (configToken?.kind === "ambiguous") {
         configToken.kind = "proven-non-path";
+      }
+      index++;
+      continue;
+    }
+
+    const detachedGitValueOptions = new Set([
+      "--max-count",
+      "--format",
+      "--pretty",
+      "--abbrev",
+      "--since",
+      "--until",
+      "--author",
+      "--grep",
+      "--sort",
+    ]);
+    if (detachedGitValueOptions.has(value)) {
+      tokens[index].kind = "proven-non-path";
+      const optionValue = tokens[index + 1];
+      if (optionValue?.kind === "ambiguous") {
+        optionValue.kind = "proven-non-path";
+      } else if (optionValue?.kind === "dynamic") {
+        optionValue.dynamicRole = "argument";
       }
       index++;
       continue;

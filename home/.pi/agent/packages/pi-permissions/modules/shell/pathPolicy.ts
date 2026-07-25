@@ -239,8 +239,18 @@ function analyzeNode(
         protectedPathExceptions,
         containsCwdMutation(node) ? { ...state, known: false } : state,
       );
-    case "AndOr":
-      if (node.commands.length > 1 && containsCwdMutation(node)) {
+    case "AndOr": {
+      const operators =
+        (node as unknown as { operators?: readonly string[] }).operators ?? [];
+      // `&&` chains run left-to-right only while each command succeeds, so a
+      // static `cd` still determines the cwd of later commands. `||` selects
+      // between mutually exclusive branches, so a cwd change anywhere in the
+      // chain leaves the effective cwd ambiguous.
+      if (
+        node.commands.length > 1 &&
+        operators.some((operator) => operator === "||") &&
+        containsCwdMutation(node)
+      ) {
         return uncertainCwdDecision(state, "conditional CWD");
       }
       if (node.commands.length === 1) {
@@ -253,15 +263,15 @@ function analyzeNode(
           protectedPathExceptions,
         );
       }
-      return analyzeNestedNodes(
+      return analyzeSequentialNodes(
         node.commands,
         state,
         startupCwd,
         activePolicy,
         protectedPathPatterns,
         protectedPathExceptions,
-        { ...state, known: false },
       );
+    }
     case "If":
     case "While":
     case "For":
@@ -357,6 +367,30 @@ function simpleStaticCdTarget(node: Node): string | undefined {
   return "~";
 }
 
+function analyzeSequentialNodes(
+  nodes: readonly Node[],
+  state: CwdState,
+  startupCwd: string,
+  activePolicy: ProfilePolicy,
+  protectedPathPatterns: readonly string[],
+  protectedPathExceptions: readonly string[],
+): { state: CwdState; decision?: DecisionWithPath } {
+  let currentState = { ...state };
+  for (const nested of nodes) {
+    const result = analyzeNode(
+      nested,
+      currentState,
+      startupCwd,
+      activePolicy,
+      protectedPathPatterns,
+      protectedPathExceptions,
+    );
+    currentState = result.state;
+    if (result.decision) return result;
+  }
+  return { state: currentState };
+}
+
 function analyzeNestedNodes(
   nodes: readonly Node[],
   state: CwdState,
@@ -390,17 +424,19 @@ function analyzeUnsupportedNode(
   protectedPathPatterns: readonly string[],
   protectedPathExceptions: readonly string[],
 ): { state: CwdState; decision?: DecisionWithPath } {
+  if (containsCwdMutation(node)) {
+    return uncertainCwdDecision(state, "conditional CWD");
+  }
   const nestedNodes = collectNestedNodes(node);
-  const result = analyzeNestedNodes(
+  return analyzeNestedNodes(
     nestedNodes,
     state,
     startupCwd,
     activePolicy,
     protectedPathPatterns,
     protectedPathExceptions,
-    containsCwdMutation(node) ? { ...state, known: false } : state,
+    state,
   );
-  return result;
 }
 
 function analyzeCommand(
@@ -754,6 +790,18 @@ function globToRegExpSource(pattern: string): string {
   for (let i = 0; i < pattern.length; i++) {
     const char = pattern[i];
     const next = pattern[i + 1];
+    // A trailing "/**" matches the directory itself as well as every
+    // descendant, so the separator and wildcard are optional together.
+    if (
+      char === "/" &&
+      next === "*" &&
+      pattern[i + 2] === "*" &&
+      i + 3 === pattern.length
+    ) {
+      source += "(?:/.*)?";
+      i += 2;
+      continue;
+    }
     if (char === "*" && next === "*") {
       const after = pattern[i + 2];
       if (after === "/") {

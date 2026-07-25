@@ -77,7 +77,7 @@ export function loadProfileConfig(
     const resolving = new Set<string>();
 
     const resolveProfile = (name: string): ProfilePolicy => {
-      if (profiles[name]) return profiles[name];
+      if (profiles[name] && !profileFile.profiles[name]) return profiles[name];
       const definition = profileFile.profiles[name];
       if (!definition) {
         throwProfileConfigError(
