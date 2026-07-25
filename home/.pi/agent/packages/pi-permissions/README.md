@@ -5,7 +5,8 @@ Pi package that mirrors the curated opencode permission posture and adds switcha
 - `default`: normal Pi system prompt with the current curated permissions
 - `worker`: default-like non-interactive subagent policy; rules that normally ask for confirmation deny with guidance instead
 - `read-only`: edit/write tools are only allowed for `./handoff.md` and `./progress.md`; read access is limited to the startup directory tree and `/tmp`; bash is limited to inspection commands, non-destructive git history commands, and output redirection to `/tmp`, `./handoff.md`, or `./progress.md`
-- `socrates`: Socratic coaching prompt with read-only / no-edit permissions
+- `tests-disallowed`: extends `default` for implementation-only work; test files cannot be read or edited, and prompt steering asks the model to fix the system rather than the tests and report tests it believes are incorrect
+- `tests-only`: extends `default` for test-authoring work; non-test files remain readable, but only test files can be edited
 - optional per-profile `color` and `emoji` metadata for the status line
 - explicit deny rules for destructive git operations and protected paths
 - automatic model steering and suggested alternatives for configured deny rules
@@ -53,16 +54,20 @@ configuration is data, not executable code. Add the bundled schema as
 ```
 
 `extends` is optional. When supplied, it names a built-in profile or another
-custom profile, and its rules are appended to inherited rules so later rules
-continue to override earlier matches. Without it, the profile is fully custom
-and must provide every required policy field. Directories may be absolute, use
-`~`, or be relative to the directory where Pi was started. Omit `directories`
-when no automatic selection is wanted. A missing config file leaves the
-portable profiles active. An existing invalid config file keeps the extension
-registered but blocks permissions until the file is fixed. `PI_SUBAGENT_PROFILE`
-remains authoritative and overrides both directory and persisted profile
-selection. TypeScript consumers should import the public policy types from
-`taylor-pi-permissions/config`.
+custom profile. Non-empty tool-rule arrays and path-rule arrays are appended to
+inherited rules, so later rules continue to override earlier matches. An empty
+custom-tool array deliberately clears that tool's inherited rules while keeping
+the tool configured; because no rule then matches, calls default to `ask`. An
+empty `tools.bash` array removes the inherited Bash command rules, which also
+leaves Bash commands at the safe `ask` default. Without `extends`, the profile
+is fully custom and must provide every required policy field. Directories may
+be absolute, use `~`, or be relative to the directory where Pi was started.
+Omit `directories` when no automatic selection is wanted. A missing config file
+leaves the portable profiles active. An existing invalid config file keeps the
+extension registered but blocks permissions until the file is fixed.
+`PI_SUBAGENT_PROFILE` remains authoritative and overrides both directory and
+persisted profile selection. TypeScript consumers should import the public
+policy types from `taylor-pi-permissions/config`.
 
 ## Subagent environment
 
@@ -159,6 +164,8 @@ Each profile defines its protected glob patterns with `protectedPathPatterns`; t
 
 Patterns use the same path glob syntax and ordered last-match behavior as other policy rules. They apply to `read`, `grep`, `find`, `ls`, `edit`, and `write`, as well as Bash path references: discovery can disclose secrets, while mutation can damage them. A profile that omits a pattern does not protect that path beyond its ordinary tool rules. Dynamic or unrecognized shell reader forms, and parser errors, fail closed: interactive sessions can ask, while non-interactive sessions block.
 
+The built-in test-focused profiles recognize conventional `test`, `tests`, `__tests__`, and `integrationTests` directories, plus `*.test.*`, `*.spec.*`, `*_test.*`, and `*.cy.*` file names. `tests-disallowed` denies both dedicated reads and mutations for these paths. `tests-only` retains the default read policy and limits dedicated edits/writes and analyzable Bash filesystem references to those test paths.
+
 Bash output redirection targets use the same `writePaths` rules and `bash` context as every other Bash path. Absolute and relative targets use the same matching rules as `edit` and `write`; context-specific rules may still distinguish dedicated mutations from Bash access.
 
 The standard profiles configure `.env*` files and directories as protected and `.env.template` as an explicit exception. Search safeguards are derived from the active profile rather than hard-coded to `.env`: the built-in `grep` tool combines all configured protected patterns into one exclusion glob, while Bash `rg`/`ripgrep` receives one exclusion per pattern followed by configured exceptions. Caller-supplied globs must be demonstrably unable to match any protected path. Raw `grep` and `git grep` are denied because their recursive behavior cannot be safely rewritten across supported platforms.
@@ -172,13 +179,14 @@ slash. This includes forms such as `cat .env`, `head .env.local`, and
 `sed -n '1,20p' **/.env*`; a direct `.env.template` path is the sole intended
 exception.
 
-`cat`, `head`, `tail`, `sed`, `nl`, `sort`, `wc`, and `file` are permitted only
-when their supported syntax identifies every input as a concrete, policy-approved
-path. Dynamic operands, globs (other than a protected expression that is denied),
-pipelines, substitutions, loops, `xargs`, `eval`, and shell interpreter `-c`
-forms fail closed without a confirmation prompt. Use Pi's `read` tool (with its
-`offset` and `limit` options), `grep`, or `find` followed by explicit `read`
-calls instead.
+Supported shell readers are allowed only when their adapters can identify their
+filesystem operands. Static operands are evaluated against `writePaths` using
+the Bash context. Ambiguous or dynamic filesystem operands require confirmation
+when an interactive UI is available and are blocked non-interactively.
+Separately, unsupported reader compositions—such as unbounded globs, pipelines,
+substitutions, loops, `xargs`, `eval`, and shell-interpreter `-c` forms—may be
+rejected directly when they cannot be analyzed safely. Use Pi's dedicated
+`read`, `grep`, or `find` tools when broader read behavior is needed.
 
 These checks are guardrails against accidental exposure, not a kernel-complete
 filesystem boundary for arbitrary process execution. Keep secrets unavailable to

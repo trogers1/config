@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -93,6 +95,112 @@ describe("permissions extension", () => {
     expect(completions?.map((completion) => completion.value)).not.toContain(
       "socrates",
     );
+  });
+
+  it("uses fixture overrides even when their names collide with shipped profiles", async () => {
+    vi.stubEnv("PI_PERMISSIONS_PROFILE_CONFIG", customProfileConfigPath);
+    vi.stubEnv("PI_SUBAGENT_PROFILE", "performance-review");
+    const harness = createExtensionHarness({ hasUI: false });
+    await harness.start();
+
+    await expect(
+      harness.callToolWithoutPrompt({
+        toolName: "bash",
+        input: { command: "fixture-only verify-profile-override" },
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("keeps protected exceptions subject to ordinary policy and reports denial alternatives", async () => {
+    vi.stubEnv("PI_PERMISSIONS_PROFILE_CONFIG", customProfileConfigPath);
+    vi.stubEnv("PI_SUBAGENT_PROFILE", "protected-matrix");
+    const harness = createExtensionHarness({ confirm: false });
+    await harness.start();
+
+    const exceptionResult = await harness.callTool({
+      toolName: "read",
+      input: { path: "private/.env.template" },
+    });
+    expect(exceptionResult).toMatchObject({ block: true });
+    expect(harness.ui.confirm).toHaveBeenCalledWith(
+      "Allow read?",
+      expect.stringContaining("private/.env.template"),
+    );
+
+    harness.ui.confirm.mockClear();
+    const protectedResult = await harness.callTool({
+      toolName: "read",
+      input: { path: "private/.env.secret" },
+    });
+    expect(protectedResult).toMatchObject({ block: true });
+    expect(protectedResult?.reason).toContain(
+      "Use an explicitly approved file instead",
+    );
+    expect(protectedResult?.reason).toContain(
+      "Ask the user for a redacted or safe-to-share value",
+    );
+    expect(harness.ui.confirm).not.toHaveBeenCalled();
+  });
+
+  it("keeps each extension instance isolated from later profile loads", async () => {
+    const directory = fs.mkdtempSync(
+      path.join(os.tmpdir(), "pi-permissions-isolation-"),
+    );
+    const firstConfigPath = path.join(directory, "first.jsonc");
+    const secondConfigPath = path.join(directory, "second.jsonc");
+    fs.writeFileSync(
+      firstConfigPath,
+      JSON.stringify({
+        defaultProfile: "isolated",
+        profiles: {
+          isolated: {
+            extends: "default",
+            tools: { deploy: [{ decision: "allow" }] },
+          },
+        },
+      }),
+    );
+    fs.writeFileSync(
+      secondConfigPath,
+      JSON.stringify({
+        defaultProfile: "isolated",
+        profiles: {
+          isolated: {
+            extends: "default",
+            tools: { deploy: [{ decision: "deny" }] },
+          },
+        },
+      }),
+    );
+
+    try {
+      vi.stubEnv("PI_PERMISSIONS_PROFILE_CONFIG", firstConfigPath);
+      const firstHarness = createExtensionHarness({ hasUI: false });
+      vi.stubEnv("PI_PERMISSIONS_PROFILE_CONFIG", secondConfigPath);
+      createExtensionHarness({ hasUI: false });
+
+      await firstHarness.start();
+      await expect(
+        firstHarness.callToolWithoutPrompt({
+          toolName: "deploy",
+          input: { environment: "staging" },
+        }),
+      ).resolves.toBeUndefined();
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves a completely unconfigured custom tool outside this extension's policy", async () => {
+    const harness = createExtensionHarness();
+    await harness.start();
+
+    await expect(
+      harness.callToolWithoutPrompt({
+        toolName: "tool-with-no-policy",
+        input: { action: "inspect" },
+      }),
+    ).resolves.toBeUndefined();
   });
 
   it("does not require directories for a profile to be selected", async () => {
@@ -318,7 +426,7 @@ describe("permissions extension", () => {
     );
   });
 
-  it("enforces basename and dynamic Bash operands under PI_SUBAGENT_PERMISSIBLE_GLOBS=modules/**", async () => {
+  it("enforces basename, redirection, and --no-index operands under PI_SUBAGENT_PERMISSIBLE_GLOBS=modules/**", async () => {
     vi.stubEnv("PI_SUBAGENT_PROFILE", "worker");
     vi.stubEnv("PI_SUBAGENT_PERMISSIBLE_GLOBS", "modules/**");
     const harness = createExtensionHarness({ hasUI: false });
@@ -344,6 +452,34 @@ describe("permissions extension", () => {
       expect(denied, command).toMatchObject({ block: true });
       expect(denied?.reason).toContain("PI_SUBAGENT_PERMISSIBLE_GLOBS");
     }
+  });
+
+  it("blocks dynamic Git diff operands under PI_SUBAGENT_PERMISSIBLE_GLOBS", async () => {
+    vi.stubEnv("PI_SUBAGENT_PROFILE", "worker");
+    vi.stubEnv("PI_SUBAGENT_PERMISSIBLE_GLOBS", "modules/**");
+    const harness = createExtensionHarness({ hasUI: false });
+    await harness.start();
+
+    const denied = await harness.callTool({
+      toolName: "bash",
+      input: { command: 'git diff "$LEFT" "$RIGHT"' },
+    });
+    expect(denied).toMatchObject({ block: true });
+    expect(denied?.reason).toContain("PI_SUBAGENT_PERMISSIBLE_GLOBS");
+  });
+
+  it("allows a basename after entering a directory inside the subagent scope", async () => {
+    vi.stubEnv("PI_SUBAGENT_PROFILE", "worker");
+    vi.stubEnv("PI_SUBAGENT_PERMISSIBLE_GLOBS", "modules/**");
+    const harness = createExtensionHarness({ hasUI: false });
+    await harness.start();
+
+    await expect(
+      harness.callToolWithoutPrompt({
+        toolName: "bash",
+        input: { command: "cd modules; rg needle package.json" },
+      }),
+    ).resolves.toBeUndefined();
   });
 
   it("fails startup for an unknown subagent profile", async () => {

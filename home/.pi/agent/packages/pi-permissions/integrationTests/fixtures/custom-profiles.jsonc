@@ -8,6 +8,7 @@
         "bash": [
           { "pattern": "glab *", "decision": "allow" },
           { "pattern": "gh *", "decision": "allow" },
+          { "pattern": "fixture-only *", "decision": "allow" },
         ],
       },
     },
@@ -17,6 +18,13 @@
       "tools": {
         "bash": [{ "pattern": "git commit -m *", "decision": "allow" }],
       },
+    },
+    "protected-matrix": {
+      "extends": "default",
+      "readPaths": [{ "pattern": "private/**", "decision": "ask" }],
+      "writePaths": [{ "pattern": "private/**", "decision": "ask" }],
+      "protectedPathPatterns": ["**/.env*"],
+      "protectedPathExceptions": ["**/.env.template"],
     },
   },
 }

@@ -1,6 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import type { TSchema } from "typebox";
+import { Value } from "typebox/value";
 import { policyConfig } from "../modules/policy";
 import {
   assertPolicyConfig,
@@ -11,16 +13,40 @@ import {
 import { evaluatePathByPattern } from "../modules/shell/pathPolicy";
 import type {
   CustomToolRule,
+  Decision,
+  PathContext,
+  PathRule,
   PolicyConfig,
+  ProfileColor,
+  ProfileConfigFile,
+  ProfileConfigProfile,
+  ProfilePolicy as PublicProfilePolicy,
   ProfilePolicyOverride,
+  ReadPathContext,
+  ReadPathRule,
+  Rule,
   ToolPolicy,
+  WritePathContext,
+  WritePathRule,
 } from "taylor-pi-permissions/config";
 
 export type PublicConfigSurface = [
   CustomToolRule,
-  ToolPolicy,
-  ProfilePolicyOverride,
+  Decision,
+  PathContext,
+  PathRule,
   PolicyConfig,
+  ProfileColor,
+  ProfileConfigFile,
+  ProfileConfigProfile,
+  PublicProfilePolicy,
+  ProfilePolicyOverride,
+  ReadPathContext,
+  ReadPathRule,
+  Rule,
+  ToolPolicy,
+  WritePathContext,
+  WritePathRule,
 ];
 
 const startupCwd = "/workspace/project";
@@ -90,7 +116,29 @@ describe("policy configuration contract", () => {
     ).toThrowError(/match|property/);
   });
 
-  it("rejects empty custom matcher property names in the generated schema", () => {
+  it("rejects a profile with an empty matcher property through the generated schema", () => {
+    const schema = JSON.parse(
+      fs.readFileSync(
+        new URL("../schemas/profiles.schema.json", import.meta.url),
+        "utf8",
+      ),
+    ) as TSchema;
+    const invalidProfileFile = {
+      defaultProfile: "default",
+      profiles: {
+        default: {
+          ...baseProfile,
+          tools: {
+            deploy: [{ decision: "deny", match: { "": "value" } }],
+          },
+        },
+      },
+    };
+
+    expect(Value.Check(schema, invalidProfileFile)).toBe(false);
+  });
+
+  it("encodes the non-empty matcher constraint in the generated schema", () => {
     type SchemaShape = {
       properties: {
         profiles: {
@@ -235,6 +283,58 @@ describe("policy configuration contract", () => {
           decision: "deny",
         },
       });
+    }
+  });
+
+  it("preserves ordinary ask decisions under protected-path exceptions in every context", () => {
+    const policy = withProtectedPathPatterns({
+      ...baseProfile,
+      readPaths: [
+        { pattern: "*", decision: "allow" },
+        { pattern: "private/**", decision: "ask" },
+      ],
+      writePaths: [
+        { pattern: "*", decision: "allow" },
+        { pattern: "private/**", decision: "ask" },
+      ],
+      protectedPathPatterns: ["**/.env*"],
+      protectedPathExceptions: ["**/.env.template"],
+    });
+
+    for (const context of ["read", "grep", "find", "ls"] as const) {
+      expect(
+        evaluateReadProtectedPath(policy, context, "private/.env.template"),
+      ).toMatchObject({
+        decision: "ask",
+        rule: { pattern: "private/**", decision: "ask" },
+      });
+      const protectedDecision = evaluateReadProtectedPath(
+        policy,
+        context,
+        "private/.env.secret",
+      );
+      expect(protectedDecision.rule?.alternatives).toEqual([
+        "Use an explicitly approved file instead",
+        "Ask the user for a redacted or safe-to-share value",
+      ]);
+    }
+
+    for (const context of ["edit", "write", "bash"] as const) {
+      expect(
+        evaluateWriteProtectedPath(policy, context, "private/.env.template"),
+      ).toMatchObject({
+        decision: "ask",
+        rule: { pattern: "private/**", decision: "ask" },
+      });
+      const protectedDecision = evaluateWriteProtectedPath(
+        policy,
+        context,
+        "private/.env.secret",
+      );
+      expect(protectedDecision.rule?.alternatives).toEqual([
+        "Use an explicitly approved file instead",
+        "Ask the user for a redacted or safe-to-share value",
+      ]);
     }
   });
 

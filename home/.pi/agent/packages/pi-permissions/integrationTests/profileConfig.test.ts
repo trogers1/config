@@ -33,10 +33,14 @@ function writeConfig(contents: string): string {
 }
 
 describe("profile configuration", () => {
-  it("uses the shipped profiles when the user configuration is absent", () => {
+  it("uses the shipped profiles when a guaranteed-missing user configuration is absent", () => {
+    const directory = fs.mkdtempSync(
+      path.join(os.tmpdir(), "pi-permissions-missing-"),
+    );
+    temporaryDirectories.push(directory);
     const config = loadProfileConfig(
       genericPolicyConfig,
-      path.join(os.tmpdir(), "missing-pi-permissions-profiles.jsonc"),
+      path.join(directory, "does-not-exist.jsonc"),
     );
 
     expect(config).toBe(genericPolicyConfig);
@@ -81,7 +85,7 @@ describe("profile configuration", () => {
     ]);
   });
 
-  it("appends inherited custom tool rules", () => {
+  it("appends non-empty custom tool overrides to inherited rules", () => {
     const config = loadProfileConfig(
       genericPolicyConfig,
       writeConfig(`{
@@ -114,7 +118,7 @@ describe("profile configuration", () => {
     ]);
   });
 
-  it("preserves empty inherited custom tool arrays", () => {
+  it("clears inherited custom tool rules while preserving an empty configured policy", () => {
     const config = loadProfileConfig(
       genericPolicyConfig,
       writeConfig(`{
@@ -193,6 +197,36 @@ describe("profile configuration", () => {
       expect((error as Error).message).toContain("schema validation failed");
     }
   });
+
+  it.each([
+    {
+      label: "unknown parent",
+      contents: {
+        profiles: {
+          default: { extends: "missing" },
+        },
+      },
+      message: "unknown inherited profile",
+    },
+    {
+      label: "cycle",
+      contents: {
+        profiles: {
+          default: { extends: "worker" },
+          worker: { extends: "default" },
+        },
+      },
+      message: "cyclic profile inheritance detected",
+    },
+  ])(
+    "rejects an invalid $label definition that shadows a shipped profile name",
+    ({ contents, message }) => {
+      const configPath = writeConfig(JSON.stringify(contents));
+      expect(() =>
+        loadProfileConfig(genericPolicyConfig, configPath),
+      ).toThrowError(message);
+    },
+  );
 
   it("throws a typed error for unknown or cyclic inheritance and invalid defaults", () => {
     const unknownInheritedConfigPath = writeConfig(
@@ -398,6 +432,16 @@ describe("extension harness profile configuration failures", () => {
         messageFragment: "unknown inherited profile",
       },
       {
+        label: "invalid override of a shipped profile",
+        contents: JSON.stringify({
+          defaultProfile: "default",
+          profiles: {
+            default: { extends: "missing" },
+          },
+        }),
+        messageFragment: "unknown inherited profile",
+      },
+      {
         label: "cyclic inheritance",
         contents: JSON.stringify({
           defaultProfile: "first",
@@ -473,10 +517,11 @@ describe("extension harness profile configuration failures", () => {
   });
 
   it("keeps the shipped profiles active when the profile config file is missing", async () => {
-    const missingConfigPath = path.join(
-      os.tmpdir(),
-      `pi-permissions-missing-${Date.now()}.jsonc`,
+    const directory = fs.mkdtempSync(
+      path.join(os.tmpdir(), "pi-permissions-missing-harness-"),
     );
+    temporaryDirectories.push(directory);
+    const missingConfigPath = path.join(directory, "does-not-exist.jsonc");
     process.env.PI_PERMISSIONS_PROFILE_CONFIG = missingConfigPath;
 
     const harness = createHarness({ hasUI: true });
