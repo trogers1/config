@@ -6,7 +6,7 @@ Pi package that mirrors the curated opencode permission posture and adds switcha
 - `worker`: default-like non-interactive subagent policy; rules that normally ask for confirmation deny with guidance instead
 - `read-only`: edit/write tools are only allowed for `./handoff.md` and `./progress.md`; read access is limited to the startup directory tree and `/tmp`; bash is limited to inspection commands, non-destructive git history commands, and output redirection to `/tmp`, `./handoff.md`, or `./progress.md`
 - `tests-disallowed`: extends `default` for implementation-only work; test files cannot be read or edited, and prompt steering asks the model to fix the system rather than the tests and report tests it believes are incorrect
-- `tests-only`: extends `default` for test-authoring work; non-test files remain readable, but only test files can be edited
+- `tests-only`: extends `default` for documentation-first test-authoring work; prompt steering makes documented behavior the spec (production code is only an interface reference), and only test files can be edited
 - optional per-profile `color` and `emoji` metadata for the status line
 - explicit deny rules for destructive git operations and protected paths
 - automatic model steering and suggested alternatives for configured deny rules
