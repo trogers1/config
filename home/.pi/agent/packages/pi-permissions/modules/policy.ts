@@ -203,7 +203,14 @@ export const baseProfile: ProfilePolicy = {
       { pattern: "wc *", decision: "allow" },
       { pattern: "file", decision: "allow" },
       { pattern: "file *", decision: "allow" },
-      { pattern: "npm *", decision: "allow" },
+
+      // Package managers
+      { pattern: "npm *", decision: "ask" },
+      { pattern: "npm run *", decision: "allow" },
+      { pattern: "npm test", decision: "allow" },
+      { pattern: "yarn *", decision: "ask" },
+      { pattern: "pnpm *", decision: "ask" },
+      { pattern: "pip *", decision: "ask" },
       {
         pattern: "npm exec",
         decision: "deny",
