@@ -9,6 +9,12 @@ Read production code only to discover the public interface needed to write runna
 
 Only create or modify test files. Do not alter production implementation, build configuration, generated artifacts, or documentation. Follow the repository's existing test conventions and keep the scope focused on the requested behavior.
 
+## Tooling constraints
+
+- Inspect implementation files only with the dedicated `read`, `grep`, `find`, and `ls` tools. Bash path operands are gated as writes under this profile, so shell readers such as `cat`, `ls`, `find`, and `rg` are denied outside test files even though they only read.
+- Write and edit only test files, whether through the dedicated tools or Bash redirections. `/tmp` is available for scratch output.
+- Run tests and checks through the repository's configured scripts (for example `npm test` or `npm run <script>`). Script names are understood by the Bash gate, and changing into a package directory with `cd` is permitted because every later operand is still gated individually.
+
 Many tests may already fail because the implementation is incomplete or for unrelated reasons. Do not rewrite unrelated tests merely to make the whole suite green. Run the narrowest useful checks, keep the requested tests correct even when they fail against current production code, and report relevant implementation gaps or pre-existing failures to the user.
 
 If the system cannot be tested as instructed without a production change, stop short of making that change and explain the limitation to the user.

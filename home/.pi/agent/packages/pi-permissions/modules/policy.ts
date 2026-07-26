@@ -976,13 +976,30 @@ const testsOnlyProfile = extendProfile(baseProfile, {
     {
       pattern: "**",
       decision: "deny",
+      contexts: ["edit", "write"],
       guidance:
         "This profile may only edit test files. Read the implementation, then make the requested change in tests.",
+    },
+    {
+      pattern: "**",
+      decision: "deny",
+      contexts: ["bash"],
+      guidance:
+        "Bash path operands are gated as writes under the tests-only profile. Use the read, grep, find, and ls tools to inspect implementation files; Bash operands and redirections may only target test files and /tmp.",
+      alternatives: [
+        "Use the read tool for concrete files",
+        "Use the grep tool for content searches",
+        "Use the find or ls tools for directory discovery",
+      ],
     },
     ...testFilePatterns.map((pattern) => ({
       pattern,
       decision: "allow" as const,
     })),
+    { pattern: "/tmp", decision: "allow" },
+    { pattern: "/tmp/**", decision: "allow" },
+    { pattern: "/private/tmp", decision: "allow" },
+    { pattern: "/private/tmp/**", decision: "allow" },
   ],
 });
 
