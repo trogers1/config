@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { classifyShell } from "./classify";
 
-describe("unbash shell classification spike", () => {
+describe("unbash shell classification", () => {
   it("separates Git repository objects from filesystem options", () => {
     const result = classifyShell(
       "git -C ../repo show HEAD~3:src/example.ts ./working-tree-file.ts",
@@ -188,6 +188,80 @@ describe("unbash shell classification spike", () => {
         expect.objectContaining({ kind: "ambiguous", value: "--output=~/x" }),
         expect.objectContaining({ kind: "ambiguous", value: "--output=.env" }),
         expect.objectContaining({ kind: "ambiguous", value: "./src" }),
+      ]),
+    );
+  });
+
+  it("proves package manager script names are not filesystem operands", () => {
+    for (const command of [
+      "npm run check:types",
+      "npm run-script build",
+      "pnpm run test:watch",
+      "npm test",
+    ]) {
+      const result = classifyShell(command);
+
+      expect(result.errors).toEqual([]);
+      expect(
+        result.tokens.every((token) => token.kind === "proven-non-path"),
+        command,
+      ).toBe(true);
+    }
+  });
+
+  it("keeps package manager install specifiers gated as possible paths", () => {
+    const result = classifyShell("npm install ../local-dependency");
+
+    expect(result.tokens).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "proven-non-path", value: "install" }),
+        expect.objectContaining({
+          kind: "ambiguous",
+          value: "../local-dependency",
+        }),
+      ]),
+    );
+  });
+
+  it("classifies package manager directory options as filesystem references", () => {
+    const cases: Array<[command: string, scriptWord: string]> = [
+      ["npm --prefix ../pkg test", "test"],
+      ["npm --prefix=../pkg test", "test"],
+      ["pnpm --dir ../pkg run build", "build"],
+      ["pnpm -C ../pkg test", "test"],
+      ["yarn --cwd ../pkg test", "test"],
+    ];
+    for (const [command, scriptWord] of cases) {
+      const result = classifyShell(command);
+
+      expect(result.errors).toEqual([]);
+      expect(result.tokens, command).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: "filesystem-reference",
+            value: "../pkg",
+          }),
+        ]),
+      );
+      expect(
+        result.tokens.find((token) => token.value === scriptWord)?.kind,
+        command,
+      ).toBe("proven-non-path");
+    }
+  });
+
+  it("keeps script arguments after package manager shortcuts gated as possible paths", () => {
+    // `npm test -- <path>` forwards the argument to the test script; unlike a
+    // run/run-script script name, it may be a filesystem operand.
+    const result = classifyShell("npm test -- tests/example.test.ts");
+
+    expect(result.tokens).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "proven-non-path", value: "test" }),
+        expect.objectContaining({
+          kind: "ambiguous",
+          value: "tests/example.test.ts",
+        }),
       ]),
     );
   });

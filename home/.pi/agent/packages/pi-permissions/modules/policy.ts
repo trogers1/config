@@ -27,6 +27,28 @@ const piReferencePathRules: Rule[] = [
   },
 ];
 
+const npmMutationGuidance =
+  "Package manager mutations install code, run lifecycle scripts, modify the project, or manage credentials and publishing. Ask the user to run the command directly.";
+
+/** Deny rules for the mutating subcommands of a package manager executable. */
+function packageManagerMutationDenials(
+  executable: string,
+  subcommands: readonly string[],
+): Rule[] {
+  return subcommands.flatMap((subcommand) => [
+    {
+      pattern: `${executable} ${subcommand}`,
+      decision: "deny" as const,
+      guidance: npmMutationGuidance,
+    },
+    {
+      pattern: `${executable} ${subcommand} *`,
+      decision: "deny" as const,
+      guidance: npmMutationGuidance,
+    },
+  ]);
+}
+
 export const baseProfile: ProfilePolicy = {
   color: "blue",
   emoji: "🛠️",
@@ -204,13 +226,205 @@ export const baseProfile: ProfilePolicy = {
       { pattern: "file", decision: "allow" },
       { pattern: "file *", decision: "allow" },
 
-      // Package managers
+      // Package managers: running scripts and read-only inspection are
+      // allowed; mutations that install code, run lifecycle scripts, modify
+      // the project, or manage credentials and publishing are denied;
+      // anything less common asks. Denials follow the allows so they win on
+      // overlap (for example `npm audit` vs `npm audit fix`).
       { pattern: "npm *", decision: "ask" },
       { pattern: "npm run *", decision: "allow" },
       { pattern: "npm test", decision: "allow" },
-      { pattern: "yarn *", decision: "ask" },
+      // Script arguments are forwarded to the script and stay path-gated, so
+      // the command form itself is safe to allow.
+      { pattern: "npm test *", decision: "allow" },
+      { pattern: "npm start", decision: "allow" },
+      { pattern: "npm start *", decision: "allow" },
+      { pattern: "npm stop", decision: "allow" },
+      { pattern: "npm restart", decision: "allow" },
+      { pattern: "npm ls", decision: "allow" },
+      { pattern: "npm ls *", decision: "allow" },
+      { pattern: "npm list", decision: "allow" },
+      { pattern: "npm list *", decision: "allow" },
+      { pattern: "npm view", decision: "allow" },
+      { pattern: "npm view *", decision: "allow" },
+      { pattern: "npm info", decision: "allow" },
+      { pattern: "npm info *", decision: "allow" },
+      { pattern: "npm show", decision: "allow" },
+      { pattern: "npm show *", decision: "allow" },
+      { pattern: "npm outdated", decision: "allow" },
+      { pattern: "npm outdated *", decision: "allow" },
+      { pattern: "npm audit", decision: "allow" },
+      { pattern: "npm explain", decision: "allow" },
+      { pattern: "npm explain *", decision: "allow" },
+      { pattern: "npm why", decision: "allow" },
+      { pattern: "npm why *", decision: "allow" },
+      { pattern: "npm config get *", decision: "allow" },
+      { pattern: "npm config list", decision: "allow" },
+      { pattern: "npm prefix", decision: "allow" },
+      { pattern: "npm root", decision: "allow" },
+      { pattern: "npm doctor", decision: "allow" },
+      { pattern: "npm help", decision: "allow" },
+      { pattern: "npm help *", decision: "allow" },
+      ...packageManagerMutationDenials("npm", [
+        "install",
+        "i",
+        "add",
+        "ci",
+        "update",
+        "uninstall",
+        "remove",
+        "rm",
+        "publish",
+        "link",
+        "login",
+        "logout",
+        "token",
+        "pkg set",
+        "config set",
+        "config delete",
+        "audit fix",
+      ]),
+      {
+        pattern: "npm version *",
+        decision: "deny",
+        guidance: npmMutationGuidance,
+      },
+
       { pattern: "pnpm *", decision: "ask" },
+      { pattern: "pnpm run *", decision: "allow" },
+      { pattern: "pnpm test", decision: "allow" },
+      { pattern: "pnpm test *", decision: "allow" },
+      { pattern: "pnpm start", decision: "allow" },
+      { pattern: "pnpm ls", decision: "allow" },
+      { pattern: "pnpm ls *", decision: "allow" },
+      { pattern: "pnpm list", decision: "allow" },
+      { pattern: "pnpm list *", decision: "allow" },
+      { pattern: "pnpm outdated", decision: "allow" },
+      { pattern: "pnpm outdated *", decision: "allow" },
+      { pattern: "pnpm audit", decision: "allow" },
+      { pattern: "pnpm why", decision: "allow" },
+      { pattern: "pnpm why *", decision: "allow" },
+      ...packageManagerMutationDenials("pnpm", [
+        "add",
+        "install",
+        "i",
+        "update",
+        "remove",
+        "rm",
+        "uninstall",
+        "publish",
+        "dlx",
+        "link",
+      ]),
+      {
+        pattern: "pnpm audit --fix*",
+        decision: "deny",
+        guidance: npmMutationGuidance,
+      },
+
+      { pattern: "yarn *", decision: "ask" },
+      { pattern: "yarn run *", decision: "allow" },
+      { pattern: "yarn test", decision: "allow" },
+      { pattern: "yarn test *", decision: "allow" },
+      { pattern: "yarn start", decision: "allow" },
+      { pattern: "yarn list", decision: "allow" },
+      { pattern: "yarn list *", decision: "allow" },
+      { pattern: "yarn info", decision: "allow" },
+      { pattern: "yarn info *", decision: "allow" },
+      { pattern: "yarn outdated", decision: "allow" },
+      { pattern: "yarn why *", decision: "allow" },
+      ...packageManagerMutationDenials("yarn", [
+        "add",
+        "install",
+        "remove",
+        "upgrade",
+        "publish",
+        "dlx",
+        "link",
+        "config set",
+      ]),
+
       { pattern: "pip *", decision: "ask" },
+      { pattern: "pip list", decision: "allow" },
+      { pattern: "pip list *", decision: "allow" },
+      { pattern: "pip show", decision: "allow" },
+      { pattern: "pip show *", decision: "allow" },
+      { pattern: "pip freeze", decision: "allow" },
+      { pattern: "pip freeze *", decision: "allow" },
+      ...packageManagerMutationDenials("pip", ["install", "uninstall"]),
+
+      { pattern: "pip3 *", decision: "ask" },
+      { pattern: "pip3 list", decision: "allow" },
+      { pattern: "pip3 list *", decision: "allow" },
+      { pattern: "pip3 show", decision: "allow" },
+      { pattern: "pip3 show *", decision: "allow" },
+      { pattern: "pip3 freeze", decision: "allow" },
+      { pattern: "pip3 freeze *", decision: "allow" },
+      ...packageManagerMutationDenials("pip3", ["install", "uninstall"]),
+
+      // uv: queries are allowed, but `uv run`/`uvx` execute arbitrary
+      // commands through the project environment, so they stay at ask.
+      { pattern: "uv *", decision: "ask" },
+      { pattern: "uv pip list", decision: "allow" },
+      { pattern: "uv pip list *", decision: "allow" },
+      { pattern: "uv pip show", decision: "allow" },
+      { pattern: "uv pip show *", decision: "allow" },
+      { pattern: "uv pip freeze", decision: "allow" },
+      { pattern: "uv pip freeze *", decision: "allow" },
+      { pattern: "uv tree", decision: "allow" },
+      { pattern: "uv tree *", decision: "allow" },
+      ...packageManagerMutationDenials("uv", [
+        "pip install",
+        "pip uninstall",
+        "add",
+        "remove",
+        "sync",
+        "lock",
+        "publish",
+        "tool install",
+      ]),
+
+      // Cargo: building and testing the current crate is allowed; installing
+      // or publishing code is denied; the rest (fmt, clean, run, ...) asks.
+      { pattern: "cargo *", decision: "ask" },
+      { pattern: "cargo build", decision: "allow" },
+      { pattern: "cargo build *", decision: "allow" },
+      { pattern: "cargo test", decision: "allow" },
+      { pattern: "cargo test *", decision: "allow" },
+      { pattern: "cargo check", decision: "allow" },
+      { pattern: "cargo check *", decision: "allow" },
+      { pattern: "cargo clippy", decision: "allow" },
+      { pattern: "cargo clippy *", decision: "allow" },
+      { pattern: "cargo doc", decision: "allow" },
+      { pattern: "cargo doc *", decision: "allow" },
+      ...packageManagerMutationDenials("cargo", [
+        "install",
+        "add",
+        "remove",
+        "uninstall",
+        "publish",
+      ]),
+
+      { pattern: "gem *", decision: "ask" },
+      { pattern: "gem list", decision: "allow" },
+      { pattern: "gem list *", decision: "allow" },
+      ...packageManagerMutationDenials("gem", ["install", "uninstall", "push"]),
+
+      // `bundle exec` runs arbitrary commands, so it stays at ask.
+      { pattern: "bundle *", decision: "ask" },
+      { pattern: "bundle list", decision: "allow" },
+      { pattern: "bundle list *", decision: "allow" },
+      ...packageManagerMutationDenials("bundle", ["install", "update", "add"]),
+
+      { pattern: "composer *", decision: "ask" },
+      { pattern: "composer show", decision: "allow" },
+      { pattern: "composer show *", decision: "allow" },
+      ...packageManagerMutationDenials("composer", [
+        "install",
+        "update",
+        "require",
+        "remove",
+      ]),
       {
         pattern: "npm exec",
         decision: "deny",
@@ -238,6 +452,7 @@ export const baseProfile: ProfilePolicy = {
         ],
       },
       { pattern: "go *", decision: "allow" },
+      ...packageManagerMutationDenials("go", ["install", "get"]),
       { pattern: "true", decision: "allow" },
       { pattern: "rg *", decision: "allow" },
       { pattern: "ripgrep *", decision: "allow" },

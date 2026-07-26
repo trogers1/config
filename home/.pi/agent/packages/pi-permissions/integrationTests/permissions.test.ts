@@ -713,6 +713,60 @@ describe("default profile bash policy", () => {
     ).resolves.toBeUndefined();
   });
 
+  it("allows package manager script names under restrictive writePaths", async () => {
+    const restrictivePolicy = structuredClone(policyConfig.profiles.default);
+    restrictivePolicy.writePaths = [{ pattern: "**", decision: "deny" }];
+    const ctx = context(process.cwd(), false);
+
+    for (const command of ["npm run check:types", "npm test"]) {
+      await expect(
+        gateBash(command, process.cwd(), ctx, restrictivePolicy),
+        command,
+      ).resolves.toBeUndefined();
+    }
+    expect(vi.mocked(ctx.ui.confirm)).not.toHaveBeenCalled();
+  });
+
+  it("gates package manager directory options as paths", async () => {
+    const restrictivePolicy = structuredClone(policyConfig.profiles.default);
+    restrictivePolicy.tools.bash = [
+      ...(restrictivePolicy.tools.bash ?? []),
+      { pattern: "npm --prefix *", decision: "allow" },
+      { pattern: "npm --prefix=*", decision: "allow" },
+      { pattern: "pnpm -C *", decision: "allow" },
+    ];
+    restrictivePolicy.writePaths = [
+      { pattern: "**", decision: "deny" },
+      { pattern: "pkg", decision: "allow" },
+      { pattern: "pkg/**", decision: "allow" },
+    ];
+
+    await expect(
+      gateBash(
+        "npm --prefix pkg run test",
+        process.cwd(),
+        context(process.cwd(), false),
+        restrictivePolicy,
+      ),
+    ).resolves.toBeUndefined();
+
+    for (const command of [
+      "npm --prefix ../blocked test",
+      "npm --prefix=../blocked test",
+      "pnpm -C ../blocked test",
+    ]) {
+      await expect(
+        gateBash(
+          command,
+          process.cwd(),
+          nonInteractiveContext(process.cwd()),
+          restrictivePolicy,
+        ),
+        command,
+      ).resolves.toMatchObject({ block: true });
+    }
+  });
+
   // cd gating matrix. cd mutates no files, so the target is never gated
   // against writePaths; but it repositions operand-less readers such as bare
   // `ls`, so the target is gated against readPaths (ls context), and the
@@ -812,6 +866,124 @@ describe("default profile bash policy", () => {
       ),
     ).resolves.toMatchObject({ block: true });
     expect(vi.mocked(ctx.ui.confirm)).toHaveBeenCalled();
+  });
+
+  it.each([
+    "npm test",
+    "npm test -- modules/shell/classify.test.ts",
+    "npm run test:watch",
+    "npm run check:types",
+    "npm run check:prettier",
+    "npm start",
+    "npm ls",
+    "npm ls --depth=0",
+    "npm view react version",
+    "npm outdated",
+    "npm audit",
+    "npm config get registry",
+    "npm explain typescript",
+    "pnpm run build",
+    "pnpm test",
+    "pnpm ls",
+    "yarn run build",
+    "yarn test",
+    "yarn list",
+    "pip list",
+    "pip show requests",
+    "pip freeze",
+    "pip3 list",
+    "uv pip list",
+    "uv tree",
+    "cargo build",
+    "cargo test",
+    "cargo test -- --nocapture",
+    "cargo check",
+    "cargo clippy",
+    "gem list",
+    "bundle list",
+    "composer show",
+    // go keeps its pre-existing broad allow; only go install/go get are denied.
+    "go build ./...",
+    "go test ./...",
+  ])(
+    "allows safe package manager commands without prompting: %s",
+    (command) => {
+      expect(decideBash(command, policyConfig.profiles.default)).toBe("allow");
+    },
+  );
+
+  it.each([
+    "npm install",
+    "npm install lodash",
+    "npm i -D typescript",
+    "npm ci",
+    "npm update",
+    "npm uninstall lodash",
+    "npm publish",
+    "npm exec cowsay",
+    "npm link",
+    "npm audit fix",
+    "npm pkg set name=evil",
+    "npm version patch",
+    "npm config set registry https://evil.example",
+    "npm login",
+    "npm token list",
+    "pnpm add lodash",
+    "pnpm install",
+    "pnpm dlx cowsay",
+    "pnpm audit --fix",
+    "yarn add lodash",
+    "yarn install",
+    "yarn upgrade",
+    "yarn publish",
+    "pip install requests",
+    "pip uninstall requests",
+    "pip3 install requests",
+    "uv pip install requests",
+    "uv add requests",
+    "uv sync",
+    "uv lock",
+    "cargo install ripgrep",
+    "cargo add serde",
+    "cargo publish",
+    "go install github.com/example/tool@latest",
+    "go get github.com/example/module",
+    "gem install rails",
+    "gem push example.gem",
+    "bundle install",
+    "bundle update",
+    "composer install",
+    "composer require vendor/package",
+  ])("denies mutating package manager commands: %s", (command) => {
+    expect(decideBash(command, policyConfig.profiles.default)).toBe("deny");
+  });
+
+  it.each([
+    "npm pack",
+    "npm dedupe",
+    "npm whoami",
+    "npm version",
+    // Arbitrary execution through the project environment must stay gated.
+    "uv run python main.py",
+    "uvx cowsay",
+    "bundle exec rake db:migrate",
+    "cargo fmt",
+    "cargo clean",
+    "composer outdated",
+  ])("asks for uncommon package manager commands: %s", (command) => {
+    expect(decideBash(command, policyConfig.profiles.default)).toBe("ask");
+  });
+
+  it("steers denied package manager mutations toward asking the user", async () => {
+    const result = await gateBash(
+      "npm install lodash",
+      process.cwd(),
+      context(process.cwd(), false),
+      policyConfig.profiles.default,
+    );
+
+    expect(result).toMatchObject({ block: true });
+    expect(result?.reason).toContain("Ask the user");
   });
 
   it.each([

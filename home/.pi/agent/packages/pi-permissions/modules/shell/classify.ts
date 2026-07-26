@@ -73,7 +73,7 @@ const fileRedirectOperators = new Set<RedirectOperator>([
 ]);
 
 /**
- * Experimental AST-backed shell operand classifier.
+ * AST-backed shell operand classifier.
  *
  * This deliberately separates shell syntax from command semantics. Unbash
  * identifies words, nested commands, and redirections; the small adapters
@@ -473,15 +473,75 @@ function classifyReaderArguments(
   }
 }
 
+// A script name is a package.json key, not a filesystem operand — but only
+// the word directly after run/run-script is the script name. Words after
+// shortcuts like `npm test` are arguments forwarded to the script and may be
+// paths, so they stay gated. Directory options change where the package
+// manager operates, so their values remain gated paths.
+const packageManagerScriptCommands = new Set(["run", "run-script"]);
+const packageManagerDirectoryOptions = new Set([
+  "--prefix",
+  "--dir",
+  "-C",
+  "--cwd",
+]);
+const packageManagerAttachedDirectoryOptions = [
+  "--prefix=",
+  "--dir=",
+  "--cwd=",
+];
+
 function classifyPackageManagerArguments(
   words: Word[],
   tokens: ClassifiedShellToken[],
 ): void {
-  const commandIndex = words.findIndex((word) => {
-    const value = staticWordValue(word);
-    return value !== undefined && !value.startsWith("-");
-  });
-  if (commandIndex >= 0) tokens[commandIndex].kind = "proven-non-path";
+  let commandName: string | undefined;
+  let scriptNameSeen = false;
+
+  for (let index = 0; index < words.length; index++) {
+    const value = staticWordValue(words[index]);
+    const token = tokens[index];
+    if (!token || value === undefined) continue;
+
+    const attached = packageManagerAttachedDirectoryOptions.find((prefix) =>
+      value.startsWith(prefix),
+    );
+    if (attached) {
+      tokens[index] = {
+        ...token,
+        kind: "filesystem-reference",
+        value: value.slice(attached.length),
+      };
+      continue;
+    }
+
+    if (packageManagerDirectoryOptions.has(value)) {
+      token.kind = "proven-non-path";
+      const directory = tokens[index + 1];
+      if (directory) {
+        if (directory.kind === "dynamic") {
+          directory.dynamicRole = "filesystem-reference";
+        } else {
+          directory.kind = "filesystem-reference";
+        }
+      }
+      index++;
+      continue;
+    }
+
+    if (value.startsWith("-")) continue;
+
+    if (!commandName) {
+      commandName = value;
+      token.kind = "proven-non-path";
+      continue;
+    }
+
+    if (packageManagerScriptCommands.has(commandName) && !scriptNameSeen) {
+      scriptNameSeen = true;
+      if (token.kind === "ambiguous") token.kind = "proven-non-path";
+    }
+  }
 }
 
 function classifyFindArguments(
