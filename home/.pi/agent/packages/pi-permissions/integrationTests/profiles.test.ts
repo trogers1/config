@@ -1110,4 +1110,78 @@ describe("permissions extension", () => {
     expect(denied?.reason).toContain("Policy guidance:");
     expect(denied?.reason).toContain("npm test -- <requested test filters>");
   });
+
+  describe("required read-only tools", () => {
+    it("activates the built-in read tools on session start", async () => {
+      const harness = createExtensionHarness();
+      await harness.start();
+
+      expect(harness.errors).toHaveLength(0);
+      // Policy guidance references the read, grep, find, and ls tools; they
+      // must be active even though pi only activates read/bash/edit/write.
+      expect(harness.getActiveTools()).toEqual(
+        expect.arrayContaining(["read", "grep", "find", "ls"]),
+      );
+      // Activation is additive: the default coding tools stay enabled.
+      expect(harness.getActiveTools()).toEqual(
+        expect.arrayContaining(["bash", "edit", "write"]),
+      );
+    });
+
+    it("leaves the active set untouched when the read tools are already active", async () => {
+      const harness = createExtensionHarness({
+        registeredTools: [
+          "read",
+          "bash",
+          "edit",
+          "write",
+          "grep",
+          "find",
+          "ls",
+          "webfetch",
+        ],
+        activeTools: [
+          "read",
+          "bash",
+          "edit",
+          "write",
+          "grep",
+          "find",
+          "ls",
+          "webfetch",
+        ],
+      });
+      await harness.start();
+
+      expect(harness.errors).toHaveLength(0);
+      expect(harness.setActiveToolsMock).not.toHaveBeenCalled();
+      expect(harness.getActiveTools()).toContain("webfetch");
+    });
+
+    it("re-activates a missing read tool on profile switch", async () => {
+      const harness = createExtensionHarness();
+      await harness.start();
+
+      harness.deactivateTool("grep");
+      await harness.runCommand("profile", "read-only");
+
+      expect(harness.getActiveTools()).toContain("grep");
+    });
+
+    it("fails loudly when a required read tool is not registered", async () => {
+      const harness = createExtensionHarness({
+        registeredTools: ["read", "bash", "edit", "write", "find", "ls"],
+      });
+      await harness.start();
+
+      expect(harness.errors).toHaveLength(1);
+      expect(harness.errors[0]?.event).toBe("session_start");
+      expect(String(harness.errors[0]?.error)).toContain("grep");
+      // The startup sequence aborts before presenting a normal profile status.
+      expect(harness.ui.setStatus).not.toHaveBeenCalledWith(
+        "permissions",
+        expect.stringContaining("default"),
+      );
+    });
+  });
 });

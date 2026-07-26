@@ -81,6 +81,16 @@ function createExtensionHarness() {
     string,
     { handler?: (args: string, ctx: ExtensionContext) => unknown }
   >();
+  const registeredTools = [
+    "read",
+    "bash",
+    "edit",
+    "write",
+    "grep",
+    "find",
+    "ls",
+  ];
+  const activeTools = new Set(["read", "bash", "edit", "write"]);
   const api = {
     on(
       event: string,
@@ -95,6 +105,14 @@ function createExtensionHarness() {
       commands.set(name, command);
     },
     appendEntry: vi.fn(),
+    getActiveTools: () => [...activeTools],
+    getAllTools: () => registeredTools.map((name) => ({ name })),
+    setActiveTools(toolNames: string[]) {
+      activeTools.clear();
+      for (const name of toolNames) {
+        if (registeredTools.includes(name)) activeTools.add(name);
+      }
+    },
   } as unknown as Parameters<typeof permissionsExtension>[0];
 
   return { api, handlers, commands };

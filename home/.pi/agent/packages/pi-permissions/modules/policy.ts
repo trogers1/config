@@ -188,14 +188,15 @@ export const baseProfile: ProfilePolicy = {
         ],
       },
       {
-        pattern: "**/node_modules/.bin/prettier *",
+        pattern: "**/node_modules/.bin/*",
         decision: "deny",
         guidance:
-          "Do not invoke Prettier directly. Use the repository's configured formatter script or make targeted edits with Pi's edit tool.",
+          "Do not invoke packages directly. Use the repository's configured scripts.",
         alternatives: [
           "npm run prettier:write",
           "npm run fix:prettier",
-          "Use the edit tool for targeted changes",
+          "npm test",
+          "Use the edit tool to add needed scripts to package.json (or equivalent)",
         ],
       },
       {

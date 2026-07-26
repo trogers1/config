@@ -57,9 +57,29 @@ export function createExtensionHarness(
     confirm?: boolean;
     editorResult?: string;
     entries?: SessionEntryInput[];
+    registeredTools?: string[];
+    activeTools?: string[];
   } = {},
 ) {
   const contextCwd = options.contextCwd ?? process.cwd();
+  // Mirrors pi 0.81.x: every built-in tool is registered, but only the
+  // coding set (read, bash, edit, write) is active by default.
+  const registeredToolNames = new Set(
+    options.registeredTools ?? [
+      "read",
+      "bash",
+      "edit",
+      "write",
+      "grep",
+      "find",
+      "ls",
+    ],
+  );
+  const activeToolNames = new Set(
+    (options.activeTools ?? ["read", "bash", "edit", "write"]).filter((name) =>
+      registeredToolNames.has(name),
+    ),
+  );
   const entries = normalizeEntries(options.entries ?? []);
   const errors: HarnessError[] = [];
   const handlers: HandlerStore = {
@@ -102,6 +122,14 @@ export function createExtensionHarness(
   // Runtime boundary: the harness stores the narrow shape and exposes the SDK context type here.
   const extensionContext = context as unknown as ExtensionCommandContext;
 
+  const setActiveToolsMock = vi.fn((toolNames: string[]) => {
+    // Real pi ignores names that are not registered.
+    activeToolNames.clear();
+    for (const name of toolNames) {
+      if (registeredToolNames.has(name)) activeToolNames.add(name);
+    }
+  });
+
   const pi = {
     on<E extends keyof HandledEvents>(
       event: E,
@@ -115,7 +143,21 @@ export function createExtensionHarness(
     appendEntry(customType: string, data: unknown) {
       entries.push(createCustomEntry(customType, data, nextEntryId++));
     },
-  } satisfies Pick<ExtensionAPI, "on" | "registerCommand" | "appendEntry">;
+    getActiveTools: () => [...activeToolNames],
+    getAllTools: () =>
+      [...registeredToolNames].map((name) => ({
+        name,
+      })) as unknown as ReturnType<ExtensionAPI["getAllTools"]>,
+    setActiveTools: setActiveToolsMock,
+  } satisfies Pick<
+    ExtensionAPI,
+    | "on"
+    | "registerCommand"
+    | "appendEntry"
+    | "getActiveTools"
+    | "getAllTools"
+    | "setActiveTools"
+  >;
 
   // Runtime boundary: the real extension factory expects the full SDK API.
   permissionsExtension(pi as unknown as ExtensionAPI);
@@ -207,6 +249,12 @@ export function createExtensionHarness(
     entries,
     errors,
     ui,
+    setActiveToolsMock,
+    getActiveTools: () => [...activeToolNames],
+    /** Simulates another extension or the user deactivating a tool mid-session. */
+    deactivateTool(name: string) {
+      activeToolNames.delete(name);
+    },
     async start(reason: SessionStartEvent["reason"] = "startup") {
       started = true;
       await dispatchSessionStart({ type: "session_start", reason });

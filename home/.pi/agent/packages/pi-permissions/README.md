@@ -16,13 +16,49 @@ Pi package that mirrors the curated opencode permission posture and adds switcha
 
 The policy lives in `modules/policy.ts`; reusable runtime helpers also live in `modules/`. Pi discovers only the extension entrypoint in `extensions/`. The Socrates prompt lives in `prompts/socrates.md`.
 
+## Required read-only tools
+
+This package **requires and will activate** pi's built-in `read`, `grep`,
+`find`, and `ls` tools. Deny guidance throughout the policy steers agents to
+these tools (for example, restrictive profiles deny Bash path operands and
+tell the agent to use `grep`/`find`/`ls` for discovery instead), so the gate
+assumes they are callable.
+
+On session start and on every profile switch, the extension therefore
+activates any missing read tools. Activation is purely additive: tools
+enabled by you or by other extensions are never removed, and nothing
+changes when the read tools are already active. If a required tool is not
+even registered, session start fails loudly — that means the installed pi
+version no longer provides a tool this package depends on.
+
+There is no opt-out from the activation itself. If a read tool should not be
+usable, keep it active but deny its paths in your custom profile
+configuration; context-scoped rules restrict a denial to one tool without
+weakening the others:
+
+```jsonc
+{
+  "profiles": {
+    "default": {
+      "extends": "default",
+      "readPaths": [
+        {
+          "pattern": "**",
+          "decision": "deny",
+          "contexts": ["grep"],
+          "guidance": "The grep tool is disabled here; search with Bash ripgrep instead.",
+        },
+      ],
+    },
+  },
+}
+```
+
 ## Commands
 
 - `/profile` shows the active profile and available profiles.
 - `/profile <name>` switches to a profile.
 - `/read-only` switches to the read-only permissions profile.
-- `/socrates` switches to the Socrates coaching profile.
-- `/socrates-off` switches back to the configured default profile.
 
 Profile changes are persisted in the Pi session, so resumed sessions restore their last selected profile.
 
@@ -95,7 +131,7 @@ Profiles have one command-rule map and two ordered path-rule arrays. Later match
 
 - `tools.bash` patterns match normalized shell command segments.
 - Other `tools.<name>` entries configure custom tools by matching glob patterns against named input properties. The built-in path tools cannot be configured here; they use the path arrays below.
-- `readPaths` applies only to the dedicated `read`, `grep`, `find`, and `ls` tools.
+- `readPaths` applies only to the dedicated `read`, `grep`, `find`, and `ls` tools, which this package activates automatically (see [Required read-only tools](#required-read-only-tools)).
 - `writePaths` applies to `edit`, `write`, and every Bash filesystem operand, including Bash readers and both input and output redirections. Bash is deliberately treated as write-capable even for apparently read-only commands. The one carve-out is `cd`: it mutates nothing and every later operand is gated individually against the tracked directory, so its target is gated against `readPaths` with the `ls` context instead — changing directory repositions operand-less readers such as bare `ls`.
 - A path rule can set `contexts` to restrict itself to particular consumers. Valid read contexts are `read`, `grep`, `find`, and `ls`; valid write contexts are `edit`, `write`, and `bash`. A rule without `contexts` applies to every consumer of its array.
 - Absolute path patterns such as `/tmp/**` match absolute paths; other patterns match paths relative to Pi's startup directory.

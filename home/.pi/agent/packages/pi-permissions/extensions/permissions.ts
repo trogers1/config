@@ -259,12 +259,43 @@ The permissions gate remains loaded and will fail closed until the profile is co
     }
   }
 
+  /**
+   * Policy guidance steers agents to the read, grep, find, and ls tools, so
+   * the gate assumes they are callable. Pi registers every built-in tool but
+   * only activates read/bash/edit/write by default, so activate the read
+   * tools additively on session start and on every profile switch. A missing
+   * registration means the installed pi version no longer provides a tool
+   * this package depends on; fail loudly instead of silently losing the
+   * read-only tool surface.
+   */
+  function ensureReadToolsActive(): void {
+    const registeredNames = new Set(pi.getAllTools().map((tool) => tool.name));
+    const unregistered = readToolNames.filter(
+      (name) => !registeredNames.has(name),
+    );
+    if (unregistered.length > 0) {
+      throw new Error(
+        `pi-permissions requires pi's built-in read tools (${readToolNames.join(", ")}), but not registered: ${unregistered.join(", ")}. ` +
+          "The installed pi version may be incompatible with this package.",
+      );
+    }
+    const activeTools = pi.getActiveTools();
+    const inactive = readToolNames.filter(
+      (name) => !activeTools.includes(name),
+    );
+    if (inactive.length === 0) return;
+    // Purely additive: preserve tools enabled by the user or other extensions.
+    pi.setActiveTools([...activeTools, ...inactive]);
+  }
+
   function setActiveProfile(profile: ProfileName): void {
     activeProfile = profile;
+    ensureReadToolsActive();
     pi.appendEntry(profileEntryType, { profile, timestamp: Date.now() });
   }
 
   pi.on("session_start", (_event, ctx) => {
+    ensureReadToolsActive();
     restoreActiveProfile(ctx);
 
     const errorReason = configurationErrorReason();

@@ -366,6 +366,12 @@ function createHarness(options: { hasUI: boolean; cwd?: string }) {
     sendMessage: () => undefined,
     appendEntry: () => undefined,
     registerTool: () => undefined,
+    getActiveTools: () => ["read", "bash", "edit", "write"],
+    getAllTools: () =>
+      ["read", "bash", "edit", "write", "grep", "find", "ls"].map((name) => ({
+        name,
+      })),
+    setActiveTools: () => undefined,
   } as unknown as ExtensionAPI;
 
   permissionsExtension(api);
