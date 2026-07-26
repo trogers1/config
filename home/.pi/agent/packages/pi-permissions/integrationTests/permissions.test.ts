@@ -713,6 +713,87 @@ describe("default profile bash policy", () => {
     ).resolves.toBeUndefined();
   });
 
+  // cd gating matrix. cd mutates no files, so the target is never gated
+  // against writePaths; but it repositions operand-less readers such as bare
+  // `ls`, so the target is gated against readPaths (ls context), and the
+  // protected-path overlay still applies. Whatever the destination, every
+  // later operand is resolved against the tracked cwd and gated individually.
+  // Each test is independent and pins one edge of this matrix.
+  describe("cd gating", () => {
+    it("allows cd into a write-denied directory, because cd itself cannot write", async () => {
+      // Every operand after the cd is still resolved against the tracked cwd
+      // and gated individually (see the 'cd project && cat ...' test below), so
+      // letting navigation through writePaths cannot enable any write.
+      const policy = structuredClone(policyConfig.profiles.default);
+      policy.writePaths = [{ pattern: "**", decision: "deny" }];
+      const ctx = context(process.cwd(), false);
+
+      await expect(
+        gateBash("cd project", process.cwd(), ctx, policy),
+      ).resolves.toBeUndefined();
+      expect(vi.mocked(ctx.ui.confirm)).not.toHaveBeenCalled();
+    });
+
+    it("denies cd into a read-denied directory, because cd repositions readers", async () => {
+      // Operand-less commands such as bare `ls` read whatever directory the
+      // shell is in, so the cd destination is gated against readPaths.
+      const policy = structuredClone(policyConfig.profiles.default);
+      policy.readPaths = [{ pattern: "**", decision: "deny" }];
+
+      await expect(
+        gateBash(
+          "cd project",
+          process.cwd(),
+          nonInteractiveContext(process.cwd()),
+          policy,
+        ),
+      ).resolves.toMatchObject({ block: true });
+    });
+
+    it("still denies cd into protected paths", async () => {
+      const result = await gateBash(
+        "cd .git",
+        process.cwd(),
+        context(process.cwd(), false),
+        policyConfig.profiles.default,
+      );
+
+      expect(result).toMatchObject({ block: true });
+      expect(result?.reason).toContain(
+        "protected from disclosure and mutation",
+      );
+    });
+
+    it("still gates operands against the directory tracked through cd", async () => {
+      // The follow-up guarantee that makes ungated navigation safe: after
+      // `cd project`, relative operands are evaluated against `project`, not
+      // the startup directory.
+      const restrictivePolicy = structuredClone(policyConfig.profiles.default);
+      restrictivePolicy.writePaths = [
+        { pattern: "**", decision: "deny" },
+        { pattern: "project/allowed", decision: "allow" },
+      ];
+
+      await expect(
+        gateBash(
+          "cd project && cat allowed",
+          process.cwd(),
+          context(process.cwd(), false),
+          restrictivePolicy,
+        ),
+      ).resolves.toBeUndefined();
+
+      await expect(
+        gateBash(
+          "cd project && cat secret",
+          process.cwd(),
+          nonInteractiveContext(process.cwd()),
+          restrictivePolicy,
+        ),
+      ).resolves.toMatchObject({ block: true });
+    });
+  });
+
   it("does not allow arbitrary node_modules directories", async () => {
     const ctx = context(process.cwd(), false);
     const unrelatedDependency = path.join(

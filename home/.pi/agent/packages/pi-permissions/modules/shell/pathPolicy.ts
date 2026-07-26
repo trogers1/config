@@ -263,7 +263,7 @@ function analyzeNode(
           protectedPathExceptions,
         );
       }
-      return analyzeSequentialNodes(
+      const andOrResult = analyzeSequentialNodes(
         node.commands,
         state,
         startupCwd,
@@ -271,6 +271,17 @@ function analyzeNode(
         protectedPathPatterns,
         protectedPathExceptions,
       );
+      // Within an && chain a later command only runs when every earlier
+      // command succeeded, so static cd tracking is sound inside the chain.
+      // The chain itself may stop before its cd commands run, so the cwd
+      // afterwards cannot be proven.
+      if (containsCwdMutation(node)) {
+        return {
+          decision: andOrResult.decision,
+          state: { ...state, known: false },
+        };
+      }
+      return andOrResult;
     }
     case "If":
     case "While":
@@ -452,16 +463,17 @@ function analyzeCommand(
   const cdTarget = commandName === "cd" ? findCdTarget(command) : undefined;
 
   if (commandName === "cd" && cdTarget) {
-    const cdDecision = evaluateTokenAsPath(
+    const cdDecision = evaluateCdTarget(
       cdTarget,
       state,
       startupCwd,
       activePolicy,
       protectedPathPatterns,
       protectedPathExceptions,
-      "bash",
     );
-    if (cdDecision?.decision !== "allow") {
+    // evaluateCdTarget returns undefined when the target is allowed; only a
+    // concrete ask/deny decision stops the command here.
+    if (cdDecision) {
       return { state, decision: cdDecision };
     }
     state = {
@@ -577,6 +589,45 @@ function evaluateTokenAsPath(
     activePolicy.writePaths,
     "allow",
     context,
+    protectedPathPatterns,
+    protectedPathExceptions,
+  );
+  if (decision.decision === "allow") return undefined;
+  return { ...decision, path: absolutePath };
+}
+
+/**
+ * cd mutates no files, and every later operand is resolved against the
+ * tracked cwd and gated individually, so gating the cd target against
+ * writePaths would only block navigation, never writes. But cd repositions
+ * operand-less readers such as bare `ls`, so the target is gated against
+ * readPaths with the `ls` context instead. Dynamic targets and relative
+ * targets under an uncertain cwd stay conservative, and protected paths
+ * remain off-limits.
+ */
+function evaluateCdTarget(
+  token: PathToken,
+  state: CwdState,
+  startupCwd: string,
+  activePolicy: ProfilePolicy,
+  protectedPathPatterns: readonly string[],
+  protectedPathExceptions: readonly string[],
+): DecisionWithPath | undefined {
+  if (token.kind === "dynamic") {
+    return { decision: "ask", path: token.value, matchPath: token.value };
+  }
+
+  if (!state.known && !isAbsoluteLike(token.value)) {
+    return { decision: "ask", path: token.value, matchPath: token.value };
+  }
+
+  const absolutePath = resolveRequestedPath(token.value, state.cwd);
+  const decision = evaluatePathByPattern(
+    absolutePath,
+    startupCwd,
+    activePolicy.readPaths,
+    "allow",
+    "ls",
     protectedPathPatterns,
     protectedPathExceptions,
   );

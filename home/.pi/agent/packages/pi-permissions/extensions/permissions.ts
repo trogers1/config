@@ -558,8 +558,11 @@ function decideSubagentBashScope(
   subagentPermissibleRules: Rule[] | undefined,
 ) {
   if (!subagentPermissibleRules) return undefined;
+  // Bash operands are gated by writePaths, while cd targets follow readPaths;
+  // replace both so navigation cannot escape the declared scope either.
   const scopedPolicy = {
     ...policy,
+    readPaths: subagentPermissibleRules as [Rule, ...Rule[]],
     writePaths: subagentPermissibleRules as [Rule, ...Rule[]],
   };
   const decision = decideBashPathReferences(
