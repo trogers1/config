@@ -17,12 +17,21 @@ export function validateRipgrepGlobOverrides(
 
     for (let index = ripgrepIndex + 1; index < tokens.length; index++) {
       const token = tokens[index];
-      const glob =
-        token === "--glob"
-          ? tokens[++index]
-          : token.startsWith("--glob=")
-            ? token.slice("--glob=".length)
-            : undefined;
+      // rg applies globs last-match-wins, so every caller glob form must be
+      // validated: --glob <v>, --glob=<v>, and the short -g whether detached
+      // (-g <v>), attached (-g<v>), or clustered (-ig <v>).
+      const glob = (() => {
+        if (token === "--glob") return tokens[++index];
+        if (token.startsWith("--glob=")) return token.slice("--glob=".length);
+        if (/^-[^-]/.test(token)) {
+          const flagIndex = token.indexOf("g");
+          if (flagIndex > 0) {
+            const attached = token.slice(flagIndex + 1);
+            return attached || tokens[++index];
+          }
+        }
+        return undefined;
+      })();
       if (glob === undefined) continue;
       if (
         !isSafeSearchGlob(glob, protectedPathPatterns, protectedPathExceptions)
@@ -37,20 +46,18 @@ export function validateRipgrepGlobOverrides(
   return undefined;
 }
 
+// Exceptions are deliberately not injected as positive globs: ripgrep treats
+// any positive --glob as a whitelist for implicit searches, which would hide
+// every non-exception file. Explicitly named paths bypass glob filtering, so
+// exception files remain searchable by naming them directly.
 export function injectRipgrepProtectedPathGlobs(
   command: string,
   protectedPathPatterns: readonly string[],
-  protectedPathExceptions: readonly string[] = [],
 ): string {
   if (protectedPathPatterns.length === 0) return command;
-  const globArguments = [
-    ...protectedPathPatterns.map(
-      (pattern) => `--glob ${shellQuote(`!${pattern}`)}`,
-    ),
-    ...protectedPathExceptions.map(
-      (pattern) => `--glob ${shellQuote(pattern)}`,
-    ),
-  ].join(" ");
+  const globArguments = protectedPathPatterns
+    .map((pattern) => `--glob ${shellQuote(`!${pattern}`)}`)
+    .join(" ");
 
   return command.replace(
     /(^|&&|\|\||[;|\n])(\s*)((?:command\s+)?)(rg|ripgrep)(?=\s|$)/gm,

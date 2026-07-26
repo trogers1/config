@@ -403,7 +403,6 @@ The permissions gate remains loaded and will fail closed until the profile is co
       event.input.command = injectRipgrepProtectedPathGlobs(
         command,
         policy.protectedPathPatterns ?? [],
-        policy.protectedPathExceptions,
       );
       return await gateBash(event.input.command, startupCwd, ctx, policy);
     }

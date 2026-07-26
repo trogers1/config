@@ -885,7 +885,7 @@ describe("permissions extension", () => {
       harness.callToolWithoutPrompt({ toolName: "bash", input: ripgrepInput }),
     ).resolves.toBeUndefined();
     expect(ripgrepInput.command).toBe(
-      "rg --glob '!**/.env*' --glob '!**/.env*/**' --glob '!**/.git' --glob '!**/.git/**' --glob '!**/secrets/*.tfvars' --glob '**/.env.template' DATABASE_URL .",
+      "rg --glob '!**/.env*' --glob '!**/.env*/**' --glob '!**/.git' --glob '!**/.git/**' --glob '!**/secrets/*.tfvars' DATABASE_URL .",
     );
 
     for (const command of [

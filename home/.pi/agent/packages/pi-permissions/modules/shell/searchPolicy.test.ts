@@ -9,16 +9,49 @@ const patterns = ["**/.env*", "**/.git/**"];
 const exceptions = ["**/.env.template"];
 
 describe("shell search policy", () => {
-  it("injects profile-derived exclusions and exceptions into ripgrep", () => {
+  it("injects only profile-derived exclusions into ripgrep", () => {
+    // Exceptions must not be injected as positive globs: ripgrep treats the
+    // presence of any positive --glob as a whitelist for implicit searches,
+    // which would hide every non-exception file from `rg pattern` searches.
+    // Exception files remain reachable because ripgrep searches explicitly
+    // named paths regardless of globs.
+    expect(injectRipgrepProtectedPathGlobs("rg DATABASE_URL .", patterns)).toBe(
+      "rg --glob '!**/.env*' --glob '!**/.git/**' DATABASE_URL .",
+    );
+  });
+
+  it("rejects short -g globs that can match configured protected paths", () => {
+    // rg applies globs last-match-wins, so any caller glob form that reaches
+    // the command line could re-include files excluded by the injected
+    // negations. The validator must cover -g as well as --glob.
+    for (const command of [
+      "rg -g '**/*' DATABASE_URL .",
+      "rg -g '**/.env*' DATABASE_URL .",
+      "rg -g**/* DATABASE_URL .",
+      "rg -ig '**/*' DATABASE_URL .",
+    ]) {
+      expect(
+        validateRipgrepGlobOverrides(command, patterns, exceptions),
+        command,
+      ).toContain("protected by the active profile");
+    }
     expect(
-      injectRipgrepProtectedPathGlobs(
-        "rg DATABASE_URL .",
+      validateRipgrepGlobOverrides(
+        "rg -g '**/*.ts' DATABASE_URL .",
         patterns,
         exceptions,
       ),
-    ).toBe(
-      "rg --glob '!**/.env*' --glob '!**/.git/**' --glob '**/.env.template' DATABASE_URL .",
-    );
+    ).toBeUndefined();
+  });
+
+  it("permits caller globs that exactly name a configured exception", () => {
+    expect(
+      validateRipgrepGlobOverrides(
+        "rg --glob '**/.env.template' DATABASE_URL .",
+        patterns,
+        exceptions,
+      ),
+    ).toBeUndefined();
   });
 
   it("derives search globs from non-env profile patterns", () => {
