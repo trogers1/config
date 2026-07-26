@@ -140,7 +140,7 @@ function classifyArgument(
   return {
     kind: dynamic
       ? "dynamic"
-      : /^--[A-Za-z][A-Za-z0-9-]*$/.test(value) || /^-[A-Za-z]$/.test(value)
+      : isFlagLikeToken(value)
         ? "proven-non-path"
         : "ambiguous",
     value,
@@ -149,6 +149,28 @@ function classifyArgument(
     end: word.end,
     command,
   };
+}
+
+/**
+ * Without per-command option schemas, a static dash-prefixed word is treated
+ * as a flag unless it carries a path-shaped value. Pure clusters (-la), long
+ * flags (--all), and options with non-path values (--format=%H) are flags;
+ * attached or =-joined values containing a path fragment (-I/usr/include,
+ * --output=~/x, --output=.env) stay ambiguous so the gate asks instead of
+ * silently skipping a possible path operand. Attached short-option values
+ * without a path separator (-o.env) cannot be recognized generically and
+ * remain a known gap.
+ */
+function isFlagLikeToken(value: string): boolean {
+  if (!value.startsWith("-")) return false;
+  const candidate = value.includes("=")
+    ? value.slice(value.indexOf("=") + 1)
+    : value;
+  return !(
+    candidate.includes("/") ||
+    candidate.startsWith("~") ||
+    candidate.startsWith(".")
+  );
 }
 
 function classifyCdTarget(words: Word[], tokens: ClassifiedShellToken[]): void {

@@ -294,6 +294,34 @@ describe("default profile bash policy", () => {
     expect(vi.mocked(ctx.ui.confirm)).not.toHaveBeenCalled();
   });
 
+  it("does not treat clustered short flags as gated paths", async () => {
+    const ctx = context(process.cwd(), false);
+
+    await expect(
+      gateBash(
+        "ls -la modules",
+        process.cwd(),
+        ctx,
+        policyConfig.profiles.default,
+      ),
+    ).resolves.toBeUndefined();
+    expect(vi.mocked(ctx.ui.confirm)).not.toHaveBeenCalled();
+  });
+
+  it("still gates path-shaped attached option values", async () => {
+    const ctx = context(process.cwd(), false);
+
+    const result = await gateBash(
+      "ls --output=.env modules",
+      process.cwd(),
+      ctx,
+      policyConfig.profiles.default,
+    );
+    expect(result).toMatchObject({ block: true });
+    expect(result?.reason).toContain("--output=.env");
+    expect(vi.mocked(ctx.ui.confirm)).toHaveBeenCalled();
+  });
+
   it.each(["default", "read-only"] as const)(
     "allows Pi documentation outside the startup directory in the %s profile",
     async (profile) => {

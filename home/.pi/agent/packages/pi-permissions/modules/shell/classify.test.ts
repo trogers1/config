@@ -171,6 +171,27 @@ describe("unbash shell classification spike", () => {
     );
   });
 
+  it("treats flag clusters as flags but keeps path-shaped option values ambiguous", () => {
+    const result = classifyShell(
+      "ls -la --format=%H -I/usr/include --output=~/x --output=.env ./src",
+    );
+
+    expect(result.errors).toEqual([]);
+    expect(result.tokens).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "proven-non-path", value: "-la" }),
+        expect.objectContaining({
+          kind: "proven-non-path",
+          value: "--format=%H",
+        }),
+        expect.objectContaining({ kind: "ambiguous", value: "-I/usr/include" }),
+        expect.objectContaining({ kind: "ambiguous", value: "--output=~/x" }),
+        expect.objectContaining({ kind: "ambiguous", value: "--output=.env" }),
+        expect.objectContaining({ kind: "ambiguous", value: "./src" }),
+      ]),
+    );
+  });
+
   it("reports malformed shell rather than relying on a recovered AST", () => {
     const result = classifyShell("cat 'unterminated");
 
