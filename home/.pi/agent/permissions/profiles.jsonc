@@ -247,6 +247,20 @@
         ],
       },
     },
+    // Not generic enough for the package builtins: personal review workflow
+    // that needs CLI access to GitLab/GitHub plus jq for shaping output.
+    "performance-review": {
+      "extends": "default",
+      "color": "red",
+      "emoji": "📋",
+      "tools": {
+        "bash": [
+          { "pattern": "glab *", "decision": "allow" },
+          { "pattern": "gh *", "decision": "allow" },
+          { "pattern": "jq *", "decision": "allow" },
+        ],
+      },
+    },
     "socrates": {
       "extends": "read-only",
       "promptFile": "~/.pi/agent/permissions/prompts/socrates.md",

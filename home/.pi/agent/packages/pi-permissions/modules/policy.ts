@@ -1015,19 +1015,6 @@ const configuredPolicy = definePolicyConfig({
     "read-only": readOnlyProfile,
     "tests-disallowed": testsDisallowedProfile,
     "tests-only": testsOnlyProfile,
-
-    "performance-review": extendProfile(baseProfile, {
-      color: "red",
-      emoji: "📋",
-      // Specific to performance-review profile only:
-      tools: {
-        bash: [
-          { pattern: "glab *", decision: "allow" },
-          { pattern: "gh *", decision: "allow" },
-          { pattern: "jq *", decision: "allow" },
-        ],
-      },
-    }),
   },
 });
 
