@@ -7,3 +7,5 @@ Here are thoughts on how to do this:
 - we could limit the types of profiles that can be selected by env var?
 - Maybe the glob env var should completely overwrite the profile's read/write paths?
 - subagents can never have more permissions than their parent somehow?
+
+Also, if we can find a way to switch profiles easily mid-message, that would be great (if pi gives a surface/api for that). It's very annoying to be mid-prompt and realize you want a specific profile, need to delete your whole prompt, set it, then paste it back.
