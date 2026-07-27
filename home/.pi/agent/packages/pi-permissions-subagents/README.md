@@ -25,6 +25,12 @@ Forked from pi's `examples/extensions/subagent` with additions:
 - **Nested-delegation guard.** Worker processes run with `PI_SUBAGENT_DEPTH=1`;
   the tool refuses to delegate from inside a worker, so costs can't fan out
   recursively.
+- **Worker auto-compaction.** Workers run headless, so nobody watches context
+  growth. Inside worker sessions (and only there), the extension compacts the
+  session once context crosses 40% of the model's context window or 150k
+  tokens, whichever comes first — before degradation sets in. It fires on the
+  upward threshold crossing only, so a failed compaction can't retrigger every
+  turn; pi's built-in auto-compaction remains as the near-full backstop.
 - **Orchestrate skill.** A companion skill at
   `~/.pi/agent/skills/orchestrate/SKILL.md` drives the full plan.md →
   progress.md → dispatch → review → integrate loop.
@@ -51,12 +57,12 @@ pi-permissions-subagents/
 
 ## Agents
 
-| Agent      | Purpose                                | Model                 | Profile     | Tools                                  |
-| ---------- | -------------------------------------- | --------------------- | ----------- | -------------------------------------- |
-| `scout`    | Fast recon, returns compressed context | `openai/gpt-5-nano`   | `read-only` | read, grep, find, ls, bash             |
-| `worker`   | General-purpose implementation         | `openai/gpt-5.4-mini` | `worker`    | (all defaults)                         |
-| `planner`  | Implementation plans                   | _(pi default)_        | `read-only` | read, grep, find, ls                   |
-| `reviewer` | Code review                            | _(pi default)_        | `read-only` | read, grep, find, ls, bash (read-only) |
+| Agent      | Purpose                                | Model                 | Profile             | Tools                                  |
+| ---------- | -------------------------------------- | --------------------- | ------------------- | -------------------------------------- |
+| `scout`    | Fast recon, returns compressed context | `openai/gpt-5-nano`   | `builtin:read-only` | read, grep, find, ls, bash             |
+| `worker`   | General-purpose implementation         | `openai/gpt-5.4-mini` | `builtin:worker`    | (all defaults)                         |
+| `planner`  | Implementation plans                   | _(pi default)_        | `builtin:read-only` | read, grep, find, ls                   |
+| `reviewer` | Code review                            | _(pi default)_        | `builtin:read-only` | read, grep, find, ls, bash (read-only) |
 
 Agents with no `model:` frontmatter inherit your pi default model. To change a
 model or prompt, either edit the files here or drop a same-named file into
@@ -110,10 +116,10 @@ under its policy. The packages integrate through two environment variables:
 1. **Per-agent `profile:` frontmatter.** The extension exports the declared
    profile as `PI_SUBAGENT_PROFILE`; `pi-permissions` selects it at session
    start, including when a persisted worker session is resumed.
-   - `scout`, `planner`, `reviewer` → `read-only`.
-   - `worker` → `worker`, a default-like non-interactive profile where common
-     build/test commands are allowed and confirmation-gated actions become
-     deny-with-guidance.
+   - `scout`, `planner`, `reviewer` → `builtin:read-only`.
+   - `worker` → `builtin:worker`, a default-like non-interactive profile where
+     common build/test commands are allowed and confirmation-gated actions
+     become deny-with-guidance.
 
 2. **Per-task write-scope enforcement.** When a task declares `writes`, the
    extension exports the entries as comma-separated

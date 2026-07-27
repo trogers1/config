@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type {
 	AgentToolResult,
 	AgentToolUpdateCallback,
+	CompactOptions,
 	ExtensionAPI,
 	ExtensionContext,
 	ToolDefinition,
@@ -110,26 +111,60 @@ export function createFakeExtensionContext(
 }
 
 type RegisteredTool = ToolDefinition<TSchema, unknown, unknown>;
+type EventHandler = (event: unknown, ctx: ExtensionContext) => unknown;
 
 export interface ExtensionRegistrationRecorder {
 	api: ExtensionAPI;
 	getRegisteredTools(): readonly RegisteredTool[];
+	getEventHandlers(event: string): readonly EventHandler[];
 }
 
 export function createExtensionRegistrationRecorder(): ExtensionRegistrationRecorder {
 	const tools: RegisteredTool[] = [];
+	const eventHandlers = new Map<string, EventHandler[]>();
 	const api = {
 		registerTool<TParams extends TSchema, TDetails, TState>(tool: ToolDefinition<TParams, TDetails, TState>) {
 			// Erasure is confined to storage; invocation validates the retained schema.
 			tools.push(tool as RegisteredTool);
 		},
-	} satisfies Pick<ExtensionAPI, "registerTool">;
+		on(event: string, handler: EventHandler) {
+			const handlers = eventHandlers.get(event) ?? [];
+			handlers.push(handler);
+			eventHandlers.set(event, handlers);
+		},
+	} satisfies Pick<ExtensionAPI, "registerTool"> & Record<"on", unknown>;
 
 	return {
-		// Extensions receive the full API in Pi. This extension only uses registerTool.
+		// Extensions receive the full API in Pi. This extension only uses registerTool and on.
 		api: api as ExtensionAPI,
 		getRegisteredTools: () => tools,
+		getEventHandlers: (event) => eventHandlers.get(event) ?? [],
 	};
+}
+
+/**
+ * Fake context surface for the worker auto-compaction handler: reports a fixed
+ * context usage and records compact() calls.
+ */
+export function createFakeCompactionContext(
+	usage: { tokens: number | null; contextWindow: number },
+	compactCalls: CompactOptions[],
+): ExtensionContext {
+	const context = {
+		getContextUsage: () => ({
+			tokens: usage.tokens,
+			contextWindow: usage.contextWindow,
+			percent: usage.tokens === null ? null : (usage.tokens / usage.contextWindow) * 100,
+		}),
+		compact: (options?: CompactOptions) => {
+			compactCalls.push(options ?? {});
+		},
+	};
+
+	// The compaction handler only reads this narrow context surface. Keep the
+	// partial-runtime cast at this single boundary so SDK changes to the used
+	// members remain checked.
+	return context as ExtensionContext;
 }
 
 export interface InvokeRegisteredToolOptions<TDetails> {

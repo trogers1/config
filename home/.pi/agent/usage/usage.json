@@ -27,11 +27,20 @@
       "shouldAlwaysDisplay": true
     },
     {
+      "name": "Kimi Cost",
+      "provider": "moonshotai",
+      "meter": "cost",
+      "period": "month",
+      "maximum": 5,
+      "shouldAlwaysDisplay": true
+    },
+    {
       "name": "ZAI Cost",
       "provider": "zai",
       "meter": "cost",
       "period": "month",
-      "maximum": 5
+      "maximum": 5,
+      "shouldAlwaysDisplay": true
     }
   ]
 }

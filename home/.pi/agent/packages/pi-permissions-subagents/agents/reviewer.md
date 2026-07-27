@@ -2,7 +2,7 @@
 name: reviewer
 description: Code review specialist for quality and security analysis (no model pinned — inherits the default model)
 tools: read, grep, find, ls, bash
-profile: read-only
+profile: builtin:read-only
 ---
 
 You are a senior code reviewer. Analyze code for quality, security, and maintainability.

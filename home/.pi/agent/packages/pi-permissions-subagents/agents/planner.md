@@ -2,7 +2,7 @@
 name: planner
 description: Creates implementation plans from context and requirements (no model pinned — inherits the default model)
 tools: read, grep, find, ls
-profile: read-only
+profile: builtin:read-only
 ---
 
 You are a planning specialist. You receive context (from a scout) and requirements, then produce a clear implementation plan.

@@ -48,6 +48,16 @@ const MAX_PARALLEL_TASKS = 8;
 const MAX_CONCURRENCY = 4;
 const COLLAPSED_ITEM_COUNT = 10;
 const PER_TASK_OUTPUT_CAP = 50 * 1024;
+const WORKER_COMPACT_WINDOW_FRACTION = 0.4;
+const WORKER_COMPACT_MAX_TOKENS = 150_000;
+
+/**
+ * Worker auto-compaction threshold: 40% of the model's context window, capped
+ * at 150k tokens — whichever comes first for the active model.
+ */
+export function workerCompactionThreshold(contextWindow: number): number {
+	return Math.min(WORKER_COMPACT_WINDOW_FRACTION * contextWindow, WORKER_COMPACT_MAX_TOKENS);
+}
 
 const UsageSchema = Type.Object({
 	input: Type.Number(),
@@ -804,6 +814,36 @@ const SubagentParams = Type.Object({
 });
 
 export default function (pi: ExtensionAPI) {
+	// Worker auto-compaction. Workers run headless (`pi --mode json -p`), so
+	// nobody watches context growth; compact once a worker's context crosses
+	// workerCompactionThreshold, before degradation sets in. Gated to worker
+	// sessions via PI_SUBAGENT_DEPTH (set in the spawn environment) — main
+	// sessions keep pi's built-in auto-compaction, which also remains as the
+	// near-full backstop inside workers.
+	let previousWorkerTokens: number | null | undefined;
+	pi.on("turn_end", (_event, ctx) => {
+		if (!process.env.PI_SUBAGENT_DEPTH) return;
+
+		const usage = ctx.getContextUsage();
+		if (!usage || usage.tokens === null) return;
+		const currentTokens = usage.tokens;
+		const threshold = workerCompactionThreshold(usage.contextWindow);
+
+		// Refire guard (from pi's trigger-compact example): compact on the
+		// upward crossing only, so a failed compaction (tokens stay high) does
+		// not retrigger every turn. A session first observed above the threshold
+		// (warm resume) counts as a crossing and compacts on its first turn.
+		const wasBelowThreshold =
+			previousWorkerTokens === undefined || (previousWorkerTokens !== null && previousWorkerTokens <= threshold);
+		previousWorkerTokens = currentTokens;
+		if (!wasBelowThreshold || currentTokens <= threshold) return;
+
+		ctx.compact({
+			customInstructions:
+				"This is a subagent worker session. Preserve the delegated task, progress so far, files read and changed, and the remaining steps.",
+		});
+	});
+
 	pi.registerTool({
 		name: "subagent",
 		label: "Subagent",

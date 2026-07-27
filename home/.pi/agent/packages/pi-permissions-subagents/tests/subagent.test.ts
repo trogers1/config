@@ -86,7 +86,7 @@ describe("subagent tool", () => {
 
 		const records = spawnRecord(projectDir);
 		expect(records).toHaveLength(1);
-		expect(records[0].env.PI_SUBAGENT_PROFILE).toBe("worker");
+		expect(records[0].env.PI_SUBAGENT_PROFILE).toBe("builtin:worker");
 		expect(records[0].env.PI_SUBAGENT_PERMISSIBLE_GLOBS).toBe("src");
 		expect(records[0].env.PI_SUBAGENT_DEPTH).toBe("1");
 	});
