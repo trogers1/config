@@ -25,12 +25,20 @@ Forked from pi's `examples/extensions/subagent` with additions:
 - **Nested-delegation guard.** Worker processes run with `PI_SUBAGENT_DEPTH=1`;
   the tool refuses to delegate from inside a worker, so costs can't fan out
   recursively.
-- **Worker auto-compaction.** Workers run headless, so nobody watches context
-  growth. Inside worker sessions (and only there), the extension compacts the
-  session once context crosses 40% of the model's context window or 150k
-  tokens, whichever comes first — before degradation sets in. It fires on the
-  upward threshold crossing only, so a failed compaction can't retrigger every
-  turn; pi's built-in auto-compaction remains as the near-full backstop.
+- **Worker auto-compaction (parent-driven).** Workers run headless, so
+  nobody watches context growth. When a worker's context crosses 40% of its
+  model's context window (capped at 150k tokens, falling back to 100k when
+  the model can't be resolved) at a turn boundary, the parent SIGTERMs the
+  worker, compacts its session out-of-band via a one-shot `pi --mode rpc`
+  compact command, and respawns the worker against the compacted session
+  with a continue prompt (up to 4 cycles). In-worker `ctx.compact()` can't be used: pi's print mode disposes
+  the runtime before a triggered compaction finishes. If a compaction cycle
+  fails, the worker resumes uncompacted and pi's built-in overflow recovery
+  (compact+retry at context-full) remains as the backstop.
+- **Premature-exit detection.** A worker that exits 0 but whose last message
+  ended mid-turn (`toolUse`) or truncated (`length`) is reported as failed,
+  not completed, so the orchestrator resumes the session instead of trusting
+  silence. Worker stderr is captured into the handoff file.
 - **Orchestrate skill.** A companion skill at
   `~/.pi/agent/skills/orchestrate/SKILL.md` drives the full plan.md →
   progress.md → dispatch → review → integrate loop.

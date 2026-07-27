@@ -27,6 +27,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import {
 	type ExtensionAPI,
 	getMarkdownTheme,
+	type ModelRegistry,
 	SessionManager,
 	type ThemeColor,
 	withFileMutationQueue,
@@ -48,16 +49,38 @@ const MAX_PARALLEL_TASKS = 8;
 const MAX_CONCURRENCY = 4;
 const COLLAPSED_ITEM_COUNT = 10;
 const PER_TASK_OUTPUT_CAP = 50 * 1024;
-const WORKER_COMPACT_WINDOW_FRACTION = 0.4;
-const WORKER_COMPACT_MAX_TOKENS = 150_000;
 
 /**
- * Worker auto-compaction threshold: 40% of the model's context window, capped
- * at 150k tokens — whichever comes first for the active model.
+ * Parent-side worker compaction. Extension-triggered ctx.compact() is broken
+ * in pi's print mode (compaction_start is emitted, then runPrintMode disposes
+ * the runtime before compaction_end), so the parent drives compaction
+ * instead: when a worker's context crosses workerCompactionThreshold at a
+ * turn boundary, the worker is SIGTERMed, its session is compacted via a
+ * one-shot `pi --mode rpc` compact command (which IS awaited properly), and
+ * the worker is respawned against the compacted session with a continue
+ * prompt.
+ */
+const WORKER_COMPACT_WINDOW_FRACTION = 0.4;
+const WORKER_COMPACT_MAX_TOKENS = 150_000;
+/** Fallback when the worker's model can't be resolved to a context window. */
+const WORKER_COMPACT_FALLBACK_TOKENS = 100_000;
+const MAX_COMPACTION_CYCLES = 4;
+const COMPACTION_TIMEOUT_MS = 240_000;
+
+/**
+ * Worker compaction threshold: 40% of the model's context window, capped at
+ * 150k tokens — compact before cheap worker models degrade, well before pi's
+ * near-full overflow backstop.
  */
 export function workerCompactionThreshold(contextWindow: number): number {
 	return Math.min(WORKER_COMPACT_WINDOW_FRACTION * contextWindow, WORKER_COMPACT_MAX_TOKENS);
 }
+
+const WORKER_COMPACT_INSTRUCTIONS =
+	"This is a subagent worker session. Preserve the delegated task, progress so far, files read and changed, and the remaining steps.";
+
+const WORKER_CONTINUE_PROMPT =
+	"Your previous process was stopped for context compaction and your session was compacted. Continue the delegated task from exactly where you left off — do not restart completed work. When the task is done, send the structured final summary.";
 
 const UsageSchema = Type.Object({
 	input: Type.Number(),
@@ -138,10 +161,16 @@ const WorkerEventSchema = Type.Union([
 		type: Type.Literal("tool_result_end"),
 		message: ToolResultMessageSchema,
 	}),
+	Type.Object({
+		type: Type.Literal("turn_end"),
+		message: AssistantMessageSchema,
+	}),
 ]);
 
 type WorkerEvent =
-	{ type: "message_end"; message: AssistantMessage } | { type: "tool_result_end"; message: ToolResultMessage };
+	| { type: "message_end"; message: AssistantMessage }
+	| { type: "tool_result_end"; message: ToolResultMessage }
+	| { type: "turn_end"; message: AssistantMessage };
 
 function parseWorkerEvent(line: string): WorkerEvent | undefined {
 	let value: unknown;
@@ -278,6 +307,14 @@ interface SingleResult {
 	startedAt?: Date;
 	endedAt?: Date;
 	workerCwd: string;
+	/** Parent-driven compaction cycles performed while this worker ran. */
+	compactions: CompactionOutcome[];
+}
+
+interface CompactionOutcome {
+	success: boolean;
+	tokensAfter?: number;
+	error?: string;
 }
 
 interface SubagentDetails {
@@ -313,7 +350,17 @@ function getFinalOutput(messages: Message[]): string {
 }
 
 function isFailedResult(result: SingleResult): boolean {
-	return result.exitCode !== 0 || result.stopReason === "error" || result.stopReason === "aborted";
+	// "toolUse"/"length" with a clean exit code means the worker process ended
+	// mid-turn without the model choosing to stop — a premature death (e.g. a
+	// turn_end extension hook preempting the run), not a completed task. Flag it
+	// so the orchestrator resumes the session instead of trusting silence.
+	return (
+		result.exitCode !== 0 ||
+		result.stopReason === "error" ||
+		result.stopReason === "aborted" ||
+		result.stopReason === "toolUse" ||
+		result.stopReason === "length"
+	);
 }
 
 function getResultOutput(result: SingleResult): string {
@@ -370,6 +417,13 @@ function resultMetaLines(r: SingleResult): string[] {
 		const shown = r.filesChanged.slice(0, 10);
 		const more = r.filesChanged.length > shown.length ? `, +${r.filesChanged.length - shown.length} more` : "";
 		lines.push(`files changed (write/edit + git snapshot): ${shown.join(", ")}${more}`);
+	}
+	if (r.compactions.length) {
+		const last = r.compactions[r.compactions.length - 1];
+		const detail = last.success
+			? `context after last: ~${formatTokens(last.tokensAfter ?? 0)}`
+			: `last failed: ${last.error}`;
+		lines.push(`compactions: ${r.compactions.length} (${detail})`);
 	}
 	if (r.scopeViolations.length) {
 		lines.push(
@@ -470,6 +524,8 @@ interface RunAgentOptions {
 	task: string;
 	cwd?: string;
 	step?: number;
+	/** Used to resolve the worker model's context window for the compaction threshold. */
+	modelRegistry?: ModelRegistry;
 	sessionId?: string;
 	label?: string;
 	writes?: string[];
@@ -477,6 +533,89 @@ interface RunAgentOptions {
 	handoffBase?: string;
 	/** Git-status bash-edit tracking is unreliable when multiple workers share a cwd. */
 	trackBashEdits?: boolean;
+}
+
+/**
+ * Compact a worker's session out-of-band via a one-shot RPC-mode pi process.
+ * Unlike ctx.compact() from a print-mode extension hook, the RPC compact
+ * command is awaited: the process stays alive until compaction_end arrives,
+ * then is killed. Returns the outcome so the caller can degrade gracefully.
+ */
+function compactWorkerSession(
+	workerCwd: string,
+	sessionId: string,
+	sessionName: string,
+	agent: AgentConfig,
+): Promise<CompactionOutcome> {
+	const args = ["--mode", "rpc", "--session-id", sessionId, "--name", `${sessionName}-compact`];
+	if (agent.model) args.push("--model", agent.model);
+	return new Promise((resolve) => {
+		const invocation = getPiInvocation(args);
+		const spawnEnv: NodeJS.ProcessEnv = { ...process.env };
+		if (agent.profile) spawnEnv.PI_SUBAGENT_PROFILE = agent.profile;
+		let proc: ReturnType<typeof spawn>;
+		try {
+			proc = spawn(invocation.command, invocation.args, {
+				cwd: workerCwd,
+				shell: false,
+				stdio: ["pipe", "pipe", "pipe"],
+				env: spawnEnv,
+			});
+		} catch (err) {
+			resolve({ success: false, error: `spawn failed: ${err}` });
+			return;
+		}
+
+		let buffer = "";
+		let settled = false;
+		const timeout = setTimeout(() => {
+			finish({ success: false, error: `timed out after ${COMPACTION_TIMEOUT_MS / 1000}s` });
+		}, COMPACTION_TIMEOUT_MS);
+		const finish = (outcome: CompactionOutcome) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timeout);
+			proc.kill("SIGTERM");
+			resolve(outcome);
+		};
+
+		proc.stdout!.on("data", (data) => {
+			buffer += data.toString();
+			const lines = buffer.split("\n");
+			buffer = lines.pop() || "";
+			for (const line of lines) {
+				if (!line.trim()) continue;
+				let event: unknown;
+				try {
+					event = JSON.parse(line);
+				} catch {
+					continue;
+				}
+				if (typeof event !== "object" || event === null) continue;
+				const e = event as {
+					type?: string;
+					aborted?: boolean;
+					errorMessage?: string;
+					result?: { estimatedTokensAfter?: number };
+				};
+				if (e.type !== "compaction_end") continue;
+				if (e.aborted || e.errorMessage) {
+					finish({ success: false, error: e.errorMessage ?? "compaction aborted" });
+				} else {
+					finish({ success: true, tokensAfter: e.result?.estimatedTokensAfter });
+				}
+			}
+		});
+		proc.on("error", (err) => finish({ success: false, error: String(err) }));
+		proc.on("close", (code) => {
+			if (!settled) {
+				finish({ success: false, error: `compaction process exited (${code ?? "signal"}) before compaction_end` });
+			}
+		});
+
+		proc.stdin!.on("error", () => {}); // ignore EPIPE if the process dies first
+		proc.stdin!.write(`${JSON.stringify({ type: "compact", customInstructions: WORKER_COMPACT_INSTRUCTIONS })}\n`);
+	});
 }
 
 async function runSingleAgent(
@@ -489,6 +628,16 @@ async function runSingleAgent(
 ): Promise<SingleResult> {
 	const agent = agents.find((a) => a.name === opts.agentName);
 	const workerCwd = opts.cwd ?? defaultCwd;
+
+	// The worker's actual provider/model, learned from its message stream, lets
+	// the compaction threshold track the model's real context window.
+	let workerProvider: string | undefined;
+	let workerModel: string | undefined;
+	const compactionThreshold = (): number => {
+		const contextWindow =
+			workerProvider && workerModel ? opts.modelRegistry?.find(workerProvider, workerModel)?.contextWindow : undefined;
+		return contextWindow ? workerCompactionThreshold(contextWindow) : WORKER_COMPACT_FALLBACK_TOKENS;
+	};
 
 	if (!agent) {
 		const available = agents.map((a) => `"${a.name}"`).join(", ") || "none";
@@ -504,6 +653,7 @@ async function runSingleAgent(
 			sessionId: opts.sessionId ?? "none",
 			filesChanged: [],
 			scopeViolations: [],
+			compactions: [],
 			workerCwd,
 		};
 	}
@@ -541,6 +691,7 @@ async function runSingleAgent(
 		writes: opts.writes,
 		filesChanged: [],
 		scopeViolations: [],
+		compactions: [],
 		startedAt: new Date(),
 		workerCwd,
 	};
@@ -567,91 +718,143 @@ async function runSingleAgent(
 			args.push("--append-system-prompt", tmpPromptPath);
 		}
 
-		args.push(`Task: ${opts.task}`);
 		let wasAborted = false;
+		let compactionCycles = 0;
+		let compactionDisabled = false;
 
-		const exitCode = await new Promise<number>((resolve) => {
-			const invocation = getPiInvocation(args);
-			const spawnEnv: NodeJS.ProcessEnv = {
-				...process.env,
-				PI_SUBAGENT_DEPTH: "1",
-			};
-			if (agent.profile) spawnEnv.PI_SUBAGENT_PROFILE = agent.profile;
-			if (opts.writes?.length) spawnEnv.PI_SUBAGENT_PERMISSIBLE_GLOBS = opts.writes.join(",");
+		const spawnWorker = (promptText: string): Promise<{ code: number; compactionRequested: boolean }> => {
+			let compactionRequested = false;
+			return new Promise((resolve) => {
+				const invocation = getPiInvocation([...args, promptText]);
+				const spawnEnv: NodeJS.ProcessEnv = {
+					...process.env,
+					PI_SUBAGENT_DEPTH: "1",
+				};
+				if (agent.profile) spawnEnv.PI_SUBAGENT_PROFILE = agent.profile;
+				if (opts.writes?.length) spawnEnv.PI_SUBAGENT_PERMISSIBLE_GLOBS = opts.writes.join(",");
 
-			const proc = spawn(invocation.command, invocation.args, {
-				cwd: workerCwd,
-				shell: false,
-				stdio: ["ignore", "pipe", "pipe"],
-				env: spawnEnv,
-			});
-			let buffer = "";
+				const proc = spawn(invocation.command, invocation.args, {
+					cwd: workerCwd,
+					shell: false,
+					stdio: ["ignore", "pipe", "pipe"],
+					env: spawnEnv,
+				});
+				let buffer = "";
 
-			const processLine = (line: string) => {
-				if (!line.trim()) return;
-				const event = parseWorkerEvent(line);
-				if (!event) return;
-
-				if (event.type === "message_end") {
-					const msg = event.message;
-					currentResult.messages.push(msg);
-
-					if (msg.role === "assistant") {
-						currentResult.usage.turns++;
-						const usage = msg.usage;
-						if (usage) {
-							currentResult.usage.input += usage.input || 0;
-							currentResult.usage.output += usage.output || 0;
-							currentResult.usage.cacheRead += usage.cacheRead || 0;
-							currentResult.usage.cacheWrite += usage.cacheWrite || 0;
-							currentResult.usage.cost += usage.cost?.total || 0;
-							currentResult.usage.contextTokens = usage.totalTokens || 0;
-						}
-						if (!currentResult.model && msg.model) currentResult.model = msg.model;
-						if (msg.stopReason) currentResult.stopReason = msg.stopReason;
-						if (msg.errorMessage) currentResult.errorMessage = msg.errorMessage;
-					}
-					emitUpdate();
-				}
-
-				if (event.type === "tool_result_end") {
-					currentResult.messages.push(event.message);
-					emitUpdate();
-				}
-			};
-
-			proc.stdout.on("data", (data) => {
-				buffer += data.toString();
-				const lines = buffer.split("\n");
-				buffer = lines.pop() || "";
-				for (const line of lines) processLine(line);
-			});
-
-			proc.stderr.on("data", (data) => {
-				currentResult.stderr += data.toString();
-			});
-
-			proc.on("close", (code) => {
-				if (buffer.trim()) processLine(buffer);
-				resolve(code ?? 0);
-			});
-
-			proc.on("error", () => {
-				resolve(1);
-			});
-
-			if (signal) {
-				const killProc = () => {
-					wasAborted = true;
+				// Kill at a turn boundary so the session file stays consistent; the
+				// in-flight LLM call is abandoned but no tool results are orphaned.
+				function killForCompaction() {
 					proc.kill("SIGTERM");
-					setTimeout(() => {
+					const force = setTimeout(() => {
 						if (!proc.killed) proc.kill("SIGKILL");
 					}, 5000);
+					proc.once("close", () => clearTimeout(force));
+				}
+
+				const processLine = (line: string) => {
+					if (!line.trim()) return;
+					const event = parseWorkerEvent(line);
+					if (!event) return;
+
+					if (event.type === "message_end") {
+						const msg = event.message;
+						currentResult.messages.push(msg);
+
+						if (msg.role === "assistant") {
+							currentResult.usage.turns++;
+							const usage = msg.usage;
+							if (usage) {
+								currentResult.usage.input += usage.input || 0;
+								currentResult.usage.output += usage.output || 0;
+								currentResult.usage.cacheRead += usage.cacheRead || 0;
+								currentResult.usage.cacheWrite += usage.cacheWrite || 0;
+								currentResult.usage.cost += usage.cost?.total || 0;
+								currentResult.usage.contextTokens = usage.totalTokens || 0;
+							}
+							if (!currentResult.model && msg.model) currentResult.model = msg.model;
+							if (!workerModel && msg.model) {
+								workerModel = msg.model;
+								workerProvider = msg.provider;
+							}
+							if (msg.stopReason) currentResult.stopReason = msg.stopReason;
+							if (msg.errorMessage) currentResult.errorMessage = msg.errorMessage;
+						}
+						emitUpdate();
+					}
+
+					if (event.type === "tool_result_end") {
+						currentResult.messages.push(event.message);
+						emitUpdate();
+					}
+
+					if (event.type === "turn_end") {
+						// Compaction trigger. Skipped when the model stopped naturally —
+						// a finished run needs no compaction — and capped so a session
+						// that will not shrink does not cycle forever.
+						const tokens = event.message.usage?.totalTokens ?? 0;
+						if (
+							!compactionDisabled &&
+							compactionCycles < MAX_COMPACTION_CYCLES &&
+							event.message.stopReason !== "stop" &&
+							tokens > compactionThreshold()
+						) {
+							compactionRequested = true;
+							killForCompaction();
+						}
+					}
 				};
-				if (signal.aborted) killProc();
-				else signal.addEventListener("abort", killProc, { once: true });
+
+				proc.stdout.on("data", (data) => {
+					buffer += data.toString();
+					const lines = buffer.split("\n");
+					buffer = lines.pop() || "";
+					for (const line of lines) processLine(line);
+				});
+
+				proc.stderr.on("data", (data) => {
+					currentResult.stderr += data.toString();
+				});
+
+				proc.on("close", (code) => {
+					if (buffer.trim()) processLine(buffer);
+					resolve({ code: code ?? 0, compactionRequested });
+				});
+
+				proc.on("error", () => {
+					resolve({ code: 1, compactionRequested });
+				});
+
+				if (signal) {
+					const killProc = () => {
+						wasAborted = true;
+						proc.kill("SIGTERM");
+						setTimeout(() => {
+							if (!proc.killed) proc.kill("SIGKILL");
+						}, 5000);
+					};
+					if (signal.aborted) killProc();
+					else signal.addEventListener("abort", killProc, { once: true });
+				}
+			});
+		};
+
+		let exitCode = 0;
+		let promptText = `Task: ${opts.task}`;
+		for (;;) {
+			const outcome = await spawnWorker(promptText);
+			exitCode = outcome.code;
+			if (wasAborted || !outcome.compactionRequested) break;
+
+			compactionCycles++;
+			const compaction = await compactWorkerSession(workerCwd, sessionId, sessionName, agent);
+			currentResult.compactions.push(compaction);
+			if (!compaction.success) {
+				// Resume anyway: pi's overflow recovery (compact+retry at
+				// context-full) remains as the backstop for this worker.
+				compactionDisabled = true;
 			}
-		});
+			promptText = WORKER_CONTINUE_PROMPT;
+		}
 
 		currentResult.exitCode = exitCode;
 		currentResult.endedAt = new Date();
@@ -686,6 +889,7 @@ async function runSingleAgent(
 					status: isFailedResult(currentResult) ? "failed" : "completed",
 					stopReason: currentResult.stopReason,
 					errorMessage: currentResult.errorMessage,
+					stderr: currentResult.stderr,
 					startedAt: currentResult.startedAt ?? new Date(),
 					endedAt: currentResult.endedAt,
 					usage: currentResult.usage,
@@ -814,35 +1018,16 @@ const SubagentParams = Type.Object({
 });
 
 export default function (pi: ExtensionAPI) {
-	// Worker auto-compaction. Workers run headless (`pi --mode json -p`), so
-	// nobody watches context growth; compact once a worker's context crosses
-	// workerCompactionThreshold, before degradation sets in. Gated to worker
-	// sessions via PI_SUBAGENT_DEPTH (set in the spawn environment) — main
-	// sessions keep pi's built-in auto-compaction, which also remains as the
-	// near-full backstop inside workers.
-	let previousWorkerTokens: number | null | undefined;
-	pi.on("turn_end", (_event, ctx) => {
-		if (!process.env.PI_SUBAGENT_DEPTH) return;
-
-		const usage = ctx.getContextUsage();
-		if (!usage || usage.tokens === null) return;
-		const currentTokens = usage.tokens;
-		const threshold = workerCompactionThreshold(usage.contextWindow);
-
-		// Refire guard (from pi's trigger-compact example): compact on the
-		// upward crossing only, so a failed compaction (tokens stay high) does
-		// not retrigger every turn. A session first observed above the threshold
-		// (warm resume) counts as a crossing and compacts on its first turn.
-		const wasBelowThreshold =
-			previousWorkerTokens === undefined || (previousWorkerTokens !== null && previousWorkerTokens <= threshold);
-		previousWorkerTokens = currentTokens;
-		if (!wasBelowThreshold || currentTokens <= threshold) return;
-
-		ctx.compact({
-			customInstructions:
-				"This is a subagent worker session. Preserve the delegated task, progress so far, files read and changed, and the remaining steps.",
-		});
-	});
+	// NOTE: worker compaction is driven parent-side inside the subagent tool
+	// (see WORKER_COMPACT_TOKENS), not by an in-worker hook. The previous
+	// turn_end hook called ctx.compact() inside the worker, but workers run
+	// headless (`pi --mode json -p`) and extension-triggered compaction is
+	// broken in print mode: pi emits compaction_start and then runPrintMode's
+	// disposeRuntime() tears the process down before compaction_end — no
+	// compaction entry is written and the worker exits 0 mid-turn (observed as
+	// "completed (toolUse)"). The effect was every worker dying silently at
+	// the threshold, and every warm resume of an over-threshold session dying
+	// after one turn.
 
 	pi.registerTool({
 		name: "subagent",
@@ -980,6 +1165,7 @@ export default function (pi: ExtensionAPI) {
 							task: taskWithContext,
 							cwd: step.cwd,
 							step: i + 1,
+							modelRegistry: ctx.modelRegistry,
 							sessionId: step.sessionId,
 							label: step.label,
 							writes: step.writes,
@@ -1054,6 +1240,7 @@ export default function (pi: ExtensionAPI) {
 						writes: params.tasks[i].writes,
 						filesChanged: [],
 						scopeViolations: [],
+						compactions: [],
 						workerCwd: params.tasks[i].cwd ?? ctx.cwd,
 					};
 				}
@@ -1082,6 +1269,7 @@ export default function (pi: ExtensionAPI) {
 							agentName: t.agent,
 							task: t.task,
 							cwd: t.cwd,
+							modelRegistry: ctx.modelRegistry,
 							sessionId: t.sessionId,
 							label: t.label,
 							writes: t.writes,
@@ -1133,6 +1321,7 @@ export default function (pi: ExtensionAPI) {
 						agentName: params.agent,
 						task: params.task,
 						cwd: params.cwd,
+						modelRegistry: ctx.modelRegistry,
 						sessionId: params.sessionId,
 						label: params.label,
 						writes: params.writes,
@@ -1151,7 +1340,7 @@ export default function (pi: ExtensionAPI) {
 						content: [
 							{
 								type: "text",
-								text: `Agent ${result.stopReason || "failed"}: ${errorMsg}\n\n${resultMetaLines(result).join("\n")}`,
+								text: `Agent failed${result.stopReason ? ` (${result.stopReason})` : ""}: ${errorMsg}\n\n${resultMetaLines(result).join("\n")}`,
 							},
 						],
 						details: makeDetails("single")([result]),

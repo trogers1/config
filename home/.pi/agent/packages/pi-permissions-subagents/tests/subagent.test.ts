@@ -2,8 +2,9 @@ import { execSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import subagentExtension from "../extensions/index.ts";
+import subagentExtension, { workerCompactionThreshold } from "../extensions/index.ts";
 import {
+	createCompactionCycleFakePi,
 	createExtensionRegistrationRecorder,
 	createFakeExtensionContext,
 	createFakePi,
@@ -12,6 +13,15 @@ import {
 	makeTmpDir,
 	type FakePiOptions,
 } from "./helpers.ts";
+
+describe("workerCompactionThreshold", () => {
+	it("is 40% of the context window, capped at 150k", () => {
+		expect(workerCompactionThreshold(262_144)).toBeCloseTo(104_857.6);
+		expect(workerCompactionThreshold(200_000)).toBe(80_000);
+		expect(workerCompactionThreshold(1_000_000)).toBe(150_000);
+		expect(workerCompactionThreshold(32_000)).toBeCloseTo(12_800);
+	});
+});
 
 describe("subagent tool", () => {
 	const originalPiPath = process.env.PI_SUBAGENT_PI_PATH;
@@ -274,6 +284,52 @@ describe("subagent tool", () => {
 		expect(text).toContain("Chain stopped at step 1");
 		expect(text).toContain("I failed.");
 		expect(text).not.toContain("Step two");
+	});
+
+	it.each(["toolUse", "length"])(
+		"treats a clean exit with mid-turn stop reason %s as a failure",
+		async (stopReason) => {
+			const projectDir = setupProjectDir();
+
+			const result = await runSingle(
+				projectDir,
+				{ output: "partial work", stopReason },
+				{ agent: "worker", task: "Do something" },
+			);
+
+			const text = getToolResultText(result);
+			expect(text).toContain(`Agent failed (${stopReason})`);
+			expect(text).toContain("partial work");
+		},
+	);
+
+	it("kills an over-threshold worker, compacts its session via RPC, and resumes it", async () => {
+		const projectDir = setupProjectDir();
+		const recordPath = join(projectDir, "spawn-record.jsonl");
+		process.env.PI_SUBAGENT_PI_PATH = createCompactionCycleFakePi(projectDir);
+		process.env.PI_SUBAGENT_TEST_RECORD = recordPath;
+
+		const tool = loadTool();
+		const result = await invokeRegisteredTool(
+			tool,
+			{ agent: "worker", task: "Do something long" },
+			createFakeExtensionContext(projectDir),
+		);
+
+		const text = getToolResultText(result);
+		expect(text).toContain("done after compaction");
+		expect(text).toContain("compactions: 1");
+
+		const records = spawnRecord(projectDir);
+		expect(records).toHaveLength(3);
+		expect(records[0].args).toContain("json"); // print-mode worker
+		expect(records[1].args).toContain("rpc"); // compaction one-shot
+		expect(records[2].args).toContain("json"); // resumed worker
+		expect(records[2].args.some((a) => a.includes("Continue the delegated task"))).toBe(true);
+
+		const sessionIdOf = (args: string[]) => args[args.indexOf("--session-id") + 1];
+		expect(sessionIdOf(records[1].args)).toBe(sessionIdOf(records[0].args));
+		expect(sessionIdOf(records[2].args)).toBe(sessionIdOf(records[0].args));
 	});
 
 	it("blocks nested delegation when already inside a worker", async () => {

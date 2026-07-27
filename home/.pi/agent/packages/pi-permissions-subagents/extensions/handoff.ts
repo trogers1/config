@@ -33,6 +33,8 @@ export interface HandoffRecord {
 	status: "completed" | "failed";
 	stopReason?: string;
 	errorMessage?: string;
+	/** Captured worker-process stderr, included when non-empty. */
+	stderr?: string;
 	startedAt: Date;
 	endedAt: Date;
 	usage: UsageStats;
@@ -160,6 +162,13 @@ export function writeHandoffFile(runDir: string, rec: HandoffRecord): string {
 	if (rec.errorMessage) lines.push(`- **Error**: ${rec.errorMessage}`);
 
 	lines.push("", "## Task", "", rec.task, "", "## Final Output", "", rec.finalOutput || "(no output)", "");
+
+	const stderr = rec.stderr?.trim();
+	if (stderr) {
+		const truncated =
+			stderr.length > 4000 ? `${stderr.slice(0, 4000)}\n[… ${stderr.length - 4000} chars omitted]` : stderr;
+		lines.push("## Worker stderr", "", "```", truncated, "```", "");
+	}
 
 	fs.writeFileSync(filePath, lines.join("\n"), "utf-8");
 	return filePath;

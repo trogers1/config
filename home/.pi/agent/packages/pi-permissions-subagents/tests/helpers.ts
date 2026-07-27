@@ -4,7 +4,6 @@ import { join } from "node:path";
 import type {
 	AgentToolResult,
 	AgentToolUpdateCallback,
-	CompactOptions,
 	ExtensionAPI,
 	ExtensionContext,
 	ToolDefinition,
@@ -91,6 +90,75 @@ export function makeTmpDir(prefix: string): string {
 	return mkdtempSync(join(tmpdir(), prefix));
 }
 
+/**
+ * Fake `pi` for the parent-side compaction cycle. Behavior per spawn (tracked
+ * via a counter file, since each spawn is a fresh process):
+ *  1. print-mode worker: reports a mid-turn turn_end with a huge context and
+ *     stays alive until SIGTERM (the parent kills it for compaction);
+ *  2. rpc-mode compactor: answers the compact command with compaction_end;
+ *  3. resumed print-mode worker: finishes with a normal stop.
+ */
+export function createCompactionCycleFakePi(tmpDir: string): string {
+	const assistantMessage = (text: string, stopReason: string, totalTokens: number) => `{
+  role: "assistant",
+  content: [{ type: "text", text: ${JSON.stringify(text)} }],
+  api: "fake",
+  provider: "fake",
+  model: "fake-model",
+  usage: {
+    input: ${totalTokens}, output: 50, totalTokens: ${totalTokens}, cacheRead: 0, cacheWrite: 0,
+    cost: { input: 0.0005, output: 0.0005, cacheRead: 0, cacheWrite: 0, total: 0.001 },
+  },
+  stopReason: ${JSON.stringify(stopReason)},
+  timestamp: Date.now(),
+}`;
+
+	const script = `#!/usr/bin/env node
+const fs = require('fs');
+const args = process.argv.slice(2);
+const recordPath = process.env.PI_SUBAGENT_TEST_RECORD;
+if (recordPath) {
+  fs.appendFileSync(recordPath, JSON.stringify({ args }) + '\\n');
+}
+const counterFile = ${JSON.stringify(join(tmpDir, "cycle-spawn-count"))};
+let count = 0;
+try { count = parseInt(fs.readFileSync(counterFile, 'utf8'), 10) || 0; } catch {}
+fs.writeFileSync(counterFile, String(count + 1));
+
+const emit = (obj) => console.log(JSON.stringify(obj));
+const stayAlive = () => setInterval(() => {}, 1000);
+
+if (args.includes('rpc')) {
+  // Compaction one-shot: answer the compact command on stdin, then wait to be killed.
+  let stdin = '';
+  process.stdin.on('data', (d) => {
+    stdin += d;
+    if (!stdin.includes('\\n')) return;
+    emit({ type: 'compaction_start', reason: 'manual' });
+    emit({
+      type: 'compaction_end', reason: 'manual', aborted: false, willRetry: false,
+      result: { summary: 's', firstKeptEntryId: 'x', tokensBefore: 120100, estimatedTokensAfter: 20000 },
+    });
+  });
+  process.stdin.resume();
+  stayAlive();
+} else if (count === 0) {
+  // First worker spawn: over-threshold context mid-turn; wait to be killed.
+  const msg = ${assistantMessage("working on it", "toolUse", 120100)};
+  emit({ type: 'message_end', message: msg });
+  emit({ type: 'turn_end', message: msg });
+  stayAlive();
+} else {
+  // Resumed worker spawn: finish normally.
+  emit({ type: 'message_end', message: ${assistantMessage("done after compaction", "stop", 20100)} });
+  process.exit(0);
+}
+`;
+	const filePath = join(tmpDir, "fake-pi-cycle.js");
+	writeFileSync(filePath, script, { mode: 0o755 });
+	return filePath;
+}
+
 export function createFakeExtensionContext(
 	cwd: string,
 	uiOverrides?: Partial<Pick<ExtensionContext["ui"], "confirm">>,
@@ -140,31 +208,6 @@ export function createExtensionRegistrationRecorder(): ExtensionRegistrationReco
 		getRegisteredTools: () => tools,
 		getEventHandlers: (event) => eventHandlers.get(event) ?? [],
 	};
-}
-
-/**
- * Fake context surface for the worker auto-compaction handler: reports a fixed
- * context usage and records compact() calls.
- */
-export function createFakeCompactionContext(
-	usage: { tokens: number | null; contextWindow: number },
-	compactCalls: CompactOptions[],
-): ExtensionContext {
-	const context = {
-		getContextUsage: () => ({
-			tokens: usage.tokens,
-			contextWindow: usage.contextWindow,
-			percent: usage.tokens === null ? null : (usage.tokens / usage.contextWindow) * 100,
-		}),
-		compact: (options?: CompactOptions) => {
-			compactCalls.push(options ?? {});
-		},
-	};
-
-	// The compaction handler only reads this narrow context surface. Keep the
-	// partial-runtime cast at this single boundary so SDK changes to the used
-	// members remain checked.
-	return context as ExtensionContext;
 }
 
 export interface InvokeRegisteredToolOptions<TDetails> {
