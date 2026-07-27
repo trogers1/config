@@ -1,15 +1,22 @@
 {
   "$schema": "https://earendil.works/pi-permissions/profiles.schema.json",
   "profiles": {
-    "performance-review": {
+    "review-tools": {
       "extends": "default",
       "directories": ["/workspace"],
       "tools": {
         "bash": [
           { "pattern": "glab *", "decision": "allow" },
           { "pattern": "gh *", "decision": "allow" },
-          { "pattern": "fixture-only *", "decision": "allow" },
         ],
+      },
+    },
+    // Deliberately collides with a shipped profile name to prove that user
+    // configuration replaces the built-in definition.
+    "read-only": {
+      "extends": "default",
+      "tools": {
+        "bash": [{ "pattern": "fixture-only *", "decision": "allow" }],
       },
     },
     "address-comments": {

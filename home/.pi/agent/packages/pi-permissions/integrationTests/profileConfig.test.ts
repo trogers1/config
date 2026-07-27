@@ -8,7 +8,7 @@ import type {
   ToolCallEvent,
 } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it } from "vitest";
-import permissionsExtension from "../extensions/permissions";
+import permissionsExtension, { decideBash } from "../extensions/permissions";
 import { policyConfig as genericPolicyConfig } from "../modules/policy";
 import {
   ProfileConfigLoadError,
@@ -142,6 +142,24 @@ describe("profile configuration", () => {
     );
 
     expect(config.profiles["deployment-child"].tools.deploy).toEqual([]);
+  });
+
+  it("leaves Bash commands at the ask default when an override clears the inherited command rules", () => {
+    const config = loadProfileConfig(
+      genericPolicyConfig,
+      writeConfig(
+        JSON.stringify({
+          profiles: {
+            "quiet-bash": { extends: "default", tools: { bash: [] } },
+          },
+        }),
+      ),
+    );
+
+    const quietBash = config.profiles["quiet-bash"];
+    expect(quietBash.tools.bash).toBeUndefined();
+    expect(decideBash("git status --short", quietBash)).toBe("ask");
+    expect(decideBash("npm test", quietBash)).toBe("ask");
   });
 
   it("accepts a fully custom profile without extends", () => {

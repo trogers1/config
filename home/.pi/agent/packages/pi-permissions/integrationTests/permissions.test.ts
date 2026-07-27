@@ -193,6 +193,52 @@ describe("shell policy parser", () => {
     expect(result?.reason).toContain("git checkout main");
   });
 
+  it("combines and deduplicates steering from every denied segment", async () => {
+    const steeringPolicy = {
+      ...parserPolicy,
+      tools: {
+        bash: [
+          { pattern: "*", decision: "allow" },
+          {
+            pattern: "git checkout *",
+            decision: "deny",
+            guidance: "Switch branches with a dedicated tool instead.",
+          },
+          {
+            pattern: "git reset *",
+            decision: "deny",
+            guidance: "Avoid history-rewriting resets.",
+            alternatives: ["git stash push"],
+          },
+        ],
+      },
+    } satisfies ProfilePolicy;
+
+    const combined = await gateBash(
+      "git checkout main && git reset --hard",
+      process.cwd(),
+      context(process.cwd()),
+      steeringPolicy,
+    );
+    expect(combined).toMatchObject({ block: true });
+    expect(combined?.reason).toContain(
+      "Switch branches with a dedicated tool instead.",
+    );
+    expect(combined?.reason).toContain("Avoid history-rewriting resets.");
+    expect(combined?.reason).toContain("git stash push");
+
+    // Two segments matching the same deny rule must not repeat its steering.
+    const duplicated = await gateBash(
+      "git checkout main && git checkout feature",
+      process.cwd(),
+      context(process.cwd()),
+      steeringPolicy,
+    );
+    expect(duplicated).toMatchObject({ block: true });
+    const guidance = "Switch branches with a dedicated tool instead.";
+    expect(duplicated?.reason?.split(guidance)).toHaveLength(2);
+  });
+
   it("denies commands hidden in both substitution syntaxes", async () => {
     for (const command of [
       'echo "$(git checkout main)"',
@@ -277,6 +323,60 @@ describe("custom tool policy", () => {
       decideCustomTool({ action: "inspect" }, [
         { decision: "deny", match: { action: "delete" } },
       ]).decision,
+    ).toBe("ask");
+  });
+
+  it("requires every property matcher to match before a rule applies", () => {
+    const strictRules: CustomToolRule[] = [
+      {
+        decision: "deny",
+        match: { environment: "production", "metadata.team": "platform-*" },
+      },
+    ];
+
+    // Only one of the two matchers agrees, so the deny rule must not apply
+    // and the configured tool falls back to the ask default.
+    expect(
+      decideCustomTool(
+        { environment: "production", metadata: { team: "core" } },
+        strictRules,
+      ).decision,
+    ).toBe("ask");
+    // A missing property cannot satisfy its matcher either.
+    expect(
+      decideCustomTool({ environment: "production" }, strictRules).decision,
+    ).toBe("ask");
+  });
+
+  it("matches non-string input values by their JSON representation", () => {
+    const numericRules: CustomToolRule[] = [
+      { decision: "allow" },
+      { decision: "deny", match: { retries: "3" } },
+    ];
+    expect(decideCustomTool({ retries: 3 }, numericRules).decision).toBe(
+      "deny",
+    );
+    expect(decideCustomTool({ retries: 4 }, numericRules).decision).toBe(
+      "allow",
+    );
+
+    const structuredRules: CustomToolRule[] = [
+      {
+        decision: "deny",
+        match: { flag: "true", "metadata.labels": '["hot"]' },
+      },
+    ];
+    expect(
+      decideCustomTool(
+        { flag: true, metadata: { labels: ["hot"] } },
+        structuredRules,
+      ).decision,
+    ).toBe("deny");
+    expect(
+      decideCustomTool(
+        { flag: false, metadata: { labels: ["hot"] } },
+        structuredRules,
+      ).decision,
     ).toBe("ask");
   });
 });
