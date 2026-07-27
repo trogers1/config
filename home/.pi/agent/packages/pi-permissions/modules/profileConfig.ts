@@ -5,7 +5,9 @@ import { parse, printParseErrorCode, type ParseError } from "jsonc-parser";
 import { Value } from "typebox/value";
 import {
   assertPolicyConfig,
+  builtinProfilePrefix,
   extendProfile,
+  isBuiltinProfileName,
   profileConfigFileSchema,
   type PolicyConfig,
   type ProfileConfigFile,
@@ -61,6 +63,23 @@ export function loadProfileConfig(
       );
     }
 
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      "profiles" in parsed &&
+      typeof parsed.profiles === "object" &&
+      parsed.profiles !== null
+    ) {
+      for (const name of Object.keys(parsed.profiles)) {
+        if (isBuiltinProfileName(name)) {
+          throwProfileConfigError(
+            configPath,
+            `/profiles/${name}: reserved profile name '${name}' begins with '${builtinProfilePrefix}'`,
+          );
+        }
+      }
+    }
+
     const validationError = Value.Errors(profileConfigFileSchema, parsed)[0];
     if (validationError) {
       throwProfileConfigError(
@@ -70,43 +89,70 @@ export function loadProfileConfig(
     }
 
     const profileFile = parsed as ProfileConfigFile;
+    const builtins = fallback.profiles;
+    const userDefinitions = profileFile.profiles;
 
-    const profiles: Record<string, ProfilePolicy> = {
-      ...fallback.profiles,
-    };
+    const resolvedUsers: Record<string, ProfilePolicy> = {};
     const resolving = new Set<string>();
 
-    const resolveProfile = (name: string): ProfilePolicy => {
-      if (profiles[name] && !profileFile.profiles[name]) return profiles[name];
-      const definition = profileFile.profiles[name];
+    const resolveProfile = (
+      target: string,
+      referrer: string = target,
+    ): ProfilePolicy => {
+      if (isBuiltinProfileName(target)) {
+        const builtin = builtins[target];
+        if (!builtin) {
+          throwProfileConfigError(
+            configPath,
+            `/profiles/${referrer}/extends: unknown built-in profile '${target}'`,
+          );
+        }
+        return builtin;
+      }
+
+      if (resolvedUsers[target]) return resolvedUsers[target];
+
+      const definition = userDefinitions[target];
       if (!definition) {
+        const available = [
+          ...Object.keys(builtins),
+          ...Object.keys(userDefinitions),
+        ].join(", ");
+        const suggestion = isBuiltinProfileName(referrer)
+          ? ""
+          : ` Did you mean 'builtin:${target}'?`;
         throwProfileConfigError(
           configPath,
-          `/profiles/${name}/extends: unknown inherited profile '${name}'`,
+          `/profiles/${referrer}/extends: unknown inherited profile '${target}'. Available: ${available}.${suggestion}`,
         );
       }
-      if (resolving.has(name)) {
+      if (resolving.has(target)) {
         throwProfileConfigError(
           configPath,
-          `/profiles/${name}/extends: cyclic profile inheritance detected`,
+          `/profiles/${target}/extends: cyclic profile inheritance detected`,
         );
       }
-      resolving.add(name);
+      resolving.add(target);
 
       const { extends: inheritedProfile, ...override } = definition;
       if (inheritedProfile) {
-        profiles[name] = extendProfile(
-          resolveProfile(inheritedProfile),
+        resolvedUsers[target] = extendProfile(
+          resolveProfile(inheritedProfile, target),
           override,
         );
       } else {
-        profiles[name] = override as ProfilePolicy;
+        resolvedUsers[target] = override as ProfilePolicy;
       }
-      resolving.delete(name);
-      return profiles[name];
+      resolving.delete(target);
+      return resolvedUsers[target];
     };
 
-    for (const name of Object.keys(profileFile.profiles)) resolveProfile(name);
+    for (const name of Object.keys(userDefinitions)) resolveProfile(name);
+
+    const profiles: Record<string, ProfilePolicy> = {
+      ...builtins,
+      ...resolvedUsers,
+    };
 
     const config: PolicyConfig = {
       defaultProfile: profileFile.defaultProfile ?? fallback.defaultProfile,

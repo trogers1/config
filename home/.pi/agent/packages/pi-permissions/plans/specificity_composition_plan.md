@@ -66,7 +66,7 @@ Consequences:
   blessed subset.
 - Same pattern + different decision across layers = a tie resolved by
   composition order, surfaced by the **conflict lint** (warning for ordinary
-rules; **error for protected-path rules**).
+  rules; **error for protected-path rules**).
 
 **Exact tokenization** (whitespace tokens for command patterns, `/` segments
 for path patterns; `*`, `**`, `?` contribute zero literals) is pinned by the
@@ -81,15 +81,15 @@ Phase 1 specificity tests and implemented in Phase 2.
 
 ### Worked examples (already true of the shipped rules)
 
-| Contest | Winner | Why |
-|---|---|---|
-| `git branch --list` allow vs `git branch *` deny | allow | 3 literals > 2 |
-| `npm exec *` deny vs `npm *` ask | deny | more specific |
-| `find * -delete *` deny vs `find *` allow | deny | more specific |
-| `echo "---"` allow vs `echo *` deny | allow | fully literal |
-| `docs/**` allow vs `**` deny (paths) | allow | more specific |
-| committer `git commit *` allow vs base `git commit *` deny | allow | tie → committer composed later |
-| `git * --output *` deny vs `git checkout *` allow | deterministic | metric tie → order; guards composed last by convention |
+| Contest                                                    | Winner        | Why                                                    |
+| ---------------------------------------------------------- | ------------- | ------------------------------------------------------ |
+| `git branch --list` allow vs `git branch *` deny           | allow         | 3 literals > 2                                         |
+| `npm exec *` deny vs `npm *` ask                           | deny          | more specific                                          |
+| `find * -delete *` deny vs `find *` allow                  | deny          | more specific                                          |
+| `echo "---"` allow vs `echo *` deny                        | allow         | fully literal                                          |
+| `docs/**` allow vs `**` deny (paths)                       | allow         | more specific                                          |
+| committer `git commit *` allow vs base `git commit *` deny | allow         | tie → committer composed later                         |
+| `git * --output *` deny vs `git checkout *` allow          | deterministic | metric tie → order; guards composed last by convention |
 
 ## Decisions
 
@@ -98,7 +98,7 @@ Phase 1 specificity tests and implemented in Phase 2.
 - **Specificity-first, order-as-tiebreak** at every decision surface.
 - **`extends: string[]`** — fold left-to-right through
   `extendProfile`; the profile's own rules apply last. Documented as
-  *concatenation, not intersection*: `["builtin:read-only", "builtin:default"]`
+  _concatenation, not intersection_: `["builtin:read-only", "builtin:default"]`
   re-opens bash.
 - **`transforms: string[]`** on profile definitions: names of shipped
   transforms applied once, after the full extends fold, in listed order.
@@ -110,8 +110,10 @@ Phase 1 specificity tests and implemented in Phase 2.
     pair-with-containment — see Deferred decisions);
   - `transform:ask-all` — every `allow` becomes `ask` (paranoid supervision;
     denies unchanged).
+
   `builtin:worker` = default + `transform:deny-asks` + its own color/emoji
   (the transform no longer hardcodes styling).
+
 - **Custom profiles may extend each other** (already supported today):
   resolution follows the extends graph, not JSONC object order; unknown
   parents and cycles fail loudly.
@@ -131,7 +133,7 @@ Phase 1 specificity tests and implemented in Phase 2.
   `"extends": ["builtin:read-only", "ruleset:test-run", "ruleset:guards"]`.
 - Reserved namespaces are **flat kind-prefixes, one per addressable kind**:
   `builtin:` (full profiles), `ruleset:` (partial policies), `transform:`
-  (policy functions). The namespacing machinery validates a prefix *list*,
+  (policy functions). The namespacing machinery validates a prefix _list_,
   not a single prefix. User definitions with a reserved prefix are hard
   errors; unknown names fail loudly (see Interactions).
 - Builtins in TS are composed from the **same registry** JSONC resolves
@@ -147,11 +149,12 @@ Phase 1 specificity tests and implemented in Phase 2.
   `**/.env*` by specificity). Denies gain guidance text.
 - Under `extends`, protected rules **concatenate like every other rule
   array** — nothing is ever dropped implicitly. The override matrix:
-  - *Weaken* a deny: author a **more-specific allow** (literal `.env` beats
+  - _Weaken_ a deny: author a **more-specific allow** (literal `.env` beats
     `**/.env*` by specificity). No conflict, no lint event.
-  - *Exact-pattern conflict* (allow over an inherited deny, or deny over an
+  - _Exact-pattern conflict_ (allow over an inherited deny, or deny over an
     inherited allow): **load error**. To redefine a protected pattern
     wholesale, write a from-scratch profile that owns its list.
+
   Every weakening is either a precise authored rule or an explicit
   from-scratch redefinition.
 
@@ -168,20 +171,20 @@ accuracy (`docs` → `scribe-only` is fine; `gardener` is not, because it
 hides danger). Dangerous or guardrail-loosening profiles must be legible as
 such (`deps-mutator` can run preinstall scripts; the name says so).
 
-| Profile | Composition | Color/emoji | Purpose |
-|---|---|---|---|
-| `builtin:default` | base composition: shell + git + package-manager rule sets + guards | blue 🛠️ | general-purpose main session |
-| `builtin:worker` | default + `transform:deny-asks` | magenta ⚙️ | non-interactive subagents |
-| `builtin:read-only` | inspection rule sets + guards; writes limited to tmp/handoff/progress | green 🔎 | read-only investigation |
-| `builtin:tests-only` | default + writes gated to test files | green 🔬 | may only write tests |
-| `builtin:tests-hidden` | default + test files protected (read **and** write) — renamed from `tests-disallowed` | orange 🕶️ | red-phase TDD: tests are hidden, not just unwritable |
-| `builtin:committer` | default + git-write rules (add/commit/reset/restore/checkout/rebase/cherry-pick/worktree) + `/dev/null` write | red ⚠️ | promoted from the user's custom `committer` |
-| `builtin:reviewer` | read-only + test/build run rules (`npm run/test`, `pnpm run/test`, `yarn run/test`, `cargo build/test/check/clippy`, `go *`) | cyan 🧐 | read code, run tests; writes stay tmp+handoff+progress |
-| `builtin:scribe-only` | default + writePaths gated to `*.md`/`**/*.md`/`docs/**`//tmp | white 📜 | docs-only editing |
-| `builtin:deps-mutator` | default + package-manager mutation allows (install/add/update/remove families) | yellow 📦 | dependency work; publish/login/token stay denied |
-| `builtin:no-shell` | default + bash `*` deny with structured-tools guidance | green 🛡️ | edit/write/read tools only |
-| `builtin:implementation-only` | default + test-file write denies (tests stay readable as the spec) | orange 🏗️ | pairs with `tests-only` for red/green orchestration; unlike `tests-hidden`, tests are not hidden |
-| `builtin:git-full` | committer + push/branch/tag/switch allows | red 🔥 | full local + remote git workflows |
+| Profile                       | Composition                                                                                                                  | Color/emoji | Purpose                                                                                          |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------ |
+| `builtin:default`             | base composition: shell + git + package-manager rule sets + guards                                                           | blue 🛠️     | general-purpose main session                                                                     |
+| `builtin:worker`              | default + `transform:deny-asks`                                                                                              | magenta ⚙️  | non-interactive subagents                                                                        |
+| `builtin:read-only`           | inspection rule sets + guards; writes limited to tmp/handoff/progress                                                        | green 🔎    | read-only investigation                                                                          |
+| `builtin:tests-only`          | default + writes gated to test files                                                                                         | green 🔬    | may only write tests                                                                             |
+| `builtin:tests-hidden`        | default + test files protected (read **and** write) — renamed from `tests-disallowed`                                        | orange 🕶️   | red-phase TDD: tests are hidden, not just unwritable                                             |
+| `builtin:committer`           | default + git-write rules (add/commit/reset/restore/checkout/rebase/cherry-pick/worktree) + `/dev/null` write                | red ⚠️      | promoted from the user's custom `committer`                                                      |
+| `builtin:reviewer`            | read-only + test/build run rules (`npm run/test`, `pnpm run/test`, `yarn run/test`, `cargo build/test/check/clippy`, `go *`) | cyan 🧐     | read code, run tests; writes stay tmp+handoff+progress                                           |
+| `builtin:scribe-only`         | default + writePaths gated to `*.md`/`**/*.md`/`docs/**`//tmp                                                                | white 📜    | docs-only editing                                                                                |
+| `builtin:deps-mutator`        | default + package-manager mutation allows (install/add/update/remove families)                                               | yellow 📦   | dependency work; publish/login/token stay denied                                                 |
+| `builtin:no-shell`            | default + bash `*` deny with structured-tools guidance                                                                       | green 🛡️    | edit/write/read tools only                                                                       |
+| `builtin:implementation-only` | default + test-file write denies (tests stay readable as the spec)                                                           | orange 🏗️   | pairs with `tests-only` for red/green orchestration; unlike `tests-hidden`, tests are not hidden |
+| `builtin:git-full`            | committer + push/branch/tag/switch allows                                                                                    | red 🔥      | full local + remote git workflows                                                                |
 
 No promptFiles for new profiles initially.
 
@@ -231,15 +234,15 @@ rules remain the input to `denyReadPatterns` translation.
 The decision table pins current behavior everywhere except these entries,
 each tagged with the phase that flips it:
 
-| # | Delta | Phase |
-|---|---|---|
-| D1 | `builtin:default` gains `head`/`tail` allows and the unified git read set (`git config --get/--list`, `git reflog`, `merge-tree`, `diff-tree`, …) | 3 |
-| D2 | `builtin:default` loses the six `address-comments` script allows and the `/**/home/.pi/agent/packages/**` path rule (machine-specific) → `personal` profile in `profiles.jsonc` | 3 |
-| D3 | Dead `grep *` / `git grep *` early allows removed (already overridden by later denies; no decision change) | 3 |
-| D4 | `builtin:read-only` gains explicit mutation-deny rules (same decisions, better guidance than the catch-all) | 3 |
-| D5 | `builtin:worker` loses the script allows inherited from default (see Phase 3 task: verify no skill dispatches worker-profile subagents that run the fetch scripts; if one does, add a custom profile with `transform:deny-asks` in `profiles.jsonc`) | 3 |
-| D6 | `protectedPathExceptions` field removed; exceptions become allow rules | 5 |
-| D7 | The policy test that clears protections with empty arrays is rewritten against a more-specific authored allow / a from-scratch profile | 5 |
+| #   | Delta                                                                                                                                                                                                                                                | Phase |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- |
+| D1  | `builtin:default` gains `head`/`tail` allows and the unified git read set (`git config --get/--list`, `git reflog`, `merge-tree`, `diff-tree`, …)                                                                                                    | 3     |
+| D2  | `builtin:default` loses the six `address-comments` script allows and the `/**/home/.pi/agent/packages/**` path rule (machine-specific) → `personal` profile in `profiles.jsonc`                                                                      | 3     |
+| D3  | Dead `grep *` / `git grep *` early allows removed (already overridden by later denies; no decision change)                                                                                                                                           | 3     |
+| D4  | `builtin:read-only` gains explicit mutation-deny rules (same decisions, better guidance than the catch-all)                                                                                                                                          | 3     |
+| D5  | `builtin:worker` loses the script allows inherited from default (see Phase 3 task: verify no skill dispatches worker-profile subagents that run the fetch scripts; if one does, add a custom profile with `transform:deny-asks` in `profiles.jsonc`) | 3     |
+| D6  | `protectedPathExceptions` field removed; exceptions become allow rules                                                                                                                                                                               | 5     |
+| D7  | The policy test that clears protections with empty arrays is rewritten against a more-specific authored allow / a from-scratch profile                                                                                                               | 5     |
 
 ## Phase 0: Land `namespacing_plan.md`
 
@@ -257,9 +260,9 @@ phase's exit gate.
 
 ### Deliverables
 
-1. **`integrationTests/decisionTable.test.ts` + corpus fixture** — `(command,
-   profile) → expected decision` across the shipped profiles, run through the
-   extension harness. **Not** `.fails`: it passes on day one and must stay
+1. **`integrationTests/decisionTable.test.ts` + corpus fixture** —
+   `(command, profile) → expected decision` across the shipped profiles, run
+   through the extension harness. **Not** `.fails`: it passes on day one and must stay
    green, changing only at pre-declared deltas (D1–D7).
 2. **`integrationTests/specificity.test.ts`** (`.fails`):
    - specific beats broad regardless of declaration order (all Worked-examples
@@ -295,15 +298,15 @@ phase's exit gate.
 
 ### `.fails` manifest
 
-| Test block | Un-marks in |
-|---|---|
-| `specificity.test.ts` | Phase 2 |
+| Test block                        | Un-marks in         |
+| --------------------------------- | ------------------- |
+| `specificity.test.ts`             | Phase 2             |
 | (decision table — never `.fails`) | edits only at D1–D7 |
-| `composition.test.ts` | Phase 4 |
-| `protectedRules.test.ts` | Phase 5 |
-| `ruleSets.test.ts` | Phase 6 |
-| `profileCatalog.test.ts` | Phase 7 |
-| explain-command tests | Phase 8 |
+| `composition.test.ts`             | Phase 4             |
+| `protectedRules.test.ts`          | Phase 5             |
+| `ruleSets.test.ts`                | Phase 6             |
+| `profileCatalog.test.ts`          | Phase 7             |
+| explain-command tests             | Phase 8             |
 
 ## Phase 2: Specificity evaluator
 
@@ -374,8 +377,8 @@ with zero behavior change.
 3. Transform registry in `policyHelpers.ts` (or its own module): `deny-asks`
    is the current `denyInteractiveDecisions` moved and decoupled from worker
    styling; `allow-asks` is new. `builtin:worker` sets its own color/emoji.
-4. Dogfood in `profiles.jsonc`: `"personal": { "extends":
-   ["builtin:default", "gitlab-skills"] }`.
+4. Dogfood in `profiles.jsonc`:
+   `"personal": { "extends": ["builtin:default", "gitlab-skills"] }`.
 5. Intermediate state (acceptable): multi-extends folds protected paths with
    today's replace semantics until Phase 5 reshapes the field.
 

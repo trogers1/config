@@ -2,7 +2,7 @@
   "$schema": "../../packages/pi-permissions/schemas/profiles.schema.json",
   "profiles": {
     "config-maintenance": {
-      "extends": "default",
+      "extends": "builtin:default",
       "directories": ["~/Code/config", "~/code/config"],
       "readPaths": [
         {
@@ -82,7 +82,7 @@
       ],
     },
     "config-maintenance-tests-disallowed": {
-      "extends": "tests-disallowed",
+      "extends": "builtin:tests-disallowed",
       "readPaths": [
         {
           "pattern": "/Users/*/.pi/agent/packages",
@@ -153,7 +153,7 @@
       ],
     },
     "config-maintenance-tests-only": {
-      "extends": "tests-only",
+      "extends": "builtin:tests-only",
       "readPaths": [
         {
           "pattern": "/Users/*/.pi/agent/packages",
@@ -224,7 +224,7 @@
       ],
     },
     "committer": {
-      "extends": "default",
+      "extends": "builtin:default",
       "color": "red",
       "emoji": "⚠️",
       "writePaths": [
@@ -250,7 +250,7 @@
     // Not generic enough for the package builtins: personal review workflow
     // that needs CLI access to GitLab/GitHub plus jq for shaping output.
     "performance-review": {
-      "extends": "default",
+      "extends": "builtin:default",
       "color": "red",
       "emoji": "📋",
       "tools": {
@@ -262,7 +262,7 @@
       },
     },
     "socrates": {
-      "extends": "read-only",
+      "extends": "builtin:read-only",
       "promptFile": "~/.pi/agent/permissions/prompts/socrates.md",
       "color": "cyan",
       "emoji": "🧠",

@@ -2,7 +2,7 @@
   "$schema": "https://earendil.works/pi-permissions/profiles.schema.json",
   "profiles": {
     "review-tools": {
-      "extends": "default",
+      "extends": "builtin:default",
       "directories": ["/workspace"],
       "tools": {
         "bash": [
@@ -11,23 +11,21 @@
         ],
       },
     },
-    // Deliberately collides with a shipped profile name to prove that user
-    // configuration replaces the built-in definition.
-    "read-only": {
-      "extends": "default",
+    "fixture-read-only": {
+      "extends": "builtin:default",
       "tools": {
         "bash": [{ "pattern": "fixture-only *", "decision": "allow" }],
       },
     },
     "address-comments": {
-      "extends": "default",
+      "extends": "builtin:default",
       "directories": ["/workspace"],
       "tools": {
         "bash": [{ "pattern": "git commit -m *", "decision": "allow" }],
       },
     },
     "protected-matrix": {
-      "extends": "default",
+      "extends": "builtin:default",
       "readPaths": [{ "pattern": "private/**", "decision": "ask" }],
       "writePaths": [{ "pattern": "private/**", "decision": "ask" }],
       "protectedPathPatterns": ["**/.env*"],

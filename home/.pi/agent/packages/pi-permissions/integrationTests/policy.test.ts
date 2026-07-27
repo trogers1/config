@@ -6,6 +6,7 @@ import { Value } from "typebox/value";
 import { policyConfig } from "../modules/policy";
 import {
   assertPolicyConfig,
+  builtinProfileNames,
   extendProfile,
   withProtectedPathPatterns,
   type ProfilePolicy,
@@ -100,6 +101,10 @@ describe("policy configuration contract", () => {
     expect(() => assertPolicyConfig(policyConfig)).not.toThrow();
   });
 
+  it("keeps the exported built-in name list in sync with the shipped registry", () => {
+    expect(builtinProfileNames).toEqual(Object.keys(policyConfig.profiles));
+  });
+
   it("rejects empty custom matcher property names at runtime", () => {
     expect(() =>
       assertPolicyConfig({
@@ -138,7 +143,7 @@ describe("policy configuration contract", () => {
     expect(Value.Check(schema, invalidProfileFile)).toBe(false);
   });
 
-  it("encodes the non-empty matcher constraint in the generated schema", () => {
+  it("encodes the non-empty matcher constraint and reserved-name rejection in the generated schema", () => {
     type SchemaShape = {
       properties: {
         profiles: {
@@ -166,6 +171,7 @@ describe("policy configuration contract", () => {
               };
             }
           >;
+          additionalProperties?: boolean;
         };
       };
     };
@@ -179,10 +185,12 @@ describe("policy configuration contract", () => {
     expect(parsed).toBeTruthy();
 
     const schema = parsed as SchemaShape;
-    const profileSchema = schema.properties.profiles.patternProperties["^.*$"];
+    const profileSchema =
+      schema.properties.profiles.patternProperties["^(?!builtin:).+$"];
     if (!profileSchema) {
       throw new Error("missing profile schema fixture");
     }
+    expect(schema.properties.profiles.additionalProperties).toBe(false);
 
     const customToolSchema =
       profileSchema.properties.tools.patternProperties[
@@ -194,6 +202,18 @@ describe("policy configuration contract", () => {
     expect(customToolSchema.items.properties.match?.patternProperties).toEqual({
       "^.+$": { type: "string" },
     });
+
+    expect(
+      Value.Check(schema as TSchema, {
+        profiles: {
+          "builtin:default": {
+            tools: { bash: [] },
+            readPaths: [{ pattern: "*", decision: "allow" }],
+            writePaths: [{ pattern: "*", decision: "allow" }],
+          },
+        },
+      }),
+    ).toBe(false);
   });
 
   it("keeps ordinary path decisions when protected exceptions are present", () => {

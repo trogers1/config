@@ -391,7 +391,7 @@ describe("default profile bash policy", () => {
         "cd home/.pi/agent/packages/pi-permissions && npm test",
         repositoryRoot,
         ctx,
-        policyConfig.profiles.default,
+        policyConfig.profiles["builtin:default"],
       ),
     ).resolves.toBeUndefined();
     expect(vi.mocked(ctx.ui.confirm)).not.toHaveBeenCalled();
@@ -406,7 +406,7 @@ describe("default profile bash policy", () => {
         "git diff --stat -- home/.pi/agent/packages/pi-permissions/integrationTests",
         repositoryRoot,
         ctx,
-        policyConfig.profiles.default,
+        policyConfig.profiles["builtin:default"],
       ),
     ).resolves.toBeUndefined();
     expect(vi.mocked(ctx.ui.confirm)).not.toHaveBeenCalled();
@@ -420,7 +420,7 @@ describe("default profile bash policy", () => {
         "ls -la modules",
         process.cwd(),
         ctx,
-        policyConfig.profiles.default,
+        policyConfig.profiles["builtin:default"],
       ),
     ).resolves.toBeUndefined();
     expect(vi.mocked(ctx.ui.confirm)).not.toHaveBeenCalled();
@@ -433,14 +433,14 @@ describe("default profile bash policy", () => {
       "ls --output=.env modules",
       process.cwd(),
       ctx,
-      policyConfig.profiles.default,
+      policyConfig.profiles["builtin:default"],
     );
     expect(result).toMatchObject({ block: true });
     expect(result?.reason).toContain("--output=.env");
     expect(vi.mocked(ctx.ui.confirm)).toHaveBeenCalled();
   });
 
-  it.each(["default", "read-only"] as const)(
+  it.each(["builtin:default", "builtin:read-only"] as const)(
     "allows Pi documentation outside the startup directory in the %s profile",
     async (profile) => {
       const piDocs = path.join(
@@ -470,7 +470,7 @@ describe("default profile bash policy", () => {
     },
   );
 
-  it.each(["default", "read-only"] as const)(
+  it.each(["builtin:default", "builtin:read-only"] as const)(
     "allows dependencies inside the local Pi packages in the %s profile",
     async (profile) => {
       const ctx = context(process.cwd());
@@ -494,7 +494,9 @@ describe("default profile bash policy", () => {
   );
 
   it("gates basename, dynamic, and Git object operands under restrictive write paths", async () => {
-    const restrictivePolicy = structuredClone(policyConfig.profiles.default);
+    const restrictivePolicy = structuredClone(
+      policyConfig.profiles["builtin:default"],
+    );
     restrictivePolicy.writePaths = [
       { pattern: "**", decision: "deny" },
       { pattern: "modules/**", decision: "allow" },
@@ -565,11 +567,11 @@ describe("default profile bash policy", () => {
     "blocks an unresolved dynamic operand for an otherwise-allowed command: %s",
     async (command) => {
       const restrictivePolicy = {
-        ...structuredClone(policyConfig.profiles.default),
+        ...structuredClone(policyConfig.profiles["builtin:default"]),
         tools: {
-          ...structuredClone(policyConfig.profiles.default.tools),
+          ...structuredClone(policyConfig.profiles["builtin:default"].tools),
           bash: [
-            ...(policyConfig.profiles.default.tools.bash ?? []),
+            ...(policyConfig.profiles["builtin:default"].tools.bash ?? []),
             { pattern: "inspect *", decision: "allow" as const },
           ],
         },
@@ -589,7 +591,9 @@ describe("default profile bash policy", () => {
   );
 
   it("blocks unresolved dynamic Git diff operands under restrictive writePaths", async () => {
-    const restrictivePolicy = structuredClone(policyConfig.profiles.default);
+    const restrictivePolicy = structuredClone(
+      policyConfig.profiles["builtin:default"],
+    );
     restrictivePolicy.writePaths = [{ pattern: "**", decision: "deny" }];
     const ctx = nonInteractiveContext(process.cwd());
 
@@ -614,7 +618,9 @@ describe("default profile bash policy", () => {
   ])(
     "prompts interactively for the unresolved filesystem operand in %s",
     async (command) => {
-      const restrictivePolicy = structuredClone(policyConfig.profiles.default);
+      const restrictivePolicy = structuredClone(
+        policyConfig.profiles["builtin:default"],
+      );
       restrictivePolicy.writePaths = [{ pattern: "**", decision: "deny" }];
       const ctx = context(process.cwd(), true);
 
@@ -629,7 +635,9 @@ describe("default profile bash policy", () => {
   );
 
   it("gates the exact basename and redirection forms from the remediation matrix", async () => {
-    const restrictivePolicy = structuredClone(policyConfig.profiles.default);
+    const restrictivePolicy = structuredClone(
+      policyConfig.profiles["builtin:default"],
+    );
     restrictivePolicy.writePaths = [{ pattern: "**", decision: "deny" }];
 
     for (const command of [
@@ -651,7 +659,9 @@ describe("default profile bash policy", () => {
   });
 
   it("treats explicit Git colon paths as paths at the gate", async () => {
-    const restrictivePolicy = structuredClone(policyConfig.profiles.default);
+    const restrictivePolicy = structuredClone(
+      policyConfig.profiles["builtin:default"],
+    );
     restrictivePolicy.writePaths = [{ pattern: "**", decision: "deny" }];
 
     for (const operand of [
@@ -673,7 +683,9 @@ describe("default profile bash policy", () => {
   });
 
   it("proves detached Git option values are non-path values before exempting them", async () => {
-    const restrictivePolicy = structuredClone(policyConfig.profiles.default);
+    const restrictivePolicy = structuredClone(
+      policyConfig.profiles["builtin:default"],
+    );
     restrictivePolicy.writePaths = [{ pattern: "**", decision: "deny" }];
 
     await expect(
@@ -687,7 +699,9 @@ describe("default profile bash policy", () => {
   });
 
   it("preserves cwd for subshells and blocks conditional or dynamic cwd control flow", async () => {
-    const restrictivePolicy = structuredClone(policyConfig.profiles.default);
+    const restrictivePolicy = structuredClone(
+      policyConfig.profiles["builtin:default"],
+    );
     restrictivePolicy.writePaths = [
       { pattern: "*", decision: "deny" },
       { pattern: "allowed", decision: "allow" },
@@ -743,11 +757,11 @@ describe("default profile bash policy", () => {
     "blocks mutually exclusive branch paths instead of flattening cwd state: %s",
     async (command) => {
       const restrictivePolicy = {
-        ...structuredClone(policyConfig.profiles.default),
+        ...structuredClone(policyConfig.profiles["builtin:default"]),
         tools: {
-          ...structuredClone(policyConfig.profiles.default.tools),
+          ...structuredClone(policyConfig.profiles["builtin:default"].tools),
           bash: [
-            ...(policyConfig.profiles.default.tools.bash ?? []),
+            ...(policyConfig.profiles["builtin:default"].tools.bash ?? []),
             { pattern: "false", decision: "allow" as const },
             { pattern: "inspect *", decision: "allow" as const },
           ],
@@ -771,7 +785,9 @@ describe("default profile bash policy", () => {
   );
 
   it("fails conservatively for && cwd uncertainty", async () => {
-    const restrictivePolicy = structuredClone(policyConfig.profiles.default);
+    const restrictivePolicy = structuredClone(
+      policyConfig.profiles["builtin:default"],
+    );
     restrictivePolicy.writePaths = [
       { pattern: "*", decision: "deny" },
       { pattern: "allowed", decision: "allow" },
@@ -789,7 +805,9 @@ describe("default profile bash policy", () => {
   });
 
   it("does not leak command or process substitution cwd into the outer shell", async () => {
-    const restrictivePolicy = structuredClone(policyConfig.profiles.default);
+    const restrictivePolicy = structuredClone(
+      policyConfig.profiles["builtin:default"],
+    );
     restrictivePolicy.writePaths = [
       { pattern: "*", decision: "deny" },
       { pattern: "allowed", decision: "allow" },
@@ -814,7 +832,9 @@ describe("default profile bash policy", () => {
   });
 
   it("persists cwd changes made by a brace group in the current shell", async () => {
-    const restrictivePolicy = structuredClone(policyConfig.profiles.default);
+    const restrictivePolicy = structuredClone(
+      policyConfig.profiles["builtin:default"],
+    );
     restrictivePolicy.writePaths = [
       { pattern: "*", decision: "deny" },
       { pattern: "allowed", decision: "allow" },
@@ -832,7 +852,9 @@ describe("default profile bash policy", () => {
   });
 
   it("allows package manager script names under restrictive writePaths", async () => {
-    const restrictivePolicy = structuredClone(policyConfig.profiles.default);
+    const restrictivePolicy = structuredClone(
+      policyConfig.profiles["builtin:default"],
+    );
     restrictivePolicy.writePaths = [{ pattern: "**", decision: "deny" }];
     const ctx = context(process.cwd(), false);
 
@@ -846,7 +868,9 @@ describe("default profile bash policy", () => {
   });
 
   it("gates package manager directory options as paths", async () => {
-    const restrictivePolicy = structuredClone(policyConfig.profiles.default);
+    const restrictivePolicy = structuredClone(
+      policyConfig.profiles["builtin:default"],
+    );
     restrictivePolicy.tools.bash = [
       ...(restrictivePolicy.tools.bash ?? []),
       { pattern: "npm --prefix *", decision: "allow" },
@@ -896,7 +920,7 @@ describe("default profile bash policy", () => {
       // Every operand after the cd is still resolved against the tracked cwd
       // and gated individually (see the 'cd project && cat ...' test below), so
       // letting navigation through writePaths cannot enable any write.
-      const policy = structuredClone(policyConfig.profiles.default);
+      const policy = structuredClone(policyConfig.profiles["builtin:default"]);
       policy.writePaths = [{ pattern: "**", decision: "deny" }];
       const ctx = context(process.cwd(), false);
 
@@ -909,7 +933,7 @@ describe("default profile bash policy", () => {
     it("denies cd into a read-denied directory, because cd repositions readers", async () => {
       // Operand-less commands such as bare `ls` read whatever directory the
       // shell is in, so the cd destination is gated against readPaths.
-      const policy = structuredClone(policyConfig.profiles.default);
+      const policy = structuredClone(policyConfig.profiles["builtin:default"]);
       policy.readPaths = [{ pattern: "**", decision: "deny" }];
 
       await expect(
@@ -927,7 +951,7 @@ describe("default profile bash policy", () => {
         "cd .git",
         process.cwd(),
         context(process.cwd(), false),
-        policyConfig.profiles.default,
+        policyConfig.profiles["builtin:default"],
       );
 
       expect(result).toMatchObject({ block: true });
@@ -940,7 +964,9 @@ describe("default profile bash policy", () => {
       // The follow-up guarantee that makes ungated navigation safe: after
       // `cd project`, relative operands are evaluated against `project`, not
       // the startup directory.
-      const restrictivePolicy = structuredClone(policyConfig.profiles.default);
+      const restrictivePolicy = structuredClone(
+        policyConfig.profiles["builtin:default"],
+      );
       restrictivePolicy.writePaths = [
         { pattern: "**", decision: "deny" },
         { pattern: "project/allowed", decision: "allow" },
@@ -980,7 +1006,7 @@ describe("default profile bash policy", () => {
         `cat ${unrelatedDependency}`,
         process.cwd(),
         ctx,
-        policyConfig.profiles.default,
+        policyConfig.profiles["builtin:default"],
       ),
     ).resolves.toMatchObject({ block: true });
     expect(vi.mocked(ctx.ui.confirm)).toHaveBeenCalled();
@@ -1026,7 +1052,9 @@ describe("default profile bash policy", () => {
   ])(
     "allows safe package manager commands without prompting: %s",
     (command) => {
-      expect(decideBash(command, policyConfig.profiles.default)).toBe("allow");
+      expect(
+        decideBash(command, policyConfig.profiles["builtin:default"]),
+      ).toBe("allow");
     },
   );
 
@@ -1073,7 +1101,9 @@ describe("default profile bash policy", () => {
     "composer install",
     "composer require vendor/package",
   ])("denies mutating package manager commands: %s", (command) => {
-    expect(decideBash(command, policyConfig.profiles.default)).toBe("deny");
+    expect(decideBash(command, policyConfig.profiles["builtin:default"])).toBe(
+      "deny",
+    );
   });
 
   it.each([
@@ -1089,7 +1119,9 @@ describe("default profile bash policy", () => {
     "cargo clean",
     "composer outdated",
   ])("asks for uncommon package manager commands: %s", (command) => {
-    expect(decideBash(command, policyConfig.profiles.default)).toBe("ask");
+    expect(decideBash(command, policyConfig.profiles["builtin:default"])).toBe(
+      "ask",
+    );
   });
 
   it("steers denied package manager mutations toward asking the user", async () => {
@@ -1097,7 +1129,7 @@ describe("default profile bash policy", () => {
       "npm install lodash",
       process.cwd(),
       context(process.cwd(), false),
-      policyConfig.profiles.default,
+      policyConfig.profiles["builtin:default"],
     );
 
     expect(result).toMatchObject({ block: true });
@@ -1112,7 +1144,9 @@ describe("default profile bash policy", () => {
     "git tag --contains v1.0.0",
     "git tag --merged main",
   ])("allows %s", (command) => {
-    expect(decideBash(command, policyConfig.profiles.default)).toBe("allow");
+    expect(decideBash(command, policyConfig.profiles["builtin:default"])).toBe(
+      "allow",
+    );
   });
 
   it.each([
@@ -1121,7 +1155,9 @@ describe("default profile bash policy", () => {
     "git tag -m 'message' v1.0.0",
     "git tag --delete v1.0.0",
   ])("denies %s", (command) => {
-    expect(decideBash(command, policyConfig.profiles.default)).toBe("deny");
+    expect(decideBash(command, policyConfig.profiles["builtin:default"])).toBe(
+      "deny",
+    );
   });
 });
 
@@ -1134,10 +1170,10 @@ describe("extension harness custom tool inheritance", () => {
     fs.writeFileSync(
       configPath,
       `{
-        "defaultProfile": "default",
+        "defaultProfile": "builtin:default",
         "profiles": {
           "deployment-base": {
-            "extends": "default",
+            "extends": "builtin:default",
             "tools": {
               "deploy": [
                 { "decision": "deny", "match": { "environment": "production" } }
@@ -1241,10 +1277,10 @@ describe("extension harness custom tool inheritance", () => {
     fs.writeFileSync(
       configPath,
       `{
-        "defaultProfile": "default",
+        "defaultProfile": "builtin:default",
         "profiles": {
           "deployment-base": {
-            "extends": "default",
+            "extends": "builtin:default",
             "tools": {
               "deploy": [
                 { "decision": "deny", "match": { "environment": "production" } }

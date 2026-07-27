@@ -1,12 +1,12 @@
 # Taylor Pi Permissions
 
-Pi package that mirrors the curated opencode permission posture and adds switchable profiles:
+Pi package that mirrors the curated opencode permission posture and adds switchable profiles. Built-in profile names are reserved under the `builtin:` namespace and cannot be overridden by user configuration.
 
-- `default`: normal Pi system prompt with the current curated permissions
-- `worker`: default-like non-interactive subagent policy; rules that normally ask for confirmation deny with guidance instead
-- `read-only`: edit/write tools are only allowed for `./handoff.md` and `./progress.md`; read access is limited to the startup directory tree and `/tmp`; bash is limited to inspection commands, non-destructive git history commands, and output redirection to `/tmp`, `./handoff.md`, or `./progress.md`
-- `tests-disallowed`: extends `default` for implementation-only work; test files cannot be read or edited, and prompt steering asks the model to fix the system rather than the tests and report tests it believes are incorrect
-- `tests-only`: extends `default` for documentation-first test-authoring work; prompt steering makes documented behavior the spec (production code is only an interface reference), and only test files can be edited
+- `builtin:default`: normal Pi system prompt with the current curated permissions
+- `builtin:worker`: default-like non-interactive subagent policy; rules that normally ask for confirmation deny with guidance instead
+- `builtin:read-only`: edit/write tools are only allowed for `./handoff.md` and `./progress.md`; read access is limited to the startup directory tree and `/tmp`; bash is limited to inspection commands, non-destructive git history commands, and output redirection to `/tmp`, `./handoff.md`, or `./progress.md`
+- `builtin:tests-disallowed`: extends `builtin:default` for implementation-only work; test files cannot be read or edited, and prompt steering asks the model to fix the system rather than the tests and report tests it believes are incorrect
+- `builtin:tests-only`: extends `builtin:default` for documentation-first test-authoring work; prompt steering makes documented behavior the spec (production code is only an interface reference), and only test files can be edited
 - optional per-profile `color` and `emoji` metadata for the status line
 - explicit deny rules for destructive git operations and protected paths
 - automatic model steering and suggested alternatives for configured deny rules
@@ -58,7 +58,7 @@ weakening the others:
 
 - `/profile` shows the active profile and available profiles.
 - `/profile <name>` switches to a profile.
-- `/read-only` switches to the read-only permissions profile.
+- `/read-only` switches to the `builtin:read-only` permissions profile.
 
 Profile changes are persisted in the Pi session, so resumed sessions restore their last selected profile.
 
@@ -80,18 +80,22 @@ configuration is data, not executable code. Add the bundled schema as
 ```jsonc
 {
   "$schema": "https://example.com/pi-permissions/profiles.schema.json",
+  "defaultProfile": "client-work",
   "profiles": {
     "client-work": {
-      "extends": "default",
+      "extends": "builtin:default",
       "directories": ["~/Code/client"],
     },
   },
 }
 ```
 
-`extends` is optional. When supplied, it names a built-in profile or another
-custom profile. Non-empty tool-rule arrays and path-rule arrays are appended to
-inherited rules, so later rules continue to override earlier matches. An empty
+`extends` is optional. When supplied, it names a built-in profile by its
+canonical name (for example `builtin:default`) or another custom profile.
+Custom profile names are exact: `extends: "default"` resolves only a custom
+profile literally named `default`; it does not fall back to `builtin:default`.
+Non-empty tool-rule arrays and path-rule arrays are appended to inherited
+rules, so later rules continue to override earlier matches. An empty
 custom-tool array deliberately clears that tool's inherited rules while keeping
 the tool configured; because no rule then matches, calls default to `ask`. An
 empty `tools.bash` array removes the inherited Bash command rules, which also
@@ -105,11 +109,18 @@ extension registered but blocks permissions until the file is fixed.
 persisted profile selection. TypeScript consumers should import the public
 policy types from `taylor-pi-permissions/config`.
 
+User-defined profile names must not start with `builtin:`. Defining a profile
+such as `builtin:default` in the user configuration is a hard validation error;
+the extension remains registered but blocks every tool call until the reserved
+name is removed. There are no legacy aliases: old unnamespaced built-in
+selectors such as `worker` or `read-only` fail closed with the list of available
+canonical names.
+
 ## Subagent environment
 
 The package consumes the environment variables exported by `pi-permissions-subagents`:
 
-- `PI_SUBAGENT_PROFILE` selects the initial profile and overrides directory and persisted profile selection in a resumed worker session. An unknown profile fails startup rather than silently granting the default policy.
+- `PI_SUBAGENT_PROFILE` selects the initial profile and overrides directory and persisted profile selection in a resumed worker session. Use canonical built-in names such as `builtin:worker`; an unknown or unnamespaced old name like `worker` fails startup with the list of available profiles rather than silently granting the default policy.
 - `PI_SUBAGENT_PERMISSIBLE_GLOBS` is a comma-separated list of paths or glob patterns relative to Pi's startup directory. When present, `edit`, `write`, Bash path references, and Bash output redirections are denied outside the declared scopes. Plain paths include their descendants; for example, `src` permits both `src` and `src/**`.
 
 The permissible-scope layer only narrows the selected profile, so protected-path and command restrictions still apply inside an allowed scope. Pi's dedicated read tools retain the profile's normal read access.
@@ -200,7 +211,7 @@ Each profile defines its protected glob patterns with `protectedPathPatterns`; t
 
 Patterns use the same path glob syntax and ordered last-match behavior as other policy rules. They apply to `read`, `grep`, `find`, `ls`, `edit`, and `write`, as well as Bash path references: discovery can disclose secrets, while mutation can damage them. A profile that omits a pattern does not protect that path beyond its ordinary tool rules. Dynamic or unrecognized shell reader forms, and parser errors, fail closed: interactive sessions can ask, while non-interactive sessions block.
 
-The built-in test-focused profiles recognize conventional `test`, `tests`, `__tests__`, and `integrationTests` directories, plus `*.test.*`, `*.spec.*`, `*_test.*`, and `*.cy.*` file names. `tests-disallowed` denies both dedicated reads and mutations for these paths. `tests-only` retains the default read policy and limits dedicated edits/writes and analyzable Bash filesystem references to those test paths and `/tmp` scratch output; its Bash denial guidance steers inspection to the dedicated `read`, `grep`, `find`, and `ls` tools.
+The built-in test-focused profiles recognize conventional `test`, `tests`, `__tests__`, and `integrationTests` directories, plus `*.test.*`, `*.spec.*`, `*_test.*`, and `*.cy.*` file names. `builtin:tests-disallowed` denies both dedicated reads and mutations for these paths. `builtin:tests-only` retains the default read policy and limits dedicated edits/writes and analyzable Bash filesystem references to those test paths and `/tmp` scratch output; its Bash denial guidance steers inspection to the dedicated `read`, `grep`, `find`, and `ls` tools.
 
 Bash output redirection targets use the same `writePaths` rules and `bash` context as every other Bash path. Absolute and relative targets use the same matching rules as `edit` and `write`; context-specific rules may still distinguish dedicated mutations from Bash access.
 

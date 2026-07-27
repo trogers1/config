@@ -31,6 +31,8 @@ function writeTempConfig(contents: string): string {
 describe("permissions extension", () => {
   beforeEach(() => {
     vi.stubEnv("PI_PERMISSIONS_PROFILE_CONFIG", missingProfileConfigPath);
+    delete process.env.PI_SUBAGENT_PROFILE;
+    delete process.env.PI_SUBAGENT_PERMISSIBLE_GLOBS;
   });
 
   afterEach(() => {
@@ -41,12 +43,14 @@ describe("permissions extension", () => {
   });
 
   it("selects the subagent profile from the environment", async () => {
-    vi.stubEnv("PI_SUBAGENT_PROFILE", "read-only");
+    vi.stubEnv("PI_SUBAGENT_PROFILE", "builtin:read-only");
     const harness = createExtensionHarness();
 
     await harness.start();
 
-    expect(lastCallArgument(harness.ui.setStatus, 1)).toContain("read-only");
+    expect(lastCallArgument(harness.ui.setStatus, 1)).toContain(
+      "builtin:read-only",
+    );
     await expect(
       harness.callTool({
         toolName: "write",
@@ -63,7 +67,7 @@ describe("permissions extension", () => {
           defaultProfile: "deploy-check",
           profiles: {
             "deploy-check": {
-              extends: "default",
+              extends: "builtin:default",
               tools: {
                 deploy: [
                   { decision: "ask" },
@@ -107,7 +111,7 @@ describe("permissions extension", () => {
         JSON.stringify({
           defaultProfile: "quiet-bash",
           profiles: {
-            "quiet-bash": { extends: "default", tools: { bash: [] } },
+            "quiet-bash": { extends: "builtin:default", tools: { bash: [] } },
           },
         }),
       ),
@@ -143,23 +147,30 @@ describe("permissions extension", () => {
     const harness = createExtensionHarness();
     await harness.start();
 
-    expect(lastCallArgument(harness.ui.setStatus, 1)).toContain("default");
+    expect(lastCallArgument(harness.ui.setStatus, 1)).toContain(
+      "builtin:default",
+    );
     const completions = await harness
       .command("profile")
       .getArgumentCompletions?.("");
     expect(completions?.map((completion) => completion.value)).toEqual(
-      expect.arrayContaining(["default", "worker", "read-only"]),
+      expect.arrayContaining([
+        "builtin:default",
+        "builtin:worker",
+        "builtin:read-only",
+      ]),
     );
     expect(completions?.map((completion) => completion.value)).not.toContain(
       "socrates",
     );
   });
 
-  it("uses fixture overrides even when their names collide with shipped profiles", async () => {
-    // The fixture redefines the shipped read-only profile on top of default;
-    // a command only its replacement allows proves the override took effect.
+  it("uses a custom profile that extends a shipped profile", async () => {
+    // The fixture defines a uniquely-named profile extending the shipped
+    // read-only profile; a command only that custom profile allows proves the
+    // extension and selection took effect.
     vi.stubEnv("PI_PERMISSIONS_PROFILE_CONFIG", customProfileConfigPath);
-    vi.stubEnv("PI_SUBAGENT_PROFILE", "read-only");
+    vi.stubEnv("PI_SUBAGENT_PROFILE", "fixture-read-only");
     const harness = createExtensionHarness({ hasUI: false });
     await harness.start();
 
@@ -214,7 +225,7 @@ describe("permissions extension", () => {
         defaultProfile: "isolated",
         profiles: {
           isolated: {
-            extends: "default",
+            extends: "builtin:default",
             tools: { deploy: [{ decision: "allow" }] },
           },
         },
@@ -226,7 +237,7 @@ describe("permissions extension", () => {
         defaultProfile: "isolated",
         profiles: {
           isolated: {
-            extends: "default",
+            extends: "builtin:default",
             tools: { deploy: [{ decision: "deny" }] },
           },
         },
@@ -267,7 +278,9 @@ describe("permissions extension", () => {
     const harness = createExtensionHarness();
     await harness.start();
 
-    expect(lastCallArgument(harness.ui.setStatus, 1)).toContain("default");
+    expect(lastCallArgument(harness.ui.setStatus, 1)).toContain(
+      "builtin:default",
+    );
   });
 
   it("selects the most-specific profile directory for a startup inside a descendant", async () => {
@@ -277,11 +290,11 @@ describe("permissions extension", () => {
         JSON.stringify({
           profiles: {
             "outer-review": {
-              extends: "default",
+              extends: "builtin:default",
               directories: ["/workspace"],
             },
             "inner-review": {
-              extends: "default",
+              extends: "builtin:default",
               directories: ["/workspace/coaching"],
             },
           },
@@ -304,7 +317,7 @@ describe("permissions extension", () => {
         JSON.stringify({
           profiles: {
             "home-bound": {
-              extends: "default",
+              extends: "builtin:default",
               directories: ["~/pi-permissions-home-binding-test"],
             },
           },
@@ -331,7 +344,7 @@ describe("permissions extension", () => {
         JSON.stringify({
           profiles: {
             "relative-bound": {
-              extends: "default",
+              extends: "builtin:default",
               directories: ["integrationTests"],
             },
           },
@@ -356,7 +369,7 @@ describe("permissions extension", () => {
         JSON.stringify({
           profiles: {
             "workspace-bound": {
-              extends: "default",
+              extends: "builtin:default",
               directories: ["/workspace"],
             },
           },
@@ -370,7 +383,7 @@ describe("permissions extension", () => {
         {
           type: "custom",
           customType: "pi-permissions-profile",
-          data: { profile: "default" },
+          data: { profile: "builtin:default" },
         },
       ],
     });
@@ -395,20 +408,22 @@ describe("permissions extension", () => {
   });
 
   it("lets PI_SUBAGENT_PROFILE override a persisted profile on resume", async () => {
-    vi.stubEnv("PI_SUBAGENT_PROFILE", "worker");
+    vi.stubEnv("PI_SUBAGENT_PROFILE", "builtin:worker");
     const harness = createExtensionHarness({
       hasUI: false,
       entries: [
         {
           type: "custom",
           customType: "pi-permissions-profile",
-          data: { profile: "read-only" },
+          data: { profile: "builtin:read-only" },
         },
       ],
     });
     await harness.start("resume");
 
-    expect(lastCallArgument(harness.ui.setStatus, 1)).toContain("worker");
+    expect(lastCallArgument(harness.ui.setStatus, 1)).toContain(
+      "builtin:worker",
+    );
     // The worker policy is active rather than the persisted read-only policy.
     await expect(
       harness.callToolWithoutPrompt({
@@ -421,7 +436,7 @@ describe("permissions extension", () => {
   it("lets PI_SUBAGENT_PROFILE override a configured profile directory", async () => {
     // The checked-in fixture binds review-tools to /workspace.
     vi.stubEnv("PI_PERMISSIONS_PROFILE_CONFIG", customProfileConfigPath);
-    vi.stubEnv("PI_SUBAGENT_PROFILE", "worker");
+    vi.stubEnv("PI_SUBAGENT_PROFILE", "builtin:worker");
 
     const harness = createExtensionHarness({
       contextCwd: "/workspace/project",
@@ -429,7 +444,9 @@ describe("permissions extension", () => {
     });
     await harness.start();
 
-    expect(lastCallArgument(harness.ui.setStatus, 1)).toContain("worker");
+    expect(lastCallArgument(harness.ui.setStatus, 1)).toContain(
+      "builtin:worker",
+    );
     await expect(
       harness.callToolWithoutPrompt({
         toolName: "bash",
@@ -439,7 +456,7 @@ describe("permissions extension", () => {
   });
 
   it("treats a plain PI_SUBAGENT_PERMISSIBLE_GLOBS path as including its descendants", async () => {
-    vi.stubEnv("PI_SUBAGENT_PROFILE", "worker");
+    vi.stubEnv("PI_SUBAGENT_PROFILE", "builtin:worker");
     vi.stubEnv("PI_SUBAGENT_PERMISSIBLE_GLOBS", "modules");
     const harness = createExtensionHarness({ hasUI: false });
     await harness.start();
@@ -466,7 +483,7 @@ describe("permissions extension", () => {
   });
 
   it("leaves dedicated read tools at the profile's normal read access under PI_SUBAGENT_PERMISSIBLE_GLOBS", async () => {
-    vi.stubEnv("PI_SUBAGENT_PROFILE", "worker");
+    vi.stubEnv("PI_SUBAGENT_PROFILE", "builtin:worker");
     vi.stubEnv("PI_SUBAGENT_PERMISSIBLE_GLOBS", "modules/**");
     const harness = createExtensionHarness({ hasUI: false });
     await harness.start();
@@ -491,7 +508,7 @@ describe("permissions extension", () => {
   });
 
   it("does not let a permissive subagent write glob widen the selected profile", async () => {
-    vi.stubEnv("PI_SUBAGENT_PROFILE", "read-only");
+    vi.stubEnv("PI_SUBAGENT_PROFILE", "builtin:read-only");
     vi.stubEnv("PI_SUBAGENT_PERMISSIBLE_GLOBS", "**");
     const harness = createExtensionHarness({ hasUI: false });
     await harness.start();
@@ -514,7 +531,7 @@ describe("permissions extension", () => {
   });
 
   it("provides a non-interactive worker profile", async () => {
-    vi.stubEnv("PI_SUBAGENT_PROFILE", "worker");
+    vi.stubEnv("PI_SUBAGENT_PROFILE", "builtin:worker");
     const harness = createExtensionHarness({ hasUI: false });
     await harness.start();
 
@@ -534,7 +551,7 @@ describe("permissions extension", () => {
   });
 
   it("enforces subagent permissible scopes for tools and Bash paths", async () => {
-    vi.stubEnv("PI_SUBAGENT_PROFILE", "worker");
+    vi.stubEnv("PI_SUBAGENT_PROFILE", "builtin:worker");
     vi.stubEnv(
       "PI_SUBAGENT_PERMISSIBLE_GLOBS",
       "modules/allowed.ts,tests/unit/**,.env",
@@ -615,7 +632,7 @@ describe("permissions extension", () => {
   });
 
   it("enforces basename, redirection, and --no-index operands under PI_SUBAGENT_PERMISSIBLE_GLOBS=modules/**", async () => {
-    vi.stubEnv("PI_SUBAGENT_PROFILE", "worker");
+    vi.stubEnv("PI_SUBAGENT_PROFILE", "builtin:worker");
     vi.stubEnv("PI_SUBAGENT_PERMISSIBLE_GLOBS", "modules/**");
     const harness = createExtensionHarness({ hasUI: false });
     await harness.start();
@@ -643,7 +660,7 @@ describe("permissions extension", () => {
   });
 
   it("blocks dynamic Git diff operands under PI_SUBAGENT_PERMISSIBLE_GLOBS", async () => {
-    vi.stubEnv("PI_SUBAGENT_PROFILE", "worker");
+    vi.stubEnv("PI_SUBAGENT_PROFILE", "builtin:worker");
     vi.stubEnv("PI_SUBAGENT_PERMISSIBLE_GLOBS", "modules/**");
     const harness = createExtensionHarness({ hasUI: false });
     await harness.start();
@@ -657,7 +674,7 @@ describe("permissions extension", () => {
   });
 
   it("allows a basename after entering a directory inside the subagent scope", async () => {
-    vi.stubEnv("PI_SUBAGENT_PROFILE", "worker");
+    vi.stubEnv("PI_SUBAGENT_PROFILE", "builtin:worker");
     vi.stubEnv("PI_SUBAGENT_PERMISSIBLE_GLOBS", "modules/**");
     const harness = createExtensionHarness({ hasUI: false });
     await harness.start();
@@ -704,7 +721,7 @@ describe("permissions extension", () => {
           {
             type: "custom",
             customType: "pi-permissions-profile",
-            data: { profile: "read-only" },
+            data: { profile: "builtin:read-only" },
           },
         ],
       });
@@ -740,7 +757,7 @@ describe("permissions extension", () => {
 
     try {
       vi.stubEnv("PI_PERMISSIONS_PROFILE_CONFIG", configPath);
-      vi.stubEnv("PI_SUBAGENT_PROFILE", "worker");
+      vi.stubEnv("PI_SUBAGENT_PROFILE", "builtin:worker");
       const harness = createExtensionHarness({ hasUI: false });
       await harness.start();
 
@@ -776,7 +793,9 @@ describe("permissions extension", () => {
     await harness.start();
 
     expect(lastCallArgument(harness.ui.setStatus, 0)).toBe("permissions");
-    expect(lastCallArgument(harness.ui.setStatus, 1)).toContain("default");
+    expect(lastCallArgument(harness.ui.setStatus, 1)).toContain(
+      "builtin:default",
+    );
 
     await harness.shutdown();
     expect(harness.ui.setStatus).toHaveBeenLastCalledWith(
@@ -791,7 +810,7 @@ describe("permissions extension", () => {
 
     await harness.runCommand("profile");
     expect(harness.ui.notify).toHaveBeenLastCalledWith(
-      expect.stringContaining("Active profile: default"),
+      expect.stringContaining("Active profile: builtin:default"),
       "info",
     );
 
@@ -801,19 +820,21 @@ describe("permissions extension", () => {
       "error",
     );
 
-    await harness.runCommand("profile", "read-only");
+    await harness.runCommand("profile", "builtin:read-only");
     expect(harness.entries.at(-1)).toMatchObject({
       customType: "pi-permissions-profile",
-      data: { profile: "read-only" },
+      data: { profile: "builtin:read-only" },
     });
     const completions = await harness
       .command("profile")
-      .getArgumentCompletions?.("read");
+      .getArgumentCompletions?.("builtin:read");
     expect(completions?.map((completion) => completion.value)).toEqual([
-      "read-only",
+      "builtin:read-only",
     ]);
     expect(lastCallArgument(harness.ui.setStatus, 1)).toContain("🔎");
-    expect(lastCallArgument(harness.ui.setStatus, 1)).toContain("read-only");
+    expect(lastCallArgument(harness.ui.setStatus, 1)).toContain(
+      "builtin:read-only",
+    );
   });
 
   it("restores the persisted read-only profile and its tool policy", async () => {
@@ -827,7 +848,7 @@ describe("permissions extension", () => {
     await resumedSession.start("resume");
 
     expect(lastCallArgument(resumedSession.ui.setStatus, 1)).toContain(
-      "read-only",
+      "builtin:read-only",
     );
 
     const write = await resumedSession.callTool({
@@ -1044,7 +1065,7 @@ describe("permissions extension", () => {
       harness.ui.confirm.mockClear();
     }
 
-    for (const profile of ["read-only", "socrates"] as const) {
+    for (const profile of ["builtin:read-only", "socrates"] as const) {
       await harness.runCommand("profile", profile);
       const denied = await harness.callTool({
         toolName: "bash",
@@ -1062,7 +1083,7 @@ describe("permissions extension", () => {
     ).resolves.toMatchObject({ block: true });
 
     // Return to the default profile for safe-reader allow checks.
-    await harness.runCommand("profile", "default");
+    await harness.runCommand("profile", "builtin:default");
     for (const command of [
       "cat README.md",
       "sed -n '1,20p' README.md",
@@ -1090,7 +1111,7 @@ describe("permissions extension", () => {
         JSON.stringify({
           profiles: {
             "unprotected-review": {
-              extends: "default",
+              extends: "builtin:default",
               protectedPathPatterns: [],
               protectedPathExceptions: [],
             },
@@ -1216,10 +1237,12 @@ describe("permissions extension", () => {
     await harness.runCommand("read-only");
     expect(harness.entries.at(-1)).toMatchObject({
       customType: "pi-permissions-profile",
-      data: { profile: "read-only" },
+      data: { profile: "builtin:read-only" },
     });
     expect(lastCallArgument(harness.ui.setStatus, 1)).toContain("🔎");
-    expect(lastCallArgument(harness.ui.setStatus, 1)).toContain("read-only");
+    expect(lastCallArgument(harness.ui.setStatus, 1)).toContain(
+      "builtin:read-only",
+    );
 
     await expect(
       harness.callToolWithoutPrompt({
@@ -1474,7 +1497,7 @@ describe("permissions extension", () => {
       await harness.start();
 
       harness.deactivateTool("grep");
-      await harness.runCommand("profile", "read-only");
+      await harness.runCommand("profile", "builtin:read-only");
 
       expect(harness.getActiveTools()).toContain("grep");
     });

@@ -1007,16 +1007,26 @@ const testsOnlyProfile = extendProfile(baseProfile, {
 // ─── Exported policy config ───────────────────────────────────────────
 
 const configuredPolicy = definePolicyConfig({
-  defaultProfile: "default",
+  defaultProfile: "builtin:default",
 
   profiles: {
-    default: baseProfile,
-    worker: workerProfile,
-    "read-only": readOnlyProfile,
-    "tests-disallowed": testsDisallowedProfile,
-    "tests-only": testsOnlyProfile,
+    "builtin:default": baseProfile,
+    "builtin:worker": workerProfile,
+    "builtin:read-only": readOnlyProfile,
+    "builtin:tests-disallowed": testsDisallowedProfile,
+    "builtin:tests-only": testsOnlyProfile,
   },
 });
 
+function deepFreeze<T extends object>(value: T): T {
+  for (const key of Reflect.ownKeys(value) as (keyof T)[]) {
+    const prop = value[key];
+    if (prop && typeof prop === "object" && !Object.isFrozen(prop)) {
+      deepFreeze(prop);
+    }
+  }
+  return Object.freeze(value);
+}
+
 /** Portable profiles shipped by the package. Local profiles live in user config. */
-export const policyConfig = configuredPolicy;
+export const policyConfig = deepFreeze(configuredPolicy);

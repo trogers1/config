@@ -9,6 +9,8 @@ const missingProfileConfigPath = path.resolve(
 describe("built-in test profiles", () => {
   beforeEach(() => {
     vi.stubEnv("PI_PERMISSIONS_PROFILE_CONFIG", missingProfileConfigPath);
+    delete process.env.PI_SUBAGENT_PROFILE;
+    delete process.env.PI_SUBAGENT_PERMISSIBLE_GLOBS;
   });
 
   afterEach(() => {
@@ -16,7 +18,7 @@ describe("built-in test profiles", () => {
   });
 
   it("keeps tests inaccessible in tests-disallowed while allowing implementation edits", async () => {
-    vi.stubEnv("PI_SUBAGENT_PROFILE", "tests-disallowed");
+    vi.stubEnv("PI_SUBAGENT_PROFILE", "builtin:tests-disallowed");
     const harness = createExtensionHarness({ hasUI: false });
     await harness.start();
 
@@ -54,7 +56,7 @@ describe("built-in test profiles", () => {
   });
 
   it("allows tests-only to read implementation files but only edit tests", async () => {
-    vi.stubEnv("PI_SUBAGENT_PROFILE", "tests-only");
+    vi.stubEnv("PI_SUBAGENT_PROFILE", "builtin:tests-only");
     const harness = createExtensionHarness({ hasUI: false });
     await harness.start();
 
@@ -92,7 +94,7 @@ describe("built-in test profiles", () => {
   });
 
   it("steers tests-only bash inspection denials toward the dedicated read tools", async () => {
-    vi.stubEnv("PI_SUBAGENT_PROFILE", "tests-only");
+    vi.stubEnv("PI_SUBAGENT_PROFILE", "builtin:tests-only");
     const harness = createExtensionHarness({ hasUI: false });
     await harness.start();
 
@@ -116,7 +118,7 @@ describe("built-in test profiles", () => {
   });
 
   it("lets tests-only bash target test files and /tmp but not implementation files", async () => {
-    vi.stubEnv("PI_SUBAGENT_PROFILE", "tests-only");
+    vi.stubEnv("PI_SUBAGENT_PROFILE", "builtin:tests-only");
     const harness = createExtensionHarness({ hasUI: false });
     await harness.start();
 
@@ -147,7 +149,7 @@ describe("built-in test profiles", () => {
   });
 
   it("lets tests-only cd into implementation directories to run package scripts", async () => {
-    vi.stubEnv("PI_SUBAGENT_PROFILE", "tests-only");
+    vi.stubEnv("PI_SUBAGENT_PROFILE", "builtin:tests-only");
     const harness = createExtensionHarness({ hasUI: false });
     await harness.start();
 

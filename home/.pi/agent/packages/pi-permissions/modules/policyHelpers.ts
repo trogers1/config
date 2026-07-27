@@ -1,6 +1,27 @@
 import { Type, type Static, type TSchema } from "typebox";
 import { Value } from "typebox/value";
 
+export const builtinProfilePrefix = "builtin:";
+
+export function isBuiltinProfileName(name: string): boolean {
+  return name.startsWith(builtinProfilePrefix);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+const customProfileNamePattern = `^(?!${escapeRegExp(builtinProfilePrefix)}).+$`;
+
+export const builtinProfileNames = [
+  "builtin:default",
+  "builtin:worker",
+  "builtin:read-only",
+  "builtin:tests-disallowed",
+  "builtin:tests-only",
+] as const;
+export type BuiltinProfileName = (typeof builtinProfileNames)[number];
+
 const readPathContextSchema = Type.Union([
   Type.Literal("read"),
   Type.Literal("grep"),
@@ -167,7 +188,13 @@ export const profileConfigFileSchema = Type.Object(
   {
     $schema: Type.Optional(Type.String()),
     defaultProfile: Type.Optional(Type.String()),
-    profiles: Type.Record(Type.String(), profileConfigProfileSchema),
+    profiles: Type.Unsafe<Record<string, ProfileConfigProfile>>({
+      type: "object",
+      patternProperties: {
+        [customProfileNamePattern]: profileConfigProfileSchema,
+      },
+      additionalProperties: false,
+    }),
   },
   {
     $id: "https://earendil.works/pi-permissions/profiles.schema.json",

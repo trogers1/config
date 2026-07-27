@@ -10,6 +10,7 @@ import type {
 import { afterEach, describe, expect, it } from "vitest";
 import permissionsExtension, { decideBash } from "../extensions/permissions";
 import { policyConfig as genericPolicyConfig } from "../modules/policy";
+import { builtinProfilePrefix } from "../modules/policyHelpers";
 import {
   ProfileConfigLoadError,
   loadProfileConfig,
@@ -54,7 +55,7 @@ describe("profile configuration", () => {
         "$schema": "https://example.test/profiles.schema.json",
         "profiles": {
           "client-work": {
-            "extends": "default",
+            "extends": "builtin:default",
             "directories": ["/workspace/client",],
             "tools": {
               "bash": [{ "pattern": "client-cli *", "decision": "allow" }],
@@ -77,10 +78,10 @@ describe("profile configuration", () => {
       expect.arrayContaining([{ pattern: "client-cli *", decision: "allow" }]),
     );
     expect(clientWork.tools.bash?.length).toBeGreaterThan(
-      genericPolicyConfig.profiles.default.tools.bash?.length ?? 0,
+      genericPolicyConfig.profiles["builtin:default"].tools.bash?.length ?? 0,
     );
     expect(clientWork.readPaths).toEqual([
-      ...genericPolicyConfig.profiles.default.readPaths,
+      ...genericPolicyConfig.profiles["builtin:default"].readPaths,
       { pattern: "vendor/**", decision: "deny", contexts: ["grep"] },
     ]);
   });
@@ -91,7 +92,7 @@ describe("profile configuration", () => {
       writeConfig(`{
         "profiles": {
           "deployment-base": {
-            "extends": "default",
+            "extends": "builtin:default",
             "tools": {
               "deploy": [
                 { "decision": "ask" },
@@ -124,7 +125,7 @@ describe("profile configuration", () => {
       writeConfig(`{
         "profiles": {
           "deployment-base": {
-            "extends": "default",
+            "extends": "builtin:default",
             "tools": {
               "deploy": [
                 { "decision": "deny", "match": { "environment": "production" } }
@@ -150,7 +151,7 @@ describe("profile configuration", () => {
       writeConfig(
         JSON.stringify({
           profiles: {
-            "quiet-bash": { extends: "default", tools: { bash: [] } },
+            "quiet-bash": { extends: "builtin:default", tools: { bash: [] } },
           },
         }),
       ),
@@ -164,7 +165,7 @@ describe("profile configuration", () => {
 
   it("accepts a fully custom profile without extends", () => {
     const standaloneProfile = {
-      ...genericPolicyConfig.profiles.default,
+      ...genericPolicyConfig.profiles["builtin:default"],
       emoji: "🧪",
     };
     const config = loadProfileConfig(
@@ -198,7 +199,7 @@ describe("profile configuration", () => {
       JSON.stringify({
         profiles: {
           default: {
-            ...genericPolicyConfig.profiles.default,
+            ...genericPolicyConfig.profiles["builtin:default"],
             bashPathReferences: [],
           },
         },
@@ -237,7 +238,7 @@ describe("profile configuration", () => {
       message: "cyclic profile inheritance detected",
     },
   ])(
-    "rejects an invalid $label definition that shadows a shipped profile name",
+    "rejects an invalid $label definition with custom names resembling former built-ins",
     ({ contents, message }) => {
       const configPath = writeConfig(JSON.stringify(contents));
       expect(() =>
@@ -246,13 +247,90 @@ describe("profile configuration", () => {
     },
   );
 
+  it.each([
+    { name: "builtin:default" },
+    { name: "builtin:worker" },
+    { name: "builtin:future" },
+  ])(
+    "rejects a user definition named $name as a reserved prefix definition",
+    ({ name }) => {
+      const configPath = writeConfig(
+        JSON.stringify({
+          profiles: {
+            [name]: { extends: "builtin:default" },
+          },
+        }),
+      );
+
+      try {
+        loadProfileConfig(genericPolicyConfig, configPath);
+        throw new Error("expected loadProfileConfig to throw");
+      } catch (error) {
+        expect(error).toBeInstanceOf(ProfileConfigLoadError);
+        expect((error as ProfileConfigLoadError).configPath).toBe(configPath);
+        expect((error as Error).message).toContain(configPath);
+        expect((error as Error).message).toContain(name);
+        expect((error as Error).message).toContain(builtinProfilePrefix);
+      }
+    },
+  );
+
+  it("resolves builtin:* extends to the shipped profile and custom names to user definitions", () => {
+    const config = loadProfileConfig(
+      genericPolicyConfig,
+      writeConfig(
+        JSON.stringify({
+          profiles: {
+            "builtin-extends": { extends: "builtin:default" },
+            default: {
+              tools: { bash: [] },
+              readPaths: [{ pattern: "*", decision: "allow" }],
+              writePaths: [{ pattern: "*", decision: "allow" }],
+            },
+            "custom-extends": { extends: "default" },
+          },
+        }),
+      ),
+    );
+
+    expect(config.profiles["builtin-extends"].tools.bash).toEqual(
+      genericPolicyConfig.profiles["builtin:default"].tools.bash,
+    );
+    expect(config.profiles["custom-extends"].tools.bash).toEqual([]);
+
+    const unknownBuiltinPath = writeConfig(
+      JSON.stringify({
+        profiles: {
+          custom: { extends: "builtin:missing" },
+        },
+      }),
+    );
+    expect(() =>
+      loadProfileConfig(genericPolicyConfig, unknownBuiltinPath),
+    ).toThrowError("unknown built-in profile 'builtin:missing'");
+  });
+
+  it("rejects a custom extends target when no custom profile with that name exists", () => {
+    const configPath = writeConfig(
+      JSON.stringify({
+        profiles: {
+          custom: { extends: "default" },
+        },
+      }),
+    );
+
+    expect(() =>
+      loadProfileConfig(genericPolicyConfig, configPath),
+    ).toThrowError("unknown inherited profile 'default'");
+  });
+
   it("throws a typed error for unknown or cyclic inheritance and invalid defaults", () => {
     const unknownInheritedConfigPath = writeConfig(
       JSON.stringify({
-        defaultProfile: "default",
+        defaultProfile: "client-work",
         profiles: {
           "client-work": {
-            ...genericPolicyConfig.profiles.default,
+            ...genericPolicyConfig.profiles["builtin:default"],
             extends: "missing",
           },
         },
@@ -263,11 +341,11 @@ describe("profile configuration", () => {
         defaultProfile: "first",
         profiles: {
           first: {
-            ...genericPolicyConfig.profiles.default,
+            ...genericPolicyConfig.profiles["builtin:default"],
             extends: "second",
           },
           second: {
-            ...genericPolicyConfig.profiles.default,
+            ...genericPolicyConfig.profiles["builtin:default"],
             extends: "first",
           },
         },
@@ -277,7 +355,7 @@ describe("profile configuration", () => {
       JSON.stringify({
         defaultProfile: "missing",
         profiles: {
-          default: genericPolicyConfig.profiles.default,
+          default: genericPolicyConfig.profiles["builtin:default"],
         },
       }),
     );
@@ -435,7 +513,7 @@ describe("extension harness profile configuration failures", () => {
         contents: JSON.stringify({
           profiles: {
             default: {
-              ...genericPolicyConfig.profiles.default,
+              ...genericPolicyConfig.profiles["builtin:default"],
               bashPathReferences: [],
             },
           },
@@ -448,7 +526,7 @@ describe("extension harness profile configuration failures", () => {
           defaultProfile: "default",
           profiles: {
             "client-work": {
-              ...genericPolicyConfig.profiles.default,
+              ...genericPolicyConfig.profiles["builtin:default"],
               extends: "missing",
             },
           },
@@ -456,14 +534,14 @@ describe("extension harness profile configuration failures", () => {
         messageFragment: "unknown inherited profile",
       },
       {
-        label: "invalid override of a shipped profile",
+        label: "reserved-name definition overrides a shipped profile",
         contents: JSON.stringify({
-          defaultProfile: "default",
+          defaultProfile: "builtin:default",
           profiles: {
-            default: { extends: "missing" },
+            "builtin:default": { extends: "missing" },
           },
         }),
-        messageFragment: "unknown inherited profile",
+        messageFragment: "reserved profile name",
       },
       {
         label: "cyclic inheritance",
@@ -471,11 +549,11 @@ describe("extension harness profile configuration failures", () => {
           defaultProfile: "first",
           profiles: {
             first: {
-              ...genericPolicyConfig.profiles.default,
+              ...genericPolicyConfig.profiles["builtin:default"],
               extends: "second",
             },
             second: {
-              ...genericPolicyConfig.profiles.default,
+              ...genericPolicyConfig.profiles["builtin:default"],
               extends: "first",
             },
           },
@@ -487,7 +565,7 @@ describe("extension harness profile configuration failures", () => {
         contents: JSON.stringify({
           defaultProfile: "missing",
           profiles: {
-            default: genericPolicyConfig.profiles.default,
+            default: genericPolicyConfig.profiles["builtin:default"],
           },
         }),
         messageFragment: "profile 'missing' is not configured",

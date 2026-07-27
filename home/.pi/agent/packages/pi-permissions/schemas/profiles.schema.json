@@ -8,7 +8,7 @@
     "profiles": {
       "type": "object",
       "patternProperties": {
-        "^.*$": {
+        "^(?!builtin:).+$": {
           "type": "object",
           "properties": {
             "promptFile": {
@@ -175,7 +175,8 @@
           },
           "additionalProperties": false
         }
-      }
+      },
+      "additionalProperties": false
     }
   },
   "$id": "https://earendil.works/pi-permissions/profiles.schema.json",

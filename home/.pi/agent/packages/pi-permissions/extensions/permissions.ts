@@ -355,12 +355,13 @@ The permissions gate remains loaded and will fail closed until the profile is co
     description: "Switch to the read-only permissions profile",
     handler: async (_args, ctx) => {
       if (preserveConfigurationErrorStatus(ctx)) return;
-      if (!policyConfig.profiles["read-only"]) {
-        ctx.ui.notify("No 'read-only' profile is configured", "error");
+      const readOnlyName = "builtin:read-only";
+      if (!policyConfig.profiles[readOnlyName]) {
+        ctx.ui.notify("No 'builtin:read-only' profile is configured", "error");
         return;
       }
 
-      setActiveProfile("read-only");
+      setActiveProfile(readOnlyName);
       ctx.ui.setStatus("permissions", formatProfileStatus(activeProfile));
       ctx.ui.notify("Read-only profile enabled", "info");
     },
