@@ -80,7 +80,9 @@ export function matchesCommandPattern(
   command: string,
 ): boolean {
   const regex = new RegExp(
-    `^${escapeRegExp(normalizeCommand(pattern)).replace(/\\\*/g, ".*")}$`,
+    `^${escapeRegExp(normalizeCommand(pattern))
+      .replace(/\\\*/g, ".*")
+      .replace(/\\\?/g, ".")}$`,
   );
   return regex.test(command);
 }

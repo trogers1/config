@@ -55,7 +55,7 @@ export const baseProfile: ProfilePolicy = {
   protectedPathPatterns: defaultProtectedPathPatterns,
   protectedPathExceptions: defaultProtectedPathExceptions,
   // No promptFile means: keep Pi's normal system prompt unchanged.
-  // Tool policies are ordered: later matching rules override earlier ones.
+  // Tool policies resolve by specificity first; composition order only breaks ties.
   // For bash, patterns match normalized command segments.
   // For path-based tools, patterns match paths relative to pi's startup directory.
   // Outside paths appear as ../..., so use ../** to gate external access.

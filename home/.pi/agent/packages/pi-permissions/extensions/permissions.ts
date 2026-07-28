@@ -46,6 +46,11 @@ import {
   type WritePathContext,
 } from "../modules/policyHelpers";
 import {
+  chooseMostSpecific,
+  commandPatternSpecificity,
+  customToolMatchSpecificity,
+} from "../modules/ruleSpecificity";
+import {
   loadProfileConfig,
   ProfileConfigLoadError,
 } from "../modules/profileConfig";
@@ -806,11 +811,12 @@ export function decideCustomTool(
   input: unknown,
   rules: CustomToolRule[],
 ): { decision: Decision; rule?: CustomToolRule } {
-  let matchedRule: CustomToolRule | undefined;
-  for (const rule of rules) {
-    if (customToolRuleMatches(rule, input)) matchedRule = rule;
-  }
-  return { decision: matchedRule?.decision ?? "ask", rule: matchedRule };
+  const winner = chooseMostSpecific(
+    rules,
+    (rule) => customToolRuleMatches(rule, input),
+    (rule) => customToolMatchSpecificity(rule.match),
+  );
+  return { decision: winner?.item.decision ?? "ask", rule: winner?.item };
 }
 
 function customToolRuleMatches(rule: CustomToolRule, input: unknown): boolean {
@@ -853,13 +859,14 @@ function evaluateByPattern(
   defaultDecision: Decision,
   matches: (pattern: string, value: string) => boolean,
 ): PolicyDecision {
-  let matchedRule: Rule | undefined;
-  for (const rule of rules) {
-    if (matches(rule.pattern, value)) matchedRule = rule;
-  }
+  const winner = chooseMostSpecific(
+    rules,
+    (rule) => matches(rule.pattern, value),
+    (rule) => commandPatternSpecificity(rule.pattern),
+  );
   return {
-    decision: matchedRule?.decision ?? defaultDecision,
-    rule: matchedRule,
+    decision: winner?.item.decision ?? defaultDecision,
+    rule: winner?.item,
   };
 }
 

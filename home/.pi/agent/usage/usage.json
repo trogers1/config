@@ -12,13 +12,6 @@
       "shouldAlwaysDisplay": true
     },
     {
-      "name": "Codex Tokens",
-      "provider": "openai-codex",
-      "meter": "tokens",
-      "period": "day",
-      "maximum": 1000000
-    },
-    {
       "name": "Codex Cost",
       "provider": "openai-codex",
       "meter": "cost",
@@ -31,7 +24,7 @@
       "provider": "moonshotai",
       "meter": "cost",
       "period": "month",
-      "maximum": 5,
+      "maximum": 50,
       "shouldAlwaysDisplay": true
     },
     {

@@ -18,6 +18,7 @@ import type {
   PathRule,
   ProfilePolicy,
 } from "../policyHelpers";
+import { chooseMostSpecific, pathPatternSpecificity } from "../ruleSpecificity";
 import { classifyCommandTokens, type ShellTokenKind } from "./classify";
 
 export type PolicyDecision = {
@@ -745,25 +746,34 @@ function evaluateRulesByPattern(
   context: PathContext,
 ): PathPolicyDecision {
   const relativeMatchPath = policyMatchPath(absolutePath, startupCwd);
-  let matchedRule: PathRule | undefined;
-  let matchedPath = relativeMatchPath;
+  const winner = chooseMostSpecific(
+    rules,
+    (rule) => {
+      const contexts: readonly PathContext[] | undefined = rule.contexts;
+      if (contexts && !contexts.includes(context)) return false;
+      const matchPath = rule.pattern.startsWith("/")
+        ? normalizePolicyPath(absolutePath)
+        : relativeMatchPath;
+      return matchesGlobPattern(rule.pattern, matchPath);
+    },
+    (rule) => pathPatternSpecificity(rule.pattern),
+  );
 
-  for (const rule of rules) {
-    const contexts: readonly PathContext[] | undefined = rule.contexts;
-    if (contexts && !contexts.includes(context)) continue;
-    const matchPath = rule.pattern.startsWith("/")
-      ? normalizePolicyPath(absolutePath)
-      : relativeMatchPath;
-    if (matchesGlobPattern(rule.pattern, matchPath)) {
-      matchedRule = rule;
-      matchedPath = matchPath;
-    }
+  if (!winner) {
+    return {
+      decision: defaultDecision,
+      matchPath: relativeMatchPath,
+    };
   }
 
+  const matchPath = winner.item.pattern.startsWith("/")
+    ? normalizePolicyPath(absolutePath)
+    : relativeMatchPath;
+
   return {
-    decision: matchedRule?.decision ?? defaultDecision,
-    rule: matchedRule,
-    matchPath: matchedPath,
+    decision: winner.item.decision,
+    rule: winner.item,
+    matchPath,
   };
 }
 
@@ -864,6 +874,8 @@ function globToRegExpSource(pattern: string): string {
       }
     } else if (char === "*") {
       source += "[^/]*";
+    } else if (char === "?") {
+      source += "[^/]";
     } else {
       source += escapeRegExp(char);
     }

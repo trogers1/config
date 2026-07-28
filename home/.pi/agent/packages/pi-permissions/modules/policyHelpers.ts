@@ -257,7 +257,7 @@ export function extendProfile(
 ): ProfilePolicy {
   const mergedTools: ProfilePolicy["tools"] = structuredClone(base.tools);
 
-  // Append override rules (later rules win by position).
+  // Append override rules; later rules win only when specificity ties.
   for (const [toolName, overrideRules] of Object.entries(
     override.tools ?? {},
   )) {
@@ -271,18 +271,20 @@ export function extendProfile(
       continue;
     }
     if (toolName === "bash") {
-      mergedTools.bash = [
-        ...(mergedTools.bash ?? []),
-        ...(overrideRules as Rule[]),
-      ];
+      const inheritedRules = mergedTools.bash ?? [];
+      const bashRules = overrideRules as Rule[];
+      warnOnRuleConflicts("bash", inheritedRules, bashRules);
+      mergedTools.bash = [...inheritedRules, ...bashRules];
       continue;
     }
     const inheritedRules = (mergedTools[toolName] ?? []) as CustomToolRule[];
-    mergedTools[toolName] = [
-      ...inheritedRules,
-      ...(overrideRules as CustomToolRule[]),
-    ];
+    const customRules = overrideRules as CustomToolRule[];
+    warnOnCustomToolRuleConflicts(toolName, inheritedRules, customRules);
+    mergedTools[toolName] = [...inheritedRules, ...customRules];
   }
+
+  warnOnPathRuleConflicts("readPaths", base.readPaths, override.readPaths);
+  warnOnPathRuleConflicts("writePaths", base.writePaths, override.writePaths);
 
   return {
     ...base,
@@ -291,4 +293,98 @@ export function extendProfile(
     readPaths: [...base.readPaths, ...(override.readPaths ?? [])],
     writePaths: [...base.writePaths, ...(override.writePaths ?? [])],
   };
+}
+
+function warnOnRuleConflicts(
+  toolName: string,
+  inheritedRules: readonly Rule[],
+  overrideRules: readonly Rule[],
+): void {
+  for (const inheritedRule of inheritedRules) {
+    for (const overrideRule of overrideRules) {
+      if (
+        inheritedRule.pattern !== overrideRule.pattern ||
+        inheritedRule.decision === overrideRule.decision
+      ) {
+        continue;
+      }
+      console.warn(
+        `Conflicting ${toolName} rule pattern '${inheritedRule.pattern}' changes from '${inheritedRule.decision}' to '${overrideRule.decision}' across profile composition.`,
+      );
+    }
+  }
+}
+
+type CustomToolRuleLike = {
+  decision: Decision;
+  match?: Record<string, string>;
+};
+
+function warnOnCustomToolRuleConflicts(
+  toolName: string,
+  inheritedRules: readonly CustomToolRuleLike[],
+  overrideRules: readonly CustomToolRuleLike[],
+): void {
+  for (const inheritedRule of inheritedRules) {
+    for (const overrideRule of overrideRules) {
+      if (
+        customToolRuleKey(inheritedRule) !== customToolRuleKey(overrideRule)
+      ) {
+        continue;
+      }
+      if (inheritedRule.decision === overrideRule.decision) continue;
+      console.warn(
+        `Conflicting custom tool rule for '${toolName}' and match ${customToolRuleKey(overrideRule)} changes from '${inheritedRule.decision}' to '${overrideRule.decision}' across profile composition.`,
+      );
+    }
+  }
+}
+
+function warnOnPathRuleConflicts(
+  kind: "readPaths" | "writePaths",
+  inheritedRules: readonly PathRule[],
+  overrideRules: readonly PathRule[] | undefined,
+): void {
+  if (!overrideRules) return;
+
+  for (const inheritedRule of inheritedRules) {
+    for (const overrideRule of overrideRules) {
+      if (
+        inheritedRule.pattern !== overrideRule.pattern ||
+        !pathRuleContextsOverlap(
+          inheritedRule.contexts,
+          overrideRule.contexts,
+        ) ||
+        inheritedRule.decision === overrideRule.decision
+      ) {
+        continue;
+      }
+      console.warn(
+        `Conflicting ${kind} rule pattern '${inheritedRule.pattern}' changes from '${inheritedRule.decision}' to '${overrideRule.decision}' across profile composition.`,
+      );
+    }
+  }
+}
+
+function pathRuleContextsOverlap(
+  left: readonly PathContext[] | undefined,
+  right: readonly PathContext[] | undefined,
+): boolean {
+  if (!left || !right) return true;
+  return left.some((context) => right.includes(context));
+}
+
+function customToolRuleKey(rule: CustomToolRuleLike): string {
+  return JSON.stringify(canonicalizeMatch(rule.match));
+}
+
+function canonicalizeMatch(
+  match: Record<string, string> | undefined,
+): Record<string, string> | null {
+  if (!match) return null;
+  return Object.fromEntries(
+    Object.keys(match)
+      .sort()
+      .map((key) => [key, match[key]]),
+  );
 }
