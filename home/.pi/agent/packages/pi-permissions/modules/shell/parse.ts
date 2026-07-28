@@ -82,7 +82,7 @@ export function matchesCommandPattern(
   const regex = new RegExp(
     `^${escapeRegExp(normalizeCommand(pattern))
       .replace(/\\\*/g, ".*")
-      .replace(/\\\?/g, ".")}$`,
+      .replace(/\\\?/g, "[^\\s]")}$`,
   );
   return regex.test(command);
 }

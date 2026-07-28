@@ -5,10 +5,12 @@ import { parse, printParseErrorCode, type ParseError } from "jsonc-parser";
 import { Value } from "typebox/value";
 import {
   assertPolicyConfig,
+  assertProfilePolicy,
   builtinProfilePrefix,
   extendProfile,
   isBuiltinProfileName,
   profileConfigFileSchema,
+  warnOnPolicyRuleConflicts,
   type PolicyConfig,
   type ProfileConfigFile,
   type ProfilePolicy,
@@ -38,6 +40,10 @@ const defaultProfileConfigPath = path.join(
   "permissions",
   "profiles.jsonc",
 );
+
+function isProfileConfigFile(value: unknown): value is ProfileConfigFile {
+  return Value.Check(profileConfigFileSchema, value);
+}
 
 /**
  * Read user-owned profile data synchronously. Configuration is deliberately
@@ -87,8 +93,11 @@ export function loadProfileConfig(
         `schema validation failed at ${validationError.instancePath || "/"}: ${validationError.message}`,
       );
     }
+    if (!isProfileConfigFile(parsed)) {
+      throwProfileConfigError(configPath, "schema validation failed");
+    }
 
-    const profileFile = parsed as ProfileConfigFile;
+    const profileFile = parsed;
     const builtins = fallback.profiles;
     const userDefinitions = profileFile.profiles;
 
@@ -141,7 +150,8 @@ export function loadProfileConfig(
           override,
         );
       } else {
-        resolvedUsers[target] = override as ProfilePolicy;
+        assertProfilePolicy(override);
+        resolvedUsers[target] = override;
       }
       resolving.delete(target);
       return resolvedUsers[target];
@@ -166,6 +176,7 @@ export function loadProfileConfig(
         error instanceof Error ? error.message : String(error),
       );
     }
+    warnOnPolicyRuleConflicts({ profiles: resolvedUsers });
     return config;
   } catch (error) {
     if (error instanceof ProfileConfigLoadError) throw error;

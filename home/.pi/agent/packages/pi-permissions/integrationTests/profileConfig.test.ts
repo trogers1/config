@@ -7,7 +7,7 @@ import type {
   SessionStartEvent,
   ToolCallEvent,
 } from "@earendil-works/pi-coding-agent";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import permissionsExtension, { decideBash } from "../extensions/permissions";
 import { policyConfig as genericPolicyConfig } from "../modules/policy";
 import { builtinProfilePrefix } from "../modules/policyHelpers";
@@ -19,6 +19,7 @@ import {
 const temporaryDirectories: string[] = [];
 
 afterEach(() => {
+  vi.restoreAllMocks();
   delete process.env.PI_PERMISSIONS_PROFILE_CONFIG;
   for (const directory of temporaryDirectories.splice(0)) {
     fs.rmSync(directory, { recursive: true, force: true });
@@ -45,6 +46,65 @@ describe("profile configuration", () => {
     );
 
     expect(config).toBe(genericPolicyConfig);
+  });
+
+  it("lints a from-scratch profile after loading and names it in warnings", () => {
+    const warnSpy = vi
+      .spyOn(console, "warn")
+      .mockImplementation(() => undefined);
+
+    loadProfileConfig(
+      genericPolicyConfig,
+      writeConfig(`{
+        "profiles": {
+          "standalone": {
+            "tools": {
+              "bash": [
+                { "pattern": "deploy *", "decision": "allow" },
+                { "pattern": "deploy *", "decision": "deny" }
+              ]
+            },
+            "readPaths": [{ "pattern": "*", "decision": "allow" }],
+            "writePaths": [{ "pattern": "*", "decision": "allow" }]
+          }
+        }
+      }`),
+    );
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      "Profile 'standalone' has conflicting bash rules for pattern 'deploy *': 'allow' conflicts with later 'deny'.",
+    );
+  });
+
+  it("lints inherited conflicts against the fully resolved child profile", () => {
+    const warnSpy = vi
+      .spyOn(console, "warn")
+      .mockImplementation(() => undefined);
+
+    loadProfileConfig(
+      genericPolicyConfig,
+      writeConfig(`{
+        "profiles": {
+          "base": {
+            "tools": {
+              "bash": [{ "pattern": "deploy *", "decision": "allow" }]
+            },
+            "readPaths": [{ "pattern": "*", "decision": "allow" }],
+            "writePaths": [{ "pattern": "*", "decision": "allow" }]
+          },
+          "child": {
+            "extends": "base",
+            "tools": {
+              "bash": [{ "pattern": "deploy *", "decision": "deny" }]
+            }
+          }
+        }
+      }`),
+    );
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      "Profile 'child' has conflicting bash rules for pattern 'deploy *': 'allow' conflicts with later 'deny'.",
+    );
   });
 
   it("parses JSONC and extends a shipped profile", () => {

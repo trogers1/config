@@ -225,10 +225,12 @@ export function assertPolicyConfig(
     );
   }
 
-  const { defaultProfile, profiles } = config as PolicyConfig;
-  if (!(defaultProfile in profiles)) {
+  if (!isPolicyConfigShape(config)) {
+    throw new Error("Invalid pi-permissions policy: schema validation failed");
+  }
+  if (!(config.defaultProfile in config.profiles)) {
     throw new Error(
-      `Invalid pi-permissions policy at /defaultProfile: profile '${defaultProfile}' is not configured`,
+      `Invalid pi-permissions policy at /defaultProfile: profile '${config.defaultProfile}' is not configured`,
     );
   }
 }
@@ -240,6 +242,7 @@ export function definePolicyConfig<
   profiles: Profiles;
 }): PolicyConfig<keyof Profiles & string> {
   assertPolicyConfig(config);
+  warnOnPolicyRuleConflicts(config);
   return config;
 }
 
@@ -271,20 +274,17 @@ export function extendProfile(
       continue;
     }
     if (toolName === "bash") {
+      assertRuleArray(toolName, overrideRules);
       const inheritedRules = mergedTools.bash ?? [];
-      const bashRules = overrideRules as Rule[];
-      warnOnRuleConflicts("bash", inheritedRules, bashRules);
-      mergedTools.bash = [...inheritedRules, ...bashRules];
+      mergedTools.bash = [...inheritedRules, ...overrideRules];
       continue;
     }
-    const inheritedRules = (mergedTools[toolName] ?? []) as CustomToolRule[];
-    const customRules = overrideRules as CustomToolRule[];
-    warnOnCustomToolRuleConflicts(toolName, inheritedRules, customRules);
-    mergedTools[toolName] = [...inheritedRules, ...customRules];
-  }
 
-  warnOnPathRuleConflicts("readPaths", base.readPaths, override.readPaths);
-  warnOnPathRuleConflicts("writePaths", base.writePaths, override.writePaths);
+    assertCustomToolRuleArray(toolName, overrideRules);
+    const inheritedRules = mergedTools[toolName] ?? [];
+    assertCustomToolRuleArray(toolName, inheritedRules);
+    mergedTools[toolName] = [...inheritedRules, ...overrideRules];
+  }
 
   return {
     ...base,
@@ -295,75 +295,127 @@ export function extendProfile(
   };
 }
 
-function warnOnRuleConflicts(
-  toolName: string,
-  inheritedRules: readonly Rule[],
-  overrideRules: readonly Rule[],
+export function warnOnPolicyRuleConflicts(
+  policyConfig: Pick<PolicyConfig, "profiles">,
 ): void {
-  for (const inheritedRule of inheritedRules) {
-    for (const overrideRule of overrideRules) {
-      if (
-        inheritedRule.pattern !== overrideRule.pattern ||
-        inheritedRule.decision === overrideRule.decision
-      ) {
-        continue;
-      }
-      console.warn(
-        `Conflicting ${toolName} rule pattern '${inheritedRule.pattern}' changes from '${inheritedRule.decision}' to '${overrideRule.decision}' across profile composition.`,
-      );
-    }
+  for (const [profileName, profile] of Object.entries(policyConfig.profiles)) {
+    warnOnProfileRuleConflicts(profileName, profile);
   }
 }
 
-type CustomToolRuleLike = {
-  decision: Decision;
-  match?: Record<string, string>;
-};
+export function warnOnProfileRuleConflicts(
+  profileName: string,
+  profile: ProfilePolicy,
+): void {
+  warnOnRuleConflicts(profileName, "bash", profile.tools.bash ?? []);
+
+  for (const [toolName, rules] of Object.entries(profile.tools)) {
+    if (toolName === "bash" || !rules) continue;
+    assertCustomToolRuleArray(toolName, rules);
+    warnOnCustomToolRuleConflicts(profileName, toolName, rules);
+  }
+
+  warnOnPathRuleConflicts(profileName, "readPaths", profile.readPaths);
+  warnOnPathRuleConflicts(profileName, "writePaths", profile.writePaths);
+}
+
+function warnOnRuleConflicts(
+  profileName: string,
+  toolName: string,
+  rules: readonly Rule[],
+): void {
+  forEachConflictingPair(
+    rules,
+    (rule) => rule.pattern,
+    (first, second) => {
+      console.warn(
+        `Profile '${profileName}' has conflicting ${toolName} rules for pattern '${first.pattern}': '${first.decision}' conflicts with later '${second.decision}'.`,
+      );
+    },
+  );
+}
 
 function warnOnCustomToolRuleConflicts(
+  profileName: string,
   toolName: string,
-  inheritedRules: readonly CustomToolRuleLike[],
-  overrideRules: readonly CustomToolRuleLike[],
+  rules: readonly CustomToolRule[],
 ): void {
-  for (const inheritedRule of inheritedRules) {
-    for (const overrideRule of overrideRules) {
-      if (
-        customToolRuleKey(inheritedRule) !== customToolRuleKey(overrideRule)
-      ) {
-        continue;
-      }
-      if (inheritedRule.decision === overrideRule.decision) continue;
-      console.warn(
-        `Conflicting custom tool rule for '${toolName}' and match ${customToolRuleKey(overrideRule)} changes from '${inheritedRule.decision}' to '${overrideRule.decision}' across profile composition.`,
-      );
-    }
-  }
+  forEachConflictingPair(rules, customToolRuleKey, (first, second) => {
+    console.warn(
+      `Profile '${profileName}' has conflicting custom-tool rules for '${toolName}' with match ${customToolRuleKey(first)}: '${first.decision}' conflicts with later '${second.decision}'.`,
+    );
+  });
 }
 
 function warnOnPathRuleConflicts(
+  profileName: string,
   kind: "readPaths" | "writePaths",
-  inheritedRules: readonly PathRule[],
-  overrideRules: readonly PathRule[] | undefined,
+  rules: readonly PathRule[],
 ): void {
-  if (!overrideRules) return;
-
-  for (const inheritedRule of inheritedRules) {
-    for (const overrideRule of overrideRules) {
-      if (
-        inheritedRule.pattern !== overrideRule.pattern ||
-        !pathRuleContextsOverlap(
-          inheritedRule.contexts,
-          overrideRule.contexts,
-        ) ||
-        inheritedRule.decision === overrideRule.decision
-      ) {
-        continue;
-      }
+  forEachConflictingPair(
+    rules,
+    (rule) => rule.pattern,
+    (first, second) => {
+      if (!pathRuleContextsOverlap(first.contexts, second.contexts)) return;
       console.warn(
-        `Conflicting ${kind} rule pattern '${inheritedRule.pattern}' changes from '${inheritedRule.decision}' to '${overrideRule.decision}' across profile composition.`,
+        `Profile '${profileName}' has conflicting ${kind} rules for pattern '${first.pattern}': '${first.decision}' conflicts with later '${second.decision}'.`,
       );
+    },
+  );
+}
+
+function forEachConflictingPair<T extends { decision: Decision }>(
+  rules: readonly T[],
+  conflictKey: (rule: T) => string,
+  report: (first: T, second: T) => void,
+): void {
+  for (let firstIndex = 0; firstIndex < rules.length; firstIndex++) {
+    const first = rules[firstIndex];
+    for (
+      let secondIndex = firstIndex + 1;
+      secondIndex < rules.length;
+      secondIndex++
+    ) {
+      const second = rules[secondIndex];
+      if (
+        conflictKey(first) === conflictKey(second) &&
+        first.decision !== second.decision
+      ) {
+        report(first, second);
+      }
     }
   }
+}
+
+function assertRuleArray(
+  toolName: string,
+  rules: Rule[] | CustomToolRule[],
+): asserts rules is Rule[] {
+  const validationError = Value.Errors(Type.Array(ruleSchema), rules)[0];
+  if (validationError) {
+    throw new Error(
+      `Invalid rules for tool '${toolName}' at ${validationError.instancePath || "/"}: ${validationError.message}`,
+    );
+  }
+}
+
+function assertCustomToolRuleArray(
+  toolName: string,
+  rules: Rule[] | CustomToolRule[],
+): asserts rules is CustomToolRule[] {
+  const validationError = Value.Errors(
+    Type.Array(customToolRuleSchema),
+    rules,
+  )[0];
+  if (validationError) {
+    throw new Error(
+      `Invalid custom-tool rules for '${toolName}' at ${validationError.instancePath || "/"}: ${validationError.message}`,
+    );
+  }
+}
+
+function isPolicyConfigShape(config: unknown): config is PolicyConfigShape {
+  return Value.Check(policyConfigSchema, config);
 }
 
 function pathRuleContextsOverlap(
@@ -374,7 +426,7 @@ function pathRuleContextsOverlap(
   return left.some((context) => right.includes(context));
 }
 
-function customToolRuleKey(rule: CustomToolRuleLike): string {
+function customToolRuleKey(rule: CustomToolRule): string {
   return JSON.stringify(canonicalizeMatch(rule.match));
 }
 

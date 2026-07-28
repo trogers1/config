@@ -2,7 +2,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { decideBash, decideCustomTool } from "../extensions/permissions";
 import { decideBashPathReferences } from "../modules/shell/pathPolicy";
-import { extendProfile } from "../modules/policyHelpers";
+import { definePolicyConfig, extendProfile } from "../modules/policyHelpers";
 import type {
   CustomToolRule,
   ProfilePolicy,
@@ -256,34 +256,102 @@ describe("specificity-first rule resolution", () => {
     });
   });
 
-  it("warns for ordinary rule conflicts using the single-extends API", () => {
+  it("readPaths break ties by composition order when specificity is equal", () => {
+    const base = pathProfile(
+      [{ pattern: "docs/*", decision: "allow" }],
+      [{ pattern: "*", decision: "allow" }],
+    );
+    const child = extendProfile(base, {
+      readPaths: [{ pattern: "docs/*", decision: "deny" }],
+    });
+    const absolute = path.resolve(startupCwd, "docs/guide.md");
+
+    expect(
+      evaluatePathByPattern(
+        absolute,
+        startupCwd,
+        child.readPaths,
+        "ask",
+        "read",
+      ),
+    ).toMatchObject({ decision: "deny" });
+  });
+
+  it("warns for conflicts in a fully resolved profile and names that profile", () => {
     const warnSpy = vi
       .spyOn(console, "warn")
       .mockImplementation(() => undefined);
-    const base = {
-      tools: { bash: [{ pattern: "git status", decision: "allow" }] },
-      readPaths: [{ pattern: "*", decision: "allow" }],
-      writePaths: [{ pattern: "*", decision: "allow" }],
-    } satisfies ProfilePolicy;
+    const conflicted = bashProfile([
+      { pattern: "git status", decision: "allow" },
+      { pattern: "git status", decision: "deny" },
+    ]);
 
-    extendProfile(base, {
-      tools: { bash: [{ pattern: "git status", decision: "deny" }] },
+    definePolicyConfig({
+      defaultProfile: "builtin:default",
+      profiles: { "builtin:default": conflicted },
     });
 
-    expect(warnSpy).toHaveBeenCalled();
-    warnSpy.mockRestore();
+    expect(warnSpy).toHaveBeenCalledWith(
+      "Profile 'builtin:default' has conflicting bash rules for pattern 'git status': 'allow' conflicts with later 'deny'.",
+    );
+  });
+
+  it("warns for path conflicts with overlapping contexts", () => {
+    const warnSpy = vi
+      .spyOn(console, "warn")
+      .mockImplementation(() => undefined);
+    const conflicted = pathProfile(
+      [
+        { pattern: "docs/*", decision: "allow", contexts: ["read"] },
+        { pattern: "docs/*", decision: "deny", contexts: ["read", "grep"] },
+      ],
+      [{ pattern: "*", decision: "allow" }],
+    );
+
+    definePolicyConfig({
+      defaultProfile: "path-conflicted",
+      profiles: { "path-conflicted": conflicted },
+    });
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      "Profile 'path-conflicted' has conflicting readPaths rules for pattern 'docs/*': 'allow' conflicts with later 'deny'.",
+    );
+  });
+
+  it("does not warn for path rules whose contexts cannot overlap", () => {
+    const warnSpy = vi
+      .spyOn(console, "warn")
+      .mockImplementation(() => undefined);
+    const profile = pathProfile(
+      [
+        { pattern: "docs/*", decision: "allow", contexts: ["read"] },
+        { pattern: "docs/*", decision: "deny", contexts: ["grep"] },
+      ],
+      [{ pattern: "*", decision: "allow" }],
+    );
+
+    definePolicyConfig({
+      defaultProfile: "disjoint-contexts",
+      profiles: { "disjoint-contexts": profile },
+    });
+
+    expect(warnSpy).not.toHaveBeenCalled();
   });
 
   it("warns for semantically identical custom-tool conflicts regardless of property order", () => {
     const warnSpy = vi
       .spyOn(console, "warn")
       .mockImplementation(() => undefined);
-    const base = {
+    const conflicted = {
       tools: {
         deploy: [
           {
             decision: "allow",
             match: { action: "deploy", environment: "prod" },
+          },
+          {
+            decision: "deny",
+            match: { environment: "prod", action: "deploy" },
           },
         ],
       },
@@ -291,19 +359,14 @@ describe("specificity-first rule resolution", () => {
       writePaths: [{ pattern: "*", decision: "allow" }],
     } satisfies ProfilePolicy;
 
-    extendProfile(base, {
-      tools: {
-        deploy: [
-          {
-            decision: "deny",
-            match: { environment: "prod", action: "deploy" },
-          },
-        ],
-      },
+    definePolicyConfig({
+      defaultProfile: "deploy-conflicted",
+      profiles: { "deploy-conflicted": conflicted },
     });
 
-    expect(warnSpy).toHaveBeenCalled();
-    warnSpy.mockRestore();
+    expect(warnSpy).toHaveBeenCalledWith(
+      `Profile 'deploy-conflicted' has conflicting custom-tool rules for 'deploy' with match {"action":"deploy","environment":"prod"}: 'allow' conflicts with later 'deny'.`,
+    );
   });
 
   it("protected layer short-circuits read, write, and bash path-operand evaluation regardless of ordinary rules", () => {
@@ -312,10 +375,7 @@ describe("specificity-first rule resolution", () => {
       writePaths: [{ pattern: "*", decision: "allow" }],
       protectedPathPatterns: ["**/.env*"],
       protectedPathExceptions: [],
-    } as ProfilePolicy & {
-      protectedPathPatterns: string[];
-      protectedPathExceptions: string[];
-    };
+    } satisfies ProfilePolicy;
     const absolute = path.resolve(startupCwd, ".env");
     expect(
       evaluatePathByPattern(

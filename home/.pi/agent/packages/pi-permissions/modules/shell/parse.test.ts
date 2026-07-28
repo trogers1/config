@@ -43,6 +43,12 @@ describe("shell parser", () => {
       true,
     );
   });
+
+  it("treats ? as a single non-whitespace character in command patterns", () => {
+    expect(matchesCommandPattern("echo ?", "echo x")).toBe(true);
+    expect(matchesCommandPattern("echo ?", "echo  ")).toBe(false);
+    expect(matchesCommandPattern("echo ?", "echo x y")).toBe(false);
+  });
 });
 
 describe("shell path policy", () => {
