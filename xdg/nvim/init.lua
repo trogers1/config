@@ -419,7 +419,17 @@ require('lazy').setup({
             i = { ['<c-enter>'] = 'to_fuzzy_refine' },
           },
         },
-        -- pickers = {}
+        pickers = {
+          live_grep = {
+            additional_args = function()
+              return {
+                '--hidden',
+                '--glob',
+                '!.git/**',
+              }
+            end,
+          },
+        },
         extensions = {
           ['ui-select'] = {
             require('telescope.themes').get_dropdown(),
