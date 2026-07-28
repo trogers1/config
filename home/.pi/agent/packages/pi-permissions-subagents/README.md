@@ -172,19 +172,31 @@ pattern in src/cache-utils.ts. Verify with `npm test -- store`.
 Do it directly instead when the task is trivial — delegation overhead (brief +
 ramp-up + your review) exceeds the savings on small work.
 
-### 3. Implement → review → warm-resume fix
+### 3. Implement → two independent review gates
 
 The preset `/implement-and-review` runs this, but the manual form shows the
-mechanics:
+mechanics. A review iteration is one reviewer verdict. A `REQUEST_CHANGES`
+verdict resumes the worker to fix the feedback, then resumes that reviewer to
+inspect the fix. Each gate has at most five iterations:
 
-1. `subagent { agent: "worker", task: "…" }` → result includes `session: 1f4e…`
-2. `subagent { agent: "reviewer", task: "Review the uncommitted changes for …" }`
-3. If changes requested:
-   `subagent { agent: "worker", sessionId: "1f4e…", task: "Apply this review feedback verbatim: …" }`
+1. `subagent { agent: "worker", task: "…" }` → result includes worker session `1f4e…`
+2. Start reviewer gate 1:
+   `subagent { agent: "reviewer", task: "Review the uncommitted changes for …" }` → reviewer session `9a2b…`
+3. For each requested change before gate 1's fifth verdict, resume the worker
+   with the feedback verbatim, then resume reviewer `9a2b…` with the worker's
+   fix summary. If gate 1 requests changes for the fifth time, stop and report
+   `ABORT` with its remaining feedback.
+4. Only after gate 1 approves, start reviewer gate 2 with a **new** `reviewer`
+   session. Give it the task and worker summary, but not gate 1's review text,
+   so it independently inspects the current diff with fresh context.
+5. Follow the same worker-resume/reviewer-resume loop for gate 2. If it reaches
+   a fifth `REQUEST_CHANGES` verdict, report `ABORT`; otherwise both gates must
+   approve before reporting success.
 
-Step 3 resumes the _same_ worker session — it already knows the files and its
-own rationale, so the fix round costs a fraction of a fresh worker and produces
-better fixes.
+Warm worker and same-gate reviewer resumes retain context, so correction rounds
+cost a fraction of fresh sessions. Gate 2 intentionally pays for a fresh
+reviewer perspective. Approval always comes from both post-fix reviewer
+verdicts, never only from the worker's verification.
 
 ### 4. Parallel tasks with write scopes
 
@@ -243,7 +255,7 @@ unless the session was interrupted.
 ```
 /scout-and-plan add Redis caching to the session store     # scout → planner (no changes)
 /implement add Redis caching to the session store          # scout → planner → worker
-/implement-and-review add input validation to API routes   # worker → reviewer → worker (warm resume)
+/implement-and-review add input validation to API routes   # worker → two independent review gates (max 5 iterations each)
 ```
 
 ## Cost guidance
