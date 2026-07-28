@@ -1,0 +1,252 @@
+[
+  {
+    "command": "git status --short",
+    "expected": {
+      "builtin:default": "allow",
+      "builtin:worker": "allow",
+      "builtin:read-only": "allow",
+      "builtin:tests-disallowed": "allow",
+      "builtin:tests-only": "allow"
+    }
+  },
+  {
+    "command": "git log --oneline",
+    "expected": {
+      "builtin:default": "allow",
+      "builtin:worker": "allow",
+      "builtin:read-only": "allow",
+      "builtin:tests-disallowed": "allow",
+      "builtin:tests-only": "allow"
+    }
+  },
+  {
+    "command": "git branch --list",
+    "expected": {
+      "builtin:default": "allow",
+      "builtin:worker": "allow",
+      "builtin:read-only": "allow",
+      "builtin:tests-disallowed": "allow",
+      "builtin:tests-only": "allow"
+    }
+  },
+  {
+    "command": "git branch -d feature/test",
+    "expected": {
+      "builtin:default": "deny",
+      "builtin:worker": "deny",
+      "builtin:read-only": "deny",
+      "builtin:tests-disallowed": "deny",
+      "builtin:tests-only": "deny"
+    }
+  },
+  {
+    "command": "git tag --list",
+    "expected": {
+      "builtin:default": "allow",
+      "builtin:worker": "allow",
+      "builtin:read-only": "allow",
+      "builtin:tests-disallowed": "allow",
+      "builtin:tests-only": "allow"
+    }
+  },
+  {
+    "command": "git tag -a v1.0.0",
+    "expected": {
+      "builtin:default": "deny",
+      "builtin:worker": "deny",
+      "builtin:read-only": "deny",
+      "builtin:tests-disallowed": "deny",
+      "builtin:tests-only": "deny"
+    }
+  },
+  {
+    "command": "git commit -m test",
+    "expected": {
+      "builtin:default": "deny",
+      "builtin:worker": "deny",
+      "builtin:read-only": "deny",
+      "builtin:tests-disallowed": "deny",
+      "builtin:tests-only": "deny"
+    }
+  },
+  {
+    "command": "git push origin main",
+    "expected": {
+      "builtin:default": "deny",
+      "builtin:worker": "deny",
+      "builtin:read-only": "deny",
+      "builtin:tests-disallowed": "deny",
+      "builtin:tests-only": "deny"
+    }
+  },
+  {
+    "command": "git checkout main",
+    "expected": {
+      "builtin:default": "deny",
+      "builtin:worker": "deny",
+      "builtin:read-only": "deny",
+      "builtin:tests-disallowed": "deny",
+      "builtin:tests-only": "deny"
+    }
+  },
+  {
+    "command": "git pull",
+    "expected": {
+      "builtin:default": "allow",
+      "builtin:worker": "allow",
+      "builtin:read-only": "deny",
+      "builtin:tests-disallowed": "allow",
+      "builtin:tests-only": "allow"
+    }
+  },
+  {
+    "command": "npm test",
+    "expected": {
+      "builtin:default": "allow",
+      "builtin:worker": "allow",
+      "builtin:read-only": "deny",
+      "builtin:tests-disallowed": "allow",
+      "builtin:tests-only": "allow"
+    }
+  },
+  {
+    "command": "npm run build",
+    "expected": {
+      "builtin:default": "allow",
+      "builtin:worker": "allow",
+      "builtin:read-only": "deny",
+      "builtin:tests-disallowed": "allow",
+      "builtin:tests-only": "allow"
+    }
+  },
+  {
+    "command": "npm install lodash",
+    "expected": {
+      "builtin:default": "deny",
+      "builtin:worker": "deny",
+      "builtin:read-only": "deny",
+      "builtin:tests-disallowed": "deny",
+      "builtin:tests-only": "deny"
+    }
+  },
+  {
+    "command": "npm publish",
+    "expected": {
+      "builtin:default": "deny",
+      "builtin:worker": "deny",
+      "builtin:read-only": "deny",
+      "builtin:tests-disallowed": "deny",
+      "builtin:tests-only": "deny"
+    }
+  },
+  {
+    "command": "npx vitest src/example.test.ts",
+    "expected": {
+      "builtin:default": "deny",
+      "builtin:worker": "deny",
+      "builtin:read-only": "deny",
+      "builtin:tests-disallowed": "deny",
+      "builtin:tests-only": "deny"
+    }
+  },
+  {
+    "command": "find . -type f",
+    "expected": {
+      "builtin:default": "allow",
+      "builtin:worker": "allow",
+      "builtin:read-only": "deny",
+      "builtin:tests-disallowed": "allow",
+      "builtin:tests-only": "deny"
+    }
+  },
+  {
+    "command": "find . -delete",
+    "expected": {
+      "builtin:default": "deny",
+      "builtin:worker": "deny",
+      "builtin:read-only": "deny",
+      "builtin:tests-disallowed": "deny",
+      "builtin:tests-only": "deny"
+    }
+  },
+  {
+    "command": "cat README.md",
+    "expected": {
+      "builtin:default": "allow",
+      "builtin:worker": "allow",
+      "builtin:read-only": "deny",
+      "builtin:tests-disallowed": "allow",
+      "builtin:tests-only": "deny"
+    }
+  },
+  {
+    "command": "grep foo src",
+    "expected": {
+      "builtin:default": "deny",
+      "builtin:worker": "deny",
+      "builtin:read-only": "deny",
+      "builtin:tests-disallowed": "deny",
+      "builtin:tests-only": "deny"
+    }
+  },
+  {
+    "command": "git grep foo",
+    "expected": {
+      "builtin:default": "deny",
+      "builtin:worker": "deny",
+      "builtin:read-only": "deny",
+      "builtin:tests-disallowed": "deny",
+      "builtin:tests-only": "deny"
+    }
+  },
+  {
+    "command": "git diff --output patch.diff",
+    "expected": {
+      "builtin:default": "deny",
+      "builtin:worker": "deny",
+      "builtin:read-only": "deny",
+      "builtin:tests-disallowed": "deny",
+      "builtin:tests-only": "deny"
+    }
+  },
+  {
+    "command": "echo hi",
+    "expected": {
+      "builtin:default": "ask",
+      "builtin:worker": "deny",
+      "builtin:read-only": "deny",
+      "builtin:tests-disallowed": "ask",
+      "builtin:tests-only": "deny"
+    }
+  },
+  {
+    "command": "echo \"---\"",
+    "expected": {
+      "builtin:default": "allow",
+      "builtin:worker": "allow",
+      "builtin:read-only": "deny",
+      "builtin:tests-disallowed": "allow",
+      "builtin:tests-only": "allow"
+    }
+  },
+  {
+    "command": "python scripts/build.py",
+    "expected": {
+      "builtin:default": "ask",
+      "builtin:worker": "deny",
+      "builtin:read-only": "deny",
+      "builtin:tests-disallowed": "ask",
+      "builtin:tests-only": "deny"
+    }
+  },
+  {
+    "command": "glab mr view 123",
+    "expected": {
+      "builtin:default": "deny",
+      "builtin:worker": "deny",
+      "builtin:read-only": "deny",
+      "builtin:tests-disallowed": "deny",
+      "builtin:tests-only": "deny"
+    }
+  }
+]
