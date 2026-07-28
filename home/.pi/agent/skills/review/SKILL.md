@@ -5,7 +5,11 @@ description: >-
 ---
 
 
-I like comprehensive, behavioral testing that is as production-like as possible. I also like implementation to be as simple, extremely typesafe, config-derived and obvious as possible. Any hard-coding, redefining, or type casting are red-flags.
+I like comprehensive, behavioral testing that is as production-like as possible. I also like implementation to be as simple, extremely typesafe, config-derived and obvious as possible. Any hard-coding, redefining, or type casting are red-flags. So:
+
+- Typecasting outside of a typebox validation function (or similar) IS A RED FLAG
+- Hard coded values that exist elsewhere ARE RED FLAGS
+- Functions returning `undefined` or using `continue` instead of throwing errors IS A RED FLAG
 
 WITH THAT IN MIND, please review the testing and implementation of the current branch to meet the provided AC. Assume you are reviewing it compared to the remote `staging` branch unless otherwise specified.
 
