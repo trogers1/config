@@ -57,6 +57,26 @@ delete-detect when the commented source text changes)
 Text after `]` is the comment content. Everything between the header and the
 next header (or EOF) belongs to that comment.
 
+EXTERNAL RESPONSES/EDITS                                  *sidecar-comments-edits*
+
+An external process (like an agent or another user) may reply in the body of an existing comment. 
+Locate the stable `@id` in its header, never edit that header or its location, and use a recognizable
+section such as:
+>
+    [@c1a2b3c_2 10-15] Can this failure be handled?
+
+    <!-- response-1 -->
+    **Agent response:** Yes. I updated the error path so that ...
+
+    <!-- response-2 -->
+    Actually, a better option would be...
+
+<
+
+The plugin imports an externally changed sidecar before it rewrites one during
+a source save. If both the sidecar buffer has unsaved Neovim edits and another
+process changed the file, it warns and refuses to overwrite either version.
+
 Use normal mode for whole-line comments, visual mode for exact spans.
 
 EXAMPLE WORKFLOW                                *sidecar-comments-example*

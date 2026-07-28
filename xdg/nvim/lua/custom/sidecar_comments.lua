@@ -60,6 +60,14 @@ local function write_file_lines(filepath, lines)
   file:close()
 end
 
+-- Deliberately use the file contents rather than mtime: an external process can write
+-- more than once within a filesystem timestamp's resolution.
+local function sidecar_disk_snapshot(filepath)
+  local exists = vim.fn.filereadable(filepath) == 1
+  local lines = exists and read_file_lines(filepath) or {}
+  return lines, string.format('%d\0%s', exists and 1 or 0, table.concat(lines, '\n'))
+end
+
 local function delete_file_if_exists(filepath)
   if vim.fn.filereadable(filepath) == 1 then
     vim.fn.delete(filepath)
@@ -94,6 +102,10 @@ local function get_or_create_state(src_path)
       comments = {},
       initialized = false,
       src_buf = nil,
+      -- Snapshot of the sidecar last incorporated by this plugin.  It lets us
+      -- distinguish an external edit from our own serialization.
+      sidecar_fingerprint = nil,
+      external_conflict_fingerprint = nil,
     }
     M.state.by_src_path[src_path] = state
   end
@@ -493,12 +505,22 @@ local function render_sidecar(src_path, opts)
     if sidecar_exists then
       delete_file_if_exists(sidecar_path)
     end
+    if opts.write_file then
+      local state = get_or_create_state(src_path)
+      local _, fingerprint = sidecar_disk_snapshot(sidecar_path)
+      state.sidecar_fingerprint = fingerprint
+      state.external_conflict_fingerprint = nil
+    end
 
     if valid_buf(sidecar_buf) then
       vim.bo[sidecar_buf].modified = false
     end
   elseif opts.write_file then
     write_file_lines(sidecar_path, lines)
+    local state = get_or_create_state(src_path)
+    local _, fingerprint = sidecar_disk_snapshot(sidecar_path)
+    state.sidecar_fingerprint = fingerprint
+    state.external_conflict_fingerprint = nil
     if valid_buf(sidecar_buf) then
       vim.bo[sidecar_buf].modified = false
     end
@@ -516,6 +538,9 @@ local function load_comments_for_buffer(src_buf)
 
   state.comments = parse_sidecar_lines(source_lines)
   state.initialized = true
+  local _, fingerprint = sidecar_disk_snapshot(sidecar_path)
+  state.sidecar_fingerprint = fingerprint
+  state.external_conflict_fingerprint = nil
   apply_comments_to_buffer(state, src_buf)
 
   return state
@@ -603,6 +628,49 @@ local function sync_state_from_sidecar_buffer(sidecar_buf, preserve_positions)
   end
 
   return merge_sidecar_into_state(src_path, comments, preserve_positions)
+end
+
+-- Import edits made by another process (for example, an agent) before this
+-- plugin serializes a sidecar.  A modified Neovim buffer and a changed file
+-- are a real conflict; do not pick a winner and silently discard a reply.
+local function import_external_sidecar_changes(src_path, opts)
+  opts = opts or {}
+  local state = get_or_create_state(src_path)
+  local sidecar_path = M.get_sidecar_path(src_path)
+  local disk_lines, disk_fingerprint = sidecar_disk_snapshot(sidecar_path)
+
+  if state.sidecar_fingerprint == nil then
+    state.sidecar_fingerprint = disk_fingerprint
+    return true
+  end
+
+  if state.sidecar_fingerprint == disk_fingerprint then
+    return true
+  end
+
+  local sidecar_buf = find_buffer_by_name(sidecar_path)
+  if valid_buf(sidecar_buf) and vim.bo[sidecar_buf].modified then
+    if state.external_conflict_fingerprint ~= disk_fingerprint then
+      vim.notify('Sidecar changed on disk while it has unsaved Neovim edits; refusing to overwrite either version', vim.log.levels.WARN)
+      state.external_conflict_fingerprint = disk_fingerprint
+    end
+    return false
+  end
+
+  merge_sidecar_into_state(src_path, parse_sidecar_lines(disk_lines), state.initialized)
+  state.sidecar_fingerprint = disk_fingerprint
+  state.external_conflict_fingerprint = nil
+
+  if valid_buf(sidecar_buf) and opts.update_buffer ~= false then
+    render_sidecar(src_path, {
+      sidecar_buf = sidecar_buf,
+      update_buffer = true,
+      preserve_view = true,
+      mark_unmodified = true,
+    })
+  end
+
+  return true
 end
 
 function M.parse_reference(reference)
@@ -998,6 +1066,14 @@ function M.setup_autocommands()
       end
       local sidecar_buf = find_buffer_by_name(M.get_sidecar_path(src_path))
 
+      -- A response may have been written directly to the sidecar by an
+      -- external process.  Import it before serializing locations from the source save.
+      -- If the user also has unsaved sidecar edits, leave both versions alone.
+      if not import_external_sidecar_changes(src_path) then
+        M.setup_highlighting(args.buf)
+        return
+      end
+
       if valid_buf(sidecar_buf) then
         sync_state_from_sidecar_buffer(sidecar_buf, true)
       else
@@ -1048,6 +1124,11 @@ function M.setup_autocommands()
           mark_unmodified = true,
         })
       end
+
+      local state = get_or_create_state(src_path)
+      local _, fingerprint = sidecar_disk_snapshot(M.get_sidecar_path(src_path))
+      state.sidecar_fingerprint = fingerprint
+      state.external_conflict_fingerprint = nil
     end,
   })
 
@@ -1056,12 +1137,32 @@ function M.setup_autocommands()
     pattern = '*' .. M.config.sidecar_ext,
     callback = function(args)
       local src_path = M.get_source_path(vim.api.nvim_buf_get_name(args.buf))
+      if not import_external_sidecar_changes(src_path, { update_buffer = false }) then
+        error 'Sidecar changed on disk while this buffer has unsaved edits; reload or merge before writing'
+      end
       sync_state_from_sidecar_buffer(args.buf, false)
       render_sidecar(src_path, {
         sidecar_buf = args.buf,
         update_buffer = true,
         preserve_view = true,
       })
+    end,
+  })
+
+  -- `FocusGained` catches edits made while Neovim was in the background.
+  -- The source-save path above repeats this check, so a response is still safe
+  -- when focus never changes.
+  vim.api.nvim_create_autocmd('FocusGained', {
+    group = augroup,
+    callback = function()
+      for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+        if valid_buf(buf) then
+          local sidecar_path = vim.api.nvim_buf_get_name(buf)
+          if sidecar_path:match(vim.pesc(M.config.sidecar_ext) .. '$') then
+            import_external_sidecar_changes(M.get_source_path(sidecar_path))
+          end
+        end
+      end
     end,
   })
 
