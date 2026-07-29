@@ -424,6 +424,9 @@ require('lazy').setup({
             additional_args = function()
               return {
                 '--hidden',
+                '--no-ignore',
+                '--glob',
+                '!**/node_modules/**',
                 '--glob',
                 '!.git/**',
               }
