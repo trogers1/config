@@ -20,6 +20,7 @@
                 { "type": "string", "const": "red" },
                 { "type": "string", "const": "green" },
                 { "type": "string", "const": "yellow" },
+                { "type": "string", "const": "orange" },
                 { "type": "string", "const": "blue" },
                 { "type": "string", "const": "magenta" },
                 { "type": "string", "const": "cyan" },

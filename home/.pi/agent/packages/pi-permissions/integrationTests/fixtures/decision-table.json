@@ -5,7 +5,7 @@
       "builtin:default": "allow",
       "builtin:worker": "allow",
       "builtin:read-only": "allow",
-      "builtin:tests-disallowed": "allow",
+      "builtin:tests-hidden": "allow",
       "builtin:tests-only": "allow"
     }
   },
@@ -15,7 +15,7 @@
       "builtin:default": "allow",
       "builtin:worker": "allow",
       "builtin:read-only": "allow",
-      "builtin:tests-disallowed": "allow",
+      "builtin:tests-hidden": "allow",
       "builtin:tests-only": "allow"
     }
   },
@@ -25,7 +25,7 @@
       "builtin:default": "allow",
       "builtin:worker": "allow",
       "builtin:read-only": "allow",
-      "builtin:tests-disallowed": "allow",
+      "builtin:tests-hidden": "allow",
       "builtin:tests-only": "allow"
     }
   },
@@ -35,7 +35,17 @@
       "builtin:default": "deny",
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
-      "builtin:tests-disallowed": "deny",
+      "builtin:tests-hidden": "deny",
+      "builtin:tests-only": "deny"
+    }
+  },
+  {
+    "command": "git branch -D feature/test",
+    "expected": {
+      "builtin:default": "deny",
+      "builtin:worker": "deny",
+      "builtin:read-only": "deny",
+      "builtin:tests-hidden": "deny",
       "builtin:tests-only": "deny"
     }
   },
@@ -45,7 +55,7 @@
       "builtin:default": "allow",
       "builtin:worker": "allow",
       "builtin:read-only": "allow",
-      "builtin:tests-disallowed": "allow",
+      "builtin:tests-hidden": "allow",
       "builtin:tests-only": "allow"
     }
   },
@@ -55,7 +65,7 @@
       "builtin:default": "deny",
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
-      "builtin:tests-disallowed": "deny",
+      "builtin:tests-hidden": "deny",
       "builtin:tests-only": "deny"
     }
   },
@@ -65,7 +75,7 @@
       "builtin:default": "deny",
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
-      "builtin:tests-disallowed": "deny",
+      "builtin:tests-hidden": "deny",
       "builtin:tests-only": "deny"
     }
   },
@@ -75,7 +85,7 @@
       "builtin:default": "deny",
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
-      "builtin:tests-disallowed": "deny",
+      "builtin:tests-hidden": "deny",
       "builtin:tests-only": "deny"
     }
   },
@@ -85,7 +95,7 @@
       "builtin:default": "deny",
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
-      "builtin:tests-disallowed": "deny",
+      "builtin:tests-hidden": "deny",
       "builtin:tests-only": "deny"
     }
   },
@@ -95,7 +105,7 @@
       "builtin:default": "allow",
       "builtin:worker": "allow",
       "builtin:read-only": "deny",
-      "builtin:tests-disallowed": "allow",
+      "builtin:tests-hidden": "allow",
       "builtin:tests-only": "allow"
     }
   },
@@ -105,7 +115,7 @@
       "builtin:default": "allow",
       "builtin:worker": "allow",
       "builtin:read-only": "deny",
-      "builtin:tests-disallowed": "allow",
+      "builtin:tests-hidden": "allow",
       "builtin:tests-only": "allow"
     }
   },
@@ -115,7 +125,7 @@
       "builtin:default": "allow",
       "builtin:worker": "allow",
       "builtin:read-only": "deny",
-      "builtin:tests-disallowed": "allow",
+      "builtin:tests-hidden": "allow",
       "builtin:tests-only": "allow"
     }
   },
@@ -125,7 +135,7 @@
       "builtin:default": "deny",
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
-      "builtin:tests-disallowed": "deny",
+      "builtin:tests-hidden": "deny",
       "builtin:tests-only": "deny"
     }
   },
@@ -135,17 +145,17 @@
       "builtin:default": "deny",
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
-      "builtin:tests-disallowed": "deny",
+      "builtin:tests-hidden": "deny",
       "builtin:tests-only": "deny"
     }
   },
   {
     "command": "npx vitest src/example.test.ts",
     "expected": {
-      "builtin:default": "deny",
+      "builtin:default": "ask",
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
-      "builtin:tests-disallowed": "deny",
+      "builtin:tests-hidden": "deny",
       "builtin:tests-only": "deny"
     }
   },
@@ -155,7 +165,7 @@
       "builtin:default": "allow",
       "builtin:worker": "allow",
       "builtin:read-only": "deny",
-      "builtin:tests-disallowed": "allow",
+      "builtin:tests-hidden": "allow",
       "builtin:tests-only": "deny"
     }
   },
@@ -165,7 +175,57 @@
       "builtin:default": "deny",
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
-      "builtin:tests-disallowed": "deny",
+      "builtin:tests-hidden": "deny",
+      "builtin:tests-only": "deny"
+    }
+  },
+  {
+    "command": "find /tmp -delete",
+    "expected": {
+      "builtin:default": "deny",
+      "builtin:worker": "deny",
+      "builtin:read-only": "deny",
+      "builtin:tests-hidden": "deny",
+      "builtin:tests-only": "deny"
+    }
+  },
+  {
+    "command": "find -delete",
+    "expected": {
+      "builtin:default": "deny",
+      "builtin:worker": "deny",
+      "builtin:read-only": "deny",
+      "builtin:tests-hidden": "deny",
+      "builtin:tests-only": "deny"
+    }
+  },
+  {
+    "command": "find -exec rm -f {} \\;",
+    "expected": {
+      "builtin:default": "deny",
+      "builtin:worker": "deny",
+      "builtin:read-only": "deny",
+      "builtin:tests-hidden": "deny",
+      "builtin:tests-only": "deny"
+    }
+  },
+  {
+    "command": "find -execdir rm -f {} \\;",
+    "expected": {
+      "builtin:default": "deny",
+      "builtin:worker": "deny",
+      "builtin:read-only": "deny",
+      "builtin:tests-hidden": "deny",
+      "builtin:tests-only": "deny"
+    }
+  },
+  {
+    "command": "find /tmp -exec echo {} \\;",
+    "expected": {
+      "builtin:default": "deny",
+      "builtin:worker": "deny",
+      "builtin:read-only": "deny",
+      "builtin:tests-hidden": "deny",
       "builtin:tests-only": "deny"
     }
   },
@@ -175,7 +235,7 @@
       "builtin:default": "allow",
       "builtin:worker": "allow",
       "builtin:read-only": "deny",
-      "builtin:tests-disallowed": "allow",
+      "builtin:tests-hidden": "allow",
       "builtin:tests-only": "deny"
     }
   },
@@ -185,7 +245,17 @@
       "builtin:default": "deny",
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
-      "builtin:tests-disallowed": "deny",
+      "builtin:tests-hidden": "deny",
+      "builtin:tests-only": "deny"
+    }
+  },
+  {
+    "command": "grep foo /tmp",
+    "expected": {
+      "builtin:default": "deny",
+      "builtin:worker": "deny",
+      "builtin:read-only": "deny",
+      "builtin:tests-hidden": "deny",
       "builtin:tests-only": "deny"
     }
   },
@@ -195,7 +265,137 @@
       "builtin:default": "deny",
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
-      "builtin:tests-disallowed": "deny",
+      "builtin:tests-hidden": "deny",
+      "builtin:tests-only": "deny"
+    }
+  },
+  {
+    "command": "git grep foo /tmp",
+    "expected": {
+      "builtin:default": "deny",
+      "builtin:worker": "deny",
+      "builtin:read-only": "deny",
+      "builtin:tests-hidden": "deny",
+      "builtin:tests-only": "deny"
+    }
+  },
+  {
+    "command": "git fsck --lost-found",
+    "expected": {
+      "builtin:default": "deny",
+      "builtin:worker": "deny",
+      "builtin:read-only": "deny",
+      "builtin:tests-hidden": "deny",
+      "builtin:tests-only": "deny"
+    }
+  },
+  {
+    "command": "git fsck --full",
+    "expected": {
+      "builtin:default": "ask",
+      "builtin:worker": "deny",
+      "builtin:read-only": "allow",
+      "builtin:tests-hidden": "ask",
+      "builtin:tests-only": "ask"
+    }
+  },
+  {
+    "command": "head README.md",
+    "expected": {
+      "builtin:default": "allow",
+      "builtin:worker": "allow",
+      "builtin:read-only": "deny",
+      "builtin:tests-hidden": "allow",
+      "builtin:tests-only": "deny"
+    }
+  },
+  {
+    "command": "tail README.md",
+    "expected": {
+      "builtin:default": "allow",
+      "builtin:worker": "allow",
+      "builtin:read-only": "deny",
+      "builtin:tests-hidden": "allow",
+      "builtin:tests-only": "deny"
+    }
+  },
+  {
+    "command": "git config --get user.name",
+    "expected": {
+      "builtin:default": "allow",
+      "builtin:worker": "allow",
+      "builtin:read-only": "allow",
+      "builtin:tests-hidden": "allow",
+      "builtin:tests-only": "allow"
+    }
+  },
+  {
+    "command": "git reflog",
+    "expected": {
+      "builtin:default": "allow",
+      "builtin:worker": "allow",
+      "builtin:read-only": "allow",
+      "builtin:tests-hidden": "allow",
+      "builtin:tests-only": "allow"
+    }
+  },
+  {
+    "command": "git merge-tree HEAD HEAD HEAD",
+    "expected": {
+      "builtin:default": "allow",
+      "builtin:worker": "allow",
+      "builtin:read-only": "allow",
+      "builtin:tests-hidden": "allow",
+      "builtin:tests-only": "allow"
+    }
+  },
+  {
+    "command": "git merge-tree --write-tree HEAD HEAD",
+    "expected": {
+      "builtin:default": "deny",
+      "builtin:worker": "deny",
+      "builtin:read-only": "deny",
+      "builtin:tests-hidden": "deny",
+      "builtin:tests-only": "deny"
+    }
+  },
+  {
+    "command": "git diff-tree HEAD",
+    "expected": {
+      "builtin:default": "allow",
+      "builtin:worker": "allow",
+      "builtin:read-only": "allow",
+      "builtin:tests-hidden": "allow",
+      "builtin:tests-only": "allow"
+    }
+  },
+  {
+    "command": "git symbolic-ref HEAD",
+    "expected": {
+      "builtin:default": "ask",
+      "builtin:worker": "deny",
+      "builtin:read-only": "allow",
+      "builtin:tests-hidden": "ask",
+      "builtin:tests-only": "ask"
+    }
+  },
+  {
+    "command": "git symbolic-ref --short HEAD",
+    "expected": {
+      "builtin:default": "ask",
+      "builtin:worker": "deny",
+      "builtin:read-only": "allow",
+      "builtin:tests-hidden": "ask",
+      "builtin:tests-only": "ask"
+    }
+  },
+  {
+    "command": "sed -i '' -e 's/foo/bar/' HEAD",
+    "expected": {
+      "builtin:default": "deny",
+      "builtin:worker": "deny",
+      "builtin:read-only": "deny",
+      "builtin:tests-hidden": "deny",
       "builtin:tests-only": "deny"
     }
   },
@@ -205,7 +405,17 @@
       "builtin:default": "deny",
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
-      "builtin:tests-disallowed": "deny",
+      "builtin:tests-hidden": "deny",
+      "builtin:tests-only": "deny"
+    }
+  },
+  {
+    "command": "git diff --output /tmp/patch.diff",
+    "expected": {
+      "builtin:default": "deny",
+      "builtin:worker": "deny",
+      "builtin:read-only": "deny",
+      "builtin:tests-hidden": "deny",
       "builtin:tests-only": "deny"
     }
   },
@@ -215,7 +425,7 @@
       "builtin:default": "ask",
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
-      "builtin:tests-disallowed": "ask",
+      "builtin:tests-hidden": "ask",
       "builtin:tests-only": "deny"
     }
   },
@@ -225,7 +435,7 @@
       "builtin:default": "allow",
       "builtin:worker": "allow",
       "builtin:read-only": "deny",
-      "builtin:tests-disallowed": "allow",
+      "builtin:tests-hidden": "allow",
       "builtin:tests-only": "allow"
     }
   },
@@ -235,17 +445,17 @@
       "builtin:default": "ask",
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
-      "builtin:tests-disallowed": "ask",
+      "builtin:tests-hidden": "ask",
       "builtin:tests-only": "deny"
     }
   },
   {
     "command": "glab mr view 123",
     "expected": {
-      "builtin:default": "deny",
+      "builtin:default": "ask",
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
-      "builtin:tests-disallowed": "deny",
+      "builtin:tests-hidden": "ask",
       "builtin:tests-only": "deny"
     }
   }

@@ -111,6 +111,7 @@ const profileColorFormatters: Record<ProfileColor, (value: string) => string> =
     red: ansi.red,
     green: ansi.green,
     yellow: ansi.yellow,
+    orange: ansi.yellow,
     blue: ansi.blue,
     magenta: ansi.magenta,
     cyan: ansi.cyan,

@@ -49,6 +49,8 @@ const gitObjectSubcommands = new Set([
   "branch",
   "tag",
   "stash",
+  "symbolic-ref",
+  "diff-tree",
 ]);
 const readerCommands = new Set([
   "cat",
@@ -431,6 +433,113 @@ function classifyGitArguments(
     ) {
       tokens[index].kind = "repository-object";
       continue;
+    }
+  }
+
+  if (subcommand === "config") {
+    classifyGitConfigReadArguments(words, tokens);
+  }
+  if (subcommand === "merge-tree") {
+    classifyReadOnlyMergeTreeArguments(words, tokens);
+  }
+}
+
+function classifyGitConfigReadArguments(
+  words: Word[],
+  tokens: ClassifiedShellToken[],
+): void {
+  const readActions = new Set(["--get", "--get-regexp"]);
+  let readActionSeen = false;
+
+  for (let index = 1; index < words.length; index++) {
+    const value = staticWordValue(words[index]);
+    const token = tokens[index];
+    if (!value || !token) continue;
+
+    if (value === "--file") {
+      const pathToken = tokens[index + 1];
+      if (pathToken?.kind === "dynamic") {
+        pathToken.dynamicRole = "filesystem-reference";
+      } else if (pathToken) {
+        pathToken.kind = "filesystem-reference";
+      }
+      index++;
+      continue;
+    }
+    if (value.startsWith("--file=")) {
+      tokens[index] = {
+        ...token,
+        kind: "filesystem-reference",
+        value: value.slice("--file=".length),
+      };
+      continue;
+    }
+    if (value === "--blob") {
+      const objectToken = tokens[index + 1];
+      if (objectToken?.kind === "ambiguous") {
+        objectToken.kind = "repository-object";
+      }
+      index++;
+      continue;
+    }
+    if (value.startsWith("--blob=")) {
+      tokens[index] = {
+        ...token,
+        kind: "repository-object",
+        value: value.slice("--blob=".length),
+      };
+      continue;
+    }
+    if (readActions.has(value)) {
+      readActionSeen = true;
+      continue;
+    }
+    if (
+      readActionSeen &&
+      token.kind === "ambiguous" &&
+      !value.startsWith("-")
+    ) {
+      token.kind = "proven-non-path";
+    }
+  }
+}
+
+function classifyReadOnlyMergeTreeArguments(
+  words: Word[],
+  tokens: ClassifiedShellToken[],
+): void {
+  const values = words.map(staticWordValue);
+  if (values.includes("--write-tree")) return;
+
+  const optionsWithValues = new Set([
+    "--merge-base",
+    "--strategy-option",
+    "-X",
+  ]);
+  const operandIndexes: number[] = [];
+  for (let index = 1; index < values.length; index++) {
+    const value = values[index];
+    if (!value) continue;
+    if (optionsWithValues.has(value)) {
+      index++;
+      continue;
+    }
+    if (!value.startsWith("-")) operandIndexes.push(index);
+  }
+
+  // The three-tree form is the explicitly read-only/trivial merge mode.
+  // Two-tree mode may write a merged tree object, so leave its operands gated.
+  if (!values.includes("--trivial-merge") && operandIndexes.length < 3) return;
+
+  for (const index of operandIndexes) {
+    const value = values[index];
+    const token = tokens[index];
+    if (
+      value &&
+      token?.kind === "ambiguous" &&
+      (looksLikeGitObjectSpec(value) || looksLikeGitRevision(value))
+    ) {
+      token.kind = "repository-object";
     }
   }
 }

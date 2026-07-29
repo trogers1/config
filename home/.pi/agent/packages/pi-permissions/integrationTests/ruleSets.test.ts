@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { decideBash } from "../extensions/permissions";
 import { policyConfig as genericPolicyConfig } from "../modules/policy";
+import { defaultGuardRules } from "../modules/ruleSets.lib/index";
 import * as policyHelpers from "../modules/policyHelpers";
 import type { ProfilePolicy } from "../modules/policyHelpers";
 import { loadProfileConfig } from "../modules/profileConfig";
@@ -31,6 +32,10 @@ const minimalPaths: Pick<ProfilePolicy, "readPaths" | "writePaths"> = {
 };
 
 describe("rule-set namespace", () => {
+  it("exports the shipped rule-set bundle", () => {
+    expect(defaultGuardRules.length).toBeGreaterThan(0);
+  });
+
   it.fails(
     "ruleset:guards resolves to the shipped guards partial policy",
     () => {

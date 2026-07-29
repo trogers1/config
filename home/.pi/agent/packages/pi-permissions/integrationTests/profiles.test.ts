@@ -1432,7 +1432,30 @@ describe("permissions extension", () => {
     expect(harness.ui.confirm).not.toHaveBeenCalled();
   });
 
-  it("returns configured steering from production deny rules", async () => {
+  it("returns configured steering from custom deny rules", async () => {
+    vi.stubEnv(
+      "PI_PERMISSIONS_PROFILE_CONFIG",
+      writeTempConfig(
+        JSON.stringify({
+          defaultProfile: "script-steering",
+          profiles: {
+            "script-steering": {
+              extends: "builtin:default",
+              tools: {
+                bash: [
+                  {
+                    pattern: "npx vitest *",
+                    decision: "deny",
+                    guidance: "Use the configured test script instead.",
+                    alternatives: ["npm test -- <requested test filters>"],
+                  },
+                ],
+              },
+            },
+          },
+        }),
+      ),
+    );
     const harness = createExtensionHarness();
     await harness.start();
 

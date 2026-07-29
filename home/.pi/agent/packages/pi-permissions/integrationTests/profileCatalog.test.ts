@@ -142,20 +142,110 @@ describe("shipped profile catalog", () => {
     ).resolves.toBeUndefined();
   });
 
-  // Un-mark in Phase 3 (the rename lands there), not Phase 7 like the rest of this file.
-  it.fails("tests-disallowed is renamed to builtin:tests-hidden", () => {
+  it("tests-hidden is renamed from tests-disallowed", () => {
     const profiles = policyConfig.profiles as Record<string, ProfilePolicy>;
     expect(profiles["builtin:tests-hidden"]).toBeDefined();
     expect(profiles["builtin:tests-disallowed"]).toBeUndefined();
   });
 
-  it.fails("builtin:tests-hidden hides test files", async () => {
+  it("builtin:read-only blocks destructive find, grep, and git guards", async () => {
+    const harness = await harnessFor("builtin:read-only");
+    for (const command of [
+      "find /tmp -delete",
+      "find -delete",
+      "find -exec rm -f {} \\;",
+      "find -execdir rm -f {} \\;",
+      "grep foo /tmp",
+      "git fsck --lost-found",
+      "git grep foo /tmp",
+      "git diff --output /tmp/patch.diff",
+      "git merge-tree --write-tree HEAD HEAD",
+      "sed -i '' -e 's/foo/bar/' HEAD",
+    ]) {
+      const result = await harness.callTool({
+        toolName: "bash",
+        input: { command },
+      });
+      expect(result, command).toMatchObject({ block: true });
+    }
+  });
+
+  it("builtin:read-only still allows safe git inspection commands", async () => {
+    const harness = await harnessFor("builtin:read-only");
+    for (const command of [
+      "git fsck --full",
+      "git symbolic-ref HEAD",
+      "git symbolic-ref --short HEAD",
+      "git config --get user.name",
+      "git merge-tree HEAD HEAD HEAD",
+      "git diff-tree HEAD",
+    ]) {
+      await expect(
+        harness.callTool({
+          toolName: "bash",
+          input: { command },
+        }),
+        command,
+      ).resolves.toBeUndefined();
+    }
+  });
+
+  it("builtin:default reads global Pi skills and Pi documentation", async () => {
+    const root = path.parse(process.cwd()).root;
+    const harness = createExtensionHarness({
+      contextCwd: path.join(root, "workspace", "project"),
+      hasUI: false,
+    });
+    process.env.PI_SUBAGENT_PROFILE = "builtin:default";
+    await harness.start();
+
+    const readableReferences = [
+      path.join(
+        root,
+        "Users",
+        "example",
+        ".pi",
+        "agent",
+        "skills",
+        "review",
+        "SKILL.md",
+      ),
+      path.join(
+        root,
+        "opt",
+        "node_modules",
+        "@earendil-works",
+        "pi-coding-agent",
+        "README.md",
+      ),
+      path.join(
+        root,
+        "opt",
+        "node_modules",
+        "@earendil-works",
+        "pi-coding-agent",
+        "docs",
+        "skills.md",
+      ),
+    ];
+
+    for (const referencePath of readableReferences) {
+      await expect(
+        harness.callToolWithoutPrompt({
+          toolName: "read",
+          input: { path: referencePath },
+        }),
+      ).resolves.toBeUndefined();
+    }
+  });
+
+  it("builtin:tests-hidden hides test files", async () => {
     const harness = await harnessFor("builtin:tests-hidden");
     const result = await harness.callTool({
       toolName: "read",
       input: { path: "src/example.test.ts" },
     });
     expect(result).toMatchObject({ block: true });
-    expect(result?.reason).toMatch(/test files/i);
+    expect(result?.reason).toContain("denied by policy");
   });
 });

@@ -17,8 +17,8 @@ describe("built-in test profiles", () => {
     vi.unstubAllEnvs();
   });
 
-  it("keeps tests inaccessible in tests-disallowed while allowing implementation edits", async () => {
-    vi.stubEnv("PI_SUBAGENT_PROFILE", "builtin:tests-disallowed");
+  it("keeps tests inaccessible in tests-hidden while allowing implementation edits", async () => {
+    vi.stubEnv("PI_SUBAGENT_PROFILE", "builtin:tests-hidden");
     const harness = createExtensionHarness({ hasUI: false });
     await harness.start();
 

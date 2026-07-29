@@ -1,5 +1,6 @@
 {
   "$schema": "../../packages/pi-permissions/schemas/profiles.schema.json",
+  "defaultProfile": "personal",
   "profiles": {
     "config-maintenance": {
       "extends": "builtin:default",
@@ -81,8 +82,8 @@
         },
       ],
     },
-    "config-maintenance-tests-disallowed": {
-      "extends": "builtin:tests-disallowed",
+    "config-maintenance-tests-hidden": {
+      "extends": "builtin:tests-hidden",
       "readPaths": [
         {
           "pattern": "/Users/*/.pi/agent/packages",
@@ -223,6 +224,74 @@
         },
       ],
     },
+    "gitlab-skills": {
+      "extends": "builtin:default",
+      "tools": {
+        "bash": [
+          { "pattern": "bash *skills/address-comments/scripts/fetch-open-mr.sh*", "decision": "allow" },
+          { "pattern": "bash *skills/address-comments/scripts/fetch-mr-discussions.sh*", "decision": "allow" },
+          { "pattern": "bash *skills/address-comments/scripts/enrich-discussions.sh*", "decision": "allow" },
+          { "pattern": "bash *skills/address-comments/scripts/render-comments-md.sh*", "decision": "allow" },
+          { "pattern": "bash *skills/address-comments/scripts/refresh-robot-comments-md.sh*", "decision": "allow" },
+          { "pattern": "bash *skills/address-comments/scripts/refresh-all-comments-md.sh*", "decision": "allow" },
+        ],
+      },
+      "readPaths": [
+        { "pattern": "/**/home/.pi/agent/packages/**", "decision": "allow" },
+      ],
+      "writePaths": [
+        { "pattern": "/**/home/.pi/agent/packages/**", "decision": "allow" },
+      ],
+    },
+    "personal": {
+      "extends": "builtin:default",
+      "tools": {
+        "bash": [
+          {
+            "pattern": "npx prettier",
+            "decision": "deny",
+            "guidance": "Do not invoke Prettier through npx. Use the repository's configured formatter or make targeted edits with Pi's edit tool.",
+            "alternatives": ["npm run prettier:write", "npm run fix:prettier", "Use the edit tool for targeted changes"],
+          },
+          {
+            "pattern": "npx prettier *",
+            "decision": "deny",
+            "guidance": "Do not invoke Prettier through npx. Use the repository's configured formatter or make targeted edits with Pi's edit tool.",
+            "alternatives": ["npm run prettier:write", "npm run fix:prettier", "Use the edit tool for targeted changes"],
+          },
+          {
+            "pattern": "**/node_modules/.bin/*",
+            "decision": "deny",
+            "guidance": "Do not invoke packages directly. Use the repository's configured scripts.",
+            "alternatives": ["npm run prettier:write", "npm run fix:prettier", "npm test", "Use the edit tool to add needed scripts to package.json (or equivalent)"],
+          },
+          {
+            "pattern": "npx vitest",
+            "decision": "deny",
+            "guidance": "Do not invoke Vitest through npx. Inspect package.json and use the repository's configured test script instead.",
+            "alternatives": ["npm test", "npm test -- <requested test filters>"],
+          },
+          {
+            "pattern": "npx vitest *",
+            "decision": "deny",
+            "guidance": "Do not invoke Vitest through npx. Inspect package.json and use the repository's configured test script instead.",
+            "alternatives": ["npm test -- <requested test filters>"],
+          },
+          { "pattern": "bash *skills/address-comments/scripts/fetch-open-mr.sh*", "decision": "allow" },
+          { "pattern": "bash *skills/address-comments/scripts/fetch-mr-discussions.sh*", "decision": "allow" },
+          { "pattern": "bash *skills/address-comments/scripts/enrich-discussions.sh*", "decision": "allow" },
+          { "pattern": "bash *skills/address-comments/scripts/render-comments-md.sh*", "decision": "allow" },
+          { "pattern": "bash *skills/address-comments/scripts/refresh-robot-comments-md.sh*", "decision": "allow" },
+          { "pattern": "bash *skills/address-comments/scripts/refresh-all-comments-md.sh*", "decision": "allow" },
+        ],
+      },
+      "readPaths": [
+        { "pattern": "/**/home/.pi/agent/packages/**", "decision": "allow" },
+      ],
+      "writePaths": [
+        { "pattern": "/**/home/.pi/agent/packages/**", "decision": "allow" },
+      ],
+    },
     "committer": {
       "extends": "builtin:default",
       "color": "red",
@@ -247,8 +316,6 @@
         ],
       },
     },
-    // Not generic enough for the package builtins: personal review workflow
-    // that needs CLI access to GitLab/GitHub plus jq for shaping output.
     "performance-review": {
       "extends": "builtin:default",
       "color": "red",
@@ -267,5 +334,5 @@
       "color": "cyan",
       "emoji": "🧠",
     },
-  },
+  }
 }

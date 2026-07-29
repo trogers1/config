@@ -17,7 +17,7 @@ export const builtinProfileNames = [
   "builtin:default",
   "builtin:worker",
   "builtin:read-only",
-  "builtin:tests-disallowed",
+  "builtin:tests-hidden",
   "builtin:tests-only",
 ] as const;
 export type BuiltinProfileName = (typeof builtinProfileNames)[number];
@@ -43,6 +43,7 @@ const profileColorSchema = Type.Union([
   Type.Literal("red"),
   Type.Literal("green"),
   Type.Literal("yellow"),
+  Type.Literal("orange"),
   Type.Literal("blue"),
   Type.Literal("magenta"),
   Type.Literal("cyan"),

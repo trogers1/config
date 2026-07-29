@@ -2,10 +2,10 @@
 
 Pi package that mirrors the curated opencode permission posture and adds switchable profiles. Built-in profile names are reserved under the `builtin:` namespace and cannot be overridden by user configuration.
 
-- `builtin:default`: normal Pi system prompt with the current curated permissions
+- `builtin:default`: normal Pi system prompt with the current curated permissions; dedicated `read` access to global Pi skills and the installed Pi README/docs is allowed even when they are outside the startup directory
 - `builtin:worker`: default-like non-interactive subagent policy; rules that normally ask for confirmation deny with guidance instead
 - `builtin:read-only`: edit/write tools are only allowed for `./handoff.md` and `./progress.md`; read access is limited to the startup directory tree and `/tmp`; bash is limited to inspection commands, non-destructive git history commands, and output redirection to `/tmp`, `./handoff.md`, or `./progress.md`
-- `builtin:tests-disallowed`: extends `builtin:default` for implementation-only work; test files cannot be read or edited, and prompt steering asks the model to fix the system rather than the tests and report tests it believes are incorrect
+- `builtin:tests-hidden`: extends `builtin:default` for implementation-only work; test files cannot be read or edited, and prompt steering asks the model to fix the system rather than the tests and report tests it believes are incorrect
 - `builtin:tests-only`: extends `builtin:default` for documentation-first test-authoring work; prompt steering makes documented behavior the spec (production code is only an interface reference), and only test files can be edited
 - optional per-profile `color` and `emoji` metadata for the status line
 - explicit deny rules for destructive git operations and protected paths
@@ -211,7 +211,7 @@ Each profile defines its protected glob patterns with `protectedPathPatterns`; t
 
 Patterns use the same path glob syntax and ordered last-match behavior as other policy rules. They apply to `read`, `grep`, `find`, `ls`, `edit`, and `write`, as well as Bash path references: discovery can disclose secrets, while mutation can damage them. A profile that omits a pattern does not protect that path beyond its ordinary tool rules. Dynamic or unrecognized shell reader forms, and parser errors, fail closed: interactive sessions can ask, while non-interactive sessions block.
 
-The built-in test-focused profiles recognize conventional `test`, `tests`, `__tests__`, and `integrationTests` directories, plus `*.test.*`, `*.spec.*`, `*_test.*`, and `*.cy.*` file names. `builtin:tests-disallowed` denies both dedicated reads and mutations for these paths. `builtin:tests-only` retains the default read policy and limits dedicated edits/writes and analyzable Bash filesystem references to those test paths and `/tmp` scratch output; its Bash denial guidance steers inspection to the dedicated `read`, `grep`, `find`, and `ls` tools.
+The built-in test-focused profiles recognize conventional `test`, `tests`, `__tests__`, and `integrationTests` directories, plus `*.test.*`, `*.spec.*`, `*_test.*`, and `*.cy.*` file names. `builtin:tests-hidden` denies both dedicated reads and mutations for these paths. `builtin:tests-only` retains the default read policy and limits dedicated edits/writes and analyzable Bash filesystem references to those test paths and `/tmp` scratch output; its Bash denial guidance steers inspection to the dedicated `read`, `grep`, `find`, and `ls` tools.
 
 Bash output redirection targets use the same `writePaths` rules and `bash` context as every other Bash path. Absolute and relative targets use the same matching rules as `edit` and `write`; context-specific rules may still distinguish dedicated mutations from Bash access.
 

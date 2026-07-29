@@ -51,17 +51,47 @@ module.exports = {
       name: "lib-public-entrypoint-only",
       severity: "error",
       comment:
-        "Code outside a *.lib/ directory may only import it through its public index.ts (docs/.lib_definition.md). Caveat: dependency-cruiser cannot correlate from/to paths, so deep imports from inside one lib into another lib's internals are not caught; refine per-lib if a second *.lib/ appears.",
+        "Code outside a *.lib/ directory may only import it through its public index.ts (docs/.lib_definition.md).",
       from: { pathNot: "\\.lib/" },
       to: { path: "\\.lib/", pathNot: "\\.lib/index\\.ts$" },
     },
     {
-      name: "lib-no-index-self-import",
+      name: "profiles-lib-no-index-self-import",
       severity: "error",
       comment:
-        "Files inside a *.lib/ import siblings directly, never through an index.ts, so index stays a true public boundary and knip can flag unused exports (docs/.lib_definition.md). Exact only while one *.lib/ exists — it blocks lib files from importing ANY lib index; on adding a second lib, replace with per-lib rules so cross-lib imports via the public index stay legal. index.test.ts is exempt so the public entrypoint itself remains testable.",
-      from: { path: "\\.lib/", pathNot: "index\\.test\\.ts$" },
-      to: { path: "\\.lib/index\\.ts$" },
+        "Files inside profiles.lib import siblings directly, never through profiles.lib/index.ts, so the index stays a true public boundary and knip can flag unused exports (docs/.lib_definition.md). index.test.ts is exempt so the public entrypoint itself remains testable.",
+      from: { path: "^modules/profiles\\.lib/", pathNot: "index\\.test\\.ts$" },
+      to: { path: "^modules/profiles\\.lib/index\\.ts$" },
+    },
+    {
+      name: "ruleSets-lib-no-index-self-import",
+      severity: "error",
+      comment:
+        "Files inside ruleSets.lib import siblings directly, never through ruleSets.lib/index.ts, so the index stays a true public boundary and knip can flag unused exports (docs/.lib_definition.md). index.test.ts is exempt so the public entrypoint itself remains testable.",
+      from: { path: "^modules/ruleSets\\.lib/", pathNot: "index\\.test\\.ts$" },
+      to: { path: "^modules/ruleSets\\.lib/index\\.ts$" },
+    },
+    {
+      name: "profiles-lib-no-cross-deep-imports",
+      severity: "error",
+      comment:
+        "profiles.lib may depend on ruleSets.lib only through ruleSets.lib/index.ts, never its deep files (docs/.lib_definition.md).",
+      from: { path: "^modules/profiles\\.lib/", pathNot: "index\\.test\\.ts$" },
+      to: {
+        path: "^modules/ruleSets\\.lib/",
+        pathNot: "^modules/ruleSets\\.lib/index\\.ts$",
+      },
+    },
+    {
+      name: "ruleSets-lib-no-cross-deep-imports",
+      severity: "error",
+      comment:
+        "ruleSets.lib may depend on profiles.lib only through profiles.lib/index.ts, never its deep files (docs/.lib_definition.md).",
+      from: { path: "^modules/ruleSets\\.lib/", pathNot: "index\\.test\\.ts$" },
+      to: {
+        path: "^modules/profiles\\.lib/",
+        pathNot: "^modules/profiles\\.lib/index\\.ts$",
+      },
     },
   ],
   options: {

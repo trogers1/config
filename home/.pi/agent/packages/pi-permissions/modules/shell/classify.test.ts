@@ -29,6 +29,97 @@ describe("unbash shell classification", () => {
     );
   });
 
+  it.each([
+    ["git config --get user.name", ["user.name"]],
+    ["git config --get user.email", ["user.email"]],
+    ["git config --get user.name Taylor", ["user.name", "Taylor"]],
+    ["git config --get-regexp '^user\\.'", ["^user\\."]],
+  ])(
+    "classifies safe Git config operands semantically: %s",
+    (gitCmd, expectedArguments) => {
+      const config = classifyShell(gitCmd);
+      expect(config.errors).toEqual([]);
+      for (const value of expectedArguments) {
+        expect(config.tokens, value).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ kind: "proven-non-path", value }),
+          ]),
+        );
+      }
+    },
+  );
+
+  it.each([
+    ["git merge-tree HEAD HEAD HEAD", ["HEAD"]],
+    ["git merge-tree --trivial-merge HEAD~1 HEAD HEAD", ["HEAD~1", "HEAD"]],
+    ["git diff-tree HEAD", ["HEAD"]],
+    ["git diff-tree HEAD~2", ["HEAD~2"]],
+    ["git diff-tree refs/heads/main", ["refs/heads/main"]],
+  ])(
+    "classifies safe Git tree-inspection operands semantically: %s",
+    (gitCmd, expectedObjects) => {
+      const result = classifyShell(gitCmd);
+      expect(result.errors).toEqual([]);
+      for (const value of expectedObjects) {
+        expect(result.tokens, value).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ kind: "repository-object", value }),
+          ]),
+        );
+        expect(
+          result.tokens.some(
+            (token) => token.value === value && token.kind === "ambiguous",
+          ),
+          value,
+        ).toBe(false);
+      }
+    },
+  );
+
+  it.each([
+    "git config --file ../config --get user.name",
+    "git config --file=../config --get user.name",
+  ])("keeps Git config files gated: %s", (gitCmd) => {
+    const config = classifyShell(gitCmd);
+    expect(config.tokens).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "filesystem-reference",
+          value: "../config",
+        }),
+        expect.objectContaining({
+          kind: "proven-non-path",
+          value: "user.name",
+        }),
+      ]),
+    );
+  });
+
+  it.each([
+    "git merge-tree HEAD HEAD",
+    "git merge-tree --write-tree HEAD HEAD",
+  ])("keeps write-capable merge-tree forms gated: %s", (gitCmd) => {
+    const mergeTree = classifyShell(gitCmd);
+    expect(mergeTree.tokens).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "ambiguous", value: "HEAD" }),
+      ]),
+    );
+  });
+
+  it("keeps diff-tree paths after -- gated as filesystem references", () => {
+    const result = classifyShell("git diff-tree HEAD -- src/example.ts");
+    expect(result.tokens).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "repository-object", value: "HEAD" }),
+        expect.objectContaining({
+          kind: "filesystem-reference",
+          value: "src/example.ts",
+        }),
+      ]),
+    );
+  });
+
   it("distinguishes ripgrep patterns, paths, and redirections", () => {
     const result = classifyShell(
       "rg --glob 'src/**' needle ./source 2>/tmp/errors > /tmp/results",
