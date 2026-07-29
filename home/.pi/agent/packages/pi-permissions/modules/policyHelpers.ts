@@ -11,7 +11,11 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-const customProfileNamePattern = `^(?!${escapeRegExp(builtinProfilePrefix)}).+$`;
+const reservedProfilePrefixes = [builtinProfilePrefix, "transform:"] as const;
+
+const customProfileNamePattern = `^(?!(?:${reservedProfilePrefixes
+  .map((prefix) => escapeRegExp(prefix))
+  .join("|")})).+$`;
 
 export const builtinProfileNames = [
   "builtin:default",
@@ -21,6 +25,20 @@ export const builtinProfileNames = [
   "builtin:tests-only",
 ] as const;
 export type BuiltinProfileName = (typeof builtinProfileNames)[number];
+
+export function isReservedProfileName(name: string): boolean {
+  return reservedProfilePrefixes.some((prefix) => name.startsWith(prefix));
+}
+
+const profileTransformNameSchema = Type.Union([
+  Type.Literal("transform:deny-asks"),
+  Type.Literal("transform:allow-asks"),
+  Type.Literal("transform:ask-all"),
+  Type.Literal("transform:deny-all"),
+]);
+export type ProfileTransformName = Static<typeof profileTransformNameSchema>;
+export const profileTransformNames: readonly ProfileTransformName[] =
+  profileTransformNameSchema.anyOf.map((schema) => schema.const);
 
 const readPathContextSchema = Type.Union([
   Type.Literal("read"),
@@ -146,10 +164,15 @@ const policyConfigSchema = Type.Object(
   { additionalProperties: false },
 );
 
+const profileExtendsSchema = Type.Array(Type.String(), { minItems: 1 });
+
+const profileTransformsSchema = Type.Array(profileTransformNameSchema);
+
 const profileConfigProfileSchema = Type.Object(
   {
     ...profileProperties,
-    extends: Type.Optional(Type.String()),
+    extends: Type.Optional(profileExtendsSchema),
+    transforms: Type.Optional(profileTransformsSchema),
     tools: Type.Optional(profileProperties.tools),
     readPaths: Type.Optional(profileProperties.readPaths),
     writePaths: Type.Optional(profileProperties.writePaths),
@@ -181,8 +204,17 @@ export type PolicyConfig<Names extends string = string> = Omit<
   defaultProfile: Names;
   profiles: Record<Names, ProfilePolicy>;
 };
-export type ProfileConfigProfile = Static<typeof profileConfigProfileSchema>;
-export type ProfilePolicyOverride = Omit<ProfileConfigProfile, "extends">;
+type ProfileConfigProfileShape = Static<typeof profileConfigProfileSchema>;
+export type ProfileConfigProfile = Omit<
+  ProfileConfigProfileShape,
+  "transforms"
+> & {
+  transforms?: readonly ProfileTransformName[];
+};
+export type ProfilePolicyOverride = Omit<
+  ProfileConfigProfile,
+  "extends" | "transforms"
+>;
 
 /** JSON Schema source of truth for ~/.pi/agent/permissions/profiles.jsonc. */
 export const profileConfigFileSchema = Type.Object(
@@ -203,7 +235,10 @@ export const profileConfigFileSchema = Type.Object(
     additionalProperties: false,
   },
 );
-export type ProfileConfigFile = Static<typeof profileConfigFileSchema>;
+type ProfileConfigFileShape = Static<typeof profileConfigFileSchema>;
+export type ProfileConfigFile = Omit<ProfileConfigFileShape, "profiles"> & {
+  profiles: Record<string, ProfileConfigProfile>;
+};
 
 export function assertProfilePolicy(
   policy: unknown,
@@ -255,6 +290,58 @@ export function withProtectedPathPatterns(
   return policy;
 }
 
+const nonInteractiveGuidance =
+  "This non-interactive worker cannot request permission. Use an explicitly allowed command or path.";
+
+const profileTransformRegistry: Record<
+  ProfileTransformName,
+  (policy: ProfilePolicy) => ProfilePolicy
+> = {
+  "transform:deny-asks": denyAsksTransform,
+  "transform:allow-asks": allowAsksTransform,
+  "transform:ask-all": askAllTransform,
+  "transform:deny-all": denyAllTransform,
+};
+
+function denyAsksTransform(policy: ProfilePolicy): ProfilePolicy {
+  return mapProfileRules(policy, (rule) =>
+    rule.decision === "ask"
+      ? {
+          ...rule,
+          decision: "deny",
+          guidance: rule.guidance ?? nonInteractiveGuidance,
+        }
+      : rule,
+  );
+}
+
+function allowAsksTransform(policy: ProfilePolicy): ProfilePolicy {
+  return mapProfileRules(policy, (rule) =>
+    rule.decision === "ask" ? { ...rule, decision: "allow" } : rule,
+  );
+}
+
+function askAllTransform(policy: ProfilePolicy): ProfilePolicy {
+  return mapProfileRules(policy, (rule) =>
+    rule.decision === "allow" ? { ...rule, decision: "ask" } : rule,
+  );
+}
+
+function denyAllTransform(policy: ProfilePolicy): ProfilePolicy {
+  return mapProfileRules(policy, (rule) => ({ ...rule, decision: "deny" }));
+}
+
+export function applyPolicyTransforms(
+  policy: ProfilePolicy,
+  transforms: readonly ProfileTransformName[],
+): ProfilePolicy {
+  return transforms.reduce(
+    (current, transformName) =>
+      profileTransformRegistry[transformName](current),
+    policy,
+  );
+}
+
 export function extendProfile(
   base: ProfilePolicy,
   override: ProfilePolicyOverride,
@@ -293,6 +380,23 @@ export function extendProfile(
     tools: mergedTools,
     readPaths: [...base.readPaths, ...(override.readPaths ?? [])],
     writePaths: [...base.writePaths, ...(override.writePaths ?? [])],
+  };
+}
+
+function mapProfileRules(
+  policy: ProfilePolicy,
+  mapRule: <T extends { decision: Decision; guidance?: string }>(rule: T) => T,
+): ProfilePolicy {
+  return {
+    ...policy,
+    tools: Object.fromEntries(
+      Object.entries(policy.tools).map(([toolName, rules]) => [
+        toolName,
+        rules?.map(mapRule) ?? [],
+      ]),
+    ),
+    readPaths: policy.readPaths.map(mapRule),
+    writePaths: policy.writePaths.map(mapRule),
   };
 }
 

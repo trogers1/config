@@ -101,15 +101,19 @@ Phase 1 specificity tests and implemented in Phase 2.
   _concatenation, not intersection_: `["builtin:read-only", "builtin:default"]`
   re-opens bash.
 - **`transforms: string[]`** on profile definitions: names of shipped
-  transforms applied once, after the full extends fold, in listed order.
-  Transforms are functions over a resolved policy, so the registry is
-  shipped-only (reserved `transform:` namespace). V1 ships:
-  - `transform:deny-asks` — every `ask` becomes `deny` (non-interactive
-    agents; what `builtin:worker` uses);
-  - `transform:allow-asks` — every `ask` becomes `allow` (auto-approve;
-    pair-with-containment — see Deferred decisions);
-  - `transform:ask-all` — every `allow` becomes `ask` (paranoid supervision;
-    denies unchanged).
+  transforms applied once, after the full `extends` fold and in listed order,
+  **before the declaring profile's own rules are applied**. A transform
+  normalizes inherited policy only; rules authored directly on the profile are
+  deliberate final overrides. Transforms are functions over the fully composed
+  inherited policy, so the registry is shipped-only (reserved `transform:`
+  namespace). V1 ships:
+  - `transform:deny-asks` — every inherited `ask` becomes `deny`
+    (non-interactive inherited policy; what `builtin:worker` uses);
+  - `transform:allow-asks` — every inherited `ask` becomes `allow`
+    (auto-approve; pair-with-containment — see Deferred decisions);
+  - `transform:ask-all` — every inherited `allow` becomes `ask` (paranoid
+    supervision; inherited denies unchanged);
+  - `transform:deny-all` — every inherited rule decision becomes `deny`.
 
   `builtin:worker` = default + `transform:deny-asks` + its own color/emoji
   (the transform no longer hardcodes styling).
@@ -274,7 +278,8 @@ phase's exit gate.
    - protected layer short-circuits every stage regardless of rules.
 3. **`integrationTests/composition.test.ts`** (`.fails`): multi-extends fold
    order, fold-is-concatenation documentation case, transforms (`deny-asks`,
-   `allow-asks`, `ask-all`), conflict-lint warnings.
+   `allow-asks`, `ask-all`, `deny-all`) over inherited policy only (with local
+   profile rules remaining final overrides), conflict-lint warnings.
 4. **`integrationTests/protectedRules.test.ts`** (`.fails`): rule-shape
    schema, concatenation under extends, more-specific authored overrides,
    exact-pattern conflicts as load errors, exceptions-as-allows.
@@ -370,13 +375,16 @@ with zero behavior change.
 
 1. Schema: `extends: string[]` (minItems 1), `transforms: string[]`;
    regenerate `schemas/profiles.schema.json`.
-2. Loader: fold left-to-right through `extendProfile`; resolve `transforms`
-   against the shipped transform registry and apply them once, after the
-   fold, in listed order. Unknown transform names fail loudly. Improve the
+2. Loader: fold parents left-to-right through `extendProfile`; resolve
+   `transforms` against the shipped transform registry and apply them once,
+   after that inherited fold and in listed order. Then apply the declaring
+   profile's own rules through `extendProfile`, so those explicit rules remain
+   final overrides. Unknown transform names fail loudly. Improve the
    unknown-parent error to name the missing parent.
 3. Transform registry in `policyHelpers.ts` (or its own module): `deny-asks`
    is the current `denyInteractiveDecisions` moved and decoupled from worker
-   styling; `allow-asks` is new. `builtin:worker` sets its own color/emoji.
+   styling; `allow-asks` and `deny-all` are new. `builtin:worker` sets its own
+   color/emoji.
 4. Dogfood in `profiles.jsonc`:
    `"personal": { "extends": ["builtin:default", "gitlab-skills"] }`.
 5. Intermediate state (acceptable): multi-extends folds protected paths with
@@ -453,7 +461,10 @@ with zero behavior change.
    rules, the winner, which tiebreak fired, active profile and composition
    chain, protected-layer overrides.
 2. README rewrite: the three-sentence metric, rule sets, multi-extends,
-   protected-layer rules, profile catalog.
+   protected-layer rules, profile catalog, and transform semantics (transforms
+   affect inherited policy only; local profile rules are final overrides),
+   including the shipped `deny-asks`, `allow-asks`, `ask-all`, and `deny-all`
+   transforms.
 3. Record the deferred decisions (below) in the README or a follow-up plan.
 
 ### Passing criteria

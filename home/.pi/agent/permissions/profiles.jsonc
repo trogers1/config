@@ -3,7 +3,7 @@
   "defaultProfile": "personal",
   "profiles": {
     "config-maintenance": {
-      "extends": "builtin:default",
+      "extends": ["builtin:default"],
       "directories": ["~/Code/config", "~/code/config"],
       "readPaths": [
         {
@@ -83,7 +83,7 @@
       ],
     },
     "config-maintenance-tests-hidden": {
-      "extends": "builtin:tests-hidden",
+      "extends": ["builtin:tests-hidden"],
       "readPaths": [
         {
           "pattern": "/Users/*/.pi/agent/packages",
@@ -154,7 +154,7 @@
       ],
     },
     "config-maintenance-tests-only": {
-      "extends": "builtin:tests-only",
+      "extends": ["builtin:tests-only"],
       "readPaths": [
         {
           "pattern": "/Users/*/.pi/agent/packages",
@@ -225,7 +225,7 @@
       ],
     },
     "gitlab-skills": {
-      "extends": "builtin:default",
+      "extends": ["builtin:default"],
       "tools": {
         "bash": [
           { "pattern": "bash *skills/address-comments/scripts/fetch-open-mr.sh*", "decision": "allow" },
@@ -244,7 +244,7 @@
       ],
     },
     "personal": {
-      "extends": "builtin:default",
+      "extends": ["builtin:default", "gitlab-skills"],
       "tools": {
         "bash": [
           {
@@ -277,23 +277,11 @@
             "guidance": "Do not invoke Vitest through npx. Inspect package.json and use the repository's configured test script instead.",
             "alternatives": ["npm test -- <requested test filters>"],
           },
-          { "pattern": "bash *skills/address-comments/scripts/fetch-open-mr.sh*", "decision": "allow" },
-          { "pattern": "bash *skills/address-comments/scripts/fetch-mr-discussions.sh*", "decision": "allow" },
-          { "pattern": "bash *skills/address-comments/scripts/enrich-discussions.sh*", "decision": "allow" },
-          { "pattern": "bash *skills/address-comments/scripts/render-comments-md.sh*", "decision": "allow" },
-          { "pattern": "bash *skills/address-comments/scripts/refresh-robot-comments-md.sh*", "decision": "allow" },
-          { "pattern": "bash *skills/address-comments/scripts/refresh-all-comments-md.sh*", "decision": "allow" },
         ],
       },
-      "readPaths": [
-        { "pattern": "/**/home/.pi/agent/packages/**", "decision": "allow" },
-      ],
-      "writePaths": [
-        { "pattern": "/**/home/.pi/agent/packages/**", "decision": "allow" },
-      ],
     },
     "committer": {
-      "extends": "builtin:default",
+      "extends": ["builtin:default"],
       "color": "red",
       "emoji": "⚠️",
       "writePaths": [
@@ -317,7 +305,7 @@
       },
     },
     "performance-review": {
-      "extends": "builtin:default",
+      "extends": ["builtin:default"],
       "color": "red",
       "emoji": "📋",
       "tools": {
@@ -329,7 +317,7 @@
       },
     },
     "socrates": {
-      "extends": "builtin:read-only",
+      "extends": ["builtin:read-only"],
       "promptFile": "~/.pi/agent/permissions/prompts/socrates.md",
       "color": "cyan",
       "emoji": "🧠",

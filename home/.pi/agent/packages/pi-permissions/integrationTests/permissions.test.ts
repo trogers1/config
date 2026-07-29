@@ -1173,7 +1173,7 @@ describe("extension harness custom tool inheritance", () => {
         "defaultProfile": "builtin:default",
         "profiles": {
           "deployment-base": {
-            "extends": "builtin:default",
+            "extends": ["builtin:default"],
             "tools": {
               "deploy": [
                 { "decision": "deny", "match": { "environment": "production" } }
@@ -1181,7 +1181,7 @@ describe("extension harness custom tool inheritance", () => {
             }
           },
           "deployment-child": {
-            "extends": "deployment-base",
+            "extends": ["deployment-base"],
             "tools": {
               "deploy": []
             }
@@ -1280,7 +1280,7 @@ describe("extension harness custom tool inheritance", () => {
         "defaultProfile": "builtin:default",
         "profiles": {
           "deployment-base": {
-            "extends": "builtin:default",
+            "extends": ["builtin:default"],
             "tools": {
               "deploy": [
                 { "decision": "deny", "match": { "environment": "production" } }
@@ -1288,7 +1288,7 @@ describe("extension harness custom tool inheritance", () => {
             }
           },
           "deployment-child": {
-            "extends": "deployment-base",
+            "extends": ["deployment-base"],
             "tools": {
               "deploy": [
                 { "decision": "allow", "match": { "environment": "staging" } }

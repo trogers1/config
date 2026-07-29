@@ -8,7 +8,7 @@
     "profiles": {
       "type": "object",
       "patternProperties": {
-        "^(?!builtin:).+$": {
+        "^(?!(?:builtin:|transform:)).+$": {
           "type": "object",
           "properties": {
             "promptFile": {
@@ -172,7 +172,22 @@
               "type": "array",
               "items": { "type": "string" }
             },
-            "extends": { "type": "string" }
+            "extends": {
+              "type": "array",
+              "items": { "type": "string" },
+              "minItems": 1
+            },
+            "transforms": {
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  { "type": "string", "const": "transform:deny-asks" },
+                  { "type": "string", "const": "transform:allow-asks" },
+                  { "type": "string", "const": "transform:ask-all" },
+                  { "type": "string", "const": "transform:deny-all" }
+                ]
+              }
+            }
           },
           "additionalProperties": false
         }

@@ -4,13 +4,16 @@ import path from "node:path";
 import { parse, printParseErrorCode, type ParseError } from "jsonc-parser";
 import { Value } from "typebox/value";
 import {
+  applyPolicyTransforms,
   assertPolicyConfig,
   assertProfilePolicy,
   builtinProfilePrefix,
   extendProfile,
   isBuiltinProfileName,
+  isReservedProfileName,
   profileConfigFileSchema,
   warnOnPolicyRuleConflicts,
+  type profileTransformNames,
   type PolicyConfig,
   type ProfileConfigFile,
   type ProfilePolicy,
@@ -77,12 +80,14 @@ export function loadProfileConfig(
       parsed.profiles !== null
     ) {
       for (const name of Object.keys(parsed.profiles)) {
-        if (isBuiltinProfileName(name)) {
-          throwProfileConfigError(
-            configPath,
-            `/profiles/${name}: reserved profile name '${name}' begins with '${builtinProfilePrefix}'`,
-          );
-        }
+        if (!isReservedProfileName(name)) continue;
+        const reservedPrefix = isBuiltinProfileName(name)
+          ? builtinProfilePrefix
+          : "transform:";
+        throwProfileConfigError(
+          configPath,
+          `/profiles/${name}: reserved profile name '${name}' begins with '${reservedPrefix}'`,
+        );
       }
     }
 
@@ -104,10 +109,24 @@ export function loadProfileConfig(
     const resolvedUsers: Record<string, ProfilePolicy> = {};
     const resolving = new Set<string>();
 
+    const applyTransforms = (
+      policy: ProfilePolicy,
+      transforms: readonly (typeof profileTransformNames)[number][] | undefined,
+    ): ProfilePolicy => {
+      if (!transforms || transforms.length === 0) return policy;
+      return applyPolicyTransforms(policy, transforms);
+    };
+
     const resolveProfile = (
       target: string,
       referrer: string = target,
     ): ProfilePolicy => {
+      if (target.startsWith("transform:")) {
+        throwProfileConfigError(
+          configPath,
+          `/profiles/${referrer}/extends: reserved transform name '${target}' cannot be used as a profile`,
+        );
+      }
       if (isBuiltinProfileName(target)) {
         const builtin = builtins[target];
         if (!builtin) {
@@ -143,16 +162,22 @@ export function loadProfileConfig(
       }
       resolving.add(target);
 
-      const { extends: inheritedProfile, ...override } = definition;
-      if (inheritedProfile) {
-        resolvedUsers[target] = extendProfile(
-          resolveProfile(inheritedProfile, target),
-          override,
-        );
-      } else {
+      const { extends: parents = [], transforms, ...override } = definition;
+      let resolved: ProfilePolicy;
+      if (parents.length === 0) {
         assertProfilePolicy(override);
-        resolvedUsers[target] = override;
+        resolved = override;
+      } else {
+        resolved = resolveProfile(parents[0], target);
+        for (const parent of parents.slice(1)) {
+          resolved = extendProfile(resolved, resolveProfile(parent, target));
+        }
+        // Transforms normalize the fully composed inherited policy. The
+        // declaring profile's own rules are final, explicit overrides.
+        resolved = applyTransforms(resolved, transforms);
+        resolved = extendProfile(resolved, override);
       }
+      resolvedUsers[target] = resolved;
       resolving.delete(target);
       return resolvedUsers[target];
     };

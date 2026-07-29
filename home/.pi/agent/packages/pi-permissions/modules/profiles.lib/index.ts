@@ -1,8 +1,8 @@
 import {
-  extendProfile,
+  applyPolicyTransforms,
   definePolicyConfig,
+  extendProfile,
   type ProfilePolicy,
-  type Rule,
 } from "../policyHelpers";
 import {
   defaultReadPaths,
@@ -32,38 +32,13 @@ const baseProfile: ProfilePolicy = {
   protectedPathExceptions: defaultProtectedPathExceptions,
 };
 
-function denyInteractiveDecisions(policy: ProfilePolicy): ProfilePolicy {
-  const denyAsk = <
-    PolicyRule extends { decision: Rule["decision"]; guidance?: string },
-  >(
-    rule: PolicyRule,
-  ): PolicyRule =>
-    rule.decision === "ask"
-      ? {
-          ...rule,
-          decision: "deny",
-          guidance:
-            rule.guidance ??
-            "This non-interactive worker cannot request permission. Use an explicitly allowed command or path.",
-        }
-      : { ...rule };
-
-  return {
-    ...policy,
+const workerProfile = applyPolicyTransforms(
+  extendProfile(baseProfile, {
     color: "magenta",
     emoji: "⚙️",
-    tools: Object.fromEntries(
-      Object.entries(policy.tools).map(([tool, rules]) => [
-        tool,
-        rules?.map((rule) => denyAsk(rule)) ?? [],
-      ]),
-    ),
-    readPaths: policy.readPaths.map(denyAsk),
-    writePaths: policy.writePaths.map(denyAsk),
-  };
-}
-
-const workerProfile = denyInteractiveDecisions(baseProfile);
+  }),
+  ["transform:deny-asks"],
+);
 
 const readOnlyProfile: ProfilePolicy = {
   color: "green",

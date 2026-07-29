@@ -67,7 +67,7 @@ describe("permissions extension", () => {
           defaultProfile: "deploy-check",
           profiles: {
             "deploy-check": {
-              extends: "builtin:default",
+              extends: ["builtin:default"],
               tools: {
                 deploy: [
                   { decision: "ask" },
@@ -111,7 +111,7 @@ describe("permissions extension", () => {
         JSON.stringify({
           defaultProfile: "quiet-bash",
           profiles: {
-            "quiet-bash": { extends: "builtin:default", tools: { bash: [] } },
+            "quiet-bash": { extends: ["builtin:default"], tools: { bash: [] } },
           },
         }),
       ),
@@ -225,7 +225,7 @@ describe("permissions extension", () => {
         defaultProfile: "isolated",
         profiles: {
           isolated: {
-            extends: "builtin:default",
+            extends: ["builtin:default"],
             tools: { deploy: [{ decision: "allow" }] },
           },
         },
@@ -237,7 +237,7 @@ describe("permissions extension", () => {
         defaultProfile: "isolated",
         profiles: {
           isolated: {
-            extends: "builtin:default",
+            extends: ["builtin:default"],
             tools: { deploy: [{ decision: "deny" }] },
           },
         },
@@ -290,11 +290,11 @@ describe("permissions extension", () => {
         JSON.stringify({
           profiles: {
             "outer-review": {
-              extends: "builtin:default",
+              extends: ["builtin:default"],
               directories: ["/workspace"],
             },
             "inner-review": {
-              extends: "builtin:default",
+              extends: ["builtin:default"],
               directories: ["/workspace/coaching"],
             },
           },
@@ -317,7 +317,7 @@ describe("permissions extension", () => {
         JSON.stringify({
           profiles: {
             "home-bound": {
-              extends: "builtin:default",
+              extends: ["builtin:default"],
               directories: ["~/pi-permissions-home-binding-test"],
             },
           },
@@ -344,7 +344,7 @@ describe("permissions extension", () => {
         JSON.stringify({
           profiles: {
             "relative-bound": {
-              extends: "builtin:default",
+              extends: ["builtin:default"],
               directories: ["integrationTests"],
             },
           },
@@ -369,7 +369,7 @@ describe("permissions extension", () => {
         JSON.stringify({
           profiles: {
             "workspace-bound": {
-              extends: "builtin:default",
+              extends: ["builtin:default"],
               directories: ["/workspace"],
             },
           },
@@ -1111,7 +1111,7 @@ describe("permissions extension", () => {
         JSON.stringify({
           profiles: {
             "unprotected-review": {
-              extends: "builtin:default",
+              extends: ["builtin:default"],
               protectedPathPatterns: [],
               protectedPathExceptions: [],
             },
@@ -1440,7 +1440,7 @@ describe("permissions extension", () => {
           defaultProfile: "script-steering",
           profiles: {
             "script-steering": {
-              extends: "builtin:default",
+              extends: ["builtin:default"],
               tools: {
                 bash: [
                   {

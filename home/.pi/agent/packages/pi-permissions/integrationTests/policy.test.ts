@@ -186,7 +186,9 @@ describe("policy configuration contract", () => {
 
     const schema = parsed as SchemaShape;
     const profileSchema =
-      schema.properties.profiles.patternProperties["^(?!builtin:).+$"];
+      schema.properties.profiles.patternProperties[
+        "^(?!(?:builtin:|transform:)).+$"
+      ];
     if (!profileSchema) {
       throw new Error("missing profile schema fixture");
     }
@@ -207,6 +209,17 @@ describe("policy configuration contract", () => {
       Value.Check(schema as TSchema, {
         profiles: {
           "builtin:default": {
+            tools: { bash: [] },
+            readPaths: [{ pattern: "*", decision: "allow" }],
+            writePaths: [{ pattern: "*", decision: "allow" }],
+          },
+        },
+      }),
+    ).toBe(false);
+    expect(
+      Value.Check(schema as TSchema, {
+        profiles: {
+          "transform:evil": {
             tools: { bash: [] },
             readPaths: [{ pattern: "*", decision: "allow" }],
             writePaths: [{ pattern: "*", decision: "allow" }],

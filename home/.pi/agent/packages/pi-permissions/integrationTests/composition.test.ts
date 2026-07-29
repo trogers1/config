@@ -10,6 +10,7 @@ import { loadProfileConfig } from "../modules/profileConfig";
 const temporaryDirectories: string[] = [];
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const directory of temporaryDirectories.splice(0)) {
     fs.rmSync(directory, { recursive: true, force: true });
   }
@@ -29,54 +30,48 @@ const minimalPaths: Pick<ProfilePolicy, "readPaths" | "writePaths"> = {
 };
 
 describe("profile composition", () => {
-  it.fails(
-    "multi-extends folds left-to-right so the rightmost parent wins on conflicts",
-    () => {
-      const config = loadProfileConfig(
-        genericPolicyConfig,
-        writeConfig({
-          profiles: {
-            left: {
-              ...minimalPaths,
-              tools: { bash: [{ pattern: "demo", decision: "allow" }] },
-            },
-            right: {
-              ...minimalPaths,
-              tools: { bash: [{ pattern: "demo", decision: "deny" }] },
-            },
-            composed: {
-              extends: ["left", "right"],
-              ...minimalPaths,
-            },
+  it("multi-extends folds left-to-right so the rightmost parent wins on conflicts", () => {
+    const config = loadProfileConfig(
+      genericPolicyConfig,
+      writeConfig({
+        profiles: {
+          left: {
+            ...minimalPaths,
+            tools: { bash: [{ pattern: "demo", decision: "allow" }] },
           },
-        }),
-      );
-
-      expect(decideBash("demo", config.profiles.composed)).toBe("deny");
-    },
-  );
-
-  it.fails(
-    "fold-is-concatenation: extending read-only then default re-opens bash to ask",
-    () => {
-      const config = loadProfileConfig(
-        genericPolicyConfig,
-        writeConfig({
-          profiles: {
-            reopened: {
-              extends: ["builtin:read-only", "builtin:default"],
-            },
+          right: {
+            ...minimalPaths,
+            tools: { bash: [{ pattern: "demo", decision: "deny" }] },
           },
-        }),
-      );
+          composed: {
+            extends: ["left", "right"],
+            ...minimalPaths,
+          },
+        },
+      }),
+    );
 
-      expect(
-        decideBash("python scripts/build.py", config.profiles.reopened),
-      ).toBe("ask");
-    },
-  );
+    expect(decideBash("demo", config.profiles.composed)).toBe("deny");
+  });
 
-  it.fails("transform:deny-asks converts every ask to deny", () => {
+  it("fold-is-concatenation: extending read-only then default re-opens bash to ask", () => {
+    const config = loadProfileConfig(
+      genericPolicyConfig,
+      writeConfig({
+        profiles: {
+          reopened: {
+            extends: ["builtin:read-only", "builtin:default"],
+          },
+        },
+      }),
+    );
+
+    expect(
+      decideBash("python scripts/build.py", config.profiles.reopened),
+    ).toBe("ask");
+  });
+
+  it("transform:deny-asks converts every ask to deny", () => {
     const config = loadProfileConfig(
       genericPolicyConfig,
       writeConfig({
@@ -94,7 +89,7 @@ describe("profile composition", () => {
     ).toBe("deny");
   });
 
-  it.fails("transform:allow-asks converts every ask to allow", () => {
+  it("transform:allow-asks converts every ask to allow", () => {
     const config = loadProfileConfig(
       genericPolicyConfig,
       writeConfig({
@@ -112,7 +107,7 @@ describe("profile composition", () => {
     ).toBe("allow");
   });
 
-  it.fails("transform:ask-all converts every allow to ask", () => {
+  it("transform:ask-all converts every allow to ask", () => {
     const config = loadProfileConfig(
       genericPolicyConfig,
       writeConfig({
@@ -130,30 +125,152 @@ describe("profile composition", () => {
     );
   });
 
-  it.fails(
-    "load emits a warning when ordinary rules share a pattern with different decisions",
-    () => {
-      // Assumption: Phase 4 linting surfaces conflicts through console.warn (or an equivalent diagnostic channel).
-      const warnSpy = vi
-        .spyOn(console, "warn")
-        .mockImplementation(() => undefined);
+  it("transform:deny-all converts every decision to deny", () => {
+    const config = loadProfileConfig(
+      genericPolicyConfig,
+      writeConfig({
+        profiles: {
+          paranoid: {
+            extends: ["builtin:default"],
+            transforms: ["transform:deny-all"],
+          },
+        },
+      }),
+    );
 
+    expect(decideBash("ls", config.profiles.paranoid)).toBe("deny");
+    expect(decideBash("git status --short", config.profiles.paranoid)).toBe(
+      "deny",
+    );
+    expect(
+      decideBash("python scripts/build.py", config.profiles.paranoid),
+    ).toBe("deny");
+  });
+
+  it("empty transforms arrays are accepted as a no-op", () => {
+    const config = loadProfileConfig(
+      genericPolicyConfig,
+      writeConfig({
+        profiles: {
+          unchanged: {
+            extends: ["builtin:default"],
+            transforms: [],
+          },
+        },
+      }),
+    );
+
+    expect(
+      decideBash("python scripts/build.py", config.profiles.unchanged),
+    ).toBe("ask");
+  });
+
+  it("transform:deny-asks transforms inherited rules but preserves profile overrides to bash, path, and custom-tool rules", () => {
+    const config = loadProfileConfig(
+      genericPolicyConfig,
+      writeConfig({
+        profiles: {
+          "worker-like": {
+            extends: ["builtin:default"],
+            transforms: ["transform:deny-asks"],
+            tools: {
+              bash: [{ pattern: "custom *", decision: "ask" }],
+              deploy: [{ decision: "ask" }],
+            },
+            readPaths: [{ pattern: "docs/**", decision: "ask" }],
+            writePaths: [{ pattern: "docs/**", decision: "ask" }],
+          },
+        },
+      }),
+    );
+
+    const policy = config.profiles["worker-like"];
+    // The inherited default policy is transformed.
+    expect(decideBash("python scripts/build.py", policy)).toBe("deny");
+
+    // Rules declared by this profile are deliberate final overrides.
+    expect(decideBash("custom build", policy)).toBe("ask");
+    expect(
+      policy.readPaths.find((rule) => rule.pattern === "docs/**")?.decision,
+    ).toBe("ask");
+    expect(
+      policy.writePaths.find((rule) => rule.pattern === "docs/**")?.decision,
+    ).toBe("ask");
+    expect(policy.tools.deploy?.[0].decision).toBe("ask");
+  });
+
+  it("transform order is applied left-to-right", () => {
+    const config = loadProfileConfig(
+      genericPolicyConfig,
+      writeConfig({
+        profiles: {
+          ordered: {
+            extends: ["builtin:default"],
+            transforms: ["transform:allow-asks", "transform:deny-asks"],
+          },
+        },
+      }),
+    );
+
+    expect(decideBash("python scripts/build.py", config.profiles.ordered)).toBe(
+      "allow",
+    );
+  });
+
+  it("unknown transform names fail loudly with a path to the bad entry", () => {
+    expect(() =>
       loadProfileConfig(
         genericPolicyConfig,
         writeConfig({
           profiles: {
-            "override-status": {
+            invalid: {
               extends: ["builtin:default"],
-              tools: {
-                bash: [{ pattern: "git status", decision: "deny" }],
-              },
+              transforms: ["transform:missing"],
             },
           },
         }),
-      );
+      ),
+    ).toThrowError(/\/profiles\/invalid\/transforms\/0/);
+  });
 
-      expect(warnSpy).toHaveBeenCalled();
-      warnSpy.mockRestore();
-    },
-  );
+  it("empty extends arrays fail validation", () => {
+    expect(() =>
+      loadProfileConfig(
+        genericPolicyConfig,
+        writeConfig({
+          profiles: {
+            invalid: {
+              extends: [],
+              readPaths: [{ pattern: "*", decision: "allow" }],
+              writePaths: [{ pattern: "*", decision: "allow" }],
+            },
+          },
+        }),
+      ),
+    ).toThrowError(/\/profiles\/invalid\/extends/);
+  });
+
+  it("load emits a warning when ordinary rules share a pattern with different decisions", () => {
+    // Assumption: Phase 4 linting surfaces conflicts through console.warn (or an equivalent diagnostic channel).
+    const warnSpy = vi
+      .spyOn(console, "warn")
+      .mockImplementation(() => undefined);
+
+    loadProfileConfig(
+      genericPolicyConfig,
+      writeConfig({
+        profiles: {
+          "override-status": {
+            extends: ["builtin:default"],
+            tools: {
+              bash: [{ pattern: "git status", decision: "deny" }],
+            },
+          },
+        },
+      }),
+    );
+
+    expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
 });
