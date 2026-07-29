@@ -634,7 +634,9 @@ end
 -- plugin serializes a sidecar.  A modified Neovim buffer and a changed file
 -- are a real conflict; do not pick a winner and silently discard a reply.
 local function import_external_sidecar_changes(src_path, opts)
-  opts = opts or {}
+  -- `string.gsub` returns a second, numeric result. Be defensive in case a
+  -- caller forwards it accidentally as the optional argument.
+  opts = type(opts) == 'table' and opts or {}
   local state = get_or_create_state(src_path)
   local sidecar_path = M.get_sidecar_path(src_path)
   local disk_lines, disk_fingerprint = sidecar_disk_snapshot(sidecar_path)
@@ -720,7 +722,10 @@ function M.get_sidecar_path(src_filepath)
 end
 
 function M.get_source_path(sidecar_filepath)
-  return sidecar_filepath:gsub(vim.pesc(M.config.sidecar_ext) .. '$', '')
+  -- Do not leak gsub's second return value (the substitution count) to a
+  -- caller that forwards this function call as an argument.
+  local source_path = sidecar_filepath:gsub(vim.pesc(M.config.sidecar_ext) .. '$', '')
+  return source_path
 end
 
 function M.format_reference(start_line, end_line, start_col, end_col, kind)
@@ -1174,6 +1179,10 @@ function M.setup_autocommands()
       local state = get_or_create_state(src_path)
       local src_buf = state.src_buf or find_buffer_by_name(src_path)
 
+      local _, fingerprint = sidecar_disk_snapshot(M.get_sidecar_path(src_path))
+      state.sidecar_fingerprint = fingerprint
+      state.external_conflict_fingerprint = nil
+
       if valid_buf(src_buf) then
         state.src_buf = src_buf
         M.setup_highlighting(src_buf)
@@ -1190,9 +1199,10 @@ function M.setup(opts)
     fg = '#ffd7d7',
     bold = true,
   })
+  local range_bg = vim.o.background == 'dark' and '#3f1d1d' or '#fcefef'
 
   vim.api.nvim_set_hl(0, M.config.range_highlight_group, {
-    bg = '#fcefef',
+    bg = range_bg,
   })
 
   M.setup_autocommands()
