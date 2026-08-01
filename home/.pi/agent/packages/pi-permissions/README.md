@@ -39,8 +39,8 @@ weakening the others:
 ```jsonc
 {
   "profiles": {
-    "default": {
-      "extends": "default",
+    "custom-default": {
+      "extends": ["builtin:default"],
       "readPaths": [
         {
           "pattern": "**",
@@ -83,7 +83,7 @@ configuration is data, not executable code. Add the bundled schema as
   "defaultProfile": "client-work",
   "profiles": {
     "client-work": {
-      "extends": "builtin:default",
+      "extends": ["builtin:default"],
       "directories": ["~/Code/client"],
     },
   },
@@ -91,11 +91,16 @@ configuration is data, not executable code. Add the bundled schema as
 ```
 
 `extends` is optional. When supplied, it names a built-in profile by its
-canonical name (for example `builtin:default`) or another custom profile.
-Custom profile names are exact: `extends: "default"` resolves only a custom
-profile literally named `default`; it does not fall back to `builtin:default`.
-Non-empty tool-rule arrays and path-rule arrays are appended to inherited
-rules, so later rules continue to override earlier matches. An empty
+canonical name (for example `builtin:default`), a shipped rule set by its
+`ruleset:` name, or another custom profile. Custom profile names are exact:
+`extends: ["default"]` resolves only a custom profile literally named
+`default`; it does not fall back to `builtin:default`. `extends` concatenates
+left-to-right, so a from-scratch profile can layer `ruleset:shell`,
+`ruleset:git`, `ruleset:packageManagers`, `ruleset:guards`, and
+`ruleset:paths` as needed. When authoring a new policy from scratch, include
+`ruleset:guards` so destructive shell guards stay in force. Non-empty tool-rule
+arrays and path-rule arrays are appended to inherited rules, and specificity
+is resolved before order; order only breaks specificity ties. An empty
 custom-tool array deliberately clears that tool's inherited rules while keeping
 the tool configured; because no rule then matches, calls default to `ask`. An
 empty `tools.bash` array removes the inherited Bash command rules, which also
@@ -109,18 +114,18 @@ extension registered but blocks permissions until the file is fixed.
 persisted profile selection. TypeScript consumers should import the public
 policy types from `taylor-pi-permissions/config`.
 
-User-defined profile names must not start with `builtin:`. Defining a profile
-such as `builtin:default` in the user configuration is a hard validation error;
-the extension remains registered but blocks every tool call until the reserved
-name is removed. There are no legacy aliases: old unnamespaced built-in
-selectors such as `worker` or `read-only` fail closed with the list of available
-canonical names.
+User-defined profile names must not start with `builtin:`, `ruleset:`, or
+`transform:`. Defining a profile such as `builtin:default` in the user
+configuration is a hard validation error; the extension remains registered but
+blocks every tool call until the reserved name is removed. There are no legacy
+aliases: old unnamespaced built-in selectors such as `worker` or `read-only`
+fail closed with the list of available canonical names.
 
 ## Subagent environment
 
 The package consumes the environment variables exported by `pi-permissions-subagents`:
 
-- `PI_SUBAGENT_PROFILE` selects the initial profile and overrides directory and persisted profile selection in a resumed worker session. Use canonical built-in names such as `builtin:worker`; an unknown or unnamespaced old name like `worker` fails startup with the list of available profiles rather than silently granting the default policy.
+- `PI_SUBAGENT_PROFILE` selects the initial profile and overrides directory and persisted profile selection in a resumed worker session. Use canonical built-in or custom profile names such as `builtin:worker` or `client-work`; an unknown or unnamespaced old name like `worker` fails startup with the list of available profiles rather than silently granting the default policy.
 - `PI_SUBAGENT_PERMISSIBLE_GLOBS` is a comma-separated list of paths or glob patterns relative to Pi's startup directory. When present, `edit`, `write`, Bash path references, and Bash output redirections are denied outside the declared scopes. Plain paths include their descendants; for example, `src` permits both `src` and `src/**`.
 
 The permissible-scope layer only narrows the selected profile, so protected-path and command restrictions still apply inside an allowed scope. Pi's dedicated read tools retain the profile's normal read access.
@@ -138,7 +143,8 @@ Supported colors: `black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, 
 
 ## Policy model
 
-Profiles have one command-rule map and two ordered path-rule arrays. Later matches override earlier matches.
+Profiles have one command-rule map and two ordered path-rule arrays.
+Resolution is specificity-first; order only breaks ties.
 
 - `tools.bash` patterns match normalized shell command segments.
 - Other `tools.<name>` entries configure custom tools by matching glob patterns against named input properties. The built-in path tools cannot be configured here; they use the path arrays below.
@@ -161,11 +167,11 @@ For example:
 }
 ```
 
-Because later matching rules win, steering comes only from the rule that made the final deny decision. For compound bash commands, steering from each denied segment is combined and deduplicated.
+Because matching is specificity-first, steering comes only from the rule that made the final deny decision. For compound bash commands, steering from each denied segment is combined and deduplicated.
 
 ### Custom tools
 
-Any tool name other than `bash` and the reserved path tools (`read`, `grep`, `find`, `ls`, `edit`, and `write`) can have profile rules. A custom rule's optional `match` object maps dot-separated input property paths to glob patterns. Every property matcher must match; a rule without `match` is a catch-all. Values are matched as strings, while non-string values use their JSON representation. Later matching rules win, and a configured custom tool with no matching rule defaults to `ask`. If a tool has no configured rules at all, this package does not add a custom-tool policy for it.
+Any tool name other than `bash` and the reserved path tools (`read`, `grep`, `find`, `ls`, `edit`, and `write`) can have profile rules. A custom rule's optional `match` object maps dot-separated input property paths to glob patterns. Every property matcher must match; a rule without `match` is a catch-all. Values are matched as strings, while non-string values use their JSON representation. Matching rules resolve by specificity, with later rules breaking ties; a configured custom tool with no matching rule defaults to `ask`. If a tool has no configured rules at all, this package does not add a custom-tool policy for it.
 
 ```jsonc
 "tools": {
@@ -189,7 +195,7 @@ Any tool name other than `bash` and the reserved path tools (`read`, `grep`, `fi
 
 Built-in path tool names are rejected under `tools` so stale per-tool path configuration cannot silently bypass `readPaths` or `writePaths`.
 
-Bash syntax is parsed with `unbash`; that proves the shell structure and token boundaries, not the executable semantics of every word. Limited command adapters add command-specific meaning for a small shipped surface, mainly ripgrep/readers, package managers, and Git, so only clearly understood operands can be treated less conservatively: ripgrep patterns, Git revisions, and package manager script names after `run`/`run-script` are proven non-paths, while package manager directory options such as `--prefix` stay gated paths. All Bash filesystem operands except `cd` targets, including input and output redirections, use `writePaths` and the `bash` context. Parser errors and semantic uncertainty ask interactively and block non-interactively. This intentionally avoids guessing whether an arbitrary command, script, argument, or substitution will mutate a path. Bash command rules remain a separate layer: they decide whether the operation itself is allowed, while `writePaths` decides where an allowed command may access the filesystem. Profiles can deny shell readers such as `grep` with guidance toward Pi's dedicated read tools when they want broader read access than Bash access.
+Bash syntax is parsed with `unbash`; that proves the shell structure and token boundaries, not the executable semantics of every word. Limited command adapters add command-specific meaning for a small shipped surface, mainly ripgrep/readers, package managers, and Git, so only clearly understood operands can be treated less conservatively: ripgrep patterns, Git revisions, and package manager script names after `run`/`run-script` are proven non-paths, while package manager directory options such as `--prefix` stay gated paths. All Bash filesystem operands except `cd` targets, including input and output redirections, use `writePaths` and the `bash` context. Parser errors and semantic uncertainty ask interactively and block non-interactively. This intentionally avoids guessing whether an arbitrary command, script, argument, or substitution will mutate a path. Bash command rules remain a separate layer: they decide whether the operation itself is allowed, while `writePaths` decides where an allowed command may access the filesystem. Profile and rule-set bash rules resolve specificity-first; order only breaks specificity ties. Profiles can deny shell readers such as `grep` with guidance toward Pi's dedicated read tools when they want broader read access than Bash access.
 
 For example, this permits dedicated edits throughout `src`, while allowing Bash only in `src/generated`:
 

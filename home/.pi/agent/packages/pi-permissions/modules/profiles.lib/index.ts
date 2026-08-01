@@ -5,13 +5,12 @@ import {
   type ProfilePolicy,
 } from "../policyHelpers";
 import {
-  defaultReadPaths,
-  defaultWritePaths,
   readOnlyPathRules,
   readOnlyWritePathRules,
+  ruleSetRegistry,
   testFilePatterns,
 } from "../ruleSets.lib/index";
-import { defaultShellRules, readOnlyShellRules } from "../ruleSets.lib/index";
+import { readOnlyShellRules } from "../ruleSets.lib/index";
 import { defaultProtectedPathRules } from "../protectedPaths";
 
 const baseProfile: ProfilePolicy = {
@@ -22,9 +21,16 @@ const baseProfile: ProfilePolicy = {
   // For bash, patterns match normalized command segments.
   // For path-based tools, patterns match paths relative to pi's startup directory.
   // Outside paths appear as ../..., so use ../** to gate external access.
-  tools: { bash: defaultShellRules },
-  readPaths: defaultReadPaths(),
-  writePaths: defaultWritePaths(),
+  tools: {
+    bash: [
+      ...(ruleSetRegistry["ruleset:shell"].tools?.bash ?? []),
+      ...(ruleSetRegistry["ruleset:git"].tools?.bash ?? []),
+      ...(ruleSetRegistry["ruleset:packageManagers"].tools?.bash ?? []),
+      ...(ruleSetRegistry["ruleset:guards"].tools?.bash ?? []),
+    ],
+  },
+  readPaths: [...(ruleSetRegistry["ruleset:paths"].readPaths ?? [])],
+  writePaths: [...(ruleSetRegistry["ruleset:paths"].writePaths ?? [])],
   protectedPathRules: defaultProtectedPathRules,
 };
 

@@ -185,7 +185,7 @@ describe("policy configuration contract", () => {
     const schema = parsed as SchemaShape;
     const profileSchema =
       schema.properties.profiles.patternProperties[
-        "^(?!(?:builtin:|transform:)).+$"
+        "^(?!(?:builtin:|ruleset:|transform:)).+$"
       ];
     if (!profileSchema) {
       throw new Error("missing profile schema fixture");

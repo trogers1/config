@@ -11,7 +11,11 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-const reservedProfilePrefixes = [builtinProfilePrefix, "transform:"] as const;
+const reservedProfilePrefixes = [
+  builtinProfilePrefix,
+  "ruleset:",
+  "transform:",
+] as const;
 
 const customProfileNamePattern = `^(?!(?:${reservedProfilePrefixes
   .map((prefix) => escapeRegExp(prefix))
@@ -334,7 +338,7 @@ const nonInteractiveGuidance =
 
 const profileTransformRegistry: Record<
   ProfileTransformName,
-  (policy: ProfilePolicy) => ProfilePolicy
+  (policy: Partial<ProfilePolicy>) => Partial<ProfilePolicy>
 > = {
   "transform:deny-asks": denyAsksTransform,
   "transform:allow-asks": allowAsksTransform,
@@ -342,7 +346,9 @@ const profileTransformRegistry: Record<
   "transform:deny-all": denyAllTransform,
 };
 
-function denyAsksTransform(policy: ProfilePolicy): ProfilePolicy {
+function denyAsksTransform(
+  policy: Partial<ProfilePolicy>,
+): Partial<ProfilePolicy> {
   return mapProfileRules(policy, (rule) =>
     rule.decision === "ask"
       ? {
@@ -354,26 +360,40 @@ function denyAsksTransform(policy: ProfilePolicy): ProfilePolicy {
   );
 }
 
-function allowAsksTransform(policy: ProfilePolicy): ProfilePolicy {
+function allowAsksTransform(
+  policy: Partial<ProfilePolicy>,
+): Partial<ProfilePolicy> {
   return mapProfileRules(policy, (rule) =>
     rule.decision === "ask" ? { ...rule, decision: "allow" } : rule,
   );
 }
 
-function askAllTransform(policy: ProfilePolicy): ProfilePolicy {
+function askAllTransform(
+  policy: Partial<ProfilePolicy>,
+): Partial<ProfilePolicy> {
   return mapProfileRules(policy, (rule) =>
     rule.decision === "allow" ? { ...rule, decision: "ask" } : rule,
   );
 }
 
-function denyAllTransform(policy: ProfilePolicy): ProfilePolicy {
+function denyAllTransform(
+  policy: Partial<ProfilePolicy>,
+): Partial<ProfilePolicy> {
   return mapProfileRules(policy, (rule) => ({ ...rule, decision: "deny" }));
 }
 
 export function applyPolicyTransforms(
   policy: ProfilePolicy,
   transforms: readonly ProfileTransformName[],
-): ProfilePolicy {
+): ProfilePolicy;
+export function applyPolicyTransforms(
+  policy: Partial<ProfilePolicy>,
+  transforms: readonly ProfileTransformName[],
+): Partial<ProfilePolicy>;
+export function applyPolicyTransforms(
+  policy: Partial<ProfilePolicy>,
+  transforms: readonly ProfileTransformName[],
+): Partial<ProfilePolicy> {
   return transforms.reduce(
     (current, transformName) =>
       profileTransformRegistry[transformName](current),
@@ -383,9 +403,17 @@ export function applyPolicyTransforms(
 
 export function extendProfile(
   base: ProfilePolicy,
-  override: ProfilePolicyOverride,
-): ProfilePolicy {
-  const mergedTools: ProfilePolicy["tools"] = structuredClone(base.tools);
+  override: Partial<ProfilePolicy>,
+): ProfilePolicy;
+export function extendProfile(
+  base: Partial<ProfilePolicy>,
+  override: Partial<ProfilePolicy>,
+): Partial<ProfilePolicy>;
+export function extendProfile(
+  base: Partial<ProfilePolicy>,
+  override: Partial<ProfilePolicy>,
+): Partial<ProfilePolicy> {
+  const mergedTools: ProfilePolicy["tools"] = structuredClone(base.tools ?? {});
 
   // Append override rules; later rules win only when specificity ties.
   for (const [toolName, overrideRules] of Object.entries(
@@ -423,26 +451,26 @@ export function extendProfile(
     ...base,
     ...override,
     tools: mergedTools,
-    readPaths: [...base.readPaths, ...(override.readPaths ?? [])],
-    writePaths: [...base.writePaths, ...(override.writePaths ?? [])],
+    readPaths: [...(base.readPaths ?? []), ...(override.readPaths ?? [])],
+    writePaths: [...(base.writePaths ?? []), ...(override.writePaths ?? [])],
     protectedPathRules: mergedProtectedPathRules,
   };
 }
 
 function mapProfileRules(
-  policy: ProfilePolicy,
+  policy: Partial<ProfilePolicy>,
   mapRule: <T extends { decision: Decision; guidance?: string }>(rule: T) => T,
-): ProfilePolicy {
+): Partial<ProfilePolicy> {
   return {
     ...policy,
     tools: Object.fromEntries(
-      Object.entries(policy.tools).map(([toolName, rules]) => [
+      Object.entries(policy.tools ?? {}).map(([toolName, rules]) => [
         toolName,
         rules?.map(mapRule) ?? [],
       ]),
     ),
-    readPaths: policy.readPaths.map(mapRule),
-    writePaths: policy.writePaths.map(mapRule),
+    readPaths: (policy.readPaths ?? []).map(mapRule),
+    writePaths: (policy.writePaths ?? []).map(mapRule),
     protectedPathRules: policy.protectedPathRules,
   };
 }
@@ -457,18 +485,18 @@ export function warnOnPolicyRuleConflicts(
 
 export function warnOnProfileRuleConflicts(
   profileName: string,
-  profile: ProfilePolicy,
+  profile: Partial<ProfilePolicy>,
 ): void {
-  warnOnRuleConflicts(profileName, "bash", profile.tools.bash ?? []);
+  warnOnRuleConflicts(profileName, "bash", profile.tools?.bash ?? []);
 
-  for (const [toolName, rules] of Object.entries(profile.tools)) {
+  for (const [toolName, rules] of Object.entries(profile.tools ?? {})) {
     if (toolName === "bash" || !rules) continue;
     assertCustomToolRuleArray(toolName, rules);
     warnOnCustomToolRuleConflicts(profileName, toolName, rules);
   }
 
-  warnOnPathRuleConflicts(profileName, "readPaths", profile.readPaths);
-  warnOnPathRuleConflicts(profileName, "writePaths", profile.writePaths);
+  warnOnPathRuleConflicts(profileName, "readPaths", profile.readPaths ?? []);
+  warnOnPathRuleConflicts(profileName, "writePaths", profile.writePaths ?? []);
 }
 
 function warnOnRuleConflicts(

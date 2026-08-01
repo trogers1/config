@@ -13,11 +13,12 @@ import {
   isReservedProfileName,
   profileConfigFileSchema,
   warnOnPolicyRuleConflicts,
-  type profileTransformNames,
   type PolicyConfig,
   type ProfileConfigFile,
   type ProfilePolicy,
+  type ProfileTransformName,
 } from "./policyHelpers";
+import { ruleSetRegistry } from "./ruleSets.lib/index";
 
 export class ProfileConfigLoadError extends Error {
   readonly configPath: string;
@@ -46,6 +47,10 @@ const defaultProfileConfigPath = path.join(
 
 function isProfileConfigFile(value: unknown): value is ProfileConfigFile {
   return Value.Check(profileConfigFileSchema, value);
+}
+
+function isRuleSetName(name: string): name is keyof typeof ruleSetRegistry {
+  return Object.hasOwn(ruleSetRegistry, name);
 }
 
 /**
@@ -83,7 +88,9 @@ export function loadProfileConfig(
         if (!isReservedProfileName(name)) continue;
         const reservedPrefix = isBuiltinProfileName(name)
           ? builtinProfilePrefix
-          : "transform:";
+          : name.startsWith("ruleset:")
+            ? "ruleset:"
+            : "transform:";
         throwProfileConfigError(
           configPath,
           `/profiles/${name}: reserved profile name '${name}' begins with '${reservedPrefix}'`,
@@ -110,9 +117,9 @@ export function loadProfileConfig(
     const resolving = new Set<string>();
 
     const applyTransforms = (
-      policy: ProfilePolicy,
-      transforms: readonly (typeof profileTransformNames)[number][] | undefined,
-    ): ProfilePolicy => {
+      policy: Partial<ProfilePolicy>,
+      transforms: readonly ProfileTransformName[] | undefined,
+    ): Partial<ProfilePolicy> => {
       if (!transforms || transforms.length === 0) return policy;
       return applyPolicyTransforms(policy, transforms);
     };
@@ -120,7 +127,7 @@ export function loadProfileConfig(
     const resolveProfile = (
       target: string,
       referrer: string = target,
-    ): ProfilePolicy => {
+    ): Partial<ProfilePolicy> => {
       if (target.startsWith("transform:")) {
         throwProfileConfigError(
           configPath,
@@ -137,13 +144,25 @@ export function loadProfileConfig(
         }
         return builtin;
       }
+      if (isRuleSetName(target)) {
+        return ruleSetRegistry[target];
+      }
+      if (target.startsWith("ruleset:")) {
+        throwProfileConfigError(
+          configPath,
+          `/profiles/${referrer}/extends: unknown rule set '${target}'`,
+        );
+      }
 
-      if (resolvedUsers[target]) return resolvedUsers[target];
+      if (Object.hasOwn(resolvedUsers, target)) return resolvedUsers[target];
 
-      const definition = userDefinitions[target];
+      const definition = Object.hasOwn(userDefinitions, target)
+        ? userDefinitions[target]
+        : undefined;
       if (!definition) {
         const available = [
           ...Object.keys(builtins),
+          ...Object.keys(ruleSetRegistry),
           ...Object.keys(userDefinitions),
         ].join(", ");
         const suggestion = isBuiltinProfileName(referrer)
@@ -163,9 +182,8 @@ export function loadProfileConfig(
       resolving.add(target);
 
       const { extends: parents = [], transforms, ...override } = definition;
-      let resolved: ProfilePolicy;
+      let resolved: Partial<ProfilePolicy>;
       if (parents.length === 0) {
-        assertProfilePolicy(override);
         resolved = override;
       } else {
         resolved = resolveProfile(parents[0], target);
@@ -177,9 +195,12 @@ export function loadProfileConfig(
         resolved = applyTransforms(resolved, transforms);
         resolved = extendProfile(resolved, override);
       }
+      // Rule sets may be partial while they are folded, but every named user
+      // profile must be complete before it enters the resolved profile map.
+      assertProfilePolicy(resolved);
       resolvedUsers[target] = resolved;
       resolving.delete(target);
-      return resolvedUsers[target];
+      return resolved;
     };
 
     for (const name of Object.keys(userDefinitions)) resolveProfile(name);

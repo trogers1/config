@@ -1,12 +1,14 @@
-/* eslint-disable @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-assignment */
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { decideBash } from "../extensions/permissions";
 import { policyConfig as genericPolicyConfig } from "../modules/policy";
-import { defaultGuardRules } from "../modules/ruleSets.lib/index";
-import * as policyHelpers from "../modules/policyHelpers";
+import {
+  defaultGuardRules,
+  ruleSetNames,
+  ruleSetRegistry,
+} from "../modules/ruleSets.lib/index";
 import type { ProfilePolicy } from "../modules/policyHelpers";
 import { loadProfileConfig } from "../modules/profileConfig";
 
@@ -36,30 +38,27 @@ describe("rule-set namespace", () => {
     expect(defaultGuardRules.length).toBeGreaterThan(0);
   });
 
-  it.fails(
-    "ruleset:guards resolves to the shipped guards partial policy",
-    () => {
-      const config = loadProfileConfig(
-        genericPolicyConfig,
-        writeConfig({
-          profiles: {
-            guarded: {
-              extends: ["ruleset:guards"],
-              ...minimalPaths,
-            },
+  it("ruleset:guards resolves to the shipped guards partial policy", () => {
+    const config = loadProfileConfig(
+      genericPolicyConfig,
+      writeConfig({
+        profiles: {
+          guarded: {
+            extends: ["ruleset:guards"],
+            ...minimalPaths,
           },
-        }),
-      );
+        },
+      }),
+    );
 
-      expect(
-        config.profiles.guarded.tools.bash?.some(
-          (rule) => rule.pattern === "find * -delete*",
-        ),
-      ).toBe(true);
-    },
-  );
+    expect(
+      config.profiles.guarded.tools.bash?.some(
+        (rule) => rule.pattern === "find * -delete*",
+      ),
+    ).toBe(true);
+  });
 
-  it.fails("user profiles may not use the reserved ruleset: prefix", () => {
+  it("user profiles may not use the reserved ruleset: prefix", () => {
     expect(() =>
       loadProfileConfig(
         genericPolicyConfig,
@@ -74,7 +73,7 @@ describe("rule-set namespace", () => {
     ).toThrow(/reserved profile name/);
   });
 
-  it.fails("unknown rule set names fail loudly", () => {
+  it("unknown rule set names fail loudly", () => {
     expect(() =>
       loadProfileConfig(
         genericPolicyConfig,
@@ -90,7 +89,23 @@ describe("rule-set namespace", () => {
     ).toThrow(/unknown rule set/);
   });
 
-  it.fails("extends can mix builtin profiles and rule sets", () => {
+  it("prototype properties do not resolve as rule sets", () => {
+    expect(() =>
+      loadProfileConfig(
+        genericPolicyConfig,
+        writeConfig({
+          profiles: {
+            custom: {
+              extends: ["constructor"],
+              ...minimalPaths,
+            },
+          },
+        }),
+      ),
+    ).toThrow(/unknown inherited profile/);
+  });
+
+  it("extends can mix builtin profiles and rule sets", () => {
     const config = loadProfileConfig(
       genericPolicyConfig,
       writeConfig({
@@ -106,12 +121,36 @@ describe("rule-set namespace", () => {
     expect(decideBash("find . -delete", config.profiles.mixed)).toBe("deny");
   });
 
-  it.fails(
-    "the TypeScript rule-set registry is the same registry JSONC resolves against",
-    () => {
-      // @ts-expect-error future exported registry
-      const names: string[] = policyHelpers.ruleSetNames?.() ?? [];
-      expect(names).toContain("ruleset:guards");
-    },
-  );
+  it("the TypeScript rule-set registry is the same registry JSONC resolves against", () => {
+    expect(ruleSetNames()).toEqual(Object.keys(ruleSetRegistry));
+
+    for (const name of ruleSetNames()) {
+      const config = loadProfileConfig(
+        genericPolicyConfig,
+        writeConfig({
+          profiles: {
+            comparison: {
+              extends: [name],
+              ...minimalPaths,
+            },
+          },
+        }),
+      );
+      const resolved = config.profiles.comparison;
+      const registered = ruleSetRegistry[name];
+
+      expect(resolved.tools.bash ?? []).toEqual(registered.tools?.bash ?? []);
+
+      if (registered.readPaths) {
+        expect(
+          resolved.readPaths.slice(0, registered.readPaths.length),
+        ).toEqual(registered.readPaths);
+      }
+      if (registered.writePaths) {
+        expect(
+          resolved.writePaths.slice(0, registered.writePaths.length),
+        ).toEqual(registered.writePaths);
+      }
+    }
+  });
 });

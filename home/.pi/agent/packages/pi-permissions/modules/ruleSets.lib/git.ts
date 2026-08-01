@@ -33,7 +33,7 @@ const sharedGitReadRules: Rule[] = [
   { pattern: "git show-branch *", decision: "allow" },
 ];
 
-export const defaultGitRules: Rule[] = [
+const defaultGitReadRules: Rule[] = [
   { pattern: "git status", decision: "allow" },
   { pattern: "git status *", decision: "allow" },
   { pattern: "git log", decision: "allow" },
@@ -68,6 +68,52 @@ export const defaultGitRules: Rule[] = [
   { pattern: "git stash list *", decision: "allow" },
   { pattern: "git stash show *", decision: "allow" },
   ...sharedGitReadRules,
+];
+
+export const defaultGitRules: Rule[] = [
+  { pattern: "git *", decision: "ask" },
+
+  ...defaultGitReadRules,
+  { pattern: "git branch *", decision: "deny" },
+  { pattern: "git rebase *", decision: "deny" },
+  { pattern: "git switch *", decision: "deny" },
+  { pattern: "git tag *", decision: "deny" },
+  { pattern: "git commit *", decision: "deny" },
+  { pattern: "git push *", decision: "deny" },
+  { pattern: "git checkout *", decision: "deny" },
+  { pattern: "git add *", decision: "deny" },
+  { pattern: "git worktree *", decision: "deny" },
+
+  { pattern: "git branch", decision: "allow" },
+  { pattern: "git branch --show-current", decision: "allow" },
+  { pattern: "git branch --list", decision: "allow" },
+  { pattern: "git branch --list *", decision: "allow" },
+  { pattern: "git branch --contains *", decision: "allow" },
+  { pattern: "git branch --merged *", decision: "allow" },
+  { pattern: "git branch --no-merged *", decision: "allow" },
+  { pattern: "git branch --points-at *", decision: "allow" },
+  { pattern: "git branch --all", decision: "allow" },
+  { pattern: "git branch --remotes", decision: "allow" },
+  { pattern: "git branch -a", decision: "allow" },
+  { pattern: "git branch -r", decision: "allow" },
+  { pattern: "git branch -v", decision: "allow" },
+  { pattern: "git branch -vv", decision: "allow" },
+  { pattern: "git branch -av", decision: "allow" },
+  { pattern: "git branch -avv", decision: "allow" },
+  { pattern: "git branch -rv", decision: "allow" },
+  { pattern: "git branch -rvv", decision: "allow" },
+  { pattern: "git tag", decision: "allow" },
+  { pattern: "git tag --list", decision: "allow" },
+  { pattern: "git tag --list *", decision: "allow" },
+  { pattern: "git tag --contains *", decision: "allow" },
+  { pattern: "git tag --merged *", decision: "allow" },
+  { pattern: "git tag --no-merged *", decision: "allow" },
+  { pattern: "git tag --points-at *", decision: "allow" },
+  { pattern: "git tag -l", decision: "allow" },
+  { pattern: "git tag -l *", decision: "allow" },
+  { pattern: "git tag --sort*", decision: "allow" },
+  { pattern: "git worktree list", decision: "allow" },
+  { pattern: "git worktree list *", decision: "allow" },
 ];
 
 export const readOnlyGitRules: Rule[] = [
