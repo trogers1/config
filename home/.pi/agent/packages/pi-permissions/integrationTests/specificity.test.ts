@@ -373,8 +373,7 @@ describe("specificity-first rule resolution", () => {
     const policy = {
       ...bashProfile([{ pattern: "*", decision: "allow" }]),
       writePaths: [{ pattern: "*", decision: "allow" }],
-      protectedPathPatterns: ["**/.env*"],
-      protectedPathExceptions: [],
+      protectedPathRules: [{ pattern: "**/.env*", decision: "deny" }],
     } satisfies ProfilePolicy;
     const absolute = path.resolve(startupCwd, ".env");
     expect(
@@ -384,8 +383,7 @@ describe("specificity-first rule resolution", () => {
         policy.readPaths,
         "allow",
         "read",
-        policy.protectedPathPatterns,
-        policy.protectedPathExceptions,
+        policy.protectedPathRules,
       ),
     ).toMatchObject({ decision: "deny" });
     expect(
@@ -395,8 +393,7 @@ describe("specificity-first rule resolution", () => {
         policy.writePaths,
         "allow",
         "write",
-        policy.protectedPathPatterns,
-        policy.protectedPathExceptions,
+        policy.protectedPathRules,
       ),
     ).toMatchObject({ decision: "deny" });
     expect(
@@ -405,8 +402,7 @@ describe("specificity-first rule resolution", () => {
         startupCwd,
         startupCwd,
         policy,
-        policy.protectedPathPatterns,
-        policy.protectedPathExceptions,
+        policy.protectedPathRules,
       ),
     ).toMatchObject({ decision: "deny" });
   });

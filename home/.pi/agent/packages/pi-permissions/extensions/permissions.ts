@@ -18,7 +18,6 @@ import {
 import {
   injectGrepProtectedPathGlob,
   injectRipgrepProtectedPathGlobs,
-  validateRipgrepGlobOverrides,
 } from "../modules/shell/searchPolicy";
 import { validateReadCommands } from "../modules/shell/readCommands";
 import {
@@ -31,7 +30,7 @@ import {
   assertProfilePolicy,
   definePolicyConfig,
   extendProfile,
-  withProtectedPathPatterns,
+  withProtectedPathRules,
   type CustomToolRule,
   type Decision,
   type PathContext,
@@ -61,7 +60,7 @@ export {
   assertProfilePolicy,
   definePolicyConfig,
   extendProfile,
-  withProtectedPathPatterns,
+  withProtectedPathRules,
 };
 export type {
   CustomToolRule,
@@ -431,16 +430,9 @@ The permissions gate remains loaded and will fail closed until the profile is co
       );
       if (scopeDecision) return scopeDecision;
 
-      const ripgrepGlobError = validateRipgrepGlobOverrides(
-        command,
-        policy.protectedPathPatterns ?? [],
-        policy.protectedPathExceptions,
-      );
-      if (ripgrepGlobError) return { block: true, reason: ripgrepGlobError };
-
       event.input.command = injectRipgrepProtectedPathGlobs(
         command,
-        policy.protectedPathPatterns ?? [],
+        policy.protectedPathRules ?? [],
       );
       return await gateBash(event.input.command, startupCwd, ctx, policy);
     }
@@ -448,8 +440,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
     if (isToolCallEventType("grep", event)) {
       const reason = injectGrepProtectedPathGlob(
         event.input,
-        policy.protectedPathPatterns ?? [],
-        policy.protectedPathExceptions,
+        policy.protectedPathRules ?? [],
       );
       if (reason) return { block: true, reason };
     }
@@ -487,8 +478,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
         subagentPermissibleRules,
         "deny",
         event.toolName,
-        policy.protectedPathPatterns,
-        policy.protectedPathExceptions,
+        policy.protectedPathRules ?? [],
       );
       if (scopeDecision.decision !== "allow") {
         return {
@@ -506,8 +496,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
       rules,
       "allow",
       event.toolName,
-      policy.protectedPathPatterns,
-      policy.protectedPathExceptions,
+      policy.protectedPathRules ?? [],
     );
     const matchPath = policyDecision.matchPath;
 
@@ -608,8 +597,7 @@ function decideSubagentBashScope(
     startupCwd,
     cwd,
     scopedPolicy,
-    policy.protectedPathPatterns,
-    policy.protectedPathExceptions,
+    policy.protectedPathRules ?? [],
   );
   if (!decision || decision.decision === "allow") return undefined;
 
@@ -652,7 +640,11 @@ export async function gateBash(
   const commands = extractShellCommands(command)
     .map(normalizeCommandForDecision)
     .filter(Boolean);
-  const readValidationError = validateReadCommands(command, commands);
+  const readValidationError = validateReadCommands(
+    command,
+    commands,
+    activePolicy.protectedPathRules ?? [],
+  );
   if (readValidationError) {
     return {
       block: true,
@@ -682,8 +674,7 @@ export async function gateBash(
     startupCwd,
     ctx.cwd ?? startupCwd,
     activePolicy,
-    activePolicy.protectedPathPatterns,
-    activePolicy.protectedPathExceptions,
+    activePolicy.protectedPathRules ?? [],
   );
   if (pathDecision?.decision === "deny") {
     return {

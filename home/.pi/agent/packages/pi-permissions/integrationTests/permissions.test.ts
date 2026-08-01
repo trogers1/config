@@ -13,6 +13,12 @@ import permissionsExtension, {
 } from "../extensions/permissions";
 import { policyConfig } from "../modules/policy";
 import type { CustomToolRule, ProfilePolicy } from "../modules/policyHelpers";
+import { defaultProtectedPathRules } from "../modules/protectedPaths";
+
+const defaultProtectedRipgrepArguments = defaultProtectedPathRules
+  .filter((rule) => rule.decision === "deny")
+  .map((rule) => `--glob '!${rule.pattern}'`)
+  .join(" ");
 
 const parserPolicy = {
   tools: {
@@ -253,7 +259,7 @@ describe("shell policy parser", () => {
   it("enforces profile-configured protected path patterns for Bash readers", async () => {
     const policy = {
       ...parserPolicy,
-      protectedPathPatterns: ["**/.db"],
+      protectedPathRules: [{ pattern: "**/.db", decision: "deny" }],
     } satisfies ProfilePolicy;
 
     const result = await gateBash(
@@ -561,6 +567,26 @@ describe("default profile bash policy", () => {
     await expect(
       gateBash("git rev-parse HEAD~3", process.cwd(), ctx, restrictivePolicy),
     ).resolves.toBeUndefined();
+  });
+
+  it("keeps common rg glob searches allowed while appending protections last", async () => {
+    const { api, handlers } = createExtensionHarness();
+    permissionsExtension(api);
+    const sessionStart = handlers.get("session_start");
+    const toolCall = handlers.get("tool_call");
+    const ctx = nonInteractiveContext(process.cwd());
+    await sessionStart?.({ type: "session_start" }, ctx);
+
+    const event = {
+      type: "tool_call",
+      toolName: "bash",
+      input: { command: "rg --glob '**/*.ts' PATTERN" },
+    };
+
+    await expect(toolCall?.(event, ctx)).resolves.toBeUndefined();
+    expect(event.input.command).toBe(
+      `rg --glob '**/*.ts' PATTERN ${defaultProtectedRipgrepArguments}`,
+    );
   });
 
   it.each(['inspect "$TARGET"', 'inspect "${ROOT}/credentials"'])(

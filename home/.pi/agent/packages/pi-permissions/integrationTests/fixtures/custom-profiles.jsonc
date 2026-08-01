@@ -28,8 +28,10 @@
       "extends": ["builtin:default"],
       "readPaths": [{ "pattern": "private/**", "decision": "ask" }],
       "writePaths": [{ "pattern": "private/**", "decision": "ask" }],
-      "protectedPathPatterns": ["**/.env*"],
-      "protectedPathExceptions": ["**/.env.template"],
+      "protectedPathRules": [
+        { "pattern": "**/.env*", "decision": "deny" },
+        { "pattern": "**/.env.template", "decision": "allow" },
+      ],
     },
   },
 }

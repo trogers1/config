@@ -200,22 +200,26 @@ For example, this permits dedicated edits throughout `src`, while allowing Bash 
 ]
 ```
 
-Each profile defines its protected glob patterns with `protectedPathPatterns`; these are the source of truth rather than an additional hard-coded `.env` policy. Narrow readable exceptions can follow them through `protectedPathExceptions`:
+Each profile defines its protected paths with `protectedPathRules`; these rules are the source of truth rather than an additional hard-coded `.env` policy. Use `allow` rules for narrow exceptions:
 
 ```ts
 {
-  protectedPathPatterns: ["**/.env*", "**/.db", "**/credentials.json"],
-  protectedPathExceptions: ["**/.env.template"],
+  protectedPathRules: [
+    { pattern: "**/.env*", decision: "deny" },
+    { pattern: "**/.db", decision: "deny" },
+    { pattern: "**/credentials.json", decision: "deny" },
+    { pattern: "**/.env.template", decision: "allow" },
+  ],
 }
 ```
 
-Patterns use the same path glob syntax and ordered last-match behavior as other policy rules. They apply to `read`, `grep`, `find`, `ls`, `edit`, and `write`, as well as Bash path references: discovery can disclose secrets, while mutation can damage them. A profile that omits a pattern does not protect that path beyond its ordinary tool rules. Dynamic or unrecognized shell reader forms, and parser errors, fail closed: interactive sessions can ask, while non-interactive sessions block.
+Protected-path rules use the same path glob syntax as other policy rules. They apply specificity-first resolution, using order only as the final tie-breaker. They apply to `read`, `grep`, `find`, `ls`, `edit`, and `write`, as well as Bash path references: discovery can disclose secrets, while mutation can damage them. A profile that omits a protected rule does not protect that path beyond its ordinary tool rules. Dynamic or unrecognized shell reader forms, and parser errors, fail closed: interactive sessions can ask, while non-interactive sessions block.
 
 The built-in test-focused profiles recognize conventional `test`, `tests`, `__tests__`, and `integrationTests` directories, plus `*.test.*`, `*.spec.*`, `*_test.*`, and `*.cy.*` file names. `builtin:tests-hidden` denies both dedicated reads and mutations for these paths. `builtin:tests-only` retains the default read policy and limits dedicated edits/writes and analyzable Bash filesystem references to those test paths and `/tmp` scratch output; its Bash denial guidance steers inspection to the dedicated `read`, `grep`, `find`, and `ls` tools.
 
 Bash output redirection targets use the same `writePaths` rules and `bash` context as every other Bash path. Absolute and relative targets use the same matching rules as `edit` and `write`; context-specific rules may still distinguish dedicated mutations from Bash access.
 
-The standard profiles configure `.env*` files and directories as protected and `.env.template` as an explicit exception. Search safeguards are derived from the active profile rather than hard-coded to `.env`: the built-in `grep` tool combines all configured protected patterns into one exclusion glob, while Bash `rg`/`ripgrep` receives one exclusion glob per pattern. Exceptions are not injected as positive globs — ripgrep treats any positive glob as a whitelist for implicit searches, which would hide every non-exception file — and they remain reachable because ripgrep searches explicitly named paths regardless of globs. Caller-supplied globs must be demonstrably unable to match any protected path. Raw `grep` and `git grep` are denied because their recursive behavior cannot be safely rewritten across supported platforms.
+The standard profiles configure `.env*` files and directories as protected and `.env.template` as an explicit exception. Search safeguards are derived from the active profile rather than hard-coded to `.env`: the built-in `grep` tool combines all configured protected patterns into one exclusion glob, while Bash `rg`/`ripgrep` receives one exclusion glob per pattern. Pi's built-in `grep` accepts only one glob, so an include glob that could overlap a protected path is denied with guidance to use Bash `rg` instead. For example, `rg --glob '**/*.ts' 'PATTERN' .` retains the caller's TypeScript filter and receives protected exclusions afterward, so those exclusions cannot be re-included. Exceptions are not injected as positive globs — ripgrep treats any positive glob as a whitelist for implicit searches, which would hide every non-exception file — and they remain reachable because ripgrep searches explicitly named paths regardless of globs. Raw `grep` and `git grep` are denied because their recursive behavior cannot be safely rewritten across supported platforms.
 
 In non-interactive contexts where confirmation is unavailable, `ask` decisions are blocked by default.
 

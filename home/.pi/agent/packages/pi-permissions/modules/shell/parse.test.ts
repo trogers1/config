@@ -58,7 +58,7 @@ describe("shell path policy", () => {
       { pattern: "*", decision: "allow" },
       { pattern: "**/.env*", decision: "deny" },
     ],
-    protectedPathPatterns: ["**/.env*"],
+    protectedPathRules: [{ pattern: "**/.env*", decision: "deny" }],
     writePaths: [
       { pattern: "**", decision: "deny" },
       { pattern: "/tmp/**", decision: "allow" },

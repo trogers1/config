@@ -6,6 +6,15 @@ import {
   createExtensionHarness,
   lastCallArgument,
 } from "./support/extensionHarness";
+import { defaultProtectedPathRules } from "../modules/protectedPaths";
+
+const defaultProtectedDenyPatterns = defaultProtectedPathRules
+  .filter((rule) => rule.decision === "deny")
+  .map((rule) => rule.pattern);
+const defaultProtectedSearchGlob = `!{${defaultProtectedDenyPatterns.join(",")}}`;
+const defaultProtectedRipgrepArguments = defaultProtectedDenyPatterns
+  .map((pattern) => `--glob '!${pattern}'`)
+  .join(" ");
 
 const missingProfileConfigPath = path.resolve(
   "integrationTests/fixtures/does-not-exist.jsonc",
@@ -1020,6 +1029,30 @@ describe("permissions extension", () => {
     ).resolves.toBeUndefined();
   });
 
+  it("blocks accidental cloud and SSH credential exposure", async () => {
+    const harness = createExtensionHarness();
+    await harness.start();
+
+    for (const secretPath of [
+      ".aws/credentials",
+      ".azure/accessTokens.json",
+      ".ssh/id_ed25519",
+    ]) {
+      for (const event of [
+        { toolName: "read", input: { path: secretPath } },
+        { toolName: "bash", input: { command: `cat ${secretPath}` } },
+      ] as const) {
+        const denied = await harness.callTool(event);
+        expect(denied, JSON.stringify(event)).toMatchObject({ block: true });
+        expect(denied?.reason).toContain(
+          "protected from disclosure and mutation",
+        );
+      }
+    }
+
+    expect(harness.ui.confirm).not.toHaveBeenCalled();
+  });
+
   it("validates shell reader inputs before broad command allow rules", async () => {
     const harness = createExtensionHarness();
     await harness.start();
@@ -1103,17 +1136,19 @@ describe("permissions extension", () => {
   });
 
   it("changes protected read and edit access when switching profiles", async () => {
-    // An empty protectedPathPatterns override replaces the inherited
-    // patterns, so this profile protects nothing beyond its ordinary rules.
     vi.stubEnv(
       "PI_PERMISSIONS_PROFILE_CONFIG",
       writeTempConfig(
         JSON.stringify({
           profiles: {
-            "unprotected-review": {
+            "read-secrets": {
               extends: ["builtin:default"],
-              protectedPathPatterns: [],
-              protectedPathExceptions: [],
+              protectedPathRules: [{ pattern: ".env", decision: "allow" }],
+            },
+            "scratch-review": {
+              tools: { bash: [{ pattern: "*", decision: "ask" }] },
+              readPaths: [{ pattern: "*", decision: "allow" }],
+              writePaths: [{ pattern: "*", decision: "allow" }],
             },
           },
         }),
@@ -1135,8 +1170,15 @@ describe("permissions extension", () => {
       harness.callTool({ toolName: "edit", input: editInput }),
     ).resolves.toMatchObject({ block: true });
 
-    await harness.runCommand("profile", "unprotected-review");
+    await harness.runCommand("profile", "read-secrets");
+    await expect(
+      harness.callToolWithoutPrompt({ toolName: "read", input: readInput }),
+    ).resolves.toBeUndefined();
+    await expect(
+      harness.callToolWithoutPrompt({ toolName: "edit", input: editInput }),
+    ).resolves.toBeUndefined();
 
+    await harness.runCommand("profile", "scratch-review");
     await expect(
       harness.callToolWithoutPrompt({ toolName: "read", input: readInput }),
     ).resolves.toBeUndefined();
@@ -1160,18 +1202,21 @@ describe("permissions extension", () => {
         input: builtInGrepInput,
       }),
     ).resolves.toBeUndefined();
-    expect(builtInGrepInput.glob).toBe(
-      "!{**/.env*,**/.env*/**,**/.git,**/.git/**,**/secrets/*.tfvars}",
-    );
+    expect(builtInGrepInput.glob).toBe(defaultProtectedSearchGlob);
 
     const safeGlobInput = {
       path: ".",
       pattern: "DATABASE_URL",
       glob: "**/*.ts",
     };
-    await expect(
-      harness.callToolWithoutPrompt({ toolName: "grep", input: safeGlobInput }),
-    ).resolves.toBeUndefined();
+    const safeGlobResult = await harness.callTool({
+      toolName: "grep",
+      input: safeGlobInput,
+    });
+    expect(safeGlobResult).toMatchObject({ block: true });
+    expect(safeGlobResult?.reason).toContain(
+      "Pi's built-in grep forwards only one --glob to ripgrep",
+    );
     expect(safeGlobInput.glob).toBe("**/*.ts");
 
     const unsafeGlob = await harness.callTool({
@@ -1186,19 +1231,28 @@ describe("permissions extension", () => {
       harness.callToolWithoutPrompt({ toolName: "bash", input: ripgrepInput }),
     ).resolves.toBeUndefined();
     expect(ripgrepInput.command).toBe(
-      "rg --glob '!**/.env*' --glob '!**/.env*/**' --glob '!**/.git' --glob '!**/.git/**' --glob '!**/secrets/*.tfvars' DATABASE_URL .",
+      `rg DATABASE_URL . ${defaultProtectedRipgrepArguments}`,
     );
 
+    for (const command of ["grep -R DATABASE_URL .", "git grep DATABASE_URL"]) {
+      await expect(
+        harness.callTool({
+          toolName: "bash",
+          input: { command },
+        }),
+      ).resolves.toMatchObject({ block: true });
+    }
+
     for (const command of [
-      "grep -R DATABASE_URL .",
-      "git grep DATABASE_URL",
       "rg --glob '**/*' DATABASE_URL .",
+      "rg --glob 'secrets/*' DATABASE_URL .",
     ]) {
-      const denied = await harness.callTool({
-        toolName: "bash",
-        input: { command },
-      });
-      expect(denied).toMatchObject({ block: true });
+      await expect(
+        harness.callTool({
+          toolName: "bash",
+          input: { command },
+        }),
+      ).resolves.toBeUndefined();
     }
   });
 

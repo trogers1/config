@@ -17,6 +17,7 @@ import type {
   PathContext,
   PathRule,
   ProfilePolicy,
+  ProtectedPathRule,
 } from "../policyHelpers";
 import { chooseMostSpecific, pathPatternSpecificity } from "../ruleSpecificity";
 import { classifyCommandTokens, type ShellTokenKind } from "./classify";
@@ -49,8 +50,7 @@ export function decideBashPathReferences(
   startupCwd: string,
   cwd: string,
   activePolicy: ProfilePolicy,
-  protectedPathPatterns: readonly string[] = [],
-  protectedPathExceptions: readonly string[] = [],
+  protectedPathRules: readonly ProtectedPathRule[] = [],
 ): DecisionWithPath | undefined {
   let state: CwdState = { cwd, known: true };
 
@@ -61,8 +61,7 @@ export function decideBashPathReferences(
       state,
       startupCwd,
       activePolicy,
-      protectedPathPatterns,
-      protectedPathExceptions,
+      protectedPathRules,
     );
     state = result.state;
     if (result.decision) return result.decision;
@@ -77,38 +76,67 @@ export function evaluatePathByPattern(
   rules: PathRule[],
   defaultDecision: Decision,
   context: PathContext,
-  protectedPathPatterns: readonly string[] = [],
-  protectedPathExceptions: readonly string[] = [],
+  protectedPathRules: readonly ProtectedPathRule[] = [],
 ): PathPolicyDecision {
-  const ordinaryDecision = evaluateRulesByPattern(
+  const ordinaryDecision = resolvePathRules(
     absolutePath,
     startupCwd,
     rules,
     defaultDecision,
-    context,
+    (rule) => {
+      const contexts: readonly PathContext[] | undefined = rule.contexts;
+      return !contexts || contexts.includes(context);
+    },
   );
-  const protectedPattern = matchProtectedPathPattern(
+  const protectedDecision = resolvePathRules(
     absolutePath,
     startupCwd,
-    protectedPathPatterns,
-    protectedPathExceptions,
+    protectedPathRules,
+    "allow",
   );
-  if (!protectedPattern) return ordinaryDecision;
-
-  return {
-    decision: "deny",
-    rule: {
-      pattern: protectedPattern.pattern,
+  if (protectedDecision.decision === "deny") {
+    return {
       decision: "deny",
-      guidance:
-        "This path is protected from disclosure and mutation by the active profile.",
-      alternatives: [
-        "Use an explicitly approved file instead",
-        "Ask the user for a redacted or safe-to-share value",
-      ],
-    },
-    matchPath: protectedPattern.matchPath,
-  };
+      rule: protectedDecision.rule
+        ? {
+            ...protectedDecision.rule,
+            guidance:
+              protectedDecision.rule.guidance ??
+              "This path is protected from disclosure and mutation by the active profile.",
+            alternatives: [
+              "Use an explicitly approved file instead",
+              "Ask the user for a redacted or safe-to-share value",
+            ],
+          }
+        : {
+            pattern: protectedDecision.matchPath,
+            decision: "deny",
+            guidance:
+              "This path is protected from disclosure and mutation by the active profile.",
+            alternatives: [
+              "Use an explicitly approved file instead",
+              "Ask the user for a redacted or safe-to-share value",
+            ],
+          },
+      matchPath: protectedDecision.matchPath,
+    };
+  }
+
+  return ordinaryDecision;
+}
+
+export function evaluateProtectedPath(
+  requestedPath: string,
+  policy: { protectedPathRules?: readonly ProtectedPathRule[] },
+  startupCwd = process.cwd(),
+): { decision: "allow" | "deny"; rule?: ProtectedPathRule; matchPath: string } {
+  const absolutePath = resolveRequestedPath(requestedPath, startupCwd);
+  return resolvePathRules(
+    absolutePath,
+    startupCwd,
+    policy.protectedPathRules ?? [],
+    "allow",
+  );
 }
 
 export function matchesGlobPattern(pattern: string, value: string): boolean {
@@ -123,8 +151,7 @@ function analyzeScript(
   state: CwdState,
   startupCwd: string,
   activePolicy: ProfilePolicy,
-  protectedPathPatterns: readonly string[],
-  protectedPathExceptions: readonly string[],
+  protectedPathRules: readonly ProtectedPathRule[],
 ): { state: CwdState; decision?: DecisionWithPath } {
   let currentState = state;
   for (const statement of script.commands) {
@@ -134,8 +161,7 @@ function analyzeScript(
       currentState,
       startupCwd,
       activePolicy,
-      protectedPathPatterns,
-      protectedPathExceptions,
+      protectedPathRules,
     );
     currentState = applySimpleCdState(statement, previousState, result.state);
     if (result.decision) return { ...result, state: currentState };
@@ -148,16 +174,14 @@ function analyzeStatement(
   state: CwdState,
   startupCwd: string,
   activePolicy: ProfilePolicy,
-  protectedPathPatterns: readonly string[],
-  protectedPathExceptions: readonly string[],
+  protectedPathRules: readonly ProtectedPathRule[],
 ): { state: CwdState; decision?: DecisionWithPath } {
   return analyzeNode(
     statement.command,
     state,
     startupCwd,
     activePolicy,
-    protectedPathPatterns,
-    protectedPathExceptions,
+    protectedPathRules,
   );
 }
 
@@ -166,8 +190,7 @@ function analyzeNode(
   state: CwdState,
   startupCwd: string,
   activePolicy: ProfilePolicy,
-  protectedPathPatterns: readonly string[],
-  protectedPathExceptions: readonly string[],
+  protectedPathRules: readonly ProtectedPathRule[],
 ): { state: CwdState; decision?: DecisionWithPath } {
   switch (node.type) {
     case "Statement":
@@ -176,8 +199,7 @@ function analyzeNode(
         state,
         startupCwd,
         activePolicy,
-        protectedPathPatterns,
-        protectedPathExceptions,
+        protectedPathRules,
       );
     case "Command":
       return analyzeCommand(
@@ -185,8 +207,7 @@ function analyzeNode(
         state,
         startupCwd,
         activePolicy,
-        protectedPathPatterns,
-        protectedPathExceptions,
+        protectedPathRules,
       );
     case "CompoundList":
       return analyzeCompoundList(
@@ -194,8 +215,7 @@ function analyzeNode(
         state,
         startupCwd,
         activePolicy,
-        protectedPathPatterns,
-        protectedPathExceptions,
+        protectedPathRules,
       );
     case "BraceGroup":
       return analyzeCompoundList(
@@ -203,8 +223,7 @@ function analyzeNode(
         state,
         startupCwd,
         activePolicy,
-        protectedPathPatterns,
-        protectedPathExceptions,
+        protectedPathRules,
       );
     case "Subshell": {
       const nested = analyzeCompoundList(
@@ -212,8 +231,7 @@ function analyzeNode(
         { ...state },
         startupCwd,
         activePolicy,
-        protectedPathPatterns,
-        protectedPathExceptions,
+        protectedPathRules,
       );
       return { state, decision: nested.decision };
     }
@@ -227,8 +245,7 @@ function analyzeNode(
           state,
           startupCwd,
           activePolicy,
-          protectedPathPatterns,
-          protectedPathExceptions,
+          protectedPathRules,
         );
       }
       return analyzeNestedNodes(
@@ -236,8 +253,7 @@ function analyzeNode(
         state,
         startupCwd,
         activePolicy,
-        protectedPathPatterns,
-        protectedPathExceptions,
+        protectedPathRules,
         containsCwdMutation(node) ? { ...state, known: false } : state,
       );
     case "AndOr": {
@@ -260,8 +276,7 @@ function analyzeNode(
           state,
           startupCwd,
           activePolicy,
-          protectedPathPatterns,
-          protectedPathExceptions,
+          protectedPathRules,
         );
       }
       const andOrResult = analyzeSequentialNodes(
@@ -269,8 +284,7 @@ function analyzeNode(
         state,
         startupCwd,
         activePolicy,
-        protectedPathPatterns,
-        protectedPathExceptions,
+        protectedPathRules,
       );
       // Within an && chain a later command only runs when every earlier
       // command succeeded, so static cd tracking is sound inside the chain.
@@ -298,8 +312,7 @@ function analyzeNode(
         state,
         startupCwd,
         activePolicy,
-        protectedPathPatterns,
-        protectedPathExceptions,
+        protectedPathRules,
       );
     default:
       return { state };
@@ -325,8 +338,7 @@ function analyzeCompoundList(
   state: CwdState,
   startupCwd: string,
   activePolicy: ProfilePolicy,
-  protectedPathPatterns: readonly string[],
-  protectedPathExceptions: readonly string[],
+  protectedPathRules: readonly ProtectedPathRule[],
 ): { state: CwdState; decision?: DecisionWithPath } {
   let currentState = state;
   for (const statement of list.commands) {
@@ -336,8 +348,7 @@ function analyzeCompoundList(
       currentState,
       startupCwd,
       activePolicy,
-      protectedPathPatterns,
-      protectedPathExceptions,
+      protectedPathRules,
     );
     currentState = applySimpleCdState(statement, previousState, result.state);
     if (result.decision) return { ...result, state: currentState };
@@ -384,8 +395,7 @@ function analyzeSequentialNodes(
   state: CwdState,
   startupCwd: string,
   activePolicy: ProfilePolicy,
-  protectedPathPatterns: readonly string[],
-  protectedPathExceptions: readonly string[],
+  protectedPathRules: readonly ProtectedPathRule[],
 ): { state: CwdState; decision?: DecisionWithPath } {
   let currentState = { ...state };
   for (const nested of nodes) {
@@ -394,8 +404,7 @@ function analyzeSequentialNodes(
       currentState,
       startupCwd,
       activePolicy,
-      protectedPathPatterns,
-      protectedPathExceptions,
+      protectedPathRules,
     );
     currentState = result.state;
     if (result.decision) return result;
@@ -408,8 +417,7 @@ function analyzeNestedNodes(
   state: CwdState,
   startupCwd: string,
   activePolicy: ProfilePolicy,
-  protectedPathPatterns: readonly string[],
-  protectedPathExceptions: readonly string[],
+  protectedPathRules: readonly ProtectedPathRule[],
   finalState: CwdState,
 ): { state: CwdState; decision?: DecisionWithPath } {
   let currentState = { ...state };
@@ -419,8 +427,7 @@ function analyzeNestedNodes(
       currentState,
       startupCwd,
       activePolicy,
-      protectedPathPatterns,
-      protectedPathExceptions,
+      protectedPathRules,
     );
     currentState = result.state;
     if (result.decision) return result;
@@ -433,8 +440,7 @@ function analyzeUnsupportedNode(
   state: CwdState,
   startupCwd: string,
   activePolicy: ProfilePolicy,
-  protectedPathPatterns: readonly string[],
-  protectedPathExceptions: readonly string[],
+  protectedPathRules: readonly ProtectedPathRule[],
 ): { state: CwdState; decision?: DecisionWithPath } {
   if (containsCwdMutation(node)) {
     return uncertainCwdDecision(state, "conditional CWD");
@@ -445,8 +451,7 @@ function analyzeUnsupportedNode(
     state,
     startupCwd,
     activePolicy,
-    protectedPathPatterns,
-    protectedPathExceptions,
+    protectedPathRules,
     state,
   );
 }
@@ -456,8 +461,7 @@ function analyzeCommand(
   state: CwdState,
   startupCwd: string,
   activePolicy: ProfilePolicy,
-  protectedPathPatterns: readonly string[],
-  protectedPathExceptions: readonly string[],
+  protectedPathRules: readonly ProtectedPathRule[],
 ): { state: CwdState; decision?: DecisionWithPath } {
   const commandName = staticWordValue(command.name);
   const tokens = classifyCommandTokens(command);
@@ -469,8 +473,7 @@ function analyzeCommand(
       state,
       startupCwd,
       activePolicy,
-      protectedPathPatterns,
-      protectedPathExceptions,
+      protectedPathRules,
     );
     // evaluateCdTarget returns undefined when the target is allowed; only a
     // concrete ask/deny decision stops the command here.
@@ -497,8 +500,7 @@ function analyzeCommand(
       state,
       startupCwd,
       activePolicy,
-      protectedPathPatterns,
-      protectedPathExceptions,
+      protectedPathRules,
       "bash",
     );
     if (decision) return { state, decision };
@@ -510,8 +512,7 @@ function analyzeCommand(
       { ...state },
       startupCwd,
       activePolicy,
-      protectedPathPatterns,
-      protectedPathExceptions,
+      protectedPathRules,
     );
     if (result.decision) return { state, decision: result.decision };
   }
@@ -524,8 +525,7 @@ function evaluateToken(
   state: CwdState,
   startupCwd: string,
   activePolicy: ProfilePolicy,
-  protectedPathPatterns: readonly string[],
-  protectedPathExceptions: readonly string[],
+  protectedPathRules: readonly ProtectedPathRule[],
   context: PathContext,
 ): DecisionWithPath | undefined {
   if (
@@ -560,8 +560,7 @@ function evaluateToken(
     state,
     startupCwd,
     activePolicy,
-    protectedPathPatterns,
-    protectedPathExceptions,
+    protectedPathRules,
     context,
   );
 }
@@ -571,8 +570,7 @@ function evaluateTokenAsPath(
   state: CwdState,
   startupCwd: string,
   activePolicy: ProfilePolicy,
-  protectedPathPatterns: readonly string[],
-  protectedPathExceptions: readonly string[],
+  protectedPathRules: readonly ProtectedPathRule[],
   context: PathContext,
 ): DecisionWithPath | undefined {
   if (token.kind === "dynamic") {
@@ -590,8 +588,7 @@ function evaluateTokenAsPath(
     activePolicy.writePaths,
     "allow",
     context,
-    protectedPathPatterns,
-    protectedPathExceptions,
+    protectedPathRules,
   );
   if (decision.decision === "allow") return undefined;
   return { ...decision, path: absolutePath };
@@ -611,8 +608,7 @@ function evaluateCdTarget(
   state: CwdState,
   startupCwd: string,
   activePolicy: ProfilePolicy,
-  protectedPathPatterns: readonly string[],
-  protectedPathExceptions: readonly string[],
+  protectedPathRules: readonly ProtectedPathRule[],
 ): DecisionWithPath | undefined {
   if (token.kind === "dynamic") {
     return { decision: "ask", path: token.value, matchPath: token.value };
@@ -629,8 +625,7 @@ function evaluateCdTarget(
     activePolicy.readPaths,
     "allow",
     "ls",
-    protectedPathPatterns,
-    protectedPathExceptions,
+    protectedPathRules,
   );
   if (decision.decision === "allow") return undefined;
   return { ...decision, path: absolutePath };
@@ -738,75 +733,40 @@ function collectNestedNodes(node: Node): Node[] {
   }
 }
 
-function evaluateRulesByPattern(
+/**
+ * Resolve any path-pattern rule set with the shared specificity ordering.
+ * Callers supply only their fallback and optional rule eligibility predicate;
+ * protected and ordinary path policy intentionally differ only at that edge.
+ */
+function resolvePathRules<
+  RuleType extends { pattern: string; decision: string },
+>(
   absolutePath: string,
   startupCwd: string,
-  rules: PathRule[],
-  defaultDecision: Decision,
-  context: PathContext,
-): PathPolicyDecision {
+  rules: readonly RuleType[],
+  defaultDecision: RuleType["decision"],
+  isEligible: (rule: RuleType) => boolean = () => true,
+): { decision: RuleType["decision"]; rule?: RuleType; matchPath: string } {
   const relativeMatchPath = policyMatchPath(absolutePath, startupCwd);
+  const matchPathFor = (rule: RuleType) =>
+    rule.pattern.startsWith("/")
+      ? normalizePolicyPath(absolutePath)
+      : relativeMatchPath;
   const winner = chooseMostSpecific(
     rules,
-    (rule) => {
-      const contexts: readonly PathContext[] | undefined = rule.contexts;
-      if (contexts && !contexts.includes(context)) return false;
-      const matchPath = rule.pattern.startsWith("/")
-        ? normalizePolicyPath(absolutePath)
-        : relativeMatchPath;
-      return matchesGlobPattern(rule.pattern, matchPath);
-    },
+    (rule) =>
+      isEligible(rule) && matchesGlobPattern(rule.pattern, matchPathFor(rule)),
     (rule) => pathPatternSpecificity(rule.pattern),
   );
 
-  if (!winner) {
-    return {
-      decision: defaultDecision,
-      matchPath: relativeMatchPath,
-    };
-  }
-
-  const matchPath = winner.item.pattern.startsWith("/")
-    ? normalizePolicyPath(absolutePath)
-    : relativeMatchPath;
+  if (!winner)
+    return { decision: defaultDecision, matchPath: relativeMatchPath };
 
   return {
     decision: winner.item.decision,
     rule: winner.item,
-    matchPath,
+    matchPath: matchPathFor(winner.item),
   };
-}
-
-function matchProtectedPathPattern(
-  absolutePath: string,
-  startupCwd: string,
-  patterns: readonly string[],
-  exceptions: readonly string[],
-): { pattern: string; matchPath: string } | undefined {
-  if (patterns.length === 0) return undefined;
-
-  const relativeMatchPath = policyMatchPath(absolutePath, startupCwd);
-  let match: { pattern: string; matchPath: string } | undefined;
-
-  for (const pattern of patterns) {
-    const matchPath = pattern.startsWith("/")
-      ? normalizePolicyPath(absolutePath)
-      : relativeMatchPath;
-    if (matchesGlobPattern(pattern, matchPath)) {
-      match = { pattern, matchPath };
-    }
-  }
-
-  if (!match) return undefined;
-
-  for (const exception of exceptions) {
-    const exceptionMatchPath = exception.startsWith("/")
-      ? normalizePolicyPath(absolutePath)
-      : relativeMatchPath;
-    if (matchesGlobPattern(exception, exceptionMatchPath)) return undefined;
-  }
-
-  return match;
 }
 
 export function resolveRequestedPath(
@@ -886,24 +846,30 @@ function globToRegExpSource(pattern: string): string {
 /** True when a literal or glob expression can name a protected path. */
 export function isProtectedPathExpression(
   token: string,
-  patterns: readonly string[] = [],
-  exceptions: readonly string[] = [],
+  rules: readonly ProtectedPathRule[] = [],
 ): boolean {
   const normalized = token.replace(/\\/g, "/");
-  let protectedExpression = false;
-  for (const pattern of patterns) {
-    if (matchesGlobPattern(pattern, normalized)) protectedExpression = true;
-  }
-  // Exceptions are intentionally ordered after denies. Only a concrete path
-  // can use an exception; a glob may match protected paths as well.
-  if (!/[?*[\]]/.test(normalized)) {
-    for (const exception of exceptions) {
-      if (matchesGlobPattern(exception, normalized)) {
-        protectedExpression = false;
-      }
-    }
-  }
-  return protectedExpression;
+  const candidates = /[?*\[\]]/.test(normalized)
+    ? representativeGlobPaths(normalized)
+    : [normalized];
+
+  return candidates.some(
+    (candidate) =>
+      evaluateProtectedPath(candidate, { protectedPathRules: rules })
+        .decision === "deny",
+  );
+}
+
+function representativeGlobPaths(pattern: string): string[] {
+  const normalized = pattern.replace(/^!/, "").replace(/\\/g, "/");
+  const candidates = ["secret", "secret.txt", "secret.json"];
+  return candidates.map((wildcard) =>
+    normalized
+      .replace(/^\*\*\//, "nested/")
+      .replace(/\*\*/g, `nested/${wildcard}`)
+      .replace(/\*/g, wildcard)
+      .replace(/\?/g, "x"),
+  );
 }
 
 function escapeRegExp(value: string): string {

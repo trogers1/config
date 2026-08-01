@@ -36,9 +36,7 @@ describe("built-in test profiles", () => {
     ]) {
       const denied = await harness.callTool(event);
       expect(denied, JSON.stringify(event)).toMatchObject({ block: true });
-      expect(denied?.reason).toContain(
-        "protected from disclosure and mutation",
-      );
+      expect(denied?.reason).toContain("Do not inspect test files");
     }
 
     await expect(

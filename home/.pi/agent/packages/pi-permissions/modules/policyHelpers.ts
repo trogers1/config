@@ -82,6 +82,20 @@ const ruleSchema = Type.Object(
   { additionalProperties: false },
 );
 
+const protectedDecisionSchema = Type.Union([
+  Type.Literal("allow"),
+  Type.Literal("deny"),
+]);
+
+const protectedPathRuleSchema = Type.Object(
+  {
+    pattern: Type.String(),
+    decision: protectedDecisionSchema,
+    guidance: Type.Optional(Type.String()),
+  },
+  { additionalProperties: false },
+);
+
 const customToolMatchSchema = Type.Unsafe<Record<string, string>>({
   type: "object",
   patternProperties: {
@@ -148,8 +162,7 @@ const profileProperties = {
   tools: toolsSchema,
   readPaths: Type.Array(readPathRuleSchema, { minItems: 1 }),
   writePaths: Type.Array(writePathRuleSchema, { minItems: 1 }),
-  protectedPathPatterns: Type.Optional(Type.Array(Type.String())),
-  protectedPathExceptions: Type.Optional(Type.Array(Type.String())),
+  protectedPathRules: Type.Optional(Type.Array(protectedPathRuleSchema)),
 };
 
 const profileSchema = Type.Object(profileProperties, {
@@ -194,6 +207,7 @@ export const writePathContexts: readonly WritePathContext[] =
 export type ReadPathRule = Static<typeof readPathRuleSchema>;
 export type WritePathRule = Static<typeof writePathRuleSchema>;
 export type PathRule = ReadPathRule | WritePathRule;
+export type ProtectedPathRule = Static<typeof protectedPathRuleSchema>;
 export type ProfileColor = Static<typeof profileColorSchema>;
 export type ProfilePolicy = Static<typeof profileSchema>;
 type PolicyConfigShape = Static<typeof policyConfigSchema>;
@@ -249,6 +263,10 @@ export function assertProfilePolicy(
       `Invalid pi-permissions profile at ${validationError.instancePath || "/"}: ${validationError.message}`,
     );
   }
+
+  if (isProfilePolicyShape(policy)) {
+    assertNoProtectedPathRuleConflicts(policy.protectedPathRules ?? []);
+  }
 }
 
 export function assertPolicyConfig(
@@ -264,6 +282,11 @@ export function assertPolicyConfig(
   if (!isPolicyConfigShape(config)) {
     throw new Error("Invalid pi-permissions policy: schema validation failed");
   }
+
+  for (const profile of Object.values(config.profiles)) {
+    assertNoProtectedPathRuleConflicts(profile.protectedPathRules ?? []);
+  }
+
   if (!(config.defaultProfile in config.profiles)) {
     throw new Error(
       `Invalid pi-permissions policy at /defaultProfile: profile '${config.defaultProfile}' is not configured`,
@@ -282,9 +305,25 @@ export function definePolicyConfig<
   return config;
 }
 
-export function withProtectedPathPatterns(
-  policy: ProfilePolicy,
-): ProfilePolicy {
+function isProfilePolicyShape(policy: unknown): policy is ProfilePolicy {
+  return Value.Check(profileSchema, policy);
+}
+
+function assertNoProtectedPathRuleConflicts(
+  rules: readonly ProtectedPathRule[],
+): void {
+  forEachConflictingPair(
+    rules,
+    (rule) => rule.pattern,
+    (first, second) => {
+      throw new Error(
+        `Protected path rules conflict for pattern '${first.pattern}': '${first.decision}' conflicts with later '${second.decision}'.`,
+      );
+    },
+  );
+}
+
+export function withProtectedPathRules(policy: ProfilePolicy): ProfilePolicy {
   // Protected-path semantics are now layered at evaluation time so the
   // ordinary ordered decision remains intact.
   return policy;
@@ -374,12 +413,19 @@ export function extendProfile(
     mergedTools[toolName] = [...inheritedRules, ...overrideRules];
   }
 
+  const mergedProtectedPathRules = [
+    ...(base.protectedPathRules ?? []),
+    ...(override.protectedPathRules ?? []),
+  ];
+  assertNoProtectedPathRuleConflicts(mergedProtectedPathRules);
+
   return {
     ...base,
     ...override,
     tools: mergedTools,
     readPaths: [...base.readPaths, ...(override.readPaths ?? [])],
     writePaths: [...base.writePaths, ...(override.writePaths ?? [])],
+    protectedPathRules: mergedProtectedPathRules,
   };
 }
 
@@ -397,6 +443,7 @@ function mapProfileRules(
     ),
     readPaths: policy.readPaths.map(mapRule),
     writePaths: policy.writePaths.map(mapRule),
+    protectedPathRules: policy.protectedPathRules,
   };
 }
 

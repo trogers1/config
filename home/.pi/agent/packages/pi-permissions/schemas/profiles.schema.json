@@ -164,13 +164,23 @@
               },
               "minItems": 1
             },
-            "protectedPathPatterns": {
+            "protectedPathRules": {
               "type": "array",
-              "items": { "type": "string" }
-            },
-            "protectedPathExceptions": {
-              "type": "array",
-              "items": { "type": "string" }
+              "items": {
+                "type": "object",
+                "required": ["pattern", "decision"],
+                "properties": {
+                  "pattern": { "type": "string" },
+                  "decision": {
+                    "anyOf": [
+                      { "type": "string", "const": "allow" },
+                      { "type": "string", "const": "deny" }
+                    ]
+                  },
+                  "guidance": { "type": "string" }
+                },
+                "additionalProperties": false
+              }
             },
             "extends": {
               "type": "array",

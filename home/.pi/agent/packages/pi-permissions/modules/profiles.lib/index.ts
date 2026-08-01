@@ -12,10 +12,7 @@ import {
   testFilePatterns,
 } from "../ruleSets.lib/index";
 import { defaultShellRules, readOnlyShellRules } from "../ruleSets.lib/index";
-import {
-  defaultProtectedPathExceptions,
-  defaultProtectedPathPatterns,
-} from "../protectedPaths";
+import { defaultProtectedPathRules } from "../protectedPaths";
 
 const baseProfile: ProfilePolicy = {
   color: "blue",
@@ -28,8 +25,7 @@ const baseProfile: ProfilePolicy = {
   tools: { bash: defaultShellRules },
   readPaths: defaultReadPaths(),
   writePaths: defaultWritePaths(),
-  protectedPathPatterns: defaultProtectedPathPatterns,
-  protectedPathExceptions: defaultProtectedPathExceptions,
+  protectedPathRules: defaultProtectedPathRules,
 };
 
 const workerProfile = applyPolicyTransforms(
@@ -46,20 +42,21 @@ const readOnlyProfile: ProfilePolicy = {
   tools: { bash: readOnlyShellRules },
   readPaths: readOnlyPathRules,
   writePaths: readOnlyWritePathRules,
-  protectedPathPatterns: defaultProtectedPathPatterns,
-  protectedPathExceptions: defaultProtectedPathExceptions,
+  protectedPathRules: defaultProtectedPathRules,
 };
 
 const testsHiddenProfile = extendProfile(baseProfile, {
   color: "orange",
   emoji: "🕶️",
   promptFile: "prompts/tests-hidden.md",
-  // Protected patterns also make grep/ripgrep exclude tests during broad
+  // Protected rules also make grep/ripgrep exclude tests during broad
   // searches whose requested path is the repository root.
-  protectedPathPatterns: [
-    ...(baseProfile.protectedPathPatterns ?? []),
-    ...testFilePatterns,
-  ],
+  protectedPathRules: testFilePatterns.map((pattern) => ({
+    pattern,
+    decision: "deny" as const,
+    guidance:
+      "You are implementing only. Do not inspect test files; adjust the system from production code and test results instead.",
+  })),
   readPaths: testFilePatterns.map((pattern) => ({
     pattern,
     decision: "deny" as const,

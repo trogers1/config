@@ -2,67 +2,60 @@ import { describe, expect, it } from "vitest";
 import {
   injectGrepProtectedPathGlob,
   injectRipgrepProtectedPathGlobs,
-  validateRipgrepGlobOverrides,
 } from "./searchPolicy";
 
-const patterns = ["**/.env*", "**/.git/**"];
-const exceptions = ["**/.env.template"];
+const rules = [
+  { pattern: "**/.env*", decision: "deny" as const },
+  { pattern: "**/.git/**", decision: "deny" as const },
+  { pattern: "**/.env.template", decision: "allow" as const },
+];
+
+const allowOnlyRules = [
+  { pattern: "**/.env.template", decision: "allow" as const },
+];
+
+const allowedDirectoryWithDeniedDescendantRules = [
+  { pattern: "safe/**", decision: "allow" as const },
+  { pattern: "safe/.env.secret", decision: "deny" as const },
+];
 
 describe("shell search policy", () => {
-  it("injects only profile-derived exclusions into ripgrep", () => {
+  it("appends protected ripgrep globs after caller overrides", () => {
     // Exceptions must not be injected as positive globs: ripgrep treats the
     // presence of any positive --glob as a whitelist for implicit searches,
     // which would hide every non-exception file from `rg pattern` searches.
     // Exception files remain reachable because ripgrep searches explicitly
     // named paths regardless of globs.
-    expect(injectRipgrepProtectedPathGlobs("rg DATABASE_URL .", patterns)).toBe(
-      "rg --glob '!**/.env*' --glob '!**/.git/**' DATABASE_URL .",
+    expect(
+      injectRipgrepProtectedPathGlobs(
+        "rg --glob '**/*.ts' DATABASE_URL .",
+        rules,
+      ),
+    ).toBe(
+      "rg --glob '**/*.ts' DATABASE_URL . --glob '!**/.env*' --glob '!**/.git/**'",
     );
   });
 
-  it("rejects short -g globs that can match configured protected paths", () => {
-    // rg applies globs last-match-wins, so any caller glob form that reaches
-    // the command line could re-include files excluded by the injected
-    // negations. The validator must cover -g as well as --glob.
-    for (const command of [
-      "rg -g '**/*' DATABASE_URL .",
-      "rg -g '**/.env*' DATABASE_URL .",
-      "rg -g**/* DATABASE_URL .",
-      "rg -ig '**/*' DATABASE_URL .",
-    ]) {
-      expect(
-        validateRipgrepGlobOverrides(command, patterns, exceptions),
-        command,
-      ).toContain("protected by the active profile");
-    }
+  it("mutates the common TypeScript glob search safely", () => {
     expect(
-      validateRipgrepGlobOverrides(
-        "rg -g '**/*.ts' DATABASE_URL .",
-        patterns,
-        exceptions,
-      ),
-    ).toBeUndefined();
-  });
-
-  it("permits caller globs that exactly name a configured exception", () => {
-    expect(
-      validateRipgrepGlobOverrides(
-        "rg --glob '**/.env.template' DATABASE_URL .",
-        patterns,
-        exceptions,
-      ),
-    ).toBeUndefined();
+      injectRipgrepProtectedPathGlobs("rg --glob '**/*.ts' PATTERN .", rules),
+    ).toBe(
+      "rg --glob '**/*.ts' PATTERN . --glob '!**/.env*' --glob '!**/.git/**'",
+    );
   });
 
   it("derives search globs from non-env profile patterns", () => {
     expect(
       injectRipgrepProtectedPathGlobs("rg TOKEN .", [
-        "**/.db",
-        "**/credentials.json",
+        { pattern: "**/.db", decision: "deny" },
+        { pattern: "**/credentials.json", decision: "deny" },
       ]),
-    ).toBe("rg --glob '!**/.db' --glob '!**/credentials.json' TOKEN .");
+    ).toBe("rg TOKEN . --glob '!**/.db' --glob '!**/credentials.json'");
     const input: { path: string; glob?: string } = { path: "." };
-    injectGrepProtectedPathGlob(input, ["**/.db", "**/credentials.json"]);
+    injectGrepProtectedPathGlob(input, [
+      { pattern: "**/.db", decision: "deny" },
+      { pattern: "**/credentials.json", decision: "deny" },
+    ]);
     expect(input.glob).toBe("!{**/.db,**/credentials.json}");
   });
 
@@ -75,39 +68,53 @@ describe("shell search policy", () => {
     expect(input.glob).toBeUndefined();
   });
 
-  it("rejects ripgrep globs that can match configured protected paths", () => {
+  it("does not inject search globs for allow-only protected rules", () => {
+    expect(injectRipgrepProtectedPathGlobs("rg TOKEN .", allowOnlyRules)).toBe(
+      "rg TOKEN .",
+    );
+    const input: { path: string; glob?: string } = { path: "." };
+    expect(injectGrepProtectedPathGlob(input, allowOnlyRules)).toBeUndefined();
+    expect(input.glob).toBeUndefined();
+  });
+
+  it("still injects deny globs for an allowed directory with a denied descendant", () => {
+    const input: { path: string; glob?: string } = { path: "safe" };
     expect(
-      validateRipgrepGlobOverrides(
-        "rg --glob '**/*' DATABASE_URL .",
-        patterns,
-        exceptions,
-      ),
-    ).toContain("protected by the active profile");
-    expect(
-      validateRipgrepGlobOverrides(
-        "rg --glob '**/*.ts' DATABASE_URL .",
-        patterns,
-        exceptions,
+      injectGrepProtectedPathGlob(
+        input,
+        allowedDirectoryWithDeniedDescendantRules,
       ),
     ).toBeUndefined();
+    expect(input.glob).toBe("!safe/.env.secret");
   });
 
   it("builds the built-in grep exclusion from every configured pattern", () => {
     const input: { path: string; glob?: string } = { path: "." };
 
-    expect(
-      injectGrepProtectedPathGlob(input, patterns, exceptions),
-    ).toBeUndefined();
+    expect(injectGrepProtectedPathGlob(input, rules)).toBeUndefined();
     expect(input.glob).toBe("!{**/.env*,**/.git/**}");
   });
 
-  it("permits direct searches of configured exceptions", () => {
+  it("explains the built-in grep single-glob limit when denying unsafe globs", () => {
+    const input: { path: string; glob?: string } = {
+      path: ".",
+      glob: "**/*",
+    };
+
+    expect(injectGrepProtectedPathGlob(input, rules)).toContain(
+      "Pi's built-in grep forwards only one --glob to ripgrep",
+    );
+    expect(injectGrepProtectedPathGlob(input, rules)).toContain(
+      "rg --glob '**/*.ts' 'PATTERN' .",
+    );
+    expect(input.glob).toBe("**/*");
+  });
+
+  it("still injects deny globs for direct searches of configured exceptions", () => {
     const input: { path: string; glob?: string } = {
       path: "nested/.env.template",
     };
-    expect(
-      injectGrepProtectedPathGlob(input, patterns, exceptions),
-    ).toBeUndefined();
-    expect(input.glob).toBeUndefined();
+    expect(injectGrepProtectedPathGlob(input, rules)).toBeUndefined();
+    expect(input.glob).toBe("!{**/.env*,**/.git/**}");
   });
 });

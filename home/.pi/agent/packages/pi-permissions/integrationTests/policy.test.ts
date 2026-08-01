@@ -8,7 +8,7 @@ import {
   assertPolicyConfig,
   builtinProfileNames,
   extendProfile,
-  withProtectedPathPatterns,
+  withProtectedPathRules,
   type ProfilePolicy,
 } from "../modules/policyHelpers";
 import { evaluatePathByPattern } from "../modules/shell/pathPolicy";
@@ -75,8 +75,7 @@ function evaluateReadProtectedPath(
     policy.readPaths,
     "allow",
     context,
-    policy.protectedPathPatterns,
-    policy.protectedPathExceptions,
+    policy.protectedPathRules,
   );
 }
 
@@ -91,8 +90,7 @@ function evaluateWriteProtectedPath(
     policy.writePaths,
     "allow",
     context,
-    policy.protectedPathPatterns,
-    policy.protectedPathExceptions,
+    policy.protectedPathRules,
   );
 }
 
@@ -230,7 +228,7 @@ describe("policy configuration contract", () => {
   });
 
   it("keeps ordinary path decisions when protected exceptions are present", () => {
-    const policy = withProtectedPathPatterns({
+    const policy = withProtectedPathRules({
       ...baseProfile,
       readPaths: [
         ...baseProfile.readPaths,
@@ -242,8 +240,10 @@ describe("policy configuration contract", () => {
         { pattern: "private/**", decision: "deny" },
         { pattern: "../**", decision: "ask" },
       ],
-      protectedPathPatterns: ["**/.env*"],
-      protectedPathExceptions: ["**/.env.template"],
+      protectedPathRules: [
+        { pattern: "**/.env*", decision: "deny" },
+        { pattern: "**/.env.template", decision: "allow" },
+      ],
     });
 
     for (const context of ["read", "grep", "find", "ls"] as const) {
@@ -320,7 +320,7 @@ describe("policy configuration contract", () => {
   });
 
   it("preserves ordinary ask decisions under protected-path exceptions in every context", () => {
-    const policy = withProtectedPathPatterns({
+    const policy = withProtectedPathRules({
       ...baseProfile,
       readPaths: [
         { pattern: "*", decision: "allow" },
@@ -330,8 +330,10 @@ describe("policy configuration contract", () => {
         { pattern: "*", decision: "allow" },
         { pattern: "private/**", decision: "ask" },
       ],
-      protectedPathPatterns: ["**/.env*"],
-      protectedPathExceptions: ["**/.env.template"],
+      protectedPathRules: [
+        { pattern: "**/.env*", decision: "deny" },
+        { pattern: "**/.env.template", decision: "allow" },
+      ],
     });
 
     for (const context of ["read", "grep", "find", "ls"] as const) {

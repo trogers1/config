@@ -1,5 +1,6 @@
 import { shellCommandWords } from "./parse";
 import { isProtectedPathExpression } from "./pathPolicy";
+import type { ProtectedPathRule } from "../policyHelpers";
 
 export type ParsedReadCommand =
   | { status: "safe"; paths: string[] }
@@ -25,6 +26,7 @@ function isReadCommand(command: string): boolean {
 export function validateReadCommands(
   command: string,
   commandSegments: string[],
+  protectedPathRules: readonly ProtectedPathRule[] = [],
 ): string | undefined {
   const hasReader =
     commandSegments.some(isReadCommand) ||
@@ -44,7 +46,7 @@ export function validateReadCommands(
 
   for (const segment of commandSegments) {
     if (!isReadCommand(segment)) continue;
-    const parsed = parseReadCommand(segment);
+    const parsed = parseReadCommand(segment, protectedPathRules);
     if (parsed.status === "unknown") return parsed.reason;
   }
   return undefined;
@@ -55,7 +57,10 @@ export function validateReadCommands(
  * surface we permit. Unbash supplies the shell words; anything whose command
  * semantics cannot be established from literal arguments is rejected.
  */
-export function parseReadCommand(command: string): ParsedReadCommand {
+export function parseReadCommand(
+  command: string,
+  protectedPathRules: readonly ProtectedPathRule[] = [],
+): ParsedReadCommand {
   const tokens = shellCommandWords(command);
   while (tokens[0] === "command") tokens.shift();
   const program = tokens.shift();
@@ -64,34 +69,46 @@ export function parseReadCommand(command: string): ParsedReadCommand {
 
   switch (program) {
     case "cat":
-      return parseOperands(tokens, new Set());
+      return parseOperands(tokens, new Set(), protectedPathRules);
     case "head":
     case "tail":
-      return parseCountReader(tokens);
+      return parseCountReader(tokens, protectedPathRules);
     case "nl":
-      return parseOptions(tokens, new Set(["b", "l", "n", "s", "w", "i"]));
+      return parseOptions(
+        tokens,
+        new Set(["b", "l", "n", "s", "w", "i"]),
+        new Set(),
+        protectedPathRules,
+      );
     case "sort":
-      return parseSort(tokens);
+      return parseSort(tokens, protectedPathRules);
     case "wc":
-      return parseOptions(tokens, new Set());
+      return parseOptions(tokens, new Set(), new Set(), protectedPathRules);
     case "file":
-      return parseFile(tokens);
+      return parseFile(tokens, protectedPathRules);
     case "sed":
-      return parseSed(tokens);
+      return parseSed(tokens, protectedPathRules);
     default:
       return unknown("unsupported read command");
   }
 }
 
-function parseCountReader(tokens: string[]): ParsedReadCommand {
+function parseCountReader(
+  tokens: string[],
+  protectedPathRules: readonly ProtectedPathRule[],
+): ParsedReadCommand {
   return parseOptions(
     tokens,
     new Set(["n", "c", "q"]),
     new Set(["lines", "bytes"]),
+    protectedPathRules,
   );
 }
 
-function parseSort(tokens: string[]): ParsedReadCommand {
+function parseSort(
+  tokens: string[],
+  protectedPathRules: readonly ProtectedPathRule[],
+): ParsedReadCommand {
   // --output changes the filesystem; --files0-from makes inputs dynamic.
   if (
     tokens.some(
@@ -107,19 +124,26 @@ function parseSort(tokens: string[]): ParsedReadCommand {
     tokens,
     new Set(["k", "S", "T", "t"]),
     new Set(["key", "buffer-size", "temporary-directory", "field-separator"]),
+    protectedPathRules,
   );
 }
 
-function parseFile(tokens: string[]): ParsedReadCommand {
+function parseFile(
+  tokens: string[],
+  protectedPathRules: readonly ProtectedPathRule[],
+): ParsedReadCommand {
   if (
     tokens.some((token) => token === "-m" || token.startsWith("--magic-file"))
   ) {
     return unknown("file magic-file options are not permitted");
   }
-  return parseOptions(tokens, new Set());
+  return parseOptions(tokens, new Set(), new Set(), protectedPathRules);
 }
 
-function parseSed(tokens: string[]): ParsedReadCommand {
+function parseSed(
+  tokens: string[],
+  protectedPathRules: readonly ProtectedPathRule[],
+): ParsedReadCommand {
   const paths: string[] = [];
   let programSeen = false;
   let endOptions = false;
@@ -177,13 +201,16 @@ function parseSed(tokens: string[]): ParsedReadCommand {
     }
     paths.push(token);
   }
-  return programSeen ? result(paths) : unknown("sed program is missing");
+  return programSeen
+    ? result(paths, protectedPathRules)
+    : unknown("sed program is missing");
 }
 
 function parseOptions(
   tokens: string[],
   shortWithValue: Set<string>,
   longWithValue = new Set<string>(),
+  protectedPathRules: readonly ProtectedPathRule[] = [],
 ): ParsedReadCommand {
   const paths: string[] = [];
   let endOptions = false;
@@ -218,22 +245,26 @@ function parseOptions(
     }
     paths.push(token);
   }
-  return result(paths);
+  return result(paths, protectedPathRules);
 }
 
 function parseOperands(
   tokens: string[],
   options: Set<string>,
+  protectedPathRules: readonly ProtectedPathRule[],
 ): ParsedReadCommand {
-  return parseOptions(tokens, options);
+  return parseOptions(tokens, options, new Set<string>(), protectedPathRules);
 }
 
-function result(paths: string[]): ParsedReadCommand {
+function result(
+  paths: string[],
+  protectedPathRules: readonly ProtectedPathRule[],
+): ParsedReadCommand {
   if (
     paths.some(
       (value) =>
         (value.includes("*") || value.includes("?") || value.includes("[")) &&
-        !isProtectedPathExpression(value),
+        !isProtectedPathExpression(value, protectedPathRules),
     )
   )
     return unknown("glob input cannot be proven safe");
