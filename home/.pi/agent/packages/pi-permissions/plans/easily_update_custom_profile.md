@@ -1,0 +1,1 @@
+When refusing a command, there should be a 'add to profile?' option that will add a matching rule (with guidance) to the current profile (or a new custom one that extends the current built-in [then autoswitch to that profile]).
