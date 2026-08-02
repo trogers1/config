@@ -33,7 +33,7 @@ import {
 	withFileMutationQueue,
 } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
-import { Type } from "typebox";
+import { IsLiteral, Type } from "typebox";
 import Value from "typebox/value";
 import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.ts";
 import {
@@ -105,6 +105,28 @@ const ImageContentSchema = Type.Object({
 	data: Type.String(),
 	mimeType: Type.String(),
 });
+// Stop reasons pi is known to emit on an assistant message, including the
+// "pending" partial-streaming reason. The `Type.String()` arm is a fallback
+// so an unforeseen value never discards a valid event; `processLine` warns via
+// `notify` when a value outside the known set (derived below) is seen.
+const StopReasonSchema = Type.Union([
+	Type.Literal("stop"),
+	Type.Literal("length"),
+	Type.Literal("toolUse"),
+	Type.Literal("error"),
+	Type.Literal("aborted"),
+	Type.Literal("pending"),
+	// Fallback: accept unforeseen stop reasons (e.g. provider-specific values
+	// or a future pi reason) so a valid event is never dropped.
+	Type.String(),
+]);
+// Known stop reasons, derived from StopReasonSchema's literal arms (the
+// Type.String() fallback arm is excluded) so the set cannot drift from the
+// schema. `processLine` warns when a stop reason outside this set is seen.
+export const KNOWN_STOP_REASONS = new Set<string>(
+	StopReasonSchema.anyOf.flatMap((member) => (IsLiteral(member) ? [member.const] : [])),
+);
+
 const AssistantMessageSchema = Type.Object({
 	role: Type.Literal("assistant"),
 	content: Type.Array(
@@ -131,13 +153,7 @@ const AssistantMessageSchema = Type.Object({
 	responseModel: Type.Optional(Type.String()),
 	responseId: Type.Optional(Type.String()),
 	usage: UsageSchema,
-	stopReason: Type.Union([
-		Type.Literal("stop"),
-		Type.Literal("length"),
-		Type.Literal("toolUse"),
-		Type.Literal("error"),
-		Type.Literal("aborted"),
-	]),
+	stopReason: StopReasonSchema,
 	errorMessage: Type.Optional(Type.String()),
 	timestamp: Type.Number(),
 });
@@ -172,17 +188,37 @@ type WorkerEvent =
 	| { type: "tool_result_end"; message: ToolResultMessage }
 	| { type: "turn_end"; message: AssistantMessage };
 
+// Event types this consumer reads from the worker's JSON stream. Derived from
+// WorkerEventSchema so the set cannot drift from the schema's union arms; pi
+// emits many other event types (plus a session header) which are ignored.
+const CONSUMED_EVENT_TYPES = new Set<string>(WorkerEventSchema.anyOf.map((member) => member.properties.type.const));
+
 function parseWorkerEvent(line: string): WorkerEvent | undefined {
 	let value: unknown;
 	try {
 		value = JSON.parse(line);
 	} catch {
-		return undefined;
+		// Every stdout line in JSON mode is a JSON object; anything else means
+		// the worker wrote unexpected output to stdout.
+		throw new Error(`Subagent worker emitted non-JSON stdout: ${line.slice(0, 200)}${line.length > 200 ? "…" : ""}`);
 	}
-	if (!Value.Check(WorkerEventSchema, value)) return undefined;
+	// Only the three event types in WorkerEventSchema are consumed. Everything
+	// else pi emits (the session header, message_start/update, agent_*,
+	// compaction_*, …) is intentionally ignored, not a failure.
+	const type = (value as { type?: unknown } | null)?.type;
+	if (typeof type !== "string" || !CONSUMED_EVENT_TYPES.has(type)) return undefined;
 
 	// Pi does not currently export its JSON-mode event schema. The local schema
-	// above validates every Message field this consumer stores or reads.
+	// above validates every Message field this consumer stores or reads. A
+	// validation failure means the protocol drifted — fail loudly rather than
+	// silently dropping the event.
+	if (!Value.Check(WorkerEventSchema, value)) {
+		const firstError = [...Value.Errors(WorkerEventSchema, value)][0] as
+			{ message?: string; path?: string } | undefined;
+		throw new Error(
+			`Subagent worker emitted a ${type} event that failed schema validation: ${firstError?.message ?? "unknown error"} (at ${firstError?.path ?? "/"})`,
+		);
+	}
 	return value as WorkerEvent;
 }
 
@@ -533,6 +569,8 @@ interface RunAgentOptions {
 	handoffBase?: string;
 	/** Git-status bash-edit tracking is unreliable when multiple workers share a cwd. */
 	trackBashEdits?: boolean;
+	/** Sink for user-visible warnings detected while parsing worker output. */
+	notify?: (message: string, type?: "info" | "warning" | "error") => void;
 }
 
 /**
@@ -740,6 +778,7 @@ async function runSingleAgent(
 					env: spawnEnv,
 				});
 				let buffer = "";
+				let parseError: string | undefined;
 
 				// Kill at a turn boundary so the session file stays consistent; the
 				// in-flight LLM call is abandoned but no tool results are orphaned.
@@ -752,8 +791,16 @@ async function runSingleAgent(
 				}
 
 				const processLine = (line: string) => {
-					if (!line.trim()) return;
-					const event = parseWorkerEvent(line);
+					if (parseError || !line.trim()) return;
+					let event: WorkerEvent | undefined;
+					try {
+						event = parseWorkerEvent(line);
+					} catch (err) {
+						parseError = err instanceof Error ? err.message : String(err);
+						currentResult.stderr += `\n${parseError}`;
+						if (!proc.killed) proc.kill("SIGTERM");
+						return;
+					}
 					if (!event) return;
 
 					if (event.type === "message_end") {
@@ -776,7 +823,15 @@ async function runSingleAgent(
 								workerModel = msg.model;
 								workerProvider = msg.provider;
 							}
-							if (msg.stopReason) currentResult.stopReason = msg.stopReason;
+							if (msg.stopReason) {
+								currentResult.stopReason = msg.stopReason;
+								if (!KNOWN_STOP_REASONS.has(msg.stopReason)) {
+									opts.notify?.(
+										`Subagent "${agent.name}" reported an unrecognized stop reason "${msg.stopReason}" (expected one of: ${[...KNOWN_STOP_REASONS].join(", ")}). The run continues, but this may indicate a pi protocol change.`,
+										"warning",
+									);
+								}
+							}
 							if (msg.errorMessage) currentResult.errorMessage = msg.errorMessage;
 						}
 						emitUpdate();
@@ -808,7 +863,10 @@ async function runSingleAgent(
 					buffer += data.toString();
 					const lines = buffer.split("\n");
 					buffer = lines.pop() || "";
-					for (const line of lines) processLine(line);
+					for (const line of lines) {
+						processLine(line);
+						if (parseError) break;
+					}
 				});
 
 				proc.stderr.on("data", (data) => {
@@ -816,8 +874,11 @@ async function runSingleAgent(
 				});
 
 				proc.on("close", (code) => {
-					if (buffer.trim()) processLine(buffer);
-					resolve({ code: code ?? 0, compactionRequested });
+					if (!parseError && buffer.trim()) processLine(buffer);
+					resolve({
+						code: parseError ? 1 : (code ?? 0),
+						compactionRequested: parseError ? false : compactionRequested,
+					});
 				});
 
 				proc.on("error", () => {
@@ -1174,6 +1235,7 @@ export default function (pi: ExtensionAPI) {
 								? `handoff-step-${i + 1}-${step.agent}-${slugify(step.label ?? step.task)}`
 								: undefined,
 							trackBashEdits: true,
+							notify: (message, type) => ctx.ui.notify(message, type),
 						},
 						signal,
 						chainUpdate,
@@ -1278,6 +1340,7 @@ export default function (pi: ExtensionAPI) {
 								? `handoff-${String(index + 1).padStart(2, "0")}-${t.agent}-${slugify(t.label ?? t.task)}`
 								: undefined,
 							trackBashEdits: false,
+							notify: (message, type) => ctx.ui.notify(message, type),
 						},
 						signal,
 						// Per-task update callback
@@ -1328,6 +1391,7 @@ export default function (pi: ExtensionAPI) {
 						runDir,
 						handoffBase: runDir ? `handoff-${params.agent}-${slugify(params.label ?? params.task)}` : undefined,
 						trackBashEdits: true,
+						notify: (message, type) => ctx.ui.notify(message, type),
 					},
 					signal,
 					onUpdate,

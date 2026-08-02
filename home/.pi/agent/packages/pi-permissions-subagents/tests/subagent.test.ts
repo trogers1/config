@@ -2,7 +2,7 @@ import { execSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import subagentExtension, { workerCompactionThreshold } from "../extensions/index.ts";
+import subagentExtension, { KNOWN_STOP_REASONS, workerCompactionThreshold } from "../extensions/index.ts";
 import {
 	createCompactionCycleFakePi,
 	createExtensionRegistrationRecorder,
@@ -20,6 +20,18 @@ describe("workerCompactionThreshold", () => {
 		expect(workerCompactionThreshold(200_000)).toBe(80_000);
 		expect(workerCompactionThreshold(1_000_000)).toBe(150_000);
 		expect(workerCompactionThreshold(32_000)).toBeCloseTo(12_800);
+	});
+});
+
+describe("KNOWN_STOP_REASONS", () => {
+	it("is derived from the stopReason schema's literal arms", () => {
+		// Literal arms of StopReasonSchema are accepted as known (no warning).
+		expect(KNOWN_STOP_REASONS.has("stop")).toBe(true);
+		expect(KNOWN_STOP_REASONS.has("toolUse")).toBe(true);
+		expect(KNOWN_STOP_REASONS.has("pending")).toBe(true);
+		// The Type.String() fallback arm contributes no value, and arbitrary
+		// strings are not known.
+		expect(KNOWN_STOP_REASONS.has("not-a-known-reason")).toBe(false);
 	});
 });
 
@@ -109,7 +121,7 @@ describe("subagent tool", () => {
 		).rejects.toThrow();
 	});
 
-	it("ignores malformed worker events at the JSON protocol boundary", async () => {
+	it("fails loudly on malformed worker events at the JSON protocol boundary", async () => {
 		const projectDir = setupProjectDir();
 		const result = await runSingle(
 			projectDir,
@@ -122,7 +134,29 @@ describe("subagent tool", () => {
 			{ agent: "worker", task: "Do something" },
 		);
 
-		expect(getToolResultText(result)).toContain("(no output)");
+		expect((result as { isError?: boolean }).isError).toBe(true);
+		expect(getToolResultText(result)).toContain("failed schema validation");
+	});
+
+	it("warns via notify when a worker reports an unrecognized stop reason", async () => {
+		const projectDir = setupProjectDir();
+		const warnings: string[] = [];
+		const recordPath = join(projectDir, "spawn-record.jsonl");
+		process.env.PI_SUBAGENT_PI_PATH = createFakePi(projectDir, {
+			output: "Did the thing.",
+			stopReason: "not-a-known-reason",
+			recordEnvPath: recordPath,
+		});
+		process.env.PI_SUBAGENT_TEST_RECORD = recordPath;
+
+		const tool = loadTool();
+		const ctx = createFakeExtensionContext(projectDir, {
+			notify: (message) => warnings.push(message),
+		});
+		const result = await invokeRegisteredTool(tool, { agent: "worker", task: "Do something" }, ctx);
+
+		expect(warnings.some((w) => w.includes("not-a-known-reason"))).toBe(true);
+		expect(getToolResultText(result)).toContain("Did the thing.");
 	});
 
 	it("writes a handoff file when runDir is provided", async () => {

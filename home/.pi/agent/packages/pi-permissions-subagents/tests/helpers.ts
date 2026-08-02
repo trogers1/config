@@ -161,11 +161,12 @@ if (args.includes('rpc')) {
 
 export function createFakeExtensionContext(
 	cwd: string,
-	uiOverrides?: Partial<Pick<ExtensionContext["ui"], "confirm">>,
+	uiOverrides?: Partial<Pick<ExtensionContext["ui"], "confirm" | "notify">>,
 ): ExtensionContext {
 	const ui = {
 		confirm: uiOverrides?.confirm ?? (() => Promise.resolve(false)),
-	} satisfies Pick<ExtensionContext["ui"], "confirm">;
+		notify: uiOverrides?.notify ?? (() => {}),
+	} satisfies Pick<ExtensionContext["ui"], "confirm" | "notify">;
 	const context = {
 		cwd,
 		hasUI: false,

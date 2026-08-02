@@ -49,9 +49,6 @@
 		},
 		"@earendil-works/pi-tui": {
 			"optional": true
-		},
-		"typebox": {
-			"optional": true
 		}
 	},
 	"devDependencies": {
@@ -64,7 +61,6 @@
 		"eslint": "^10.7.0",
 		"knip": "^6.29.0",
 		"prettier": "^3.9.5",
-		"typebox": "^1.1.38",
 		"typescript": "^6.0.3",
 		"typescript-eslint": "^8.65.0",
 		"vitest": "^4.1.10"
