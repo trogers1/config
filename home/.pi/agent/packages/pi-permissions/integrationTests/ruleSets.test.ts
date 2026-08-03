@@ -38,13 +38,13 @@ describe("rule-set namespace", () => {
     expect(defaultGuardRules.length).toBeGreaterThan(0);
   });
 
-  it("ruleset:guards resolves to the shipped guards partial policy", () => {
+  it("ruleset:shell-guards resolves to the shipped guards partial policy", () => {
     const config = loadProfileConfig(
       genericPolicyConfig,
       writeConfig({
         profiles: {
           guarded: {
-            extends: ["ruleset:guards"],
+            extends: ["ruleset:shell-guards"],
             ...minimalPaths,
           },
         },
@@ -111,7 +111,7 @@ describe("rule-set namespace", () => {
       writeConfig({
         profiles: {
           mixed: {
-            extends: ["builtin:default", "ruleset:guards"],
+            extends: ["builtin:default", "ruleset:shell-guards"],
             ...minimalPaths,
           },
         },
@@ -119,6 +119,86 @@ describe("rule-set namespace", () => {
     );
 
     expect(decideBash("find . -delete", config.profiles.mixed)).toBe("deny");
+  });
+
+  it("deps-mutations rule sets are decision twins generated from one table", () => {
+    const deny =
+      ruleSetRegistry["ruleset:deps-mutations-guard"].tools?.bash ?? [];
+    const allow =
+      ruleSetRegistry["ruleset:deps-mutations-allow"].tools?.bash ?? [];
+
+    expect(deny.length).toBeGreaterThan(0);
+    expect(allow.map((rule) => rule.pattern)).toEqual(
+      deny.map((rule) => rule.pattern),
+    );
+    expect(deny.every((rule) => rule.decision === "deny")).toBe(true);
+    expect(allow.every((rule) => rule.decision === "allow")).toBe(true);
+  });
+
+  it("deps-mutations-allow opens dependency work while publish stays denied", () => {
+    const config = loadProfileConfig(
+      genericPolicyConfig,
+      writeConfig({
+        profiles: {
+          "deps-work": {
+            extends: [
+              "ruleset:packageManagers",
+              "ruleset:deps-mutations-allow",
+            ],
+            ...minimalPaths,
+          },
+        },
+      }),
+    );
+
+    expect(decideBash("npm install lodash", config.profiles["deps-work"])).toBe(
+      "allow",
+    );
+    expect(decideBash("npm publish", config.profiles["deps-work"])).toBe(
+      "deny",
+    );
+  });
+
+  it("deps-mutations-guard restores the standard guarded posture", () => {
+    const config = loadProfileConfig(
+      genericPolicyConfig,
+      writeConfig({
+        profiles: {
+          guarded: {
+            extends: [
+              "ruleset:packageManagers",
+              "ruleset:deps-mutations-guard",
+            ],
+            ...minimalPaths,
+          },
+        },
+      }),
+    );
+
+    expect(decideBash("npm install lodash", config.profiles.guarded)).toBe(
+      "deny",
+    );
+  });
+
+  it("git-write composes commit permissions onto any base", () => {
+    const config = loadProfileConfig(
+      genericPolicyConfig,
+      writeConfig({
+        profiles: {
+          committer: {
+            extends: ["ruleset:git-commit"],
+            ...minimalPaths,
+          },
+        },
+      }),
+    );
+
+    expect(decideBash("git commit -m test", config.profiles.committer)).toBe(
+      "allow",
+    );
+    expect(decideBash("git push origin main", config.profiles.committer)).toBe(
+      "ask",
+    );
   });
 
   it("the TypeScript rule-set registry is the same registry JSONC resolves against", () => {

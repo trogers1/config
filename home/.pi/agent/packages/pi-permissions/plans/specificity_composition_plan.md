@@ -134,7 +134,7 @@ Phase 1 specificity tests and implemented in Phase 2.
   and no transforms (transforms apply to fully-folded profiles).
 - Rule sets are exposed to JSONC through a reserved **`ruleset:` namespace**,
   usable in `extends` interchangeably with profiles:
-  `"extends": ["builtin:read-only", "ruleset:test-run", "ruleset:guards"]`.
+  `"extends": ["builtin:read-only", "ruleset:test-run", "ruleset:shell-guards"]`.
 - Reserved namespaces are **flat kind-prefixes, one per addressable kind**:
   `builtin:` (full profiles), `ruleset:` (partial policies), `transform:`
   (policy functions). The namespacing machinery validates a prefix _list_,
@@ -432,7 +432,7 @@ with zero behavior change.
    rule-set registry; mixed profile/ruleset folds work.
 3. Schema: encode the reserved prefix; regenerate.
 4. Docs: composing from rule sets vs extending profiles; "always include
-   `ruleset:guards`" guidance for from-scratch profiles.
+   `ruleset:shell-guards`" guidance for from-scratch profiles.
 
 ### Passing criteria
 
@@ -475,7 +475,7 @@ with zero behavior change.
 ## Deferred decisions
 
 - Promoting write-guards into the engine-level always-win class alongside the
-  protected layer. Today guards are ordinary rules in `ruleset:guards`: a
+  protected layer. Today guards are ordinary rules in `ruleset:shell-guards`: a
   from-scratch profile can omit them, and specificity is a heuristic, so a
   sufficiently specific allow could outrank them. Promotion means the guard
   set is evaluated like the protected layer — always applied, deny

@@ -22,7 +22,117 @@ function packageManagerMutationDenials(
   ]);
 }
 
-export const defaultPackageManagerRules: Rule[] = [
+/**
+ * Dependency-mutation subcommands (install/add/update/remove families): the
+ * mutations a dependency-work profile performs deliberately. One table
+ * generates both the guard (deny) and opener (allow) rule-set variants below,
+ * so the two can never drift. Publishing, credential, and one-off-binary
+ * mutations are excluded; those live in the base rules and stay denied even
+ * for dependency-work profiles.
+ */
+const dependencyMutationSubcommands: Record<string, readonly string[]> = {
+  npm: ["install", "i", "add", "ci", "update", "uninstall", "remove", "rm"],
+  pnpm: ["add", "install", "i", "update", "remove", "rm", "uninstall"],
+  yarn: ["add", "install", "remove", "upgrade"],
+  pip: ["install", "uninstall"],
+  pip3: ["install", "uninstall"],
+  uv: ["pip install", "pip uninstall", "add", "remove", "sync", "lock"],
+  cargo: ["install", "add", "remove", "uninstall"],
+  gem: ["install", "uninstall"],
+  bundle: ["install", "update", "add"],
+  composer: ["install", "update", "require", "remove"],
+  go: ["install", "get"],
+};
+
+const npmCredentialMutations = [
+  "publish",
+  "link",
+  "login",
+  "logout",
+  "token",
+  "pkg set",
+  "config set",
+  "config delete",
+  "audit fix",
+] as const;
+const pnpmCredentialMutations = ["publish", "dlx", "link"] as const;
+const yarnCredentialMutations = [
+  "publish",
+  "dlx",
+  "link",
+  "config set",
+] as const;
+const uvCredentialMutations = ["publish", "tool install"] as const;
+
+function dependencyMutationRules(decision: "allow" | "deny"): Rule[] {
+  return Object.entries(dependencyMutationSubcommands).flatMap(
+    ([executable, subcommands]) =>
+      subcommands.flatMap((subcommand): Rule[] => [
+        {
+          pattern: `${executable} ${subcommand}`,
+          decision,
+          ...(decision === "deny" ? { guidance: npmMutationGuidance } : {}),
+        },
+        {
+          pattern: `${executable} ${subcommand} *`,
+          decision,
+          ...(decision === "deny" ? { guidance: npmMutationGuidance } : {}),
+        },
+      ]),
+  );
+}
+
+/**
+ * Guard variant (`ruleset:deps-mutations-guard`): deny dependency
+ * mutations. Standard posture; `builtin:default` composes it after
+ * `ruleset:packageManagers`.
+ */
+export const dependencyMutationGuardRules: Rule[] =
+  dependencyMutationRules("deny");
+
+/**
+ * Opener variant (`ruleset:deps-mutations-allow`): allow dependency
+ * mutations. Decision twin of the deny variant; `builtin:deps-mutator`
+ * composes it in the deny variant's place.
+ */
+export const dependencyMutationAllowRules: Rule[] =
+  dependencyMutationRules("allow");
+
+/**
+ * Test and build invocation allows (`ruleset:test-run`) for read-mostly
+ * profiles (`builtin:reviewer`): run the project's checks without opening
+ * writes.
+ */
+export const testRunRules: Rule[] = [
+  { pattern: "npm run *", decision: "allow" },
+  { pattern: "npm test", decision: "allow" },
+  { pattern: "npm test *", decision: "allow" },
+  { pattern: "pnpm run *", decision: "allow" },
+  { pattern: "pnpm test", decision: "allow" },
+  { pattern: "pnpm test *", decision: "allow" },
+  { pattern: "yarn run *", decision: "allow" },
+  { pattern: "yarn test", decision: "allow" },
+  { pattern: "yarn test *", decision: "allow" },
+  { pattern: "cargo build", decision: "allow" },
+  { pattern: "cargo build *", decision: "allow" },
+  { pattern: "cargo test", decision: "allow" },
+  { pattern: "cargo test *", decision: "allow" },
+  { pattern: "cargo check", decision: "allow" },
+  { pattern: "cargo check *", decision: "allow" },
+  { pattern: "cargo clippy", decision: "allow" },
+  { pattern: "cargo clippy *", decision: "allow" },
+  { pattern: "go *", decision: "allow" },
+];
+
+/**
+ * Base package-manager policy (`ruleset:packageManagers`): unknown commands
+ * ask, read-only queries allow, and credential/publishing mutations deny.
+ * Contains no dependency-mutation rules; compose it with
+ * `ruleset:deps-mutations-guard` (standard posture, as `builtin:default`
+ * does) or `ruleset:deps-mutations-allow` (dependency-work posture, as
+ * `builtin:deps-mutator` does).
+ */
+export const packageManagerRules: Rule[] = [
   { pattern: "npm *", decision: "ask" },
   { pattern: "npm run *", decision: "allow" },
   { pattern: "npm test", decision: "allow" },
@@ -55,25 +165,7 @@ export const defaultPackageManagerRules: Rule[] = [
   { pattern: "npm doctor", decision: "allow" },
   { pattern: "npm help", decision: "allow" },
   { pattern: "npm help *", decision: "allow" },
-  ...packageManagerMutationDenials("npm", [
-    "install",
-    "i",
-    "add",
-    "ci",
-    "update",
-    "uninstall",
-    "remove",
-    "rm",
-    "publish",
-    "link",
-    "login",
-    "logout",
-    "token",
-    "pkg set",
-    "config set",
-    "config delete",
-    "audit fix",
-  ]),
+  ...packageManagerMutationDenials("npm", npmCredentialMutations),
   { pattern: "npm version *", decision: "deny", guidance: npmMutationGuidance },
 
   { pattern: "pnpm *", decision: "ask" },
@@ -90,18 +182,7 @@ export const defaultPackageManagerRules: Rule[] = [
   { pattern: "pnpm audit", decision: "allow" },
   { pattern: "pnpm why", decision: "allow" },
   { pattern: "pnpm why *", decision: "allow" },
-  ...packageManagerMutationDenials("pnpm", [
-    "add",
-    "install",
-    "i",
-    "update",
-    "remove",
-    "rm",
-    "uninstall",
-    "publish",
-    "dlx",
-    "link",
-  ]),
+  ...packageManagerMutationDenials("pnpm", pnpmCredentialMutations),
   {
     pattern: "pnpm audit --fix*",
     decision: "deny",
@@ -119,16 +200,7 @@ export const defaultPackageManagerRules: Rule[] = [
   { pattern: "yarn info *", decision: "allow" },
   { pattern: "yarn outdated", decision: "allow" },
   { pattern: "yarn why *", decision: "allow" },
-  ...packageManagerMutationDenials("yarn", [
-    "add",
-    "install",
-    "remove",
-    "upgrade",
-    "publish",
-    "dlx",
-    "link",
-    "config set",
-  ]),
+  ...packageManagerMutationDenials("yarn", yarnCredentialMutations),
 
   { pattern: "pip *", decision: "ask" },
   { pattern: "pip list", decision: "allow" },
@@ -137,7 +209,6 @@ export const defaultPackageManagerRules: Rule[] = [
   { pattern: "pip show *", decision: "allow" },
   { pattern: "pip freeze", decision: "allow" },
   { pattern: "pip freeze *", decision: "allow" },
-  ...packageManagerMutationDenials("pip", ["install", "uninstall"]),
 
   { pattern: "pip3 *", decision: "ask" },
   { pattern: "pip3 list", decision: "allow" },
@@ -146,7 +217,6 @@ export const defaultPackageManagerRules: Rule[] = [
   { pattern: "pip3 show *", decision: "allow" },
   { pattern: "pip3 freeze", decision: "allow" },
   { pattern: "pip3 freeze *", decision: "allow" },
-  ...packageManagerMutationDenials("pip3", ["install", "uninstall"]),
 
   { pattern: "uv *", decision: "ask" },
   { pattern: "uv pip list", decision: "allow" },
@@ -157,16 +227,7 @@ export const defaultPackageManagerRules: Rule[] = [
   { pattern: "uv pip freeze *", decision: "allow" },
   { pattern: "uv tree", decision: "allow" },
   { pattern: "uv tree *", decision: "allow" },
-  ...packageManagerMutationDenials("uv", [
-    "pip install",
-    "pip uninstall",
-    "add",
-    "remove",
-    "sync",
-    "lock",
-    "publish",
-    "tool install",
-  ]),
+  ...packageManagerMutationDenials("uv", uvCredentialMutations),
 
   { pattern: "cargo *", decision: "ask" },
   { pattern: "cargo build", decision: "allow" },
@@ -179,33 +240,20 @@ export const defaultPackageManagerRules: Rule[] = [
   { pattern: "cargo clippy *", decision: "allow" },
   { pattern: "cargo doc", decision: "allow" },
   { pattern: "cargo doc *", decision: "allow" },
-  ...packageManagerMutationDenials("cargo", [
-    "install",
-    "add",
-    "remove",
-    "uninstall",
-    "publish",
-  ]),
+  ...packageManagerMutationDenials("cargo", ["publish"]),
 
   { pattern: "gem *", decision: "ask" },
   { pattern: "gem list", decision: "allow" },
   { pattern: "gem list *", decision: "allow" },
-  ...packageManagerMutationDenials("gem", ["install", "uninstall", "push"]),
+  ...packageManagerMutationDenials("gem", ["push"]),
 
   { pattern: "bundle *", decision: "ask" },
   { pattern: "bundle list", decision: "allow" },
   { pattern: "bundle list *", decision: "allow" },
-  ...packageManagerMutationDenials("bundle", ["install", "update", "add"]),
 
   { pattern: "composer *", decision: "ask" },
   { pattern: "composer show", decision: "allow" },
   { pattern: "composer show *", decision: "allow" },
-  ...packageManagerMutationDenials("composer", [
-    "install",
-    "update",
-    "require",
-    "remove",
-  ]),
 
   {
     pattern: "npm exec",
@@ -234,5 +282,4 @@ export const defaultPackageManagerRules: Rule[] = [
     ],
   },
   { pattern: "go *", decision: "allow" },
-  ...packageManagerMutationDenials("go", ["install", "get"]),
 ];

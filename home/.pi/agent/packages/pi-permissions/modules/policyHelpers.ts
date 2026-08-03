@@ -27,6 +27,13 @@ export const builtinProfileNames = [
   "builtin:read-only",
   "builtin:tests-hidden",
   "builtin:tests-only",
+  "builtin:committer",
+  "builtin:reviewer",
+  "builtin:scribe-only",
+  "builtin:deps-mutator",
+  "builtin:no-shell",
+  "builtin:implementation-only",
+  "builtin:git-full",
 ] as const;
 export type BuiltinProfileName = (typeof builtinProfileNames)[number];
 

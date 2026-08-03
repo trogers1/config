@@ -116,6 +116,35 @@ export const defaultGitRules: Rule[] = [
   { pattern: "git worktree list *", decision: "allow" },
 ];
 
+/**
+ * Git index/history write allows (`ruleset:git-commit`) for
+ * `builtin:committer`. Appended after the default git denies, identical
+ * patterns tie on specificity and resolve by composition order.
+ */
+export const gitCommitRules: Rule[] = [
+  { pattern: "git add *", decision: "allow" },
+  { pattern: "git commit", decision: "allow" },
+  { pattern: "git commit *", decision: "allow" },
+  { pattern: "git reset *", decision: "allow" },
+  { pattern: "git restore *", decision: "allow" },
+  { pattern: "git checkout *", decision: "allow" },
+  { pattern: "git rebase *", decision: "allow" },
+  { pattern: "git cherry-pick *", decision: "allow" },
+  { pattern: "git worktree *", decision: "allow" },
+];
+
+/**
+ * Ref mutation allows (`ruleset:git-refs`: push/branch/tag/switch) for
+ * `builtin:git-full`.
+ */
+export const gitRefsRules: Rule[] = [
+  { pattern: "git push", decision: "allow" },
+  { pattern: "git push *", decision: "allow" },
+  { pattern: "git branch *", decision: "allow" },
+  { pattern: "git tag *", decision: "allow" },
+  { pattern: "git switch *", decision: "allow" },
+];
+
 export const readOnlyGitRules: Rule[] = [
   { pattern: "git", decision: "allow" },
   { pattern: "git version", decision: "allow" },

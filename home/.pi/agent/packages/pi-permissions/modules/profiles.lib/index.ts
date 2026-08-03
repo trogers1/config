@@ -1,116 +1,18 @@
+import { definePolicyConfig } from "../policyHelpers";
+import { baseProfile } from "./base";
+import { readOnlyProfile, workerProfile } from "./core";
+import { committerProfile, gitFullProfile } from "./git";
 import {
-  applyPolicyTransforms,
-  definePolicyConfig,
-  extendProfile,
-  type ProfilePolicy,
-} from "../policyHelpers";
+  depsMutatorProfile,
+  noShellProfile,
+  reviewerProfile,
+  scribeOnlyProfile,
+} from "./scoped";
 import {
-  readOnlyPathRules,
-  readOnlyWritePathRules,
-  ruleSetRegistry,
-  testFilePatterns,
-} from "../ruleSets.lib/index";
-import { readOnlyShellRules } from "../ruleSets.lib/index";
-import { defaultProtectedPathRules } from "../protectedPaths";
-
-const baseProfile: ProfilePolicy = {
-  color: "blue",
-  emoji: "🛠️",
-  // No promptFile means: keep Pi's normal system prompt unchanged.
-  // Tool policies resolve by specificity first; composition order only breaks ties.
-  // For bash, patterns match normalized command segments.
-  // For path-based tools, patterns match paths relative to pi's startup directory.
-  // Outside paths appear as ../..., so use ../** to gate external access.
-  tools: {
-    bash: [
-      ...(ruleSetRegistry["ruleset:shell"].tools?.bash ?? []),
-      ...(ruleSetRegistry["ruleset:git"].tools?.bash ?? []),
-      ...(ruleSetRegistry["ruleset:packageManagers"].tools?.bash ?? []),
-      ...(ruleSetRegistry["ruleset:guards"].tools?.bash ?? []),
-    ],
-  },
-  readPaths: [...(ruleSetRegistry["ruleset:paths"].readPaths ?? [])],
-  writePaths: [...(ruleSetRegistry["ruleset:paths"].writePaths ?? [])],
-  protectedPathRules: defaultProtectedPathRules,
-};
-
-const workerProfile = applyPolicyTransforms(
-  extendProfile(baseProfile, {
-    color: "magenta",
-    emoji: "⚙️",
-  }),
-  ["transform:deny-asks"],
-);
-
-const readOnlyProfile: ProfilePolicy = {
-  color: "green",
-  emoji: "🔎",
-  tools: { bash: readOnlyShellRules },
-  readPaths: readOnlyPathRules,
-  writePaths: readOnlyWritePathRules,
-  protectedPathRules: defaultProtectedPathRules,
-};
-
-const testsHiddenProfile = extendProfile(baseProfile, {
-  color: "orange",
-  emoji: "🕶️",
-  promptFile: "prompts/tests-hidden.md",
-  // Protected rules also make grep/ripgrep exclude tests during broad
-  // searches whose requested path is the repository root.
-  protectedPathRules: testFilePatterns.map((pattern) => ({
-    pattern,
-    decision: "deny" as const,
-    guidance:
-      "You are implementing only. Do not inspect test files; adjust the system from production code and test results instead.",
-  })),
-  readPaths: testFilePatterns.map((pattern) => ({
-    pattern,
-    decision: "deny" as const,
-    guidance:
-      "You are implementing only. Do not inspect test files; adjust the system from production code and test results instead.",
-  })),
-  writePaths: testFilePatterns.map((pattern) => ({
-    pattern,
-    decision: "deny" as const,
-    guidance:
-      "You are implementing only. Do not alter tests; adjust the system under test instead.",
-  })),
-});
-
-const testsOnlyProfile = extendProfile(baseProfile, {
-  color: "green",
-  emoji: "🔬",
-  promptFile: "prompts/tests-only.md",
-  writePaths: [
-    {
-      pattern: "**",
-      decision: "deny",
-      contexts: ["edit", "write"],
-      guidance:
-        "This profile may only edit test files. Read the implementation, then make the requested change in tests.",
-    },
-    {
-      pattern: "**",
-      decision: "deny",
-      contexts: ["bash"],
-      guidance:
-        "Bash path operands are gated as writes under the tests-only profile. Use the read, grep, find, and ls tools to inspect implementation files; Bash operands and redirections may only target test files and /tmp.",
-      alternatives: [
-        "Use the read tool for concrete files",
-        "Use the grep tool for content searches",
-        "Use the find or ls tools for directory discovery",
-      ],
-    },
-    ...testFilePatterns.map((pattern) => ({
-      pattern,
-      decision: "allow" as const,
-    })),
-    { pattern: "/tmp", decision: "allow" },
-    { pattern: "/tmp/**", decision: "allow" },
-    { pattern: "/private/tmp", decision: "allow" },
-    { pattern: "/private/tmp/**", decision: "allow" },
-  ],
-});
+  implementationOnlyProfile,
+  testsHiddenProfile,
+  testsOnlyProfile,
+} from "./testWorkflows";
 
 const configuredPolicy = definePolicyConfig({
   defaultProfile: "builtin:default",
@@ -120,6 +22,13 @@ const configuredPolicy = definePolicyConfig({
     "builtin:read-only": readOnlyProfile,
     "builtin:tests-hidden": testsHiddenProfile,
     "builtin:tests-only": testsOnlyProfile,
+    "builtin:committer": committerProfile,
+    "builtin:reviewer": reviewerProfile,
+    "builtin:scribe-only": scribeOnlyProfile,
+    "builtin:deps-mutator": depsMutatorProfile,
+    "builtin:no-shell": noShellProfile,
+    "builtin:implementation-only": implementationOnlyProfile,
+    "builtin:git-full": gitFullProfile,
   },
 });
 

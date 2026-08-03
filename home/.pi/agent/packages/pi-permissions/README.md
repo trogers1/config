@@ -7,6 +7,13 @@ Pi package that mirrors the curated opencode permission posture and adds switcha
 - `builtin:read-only`: edit/write tools are only allowed for `./handoff.md` and `./progress.md`; read access is limited to the startup directory tree and `/tmp`; bash is limited to inspection commands, non-destructive git history commands, and output redirection to `/tmp`, `./handoff.md`, or `./progress.md`
 - `builtin:tests-hidden`: extends `builtin:default` for implementation-only work; test files cannot be read or edited, and prompt steering asks the model to fix the system rather than the tests and report tests it believes are incorrect
 - `builtin:tests-only`: extends `builtin:default` for documentation-first test-authoring work; prompt steering makes documented behavior the spec (production code is only an interface reference), and only test files can be edited
+- `builtin:committer`: extends `builtin:default` with git write commands allowed (add/commit/reset/restore/checkout/rebase/cherry-pick/worktree)
+- `builtin:reviewer`: extends `builtin:read-only` with test and build commands allowed (`npm`/`pnpm`/`yarn` run and test, `cargo build`/`test`/`check`/`clippy`, `go`); writes stay limited to `/tmp`, `handoff.md`, and `progress.md`
+- `builtin:scribe-only`: extends `builtin:default`; writes are limited to Markdown documentation and `/tmp`
+- `builtin:deps-mutator`: extends `builtin:default`; package-manager dependency mutations (install/add/update/remove families) are allowed while publish/login/token stay denied
+- `builtin:no-shell`: default path policy with all Bash commands denied; structured read/grep/find/ls/edit/write tools only
+- `builtin:implementation-only`: extends `builtin:default`; test files stay readable as the specification but cannot be written
+- `builtin:git-full`: extends `builtin:committer` with push/branch/tag/switch allowed
 - optional per-profile `color` and `emoji` metadata for the status line
 - explicit deny rules for destructive git operations and protected paths
 - automatic model steering and suggested alternatives for configured deny rules
@@ -96,9 +103,20 @@ canonical name (for example `builtin:default`), a shipped rule set by its
 `extends: ["default"]` resolves only a custom profile literally named
 `default`; it does not fall back to `builtin:default`. `extends` concatenates
 left-to-right, so a from-scratch profile can layer `ruleset:shell`,
-`ruleset:git`, `ruleset:packageManagers`, `ruleset:guards`, and
-`ruleset:paths` as needed. When authoring a new policy from scratch, include
-`ruleset:guards` so destructive shell guards stay in force. Non-empty tool-rule
+`ruleset:git`, `ruleset:packageManagers`, `ruleset:shell-guards`, and
+`ruleset:path-guards` as needed. `ruleset:packageManagers` is the base posture
+only (unknown commands ask, queries allow, publish/credentials deny); pair it
+with `ruleset:deps-mutations-guard` to deny install/add/update/remove
+families (the `builtin:default` posture) or `ruleset:deps-mutations-allow`
+to permit them (the `builtin:deps-mutator` posture). The two are decision
+twins generated from one subcommand table. Further pick-and-choose fragments:
+`ruleset:git-commit` (committer posture: add/commit/reset/restore/checkout/
+rebase/cherry-pick/worktree plus `/dev/null` writes), `ruleset:git-refs`
+(push/branch/tag/switch), `ruleset:test-run` (npm/pnpm/yarn test and run,
+cargo build/test/check/clippy, go), `ruleset:docs-write` (writes gated to
+Markdown, docs/, and /tmp), and `ruleset:test-write-protection` (test-file
+write denies). When authoring a new policy from scratch, include
+`ruleset:shell-guards` so destructive shell guards stay in force. Non-empty tool-rule
 arrays and path-rule arrays are appended to inherited rules, and specificity
 is resolved before order; order only breaks specificity ties. An empty
 custom-tool array deliberately clears that tool's inherited rules while keeping

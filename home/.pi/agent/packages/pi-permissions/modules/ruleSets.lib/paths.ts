@@ -41,6 +41,53 @@ export const testFilePatterns = [
   "**/*.cy.*",
 ] as const;
 
+/**
+ * Test-file write denies (`ruleset:test-write-protection`), shared by
+ * `builtin:tests-hidden` and `builtin:implementation-only`: tests stay
+ * readable as the specification; only writes are denied.
+ */
+export const testWriteProtectionRules: WritePathRule[] = testFilePatterns.map(
+  (pattern) => ({
+    pattern,
+    decision: "deny",
+    guidance:
+      "You are implementing only. Do not alter tests; adjust the system under test instead.",
+  }),
+);
+
+/**
+ * Write gating for docs-only profiles (`ruleset:docs-write`), used by
+ * `builtin:scribe-only`: Markdown documentation, docs/, and /tmp scratch.
+ */
+export const docsWritePathRules: WritePathRule[] = [
+  {
+    pattern: "**",
+    decision: "deny",
+    contexts: ["edit", "write"],
+    guidance:
+      "The scribe-only profile may only write Markdown documentation and /tmp scratch files.",
+  },
+  {
+    pattern: "**",
+    decision: "deny",
+    contexts: ["bash"],
+    guidance:
+      "Bash path operands are gated as writes under the scribe-only profile. Only Markdown documentation paths and /tmp may be targeted.",
+    alternatives: [
+      "Use the read tool for concrete files",
+      "Use the grep tool for content searches",
+      "Use the find or ls tools for directory discovery",
+    ],
+  },
+  { pattern: "*.md", decision: "allow" },
+  { pattern: "**/*.md", decision: "allow" },
+  { pattern: "docs/**", decision: "allow" },
+  { pattern: "/tmp", decision: "allow" },
+  { pattern: "/tmp/**", decision: "allow" },
+  { pattern: "/private/tmp", decision: "allow" },
+  { pattern: "/private/tmp/**", decision: "allow" },
+];
+
 export const readOnlyPathRules: ProfilePolicy["readPaths"] = [
   { pattern: "*", decision: "allow" },
   {

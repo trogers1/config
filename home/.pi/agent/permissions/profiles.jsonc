@@ -280,30 +280,6 @@
         ],
       },
     },
-    "committer": {
-      "extends": ["builtin:default"],
-      "color": "red",
-      "emoji": "⚠️",
-      "writePaths": [
-        {
-          "pattern": "/dev/null",
-          "decision": "allow",
-        },
-      ],
-      "tools": {
-        "bash": [
-          { "pattern": "git add *", "decision": "allow" },
-          { "pattern": "git commit", "decision": "allow" },
-          { "pattern": "git commit *", "decision": "allow" },
-          { "pattern": "git reset *", "decision": "allow" },
-          { "pattern": "git restore *", "decision": "allow" },
-          { "pattern": "git checkout *", "decision": "allow" },
-          { "pattern": "git rebase *", "decision": "allow" },
-          { "pattern": "git cherry-pick *", "decision": "allow" },
-          { "pattern": "git worktree *", "decision": "allow" },
-        ],
-      },
-    },
     "performance-review": {
       "extends": ["builtin:default"],
       "color": "red",

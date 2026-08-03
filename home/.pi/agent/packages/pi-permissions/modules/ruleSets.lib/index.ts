@@ -1,13 +1,20 @@
 import type { ProfilePolicy } from "../policyHelpers";
-import { defaultGitRules } from "./git";
+import { defaultGitRules, gitCommitRules, gitRefsRules } from "./git";
 import { defaultGuardRules } from "./guards";
-import { defaultPackageManagerRules } from "./packageManagers";
+import {
+  dependencyMutationAllowRules,
+  dependencyMutationGuardRules,
+  packageManagerRules,
+  testRunRules,
+} from "./packageManagers";
 import {
   defaultReadPaths,
   defaultWritePaths,
+  docsWritePathRules,
   readOnlyPathRules,
   readOnlyWritePathRules,
   testFilePatterns,
+  testWriteProtectionRules,
 } from "./paths";
 import { defaultShellRules, readOnlyShellRules } from "./shell";
 
@@ -22,8 +29,15 @@ export type RuleSetName =
   | "ruleset:shell"
   | "ruleset:git"
   | "ruleset:packageManagers"
-  | "ruleset:guards"
-  | "ruleset:paths";
+  | "ruleset:deps-mutations-guard"
+  | "ruleset:deps-mutations-allow"
+  | "ruleset:shell-guards"
+  | "ruleset:path-guards"
+  | "ruleset:git-commit"
+  | "ruleset:git-refs"
+  | "ruleset:test-run"
+  | "ruleset:docs-write"
+  | "ruleset:test-write-protection";
 
 export const ruleSetRegistry: Record<RuleSetName, RuleSetPolicy> = {
   "ruleset:shell": {
@@ -36,19 +50,54 @@ export const ruleSetRegistry: Record<RuleSetName, RuleSetPolicy> = {
       bash: defaultGitRules,
     },
   },
+  // Base package-manager posture only: pair with ruleset:deps-mutations-guard
+  // (standard, as builtin:default does) or ruleset:deps-mutations-allow
+  // (dependency work, as builtin:deps-mutator does).
   "ruleset:packageManagers": {
     tools: {
-      bash: defaultPackageManagerRules,
+      bash: packageManagerRules,
     },
   },
-  "ruleset:guards": {
+  "ruleset:deps-mutations-guard": {
+    tools: {
+      bash: dependencyMutationGuardRules,
+    },
+  },
+  "ruleset:deps-mutations-allow": {
+    tools: {
+      bash: dependencyMutationAllowRules,
+    },
+  },
+  "ruleset:shell-guards": {
     tools: {
       bash: defaultGuardRules,
     },
   },
-  "ruleset:paths": {
+  "ruleset:path-guards": {
     readPaths: defaultReadPaths(),
     writePaths: defaultWritePaths(),
+  },
+  "ruleset:git-commit": {
+    tools: {
+      bash: gitCommitRules,
+    },
+    writePaths: [{ pattern: "/dev/null", decision: "allow" }],
+  },
+  "ruleset:git-refs": {
+    tools: {
+      bash: gitRefsRules,
+    },
+  },
+  "ruleset:test-run": {
+    tools: {
+      bash: testRunRules,
+    },
+  },
+  "ruleset:docs-write": {
+    writePaths: docsWritePathRules,
+  },
+  "ruleset:test-write-protection": {
+    writePaths: testWriteProtectionRules,
   },
 };
 
