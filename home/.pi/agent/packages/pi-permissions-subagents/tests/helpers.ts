@@ -78,6 +78,12 @@ const event = ${
 }`
 			: JSON.stringify(options.rawEvent)
 	};
+// Real pi echoes the prompt as a user message_end before the assistant
+// messages; the consumer must ignore non-assistant message_end events.
+console.log(JSON.stringify({
+  type: "message_end",
+  message: { role: "user", content: [{ type: "text", text: output }], timestamp: Date.now() },
+}));
 console.log(JSON.stringify(event));
 process.exit(${options.exitCode ?? 0});
 `;

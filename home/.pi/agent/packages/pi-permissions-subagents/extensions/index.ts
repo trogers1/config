@@ -33,7 +33,7 @@ import {
 	withFileMutationQueue,
 } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
-import { IsLiteral, Type } from "typebox";
+import { IsLiteral, Type, type TSchema } from "typebox";
 import Value from "typebox/value";
 import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.ts";
 import {
@@ -188,12 +188,85 @@ type WorkerEvent =
 	| { type: "tool_result_end"; message: ToolResultMessage }
 	| { type: "turn_end"; message: AssistantMessage };
 
+/**
+ * Hard gate: only the fields this consumer dereferences unconditionally.
+ * Anything beyond this (api, provider, model, usage, stopReason, timestamps,
+ * toolResult metadata, …) is bookkeeping the code already guards with `?.` /
+ * `|| 0` fallbacks — a worker event missing those is degraded, not fatal, so
+ * it is accepted with a warning instead of killing the run.
+ */
+const MinimalContentPartSchema = Type.Union([
+	// getFinalOutput / display read .text on text parts.
+	Type.Object({ type: Type.Literal("text"), text: Type.String() }),
+	// extractFilesChanged reads .name and .arguments.path on toolCall parts.
+	Type.Object({
+		type: Type.Literal("toolCall"),
+		name: Type.String(),
+		arguments: Type.Record(Type.String(), Type.Unknown()),
+	}),
+	// Other part types (thinking, …) are passed through, never read.
+	Type.Object({ type: Type.String() }),
+]);
+const MinimalAssistantMessageSchema = Type.Object({
+	role: Type.Literal("assistant"),
+	content: Type.Array(MinimalContentPartSchema),
+});
+const MinimalToolResultMessageSchema = Type.Object({
+	role: Type.Literal("toolResult"),
+});
+const MinimalWorkerEventSchema = Type.Union([
+	Type.Object({ type: Type.Literal("message_end"), message: MinimalAssistantMessageSchema }),
+	Type.Object({ type: Type.Literal("tool_result_end"), message: MinimalToolResultMessageSchema }),
+	Type.Object({ type: Type.Literal("turn_end"), message: MinimalAssistantMessageSchema }),
+]);
+
 // Event types this consumer reads from the worker's JSON stream. Derived from
 // WorkerEventSchema so the set cannot drift from the schema's union arms; pi
 // emits many other event types (plus a session header) which are ignored.
 const CONSUMED_EVENT_TYPES = new Set<string>(WorkerEventSchema.anyOf.map((member) => member.properties.type.const));
 
-function parseWorkerEvent(line: string): WorkerEvent | undefined {
+// Concrete schema arm per event type, for both the strict and minimal
+// schemas. Validating against the matching arm instead of the union gives
+// errors real paths (/message/usage) — TypeBox reports union failures as
+// pathless aggregates ("must have required properties …" at "/"), which is
+// useless for diagnosing protocol drift.
+function schemaArmsByType<T extends { anyOf: Array<{ properties: { type: { const: string } } } & TSchema> }>(
+	schema: T,
+): Map<string, TSchema> {
+	return new Map<string, TSchema>(schema.anyOf.map((member) => [member.properties.type.const, member]));
+}
+const EVENT_SCHEMA_BY_TYPE = schemaArmsByType(WorkerEventSchema);
+const MINIMAL_EVENT_SCHEMA_BY_TYPE = schemaArmsByType(MinimalWorkerEventSchema);
+
+const MAX_VALIDATION_ERRORS_SHOWN = 5;
+const PAYLOAD_PREVIEW_CHARS = 300;
+
+function formatValidationFailure(
+	type: string,
+	value: unknown,
+	schemaByType: Map<string, TSchema>,
+	unionSchema: TSchema,
+): string {
+	const arm = schemaByType.get(type) ?? unionSchema;
+	const errors = [...Value.Errors(arm, value)];
+	const shown = errors
+		.slice(0, MAX_VALIDATION_ERRORS_SHOWN)
+		.map((e) => `${e.instancePath || "/"}: ${e.message}`)
+		.join("; ");
+	const more =
+		errors.length > MAX_VALIDATION_ERRORS_SHOWN ? ` (+${errors.length - MAX_VALIDATION_ERRORS_SHOWN} more)` : "";
+	const payload = JSON.stringify(value) ?? String(value);
+	const preview = payload.length > PAYLOAD_PREVIEW_CHARS ? `${payload.slice(0, PAYLOAD_PREVIEW_CHARS)}…` : payload;
+	return `${shown || "unknown error"}${more}. Offending event: ${preview}`;
+}
+
+interface ParsedWorkerEvent {
+	event: WorkerEvent;
+	/** Non-fatal drift: the event is processable but missing bookkeeping fields. */
+	warnings: string[];
+}
+
+function parseWorkerEvent(line: string): ParsedWorkerEvent | undefined {
 	let value: unknown;
 	try {
 		value = JSON.parse(line);
@@ -208,18 +281,33 @@ function parseWorkerEvent(line: string): WorkerEvent | undefined {
 	const type = (value as { type?: unknown } | null)?.type;
 	if (typeof type !== "string" || !CONSUMED_EVENT_TYPES.has(type)) return undefined;
 
-	// Pi does not currently export its JSON-mode event schema. The local schema
-	// above validates every Message field this consumer stores or reads. A
-	// validation failure means the protocol drifted — fail loudly rather than
-	// silently dropping the event.
-	if (!Value.Check(WorkerEventSchema, value)) {
-		const firstError = [...Value.Errors(WorkerEventSchema, value)][0] as
-			{ message?: string; path?: string } | undefined;
+	// Pi emits message_end for every message appended to the session — the
+	// user prompt echo and tool results included — not just assistant replies.
+	// This consumer only reads assistant messages; the rest are stream noise,
+	// not schema violations.
+	const role = (value as { message?: { role?: unknown } } | null)?.message?.role;
+	if (type === "message_end" && role !== "assistant") return undefined;
+
+	// Pi does not currently export its JSON-mode event schema, so two local
+	// schemas validate the boundary:
+	//  - Minimal (hard fail): the fields this consumer actually dereferences.
+	//    A violation means the event cannot be processed — fail loudly rather
+	//    than silently dropping it.
+	//  - Strict (warn only): the full pi message shape. A violation means the
+	//    protocol drifted in bookkeeping fields (usage, stopReason, …) that
+	//    the consumer guards with fallbacks — surface a warning and continue.
+	if (!Value.Check(MinimalWorkerEventSchema, value)) {
 		throw new Error(
-			`Subagent worker emitted a ${type} event that failed schema validation: ${firstError?.message ?? "unknown error"} (at ${firstError?.path ?? "/"})`,
+			`Subagent worker emitted a ${type} event that failed schema validation: ${formatValidationFailure(type, value, MINIMAL_EVENT_SCHEMA_BY_TYPE, MinimalWorkerEventSchema)}`,
 		);
 	}
-	return value as WorkerEvent;
+	const warnings: string[] = [];
+	if (!Value.Check(WorkerEventSchema, value)) {
+		warnings.push(
+			`Subagent worker emitted a ${type} event missing fields this consumer expects (continuing with degraded bookkeeping): ${formatValidationFailure(type, value, EVENT_SCHEMA_BY_TYPE, WorkerEventSchema)}`,
+		);
+	}
+	return { event: value as WorkerEvent, warnings };
 }
 
 function formatTokens(count: number): string {
@@ -779,6 +867,9 @@ async function runSingleAgent(
 				});
 				let buffer = "";
 				let parseError: string | undefined;
+				// Soft-validation warnings are surfaced once per distinct signature so
+				// a systematically drifted worker does not spam the user per event.
+				const warnedSignatures = new Set<string>();
 
 				// Kill at a turn boundary so the session file stays consistent; the
 				// in-flight LLM call is abandoned but no tool results are orphaned.
@@ -792,16 +883,23 @@ async function runSingleAgent(
 
 				const processLine = (line: string) => {
 					if (parseError || !line.trim()) return;
-					let event: WorkerEvent | undefined;
+					let parsed: ParsedWorkerEvent | undefined;
 					try {
-						event = parseWorkerEvent(line);
+						parsed = parseWorkerEvent(line);
 					} catch (err) {
 						parseError = err instanceof Error ? err.message : String(err);
 						currentResult.stderr += `\n${parseError}`;
 						if (!proc.killed) proc.kill("SIGTERM");
 						return;
 					}
-					if (!event) return;
+					if (!parsed) return;
+					const { event } = parsed;
+					for (const warning of parsed.warnings) {
+						const signature = warning.slice(0, warning.indexOf("Offending event:") >>> 0);
+						if (warnedSignatures.has(signature)) continue;
+						warnedSignatures.add(signature);
+						opts.notify?.(warning, "warning");
+					}
 
 					if (event.type === "message_end") {
 						const msg = event.message;

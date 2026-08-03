@@ -135,7 +135,39 @@ describe("subagent tool", () => {
 		);
 
 		expect((result as { isError?: boolean }).isError).toBe(true);
-		expect(getToolResultText(result)).toContain("failed schema validation");
+		const text = getToolResultText(result);
+		expect(text).toContain("failed schema validation");
+		// Pinpoints the failing field with a concrete path and shows the payload.
+		expect(text).toContain("/message/content");
+		expect(text).toContain('"not-an-array"');
+	});
+
+	it("warns and continues when a worker event is missing non-essential bookkeeping fields", async () => {
+		const projectDir = setupProjectDir();
+		const warnings: string[] = [];
+		const recordPath = join(projectDir, "spawn-record.jsonl");
+		process.env.PI_SUBAGENT_PI_PATH = createFakePi(projectDir, {
+			recordEnvPath: recordPath,
+			rawEvent: {
+				type: "message_end",
+				message: {
+					role: "assistant",
+					content: [{ type: "text", text: "Done despite drift." }],
+					// No api/provider/model/usage/stopReason/timestamp.
+				},
+			},
+		});
+		process.env.PI_SUBAGENT_TEST_RECORD = recordPath;
+
+		const tool = loadTool();
+		const ctx = createFakeExtensionContext(projectDir, {
+			notify: (message) => warnings.push(message),
+		});
+		const result = await invokeRegisteredTool(tool, { agent: "worker", task: "Do something" }, ctx);
+
+		expect((result as { isError?: boolean }).isError).not.toBe(true);
+		expect(getToolResultText(result)).toContain("Done despite drift.");
+		expect(warnings.some((w) => w.includes("degraded bookkeeping") && w.includes("usage"))).toBe(true);
 	});
 
 	it("warns via notify when a worker reports an unrecognized stop reason", async () => {
