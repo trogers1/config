@@ -1,9 +1,12 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { decideBash } from "../extensions/permissions";
-import { policyConfig as genericPolicyConfig } from "../modules/policy";
+import {
+  builtinCompositionChains,
+  policyConfig as genericPolicyConfig,
+} from "../modules/policy";
 import {
   defaultGuardRules,
   ruleSetNames,
@@ -11,10 +14,12 @@ import {
 } from "../modules/ruleSets.lib/index";
 import type { ProfilePolicy } from "../modules/policyHelpers";
 import { loadProfileConfig } from "../modules/profileConfig";
+import { createExtensionHarness } from "./support/extensionHarness";
 
 const temporaryDirectories: string[] = [];
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   for (const directory of temporaryDirectories.splice(0)) {
     fs.rmSync(directory, { recursive: true, force: true });
   }
@@ -56,6 +61,72 @@ describe("rule-set namespace", () => {
         (rule) => rule.pattern === "find * -delete*",
       ),
     ).toBe(true);
+  });
+
+  it("ruleset:read-only-shell and ruleset:read-only-path resolve through JSONC", () => {
+    const config = loadProfileConfig(
+      genericPolicyConfig,
+      writeConfig({
+        profiles: {
+          comparison: {
+            extends: ["ruleset:read-only-path", "ruleset:read-only-shell"],
+          },
+        },
+      }),
+    );
+
+    const resolved = config.profiles.comparison;
+    const shell = ruleSetRegistry["ruleset:read-only-shell"];
+    const pathPosture = ruleSetRegistry["ruleset:read-only-path"];
+
+    expect(resolved.tools.bash).toEqual(shell.tools?.bash ?? []);
+    expect(resolved.readPaths).toEqual(pathPosture.readPaths ?? []);
+    expect(resolved.writePaths).toEqual(pathPosture.writePaths ?? []);
+    expect(resolved.protectedPathRules).toEqual(
+      pathPosture.protectedPathRules ?? [],
+    );
+  });
+
+  it("builtin:read-only reuses the shipped read-only rule-set arrays", () => {
+    const builtin = genericPolicyConfig.profiles["builtin:read-only"];
+    const shell = ruleSetRegistry["ruleset:read-only-shell"];
+    const pathPosture = ruleSetRegistry["ruleset:read-only-path"];
+
+    expect(builtin.tools.bash).toBe(shell.tools?.bash);
+    expect(builtin.readPaths).toBe(pathPosture.readPaths);
+    expect(builtin.writePaths).toBe(pathPosture.writePaths);
+    expect(builtin.protectedPathRules).toBe(pathPosture.protectedPathRules);
+    expect(builtinCompositionChains["builtin:read-only"]).toEqual([
+      "ruleset:read-only-path",
+      "ruleset:read-only-shell",
+      "builtin:read-only",
+    ]);
+  });
+
+  it("ruleset:path-guards protects sensitive paths when composed through user config", async () => {
+    vi.stubEnv(
+      "PI_PERMISSIONS_PROFILE_CONFIG",
+      writeConfig({
+        defaultProfile: "guarded-paths",
+        profiles: {
+          "guarded-paths": {
+            extends: ["ruleset:path-guards"],
+            tools: { bash: [{ pattern: "*", decision: "allow" }] },
+          },
+        },
+      }),
+    );
+    const harness = createExtensionHarness();
+    await harness.start();
+
+    const result = await harness.callTool({
+      toolName: "read",
+      input: { path: ".env" },
+    });
+
+    expect(result).toMatchObject({ block: true });
+    expect(result?.reason).toContain("protected from disclosure and mutation");
+    expect(harness.ui.confirm).not.toHaveBeenCalled();
   });
 
   it("user profiles may not use the reserved ruleset: prefix", () => {

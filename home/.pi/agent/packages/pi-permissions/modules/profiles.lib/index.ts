@@ -1,16 +1,33 @@
 import { definePolicyConfig } from "../policyHelpers";
-import { baseProfile } from "./base";
-import { readOnlyProfile, workerProfile } from "./core";
-import { committerProfile, gitFullProfile } from "./git";
+import { baseCompositionChain, baseProfile } from "./base";
 import {
+  readOnlyCompositionChain,
+  readOnlyProfile,
+  workerCompositionChain,
+  workerProfile,
+} from "./core";
+import {
+  committerCompositionChain,
+  committerProfile,
+  gitFullCompositionChain,
+  gitFullProfile,
+} from "./git";
+import {
+  depsMutatorCompositionChain,
   depsMutatorProfile,
+  noShellCompositionChain,
   noShellProfile,
+  reviewerCompositionChain,
   reviewerProfile,
+  scribeOnlyCompositionChain,
   scribeOnlyProfile,
 } from "./scoped";
 import {
+  implementationOnlyCompositionChain,
   implementationOnlyProfile,
+  testsHiddenCompositionChain,
   testsHiddenProfile,
+  testsOnlyCompositionChain,
   testsOnlyProfile,
 } from "./testWorkflows";
 
@@ -44,3 +61,19 @@ function deepFreeze<T extends object>(value: T): T {
 
 /** Portable profiles shipped by the package. Local profiles live in user config. */
 export const policyConfig = deepFreeze(configuredPolicy);
+
+/** Ordered provenance used by the explainer for shipped profiles. */
+export const builtinCompositionChains: Record<string, readonly string[]> = {
+  "builtin:default": baseCompositionChain,
+  "builtin:worker": workerCompositionChain,
+  "builtin:read-only": readOnlyCompositionChain,
+  "builtin:tests-hidden": testsHiddenCompositionChain,
+  "builtin:tests-only": testsOnlyCompositionChain,
+  "builtin:committer": committerCompositionChain,
+  "builtin:reviewer": reviewerCompositionChain,
+  "builtin:scribe-only": scribeOnlyCompositionChain,
+  "builtin:deps-mutator": depsMutatorCompositionChain,
+  "builtin:no-shell": noShellCompositionChain,
+  "builtin:implementation-only": implementationOnlyCompositionChain,
+  "builtin:git-full": gitFullCompositionChain,
+};

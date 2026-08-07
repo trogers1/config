@@ -173,6 +173,25 @@ describe("shell policy parser", () => {
     );
   });
 
+  it("denies a definite protected path before prompting for parse errors", async () => {
+    const policy = {
+      ...parserPolicy,
+      protectedPathRules: [{ pattern: "**/.env*", decision: "deny" }],
+    } satisfies ProfilePolicy;
+    const ctx = context(process.cwd());
+
+    const result = await gateBash(
+      "cat .env 'unterminated",
+      process.cwd(),
+      ctx,
+      policy,
+    );
+
+    expect(result).toMatchObject({ block: true });
+    expect(result?.reason).toContain("protected-path policy");
+    expect(vi.mocked(ctx.ui.confirm)).not.toHaveBeenCalled();
+  });
+
   it("blocks unbash parse errors without attempting a non-interactive prompt", async () => {
     const ctx = nonInteractiveContext(process.cwd());
     const result = await gateBash(
@@ -447,37 +466,40 @@ describe("default profile bash policy", () => {
   });
 
   it.each(["builtin:default", "builtin:read-only"] as const)(
-    "allows Pi documentation outside the startup directory in the %s profile",
+    "allows Pi package and extension documentation outside the startup directory in the %s profile",
     async (profile) => {
-      const piDocs = path.join(
-        homedir(),
-        ".nvm",
-        "versions",
-        "node",
-        "vtest",
-        "lib",
-        "node_modules",
-        "@earendil-works",
-        "pi-coding-agent",
-        "docs",
-        "extensions.md",
-      );
-      const ctx = context(process.cwd());
+      for (const document of ["packages.md", "extensions.md"]) {
+        const piDocs = path.join(
+          homedir(),
+          ".nvm",
+          "versions",
+          "node",
+          "vtest",
+          "lib",
+          "node_modules",
+          "@earendil-works",
+          "pi-coding-agent",
+          "docs",
+          document,
+        );
+        const ctx = context(process.cwd());
 
-      await expect(
-        gateBash(
-          `cat ${piDocs}`,
-          process.cwd(),
-          ctx,
-          policyConfig.profiles[profile],
-        ),
-      ).resolves.toBeUndefined();
-      expect(vi.mocked(ctx.ui.confirm)).not.toHaveBeenCalled();
+        await expect(
+          gateBash(
+            `cat ${piDocs}`,
+            process.cwd(),
+            ctx,
+            policyConfig.profiles[profile],
+          ),
+          document,
+        ).resolves.toBeUndefined();
+        expect(vi.mocked(ctx.ui.confirm), document).not.toHaveBeenCalled();
+      }
     },
   );
 
   it.each(["builtin:default", "builtin:read-only"] as const)(
-    "allows dependencies inside the local Pi packages in the %s profile",
+    "allows dependencies inside Pi packages in the %s profile",
     async (profile) => {
       const ctx = context(process.cwd());
       const packageDependency = path.join(
@@ -986,6 +1008,33 @@ describe("default profile bash policy", () => {
       );
     });
 
+    it("finds a denied operand after a static cd ask before prompting", async () => {
+      const policy = {
+        tools: { bash: [{ pattern: "*", decision: "allow" }] },
+        readPaths: [
+          { pattern: "**", decision: "allow" },
+          { pattern: "docs/**", decision: "ask" },
+        ],
+        writePaths: [
+          { pattern: "**", decision: "allow" },
+          { pattern: "docs/blocked", decision: "deny" },
+        ],
+      } satisfies ProfilePolicy;
+      const ctx = context(process.cwd());
+
+      const result = await gateBash(
+        "cd docs && cp source blocked",
+        process.cwd(),
+        ctx,
+        policy,
+      );
+
+      expect(result).toMatchObject({ block: true });
+      expect(result?.reason).toContain("Bash path reference denied by policy");
+      expect(result?.reason).toContain("docs/blocked");
+      expect(vi.mocked(ctx.ui.confirm)).not.toHaveBeenCalled();
+    });
+
     it("still gates operands against the directory tracked through cd", async () => {
       // The follow-up guarantee that makes ungated navigation safe: after
       // `cd project`, relative operands are evaluated against `project`, not
@@ -1188,7 +1237,7 @@ describe("default profile bash policy", () => {
 });
 
 describe("extension harness custom tool inheritance", () => {
-  it("prompts for an inherited empty custom tool and blocks without a UI", async () => {
+  it("preserves inherited custom-tool rules when a child appends an empty list", async () => {
     const configDirectory = fs.mkdtempSync(
       path.join(tmpdir(), "pi-permissions-"),
     );
@@ -1241,11 +1290,11 @@ describe("extension harness custom tool inheritance", () => {
         interactiveCtx,
       );
 
-      expect(interactiveResult).toBeUndefined();
-      expect(vi.mocked(interactiveCtx.ui.confirm)).toHaveBeenCalledWith(
-        "Allow deploy?",
-        "deploy matched a custom tool policy requiring confirmation.",
-      );
+      expect(interactiveResult).toMatchObject({ block: true });
+      expect(
+        String((interactiveResult as { reason?: string }).reason),
+      ).toContain("deploy denied by custom tool policy");
+      expect(vi.mocked(interactiveCtx.ui.confirm)).not.toHaveBeenCalled();
 
       const { api, handlers } = createExtensionHarness();
       permissionsExtension(api);
@@ -1277,7 +1326,7 @@ describe("extension harness custom tool inheritance", () => {
 
       expect(result).toMatchObject({ block: true });
       expect(String((result as { reason?: string }).reason)).toContain(
-        "deploy was not approved",
+        "deploy denied by custom tool policy",
       );
       expect(vi.mocked(ctx.ui.confirm)).not.toHaveBeenCalled();
     } finally {

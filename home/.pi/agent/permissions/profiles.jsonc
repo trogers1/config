@@ -241,6 +241,16 @@
       ],
       "writePaths": [
         { "pattern": "/**/home/.pi/agent/packages/**", "decision": "allow" },
+        {
+          "pattern": "/**/home/.pi/agent/skills/address-comments/scripts/*.sh",
+          "decision": "allow",
+          "contexts": ["bash"],
+        },
+        {
+          "pattern": "/**/home/.pi/agent/skills/address-comments/*",
+          "decision": "allow",
+          "contexts": ["bash"],
+        },
       ],
     },
     "personal": {

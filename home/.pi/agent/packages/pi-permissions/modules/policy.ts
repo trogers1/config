@@ -1,1 +1,1 @@
-export { policyConfig } from "./profiles.lib";
+export { builtinCompositionChains, policyConfig } from "./profiles.lib";

@@ -2,16 +2,17 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import decisionTable from "./fixtures/decision-table.json";
 import { createExtensionHarness } from "./support/extensionHarness";
+import { builtinProfileNames } from "../modules/policyHelpers";
 
 type Decision = "allow" | "ask" | "deny";
 
 type DecisionTableRow = {
   command: string;
-  expected: Record<string, Decision>;
+  expected: Partial<Record<(typeof builtinProfileNames)[number], Decision>>;
 };
 
 const typedTable = decisionTable as DecisionTableRow[];
-const profiles = Object.keys(typedTable[0].expected);
+const profiles = builtinProfileNames;
 
 const missingProfileConfigPath = path.resolve(
   "integrationTests/fixtures/does-not-exist.jsonc",
@@ -26,6 +27,24 @@ const missingProfileConfigPath = path.resolve(
 //   ask   → block, ui.confirm invoked
 //   deny  → block, no prompt
 describe("decision table", () => {
+  it("contains an expectation for every shipped builtin profile", () => {
+    const coveredProfiles = new Set(
+      typedTable.flatMap((row) => Object.keys(row.expected)),
+    );
+    expect(coveredProfiles).toEqual(new Set(builtinProfileNames));
+  });
+
+  it("pins every command against every shipped builtin profile", () => {
+    const expectedProfiles = new Set<string>(builtinProfileNames);
+
+    for (const row of typedTable) {
+      expect(
+        new Set(Object.keys(row.expected)),
+        `Incomplete decision-table row for command: ${row.command}`,
+      ).toEqual(expectedProfiles);
+    }
+  });
+
   describe.each(profiles)("%s", (profile) => {
     let harness: ReturnType<typeof createExtensionHarness>;
 
@@ -43,15 +62,22 @@ describe("decision table", () => {
       delete process.env.PI_SUBAGENT_PROFILE;
     });
 
-    it.each(typedTable)("$command", async ({ command, expected }) => {
+    it.each(
+      typedTable.filter(
+        (row) => expectedForProfile(row, profile) !== undefined,
+      ),
+    )("$command", async ({ command, expected }) => {
       harness.ui.confirm.mockClear();
+      const decision = expectedForProfile({ command, expected }, profile);
+      if (!decision)
+        throw new Error(`Missing decision-table expectation for ${profile}`);
 
       const result = await harness.callTool({
         toolName: "bash",
         input: { command },
       });
 
-      switch (expected[profile]) {
+      switch (decision) {
         case "allow":
           expect(result).toBeUndefined();
           expect(harness.ui.confirm).not.toHaveBeenCalled();
@@ -71,3 +97,10 @@ describe("decision table", () => {
     });
   });
 });
+
+function expectedForProfile(
+  row: DecisionTableRow,
+  profile: (typeof builtinProfileNames)[number],
+): Decision | undefined {
+  return row.expected[profile];
+}

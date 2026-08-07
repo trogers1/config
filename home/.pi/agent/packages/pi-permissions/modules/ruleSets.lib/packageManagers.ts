@@ -121,6 +121,12 @@ export const testRunRules: Rule[] = [
   { pattern: "cargo check *", decision: "allow" },
   { pattern: "cargo clippy", decision: "allow" },
   { pattern: "cargo clippy *", decision: "allow" },
+  { pattern: "go build", decision: "allow" },
+  { pattern: "go build *", decision: "allow" },
+  { pattern: "go test", decision: "allow" },
+  { pattern: "go test *", decision: "allow" },
+  // Keep the existing broad Go posture; explicit build/test rules above also
+  // declare the subcommands the path evaluator can recognize as syntax.
   { pattern: "go *", decision: "allow" },
 ];
 

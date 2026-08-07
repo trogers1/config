@@ -81,12 +81,21 @@ const fileRedirectOperators = new Set<RedirectOperator>([
  * identifies words, nested commands, and redirections; the small adapters
  * below identify arguments whose meaning is specific to Git or ripgrep.
  */
-export function classifyShell(command: string): ShellClassification {
+export type ShellClassificationOptions = {
+  /** Static subcommands established by the active command policy. */
+  subcommands?: readonly string[];
+};
+
+export function classifyShell(
+  command: string,
+  options: ShellClassificationOptions = {},
+): ShellClassification {
   const script = parse(command);
   const tokens: ClassifiedShellToken[] = [];
 
   walkAst(script, (node) => {
-    if (isCommand(node)) tokens.push(...classifyCommandTokens(node));
+    if (isCommand(node))
+      tokens.push(...classifyCommandTokens(node, options.subcommands));
   });
 
   return {
@@ -98,6 +107,7 @@ export function classifyShell(command: string): ShellClassification {
 
 export function classifyCommandTokens(
   command: Command,
+  subcommands: readonly string[] = [],
 ): ClassifiedShellToken[] {
   const commandName = staticWordValue(command.name);
   const tokens = command.suffix.map((word) =>
@@ -117,8 +127,9 @@ export function classifyCommandTokens(
     classifyReaderArguments(commandName, command.suffix, tokens);
   }
   if (commandName && packageManagerCommands.has(commandName)) {
-    classifyPackageManagerArguments(command.suffix, tokens);
+    classifyPackageManagerArguments(commandName, command.suffix, tokens);
   }
+  classifyPolicySubcommand(command.suffix, tokens, subcommands);
   if (commandName === "find") classifyFindArguments(command.suffix, tokens);
 
   return tokens;
@@ -601,12 +612,12 @@ const packageManagerAttachedDirectoryOptions = [
 ];
 
 function classifyPackageManagerArguments(
+  executableName: string,
   words: Word[],
   tokens: ClassifiedShellToken[],
 ): void {
-  let commandName: string | undefined;
+  let subcommandName: string | undefined;
   let scriptNameSeen = false;
-
   for (let index = 0; index < words.length; index++) {
     const value = staticWordValue(words[index]);
     const token = tokens[index];
@@ -640,16 +651,46 @@ function classifyPackageManagerArguments(
 
     if (value.startsWith("-")) continue;
 
-    if (!commandName) {
-      commandName = value;
+    if (!subcommandName) {
+      subcommandName = value;
       token.kind = "proven-non-path";
       continue;
     }
 
-    if (packageManagerScriptCommands.has(commandName) && !scriptNameSeen) {
+    if (
+      (executableName === "npm" ||
+        executableName === "pnpm" ||
+        executableName === "yarn") &&
+      packageManagerScriptCommands.has(subcommandName) &&
+      !scriptNameSeen
+    ) {
       scriptNameSeen = true;
-      if (token.kind === "ambiguous") token.kind = "proven-non-path";
+      if (token.kind === "dynamic") token.dynamicRole = "argument";
+      else if (token.kind === "ambiguous") token.kind = "proven-non-path";
     }
+  }
+}
+
+/**
+ * The shell AST establishes token boundaries but cannot know a program's CLI
+ * grammar. The active policy does: a literal second word in a command rule is
+ * a declared subcommand. Mark only that one word as syntax; every subsequent
+ * operand remains conservatively path-checked unless a dedicated adapter
+ * understands it.
+ */
+function classifyPolicySubcommand(
+  words: Word[],
+  tokens: ClassifiedShellToken[],
+  subcommands: readonly string[],
+): void {
+  for (let index = 0; index < words.length; index++) {
+    const value = staticWordValue(words[index]);
+    const token = tokens[index];
+    if (!value || !token || value.startsWith("-")) continue;
+    if (subcommands.includes(value) && token.kind === "ambiguous") {
+      token.kind = "proven-non-path";
+    }
+    return;
   }
 }
 

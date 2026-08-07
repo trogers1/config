@@ -1,7 +1,7 @@
 {
-  "defaultProvider": "moonshotai",
-  "defaultModel": "kimi-k3",
-  "defaultThinkingLevel": "high",
+  "defaultProvider": "openai-codex",
+  "defaultModel": "gpt-5.6-sol",
+  "defaultThinkingLevel": "medium",
   "hideThinkingBlock": false,
   "packages": [
     "./packages/pi-permissions",

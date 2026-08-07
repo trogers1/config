@@ -41,8 +41,6 @@ export const defaultShellRules: Rule[] = [
   { pattern: "ripgrep *", decision: "allow" },
 
   { pattern: "true", decision: "allow" },
-  { pattern: "rg *", decision: "allow" },
-  { pattern: "ripgrep *", decision: "allow" },
   { pattern: "terraform fmt *", decision: "allow" },
   { pattern: "terraform validate", decision: "allow" },
   { pattern: "terraform validate *", decision: "allow" },

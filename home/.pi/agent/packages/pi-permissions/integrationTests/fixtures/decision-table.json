@@ -6,7 +6,14 @@
       "builtin:worker": "allow",
       "builtin:read-only": "allow",
       "builtin:tests-hidden": "allow",
-      "builtin:tests-only": "allow"
+      "builtin:tests-only": "allow",
+      "builtin:committer": "allow",
+      "builtin:reviewer": "allow",
+      "builtin:scribe-only": "allow",
+      "builtin:deps-mutator": "allow",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "allow",
+      "builtin:git-full": "allow"
     }
   },
   {
@@ -16,7 +23,14 @@
       "builtin:worker": "allow",
       "builtin:read-only": "allow",
       "builtin:tests-hidden": "allow",
-      "builtin:tests-only": "allow"
+      "builtin:tests-only": "allow",
+      "builtin:committer": "allow",
+      "builtin:reviewer": "allow",
+      "builtin:scribe-only": "allow",
+      "builtin:deps-mutator": "allow",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "allow",
+      "builtin:git-full": "allow"
     }
   },
   {
@@ -26,7 +40,14 @@
       "builtin:worker": "allow",
       "builtin:read-only": "allow",
       "builtin:tests-hidden": "allow",
-      "builtin:tests-only": "allow"
+      "builtin:tests-only": "allow",
+      "builtin:committer": "allow",
+      "builtin:reviewer": "allow",
+      "builtin:scribe-only": "allow",
+      "builtin:deps-mutator": "allow",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "allow",
+      "builtin:git-full": "allow"
     }
   },
   {
@@ -36,7 +57,14 @@
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "deny",
-      "builtin:tests-only": "deny"
+      "builtin:tests-only": "deny",
+      "builtin:committer": "deny",
+      "builtin:reviewer": "deny",
+      "builtin:scribe-only": "deny",
+      "builtin:deps-mutator": "deny",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "deny",
+      "builtin:git-full": "allow"
     }
   },
   {
@@ -46,7 +74,14 @@
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "deny",
-      "builtin:tests-only": "deny"
+      "builtin:tests-only": "deny",
+      "builtin:committer": "deny",
+      "builtin:reviewer": "deny",
+      "builtin:scribe-only": "deny",
+      "builtin:deps-mutator": "deny",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "deny",
+      "builtin:git-full": "allow"
     }
   },
   {
@@ -56,7 +91,14 @@
       "builtin:worker": "allow",
       "builtin:read-only": "allow",
       "builtin:tests-hidden": "allow",
-      "builtin:tests-only": "allow"
+      "builtin:tests-only": "allow",
+      "builtin:committer": "allow",
+      "builtin:reviewer": "allow",
+      "builtin:scribe-only": "allow",
+      "builtin:deps-mutator": "allow",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "allow",
+      "builtin:git-full": "allow"
     }
   },
   {
@@ -66,7 +108,14 @@
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "deny",
-      "builtin:tests-only": "deny"
+      "builtin:tests-only": "deny",
+      "builtin:committer": "deny",
+      "builtin:reviewer": "deny",
+      "builtin:scribe-only": "deny",
+      "builtin:deps-mutator": "deny",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "deny",
+      "builtin:git-full": "allow"
     }
   },
   {
@@ -76,7 +125,14 @@
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "deny",
-      "builtin:tests-only": "deny"
+      "builtin:tests-only": "deny",
+      "builtin:committer": "allow",
+      "builtin:reviewer": "deny",
+      "builtin:scribe-only": "deny",
+      "builtin:deps-mutator": "deny",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "deny",
+      "builtin:git-full": "allow"
     }
   },
   {
@@ -86,7 +142,14 @@
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "deny",
-      "builtin:tests-only": "deny"
+      "builtin:tests-only": "deny",
+      "builtin:committer": "deny",
+      "builtin:reviewer": "deny",
+      "builtin:scribe-only": "deny",
+      "builtin:deps-mutator": "deny",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "deny",
+      "builtin:git-full": "allow"
     }
   },
   {
@@ -96,7 +159,14 @@
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "deny",
-      "builtin:tests-only": "deny"
+      "builtin:tests-only": "deny",
+      "builtin:committer": "allow",
+      "builtin:reviewer": "deny",
+      "builtin:scribe-only": "deny",
+      "builtin:deps-mutator": "deny",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "deny",
+      "builtin:git-full": "allow"
     }
   },
   {
@@ -106,7 +176,14 @@
       "builtin:worker": "allow",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "allow",
-      "builtin:tests-only": "allow"
+      "builtin:tests-only": "allow",
+      "builtin:committer": "allow",
+      "builtin:reviewer": "deny",
+      "builtin:scribe-only": "allow",
+      "builtin:deps-mutator": "allow",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "allow",
+      "builtin:git-full": "allow"
     }
   },
   {
@@ -116,7 +193,14 @@
       "builtin:worker": "allow",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "allow",
-      "builtin:tests-only": "allow"
+      "builtin:tests-only": "allow",
+      "builtin:committer": "allow",
+      "builtin:reviewer": "allow",
+      "builtin:scribe-only": "allow",
+      "builtin:deps-mutator": "allow",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "allow",
+      "builtin:git-full": "allow"
     }
   },
   {
@@ -126,7 +210,14 @@
       "builtin:worker": "allow",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "allow",
-      "builtin:tests-only": "allow"
+      "builtin:tests-only": "allow",
+      "builtin:committer": "allow",
+      "builtin:reviewer": "allow",
+      "builtin:scribe-only": "allow",
+      "builtin:deps-mutator": "allow",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "allow",
+      "builtin:git-full": "allow"
     }
   },
   {
@@ -136,7 +227,14 @@
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "deny",
-      "builtin:tests-only": "deny"
+      "builtin:tests-only": "deny",
+      "builtin:committer": "deny",
+      "builtin:reviewer": "deny",
+      "builtin:scribe-only": "deny",
+      "builtin:deps-mutator": "allow",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "deny",
+      "builtin:git-full": "deny"
     }
   },
   {
@@ -146,7 +244,14 @@
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "deny",
-      "builtin:tests-only": "deny"
+      "builtin:tests-only": "deny",
+      "builtin:committer": "deny",
+      "builtin:reviewer": "deny",
+      "builtin:scribe-only": "deny",
+      "builtin:deps-mutator": "deny",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "deny",
+      "builtin:git-full": "deny"
     }
   },
   {
@@ -156,7 +261,14 @@
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "deny",
-      "builtin:tests-only": "deny"
+      "builtin:tests-only": "deny",
+      "builtin:committer": "ask",
+      "builtin:reviewer": "deny",
+      "builtin:scribe-only": "deny",
+      "builtin:deps-mutator": "ask",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "deny",
+      "builtin:git-full": "ask"
     }
   },
   {
@@ -166,7 +278,14 @@
       "builtin:worker": "allow",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "allow",
-      "builtin:tests-only": "deny"
+      "builtin:tests-only": "deny",
+      "builtin:committer": "allow",
+      "builtin:reviewer": "deny",
+      "builtin:scribe-only": "deny",
+      "builtin:deps-mutator": "allow",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "allow",
+      "builtin:git-full": "allow"
     }
   },
   {
@@ -176,7 +295,14 @@
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "deny",
-      "builtin:tests-only": "deny"
+      "builtin:tests-only": "deny",
+      "builtin:committer": "deny",
+      "builtin:reviewer": "deny",
+      "builtin:scribe-only": "deny",
+      "builtin:deps-mutator": "deny",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "deny",
+      "builtin:git-full": "deny"
     }
   },
   {
@@ -186,7 +312,14 @@
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "deny",
-      "builtin:tests-only": "deny"
+      "builtin:tests-only": "deny",
+      "builtin:committer": "deny",
+      "builtin:reviewer": "deny",
+      "builtin:scribe-only": "deny",
+      "builtin:deps-mutator": "deny",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "deny",
+      "builtin:git-full": "deny"
     }
   },
   {
@@ -196,7 +329,14 @@
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "deny",
-      "builtin:tests-only": "deny"
+      "builtin:tests-only": "deny",
+      "builtin:committer": "deny",
+      "builtin:reviewer": "deny",
+      "builtin:scribe-only": "deny",
+      "builtin:deps-mutator": "deny",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "deny",
+      "builtin:git-full": "deny"
     }
   },
   {
@@ -206,7 +346,14 @@
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "deny",
-      "builtin:tests-only": "deny"
+      "builtin:tests-only": "deny",
+      "builtin:committer": "deny",
+      "builtin:reviewer": "deny",
+      "builtin:scribe-only": "deny",
+      "builtin:deps-mutator": "deny",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "deny",
+      "builtin:git-full": "deny"
     }
   },
   {
@@ -216,7 +363,14 @@
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "deny",
-      "builtin:tests-only": "deny"
+      "builtin:tests-only": "deny",
+      "builtin:committer": "deny",
+      "builtin:reviewer": "deny",
+      "builtin:scribe-only": "deny",
+      "builtin:deps-mutator": "deny",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "deny",
+      "builtin:git-full": "deny"
     }
   },
   {
@@ -226,7 +380,14 @@
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "deny",
-      "builtin:tests-only": "deny"
+      "builtin:tests-only": "deny",
+      "builtin:committer": "deny",
+      "builtin:reviewer": "deny",
+      "builtin:scribe-only": "deny",
+      "builtin:deps-mutator": "deny",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "deny",
+      "builtin:git-full": "deny"
     }
   },
   {
@@ -236,7 +397,14 @@
       "builtin:worker": "allow",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "allow",
-      "builtin:tests-only": "deny"
+      "builtin:tests-only": "deny",
+      "builtin:committer": "allow",
+      "builtin:reviewer": "deny",
+      "builtin:scribe-only": "allow",
+      "builtin:deps-mutator": "allow",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "allow",
+      "builtin:git-full": "allow"
     }
   },
   {
@@ -246,7 +414,14 @@
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "deny",
-      "builtin:tests-only": "deny"
+      "builtin:tests-only": "deny",
+      "builtin:committer": "deny",
+      "builtin:reviewer": "deny",
+      "builtin:scribe-only": "deny",
+      "builtin:deps-mutator": "deny",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "deny",
+      "builtin:git-full": "deny"
     }
   },
   {
@@ -256,7 +431,14 @@
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "deny",
-      "builtin:tests-only": "deny"
+      "builtin:tests-only": "deny",
+      "builtin:committer": "deny",
+      "builtin:reviewer": "deny",
+      "builtin:scribe-only": "deny",
+      "builtin:deps-mutator": "deny",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "deny",
+      "builtin:git-full": "deny"
     }
   },
   {
@@ -266,7 +448,14 @@
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "deny",
-      "builtin:tests-only": "deny"
+      "builtin:tests-only": "deny",
+      "builtin:committer": "deny",
+      "builtin:reviewer": "deny",
+      "builtin:scribe-only": "deny",
+      "builtin:deps-mutator": "deny",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "deny",
+      "builtin:git-full": "deny"
     }
   },
   {
@@ -276,7 +465,14 @@
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "deny",
-      "builtin:tests-only": "deny"
+      "builtin:tests-only": "deny",
+      "builtin:committer": "deny",
+      "builtin:reviewer": "deny",
+      "builtin:scribe-only": "deny",
+      "builtin:deps-mutator": "deny",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "deny",
+      "builtin:git-full": "deny"
     }
   },
   {
@@ -286,7 +482,14 @@
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "deny",
-      "builtin:tests-only": "deny"
+      "builtin:tests-only": "deny",
+      "builtin:committer": "deny",
+      "builtin:reviewer": "deny",
+      "builtin:scribe-only": "deny",
+      "builtin:deps-mutator": "deny",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "deny",
+      "builtin:git-full": "deny"
     }
   },
   {
@@ -296,7 +499,14 @@
       "builtin:worker": "deny",
       "builtin:read-only": "allow",
       "builtin:tests-hidden": "ask",
-      "builtin:tests-only": "ask"
+      "builtin:tests-only": "ask",
+      "builtin:committer": "ask",
+      "builtin:reviewer": "allow",
+      "builtin:scribe-only": "ask",
+      "builtin:deps-mutator": "ask",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "ask",
+      "builtin:git-full": "ask"
     }
   },
   {
@@ -306,7 +516,14 @@
       "builtin:worker": "allow",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "allow",
-      "builtin:tests-only": "deny"
+      "builtin:tests-only": "deny",
+      "builtin:committer": "allow",
+      "builtin:reviewer": "deny",
+      "builtin:scribe-only": "allow",
+      "builtin:deps-mutator": "allow",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "allow",
+      "builtin:git-full": "allow"
     }
   },
   {
@@ -316,7 +533,14 @@
       "builtin:worker": "allow",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "allow",
-      "builtin:tests-only": "deny"
+      "builtin:tests-only": "deny",
+      "builtin:committer": "allow",
+      "builtin:reviewer": "deny",
+      "builtin:scribe-only": "allow",
+      "builtin:deps-mutator": "allow",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "allow",
+      "builtin:git-full": "allow"
     }
   },
   {
@@ -326,7 +550,14 @@
       "builtin:worker": "allow",
       "builtin:read-only": "allow",
       "builtin:tests-hidden": "allow",
-      "builtin:tests-only": "allow"
+      "builtin:tests-only": "allow",
+      "builtin:committer": "allow",
+      "builtin:reviewer": "allow",
+      "builtin:scribe-only": "allow",
+      "builtin:deps-mutator": "allow",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "allow",
+      "builtin:git-full": "allow"
     }
   },
   {
@@ -336,7 +567,14 @@
       "builtin:worker": "allow",
       "builtin:read-only": "allow",
       "builtin:tests-hidden": "allow",
-      "builtin:tests-only": "allow"
+      "builtin:tests-only": "allow",
+      "builtin:committer": "allow",
+      "builtin:reviewer": "allow",
+      "builtin:scribe-only": "allow",
+      "builtin:deps-mutator": "allow",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "allow",
+      "builtin:git-full": "allow"
     }
   },
   {
@@ -346,7 +584,14 @@
       "builtin:worker": "allow",
       "builtin:read-only": "allow",
       "builtin:tests-hidden": "allow",
-      "builtin:tests-only": "allow"
+      "builtin:tests-only": "allow",
+      "builtin:committer": "allow",
+      "builtin:reviewer": "allow",
+      "builtin:scribe-only": "allow",
+      "builtin:deps-mutator": "allow",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "allow",
+      "builtin:git-full": "allow"
     }
   },
   {
@@ -356,7 +601,14 @@
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "deny",
-      "builtin:tests-only": "deny"
+      "builtin:tests-only": "deny",
+      "builtin:committer": "deny",
+      "builtin:reviewer": "deny",
+      "builtin:scribe-only": "deny",
+      "builtin:deps-mutator": "deny",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "deny",
+      "builtin:git-full": "deny"
     }
   },
   {
@@ -366,7 +618,14 @@
       "builtin:worker": "allow",
       "builtin:read-only": "allow",
       "builtin:tests-hidden": "allow",
-      "builtin:tests-only": "allow"
+      "builtin:tests-only": "allow",
+      "builtin:committer": "allow",
+      "builtin:reviewer": "allow",
+      "builtin:scribe-only": "allow",
+      "builtin:deps-mutator": "allow",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "allow",
+      "builtin:git-full": "allow"
     }
   },
   {
@@ -376,7 +635,14 @@
       "builtin:worker": "deny",
       "builtin:read-only": "allow",
       "builtin:tests-hidden": "ask",
-      "builtin:tests-only": "ask"
+      "builtin:tests-only": "ask",
+      "builtin:committer": "ask",
+      "builtin:reviewer": "allow",
+      "builtin:scribe-only": "ask",
+      "builtin:deps-mutator": "ask",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "ask",
+      "builtin:git-full": "ask"
     }
   },
   {
@@ -386,7 +652,14 @@
       "builtin:worker": "deny",
       "builtin:read-only": "allow",
       "builtin:tests-hidden": "ask",
-      "builtin:tests-only": "ask"
+      "builtin:tests-only": "ask",
+      "builtin:committer": "ask",
+      "builtin:reviewer": "allow",
+      "builtin:scribe-only": "ask",
+      "builtin:deps-mutator": "ask",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "ask",
+      "builtin:git-full": "ask"
     }
   },
   {
@@ -396,7 +669,14 @@
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "deny",
-      "builtin:tests-only": "deny"
+      "builtin:tests-only": "deny",
+      "builtin:committer": "deny",
+      "builtin:reviewer": "deny",
+      "builtin:scribe-only": "deny",
+      "builtin:deps-mutator": "deny",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "deny",
+      "builtin:git-full": "deny"
     }
   },
   {
@@ -406,7 +686,14 @@
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "deny",
-      "builtin:tests-only": "deny"
+      "builtin:tests-only": "deny",
+      "builtin:committer": "deny",
+      "builtin:reviewer": "deny",
+      "builtin:scribe-only": "deny",
+      "builtin:deps-mutator": "deny",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "deny",
+      "builtin:git-full": "deny"
     }
   },
   {
@@ -416,7 +703,14 @@
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "deny",
-      "builtin:tests-only": "deny"
+      "builtin:tests-only": "deny",
+      "builtin:committer": "deny",
+      "builtin:reviewer": "deny",
+      "builtin:scribe-only": "deny",
+      "builtin:deps-mutator": "deny",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "deny",
+      "builtin:git-full": "deny"
     }
   },
   {
@@ -426,7 +720,14 @@
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "ask",
-      "builtin:tests-only": "deny"
+      "builtin:tests-only": "deny",
+      "builtin:committer": "ask",
+      "builtin:reviewer": "deny",
+      "builtin:scribe-only": "deny",
+      "builtin:deps-mutator": "ask",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "ask",
+      "builtin:git-full": "ask"
     }
   },
   {
@@ -436,7 +737,14 @@
       "builtin:worker": "allow",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "allow",
-      "builtin:tests-only": "allow"
+      "builtin:tests-only": "allow",
+      "builtin:committer": "allow",
+      "builtin:reviewer": "deny",
+      "builtin:scribe-only": "allow",
+      "builtin:deps-mutator": "allow",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "allow",
+      "builtin:git-full": "allow"
     }
   },
   {
@@ -446,7 +754,14 @@
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "ask",
-      "builtin:tests-only": "deny"
+      "builtin:tests-only": "deny",
+      "builtin:committer": "ask",
+      "builtin:reviewer": "deny",
+      "builtin:scribe-only": "deny",
+      "builtin:deps-mutator": "ask",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "ask",
+      "builtin:git-full": "ask"
     }
   },
   {
@@ -456,7 +771,116 @@
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "ask",
-      "builtin:tests-only": "deny"
+      "builtin:tests-only": "deny",
+      "builtin:committer": "ask",
+      "builtin:reviewer": "deny",
+      "builtin:scribe-only": "deny",
+      "builtin:deps-mutator": "ask",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "ask",
+      "builtin:git-full": "ask"
+    }
+  },
+  {
+    "command": "git rm src/example.ts",
+    "expected": {
+      "builtin:default": "ask",
+      "builtin:worker": "deny",
+      "builtin:read-only": "deny",
+      "builtin:tests-hidden": "ask",
+      "builtin:tests-only": "deny",
+      "builtin:committer": "allow",
+      "builtin:reviewer": "deny",
+      "builtin:scribe-only": "deny",
+      "builtin:deps-mutator": "ask",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "ask",
+      "builtin:git-full": "allow"
+    }
+  },
+  {
+    "command": "npm test",
+    "expected": {
+      "builtin:default": "allow",
+      "builtin:worker": "allow",
+      "builtin:read-only": "deny",
+      "builtin:tests-hidden": "allow",
+      "builtin:tests-only": "allow",
+      "builtin:committer": "allow",
+      "builtin:reviewer": "allow",
+      "builtin:scribe-only": "allow",
+      "builtin:deps-mutator": "allow",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "allow",
+      "builtin:git-full": "allow"
+    }
+  },
+  {
+    "command": "echo \"---\"",
+    "expected": {
+      "builtin:default": "allow",
+      "builtin:worker": "allow",
+      "builtin:read-only": "deny",
+      "builtin:tests-hidden": "allow",
+      "builtin:tests-only": "allow",
+      "builtin:committer": "allow",
+      "builtin:reviewer": "deny",
+      "builtin:scribe-only": "allow",
+      "builtin:deps-mutator": "allow",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "allow",
+      "builtin:git-full": "allow"
+    }
+  },
+  {
+    "command": "npm install lodash",
+    "expected": {
+      "builtin:default": "deny",
+      "builtin:worker": "deny",
+      "builtin:read-only": "deny",
+      "builtin:tests-hidden": "deny",
+      "builtin:tests-only": "deny",
+      "builtin:committer": "deny",
+      "builtin:reviewer": "deny",
+      "builtin:scribe-only": "deny",
+      "builtin:deps-mutator": "allow",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "deny",
+      "builtin:git-full": "deny"
+    }
+  },
+  {
+    "command": "git status --short",
+    "expected": {
+      "builtin:default": "allow",
+      "builtin:worker": "allow",
+      "builtin:read-only": "allow",
+      "builtin:tests-hidden": "allow",
+      "builtin:tests-only": "allow",
+      "builtin:committer": "allow",
+      "builtin:reviewer": "allow",
+      "builtin:scribe-only": "allow",
+      "builtin:deps-mutator": "allow",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "allow",
+      "builtin:git-full": "allow"
+    }
+  },
+  {
+    "command": "git push origin main",
+    "expected": {
+      "builtin:default": "deny",
+      "builtin:worker": "deny",
+      "builtin:read-only": "deny",
+      "builtin:tests-hidden": "deny",
+      "builtin:tests-only": "deny",
+      "builtin:committer": "deny",
+      "builtin:reviewer": "deny",
+      "builtin:scribe-only": "deny",
+      "builtin:deps-mutator": "deny",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "deny",
+      "builtin:git-full": "allow"
     }
   }
 ]

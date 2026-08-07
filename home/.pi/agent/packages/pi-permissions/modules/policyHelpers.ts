@@ -201,7 +201,10 @@ const profileConfigProfileSchema = Type.Object(
     readPaths: Type.Optional(profileProperties.readPaths),
     writePaths: Type.Optional(profileProperties.writePaths),
   },
-  { additionalProperties: false },
+  {
+    additionalProperties: false,
+    dependentRequired: { transforms: ["extends"] },
+  },
 );
 
 export type Decision = Static<typeof decisionSchema>;
@@ -298,7 +301,7 @@ export function assertPolicyConfig(
     assertNoProtectedPathRuleConflicts(profile.protectedPathRules ?? []);
   }
 
-  if (!(config.defaultProfile in config.profiles)) {
+  if (!Object.hasOwn(config.profiles, config.defaultProfile)) {
     throw new Error(
       `Invalid pi-permissions policy at /defaultProfile: profile '${config.defaultProfile}' is not configured`,
     );
@@ -427,14 +430,6 @@ export function extendProfile(
     override.tools ?? {},
   )) {
     if (!overrideRules) continue;
-    if (overrideRules.length === 0) {
-      if (toolName === "bash") {
-        delete mergedTools[toolName];
-      } else {
-        mergedTools[toolName] = [];
-      }
-      continue;
-    }
     if (toolName === "bash") {
       assertRuleArray(toolName, overrideRules);
       const inheritedRules = mergedTools.bash ?? [];

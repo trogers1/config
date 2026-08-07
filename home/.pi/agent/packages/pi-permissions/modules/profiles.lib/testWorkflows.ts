@@ -1,6 +1,23 @@
 import { extendProfile } from "../policyHelpers";
 import { ruleSetRegistry, testFilePatterns } from "../ruleSets.lib/index";
-import { baseProfile } from "./base";
+import { baseCompositionChain, baseProfile } from "./base";
+
+export const testsHiddenCompositionChain = [
+  ...baseCompositionChain,
+  "ruleset:test-write-protection",
+  "builtin:tests-hidden",
+] as const;
+
+export const testsOnlyCompositionChain = [
+  ...baseCompositionChain,
+  "builtin:tests-only",
+] as const;
+
+export const implementationOnlyCompositionChain = [
+  ...baseCompositionChain,
+  "ruleset:test-write-protection",
+  "builtin:implementation-only",
+] as const;
 
 /**
  * Test files are hidden entirely: reads, writes, and broad searches from the

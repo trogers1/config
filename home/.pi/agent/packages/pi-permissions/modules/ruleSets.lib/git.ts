@@ -38,8 +38,6 @@ const defaultGitReadRules: Rule[] = [
   { pattern: "git status *", decision: "allow" },
   { pattern: "git log", decision: "allow" },
   { pattern: "git log *", decision: "allow" },
-  { pattern: "git rm *", decision: "allow" },
-  { pattern: "git mv *", decision: "allow" },
   { pattern: "git diff", decision: "allow" },
   { pattern: "git diff *", decision: "allow" },
   { pattern: "git pull", decision: "allow" },
@@ -117,7 +115,7 @@ export const defaultGitRules: Rule[] = [
 ];
 
 /**
- * Git index/history write allows (`ruleset:git-commit`) for
+ * Git index/history/worktree mutation allows (`ruleset:git-commit`) for
  * `builtin:committer`. Appended after the default git denies, identical
  * patterns tie on specificity and resolve by composition order.
  */
@@ -131,6 +129,8 @@ export const gitCommitRules: Rule[] = [
   { pattern: "git rebase *", decision: "allow" },
   { pattern: "git cherry-pick *", decision: "allow" },
   { pattern: "git worktree *", decision: "allow" },
+  { pattern: "git rm *", decision: "allow" },
+  { pattern: "git mv *", decision: "allow" },
 ];
 
 /**

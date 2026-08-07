@@ -8,12 +8,16 @@ import {
 } from "../modules/shell/parse";
 import { classifyShell } from "../modules/shell/classify";
 import {
+  analyzeBashPathReferences,
   decideBashPathReferences,
+  decideProtectedBashPathReferences,
   displayPath,
   evaluatePathByPattern,
   expandHome,
   matchesGlobPattern,
+  rankPathRules,
   resolveRequestedPath,
+  type BashPathReferenceTrace,
 } from "../modules/shell/pathPolicy";
 import {
   injectGrepProtectedPathGlob,
@@ -48,12 +52,21 @@ import {
   chooseMostSpecific,
   commandPatternSpecificity,
   customToolMatchSpecificity,
+  pathPatternSpecificity,
+  rankMatchingRules,
+  type RankedItem,
+  type Specificity,
 } from "../modules/ruleSpecificity";
 import {
   loadProfileConfig,
+  loadRawProfileConfig,
   ProfileConfigLoadError,
+  type RawProfileConfig,
 } from "../modules/profileConfig";
-import { policyConfig as genericPolicyConfig } from "../modules/policy";
+import {
+  builtinCompositionChains,
+  policyConfig as genericPolicyConfig,
+} from "../modules/policy";
 
 export {
   assertPolicyConfig,
@@ -147,16 +160,16 @@ function readStringProperty(value: unknown, key: string): string | undefined {
 }
 
 export default function (pi: ExtensionAPI) {
+  const profileConfigPath =
+    process.env.PI_PERMISSIONS_PROFILE_CONFIG?.trim() || undefined;
+
   const profileConfigLoad: {
     config: PolicyConfig;
     error?: ProfileConfigLoadError;
   } = (() => {
     try {
       return {
-        config: loadProfileConfig(
-          genericPolicyConfig,
-          process.env.PI_PERMISSIONS_PROFILE_CONFIG?.trim() || undefined,
-        ),
+        config: loadProfileConfig(genericPolicyConfig, profileConfigPath),
       };
     } catch (error) {
       if (error instanceof ProfileConfigLoadError) {
@@ -165,6 +178,8 @@ export default function (pi: ExtensionAPI) {
       throw error;
     }
   })();
+
+  const rawProfileConfig = loadRawProfileConfig(profileConfigPath);
 
   const policyConfig = profileConfigLoad.config;
   type ProfileName = string;
@@ -192,7 +207,7 @@ export default function (pi: ExtensionAPI) {
   }
 
   function isProfileName(value: string): boolean {
-    return value in policyConfig.profiles;
+    return Object.hasOwn(policyConfig.profiles, value);
   }
 
   function activePolicy(profile: ProfileName): ProfilePolicy {
@@ -369,6 +384,87 @@ The permissions gate remains loaded and will fail closed until the profile is co
       setActiveProfile(readOnlyName);
       ctx.ui.setStatus("permissions", formatProfileStatus(activeProfile));
       ctx.ui.notify("Read-only profile enabled", "info");
+    },
+  });
+
+  pi.registerCommand("permissions", {
+    description:
+      "Explain which rule decided access: /permissions explain <tool> <input>",
+    getArgumentCompletions: (prefix) => {
+      const tools = ["bash", "read", "edit", "write", "grep", "find", "ls"];
+      const trimmed = prefix.trimStart();
+      if (trimmed.startsWith("explain ")) {
+        const toolPrefix = trimmed.slice("explain ".length);
+        return tools
+          .filter((tool) => tool.startsWith(toolPrefix))
+          .map((tool) => ({
+            value: `explain ${tool}`,
+            label: tool,
+          }));
+      }
+      if ("explain".startsWith(trimmed)) {
+        return [
+          {
+            value: "explain",
+            label: "explain",
+            description: "explain a permission decision",
+          },
+        ];
+      }
+      return [];
+    },
+    handler: async (args, ctx) => {
+      if (preserveConfigurationErrorStatus(ctx)) return;
+
+      const trimmed = args.trim();
+      if (!trimmed.startsWith("explain ")) {
+        ctx.ui.notify("Usage: /permissions explain <tool> <input>", "error");
+        return;
+      }
+
+      const afterExplain = trimmed.slice("explain ".length).trim();
+      const firstSpace = afterExplain.search(/\s/);
+      if (firstSpace === -1) {
+        ctx.ui.notify("Usage: /permissions explain <tool> <input>", "error");
+        return;
+      }
+
+      const tool = afterExplain.slice(0, firstSpace);
+      const input = afterExplain.slice(firstSpace + 1).trim();
+      const policy = activePolicy(activeProfile);
+      const cwd = ctx.cwd ?? startupCwd;
+
+      const scopeDecision = explainSubagentScope(
+        activeProfile,
+        tool,
+        input,
+        startupCwd,
+        cwd,
+        policy,
+        subagentPermissibleRules,
+      );
+      if (scopeDecision) {
+        ctx.ui.notify(formatExplanation(scopeDecision), "info");
+        return;
+      }
+
+      const evaluatedInput =
+        tool === "bash"
+          ? injectRipgrepProtectedPathGlobs(
+              input,
+              policy.protectedPathRules ?? [],
+            )
+          : input;
+      const explanation = explainPermission(
+        policy,
+        activeProfile,
+        tool,
+        evaluatedInput,
+        cwd,
+        startupCwd,
+        rawProfileConfig,
+      );
+      ctx.ui.notify(formatExplanation(explanation), "info");
     },
   });
 
@@ -577,6 +673,73 @@ function pathAnalysisSegments(command: string): string[] {
   return [command];
 }
 
+function explainSubagentScope(
+  profile: string,
+  tool: string,
+  input: string,
+  startupCwd: string,
+  cwd: string,
+  policy: ProfilePolicy,
+  subagentPermissibleRules: Rule[] | undefined,
+): PermissionExplanation | undefined {
+  if (!subagentPermissibleRules) return undefined;
+
+  let matchedRule: Rule | undefined;
+  if (tool === "bash") {
+    const scopedPolicy = {
+      ...policy,
+      readPaths: subagentPermissibleRules as [Rule, ...Rule[]],
+      writePaths: subagentPermissibleRules as [Rule, ...Rule[]],
+    };
+    const decision = decideBashPathReferences(
+      pathAnalysisSegments(input),
+      startupCwd,
+      cwd,
+      scopedPolicy,
+      policy.protectedPathRules ?? [],
+    );
+    if (!decision || decision.decision === "allow") return undefined;
+    matchedRule = decision.rule;
+  } else if (tool === "edit" || tool === "write") {
+    const absolutePath = resolveRequestedPath(input, cwd);
+    const decision = evaluatePathByPattern(
+      absolutePath,
+      startupCwd,
+      subagentPermissibleRules,
+      "deny",
+      tool,
+      policy.protectedPathRules ?? [],
+    );
+    if (decision.decision === "allow") return undefined;
+    matchedRule = decision.rule;
+  } else {
+    return undefined;
+  }
+
+  const winner = matchedRule
+    ? {
+        pattern: matchedRule.pattern,
+        decision: matchedRule.decision,
+        score: pathPatternSpecificity(matchedRule.pattern),
+        index: subagentPermissibleRules.indexOf(matchedRule),
+      }
+    : undefined;
+  return {
+    tool,
+    input,
+    profile,
+    compositionChain: [],
+    decision: "deny",
+    winner,
+    matches: winner ? [winner] : [],
+    protectedOverride: undefined,
+    notes: [
+      "PI_SUBAGENT_PERMISSIBLE_GLOBS narrows this subagent to its declared paths and denies this request.",
+    ],
+    fallback: "deny",
+  };
+}
+
 function decideSubagentBashScope(
   command: string,
   startupCwd: string,
@@ -610,13 +773,110 @@ function decideSubagentBashScope(
   };
 }
 
+type BashGateEvaluation = {
+  parseErrors: ReturnType<typeof classifyShell>["errors"];
+  commands: string[];
+  protectedPathDecision: ReturnType<typeof decideProtectedBashPathReferences>;
+  readValidationError: string | undefined;
+  pathDecision: ReturnType<typeof decideBashPathReferences>;
+  pathTrace?: BashPathReferenceTrace;
+  commandDecisions: PolicyDecision[];
+};
+
+/**
+ * Evaluate every policy stage used by Bash enforcement without interacting
+ * with the user. Both `gateBash` and `/permissions explain` consume this
+ * result so the displayed first gate cannot drift from the real gate.
+ */
+function evaluateBashGate(
+  command: string,
+  startupCwd: string,
+  cwd: string,
+  activePolicy: ProfilePolicy,
+): BashGateEvaluation {
+  const parseErrors = classifyShell(command).errors;
+  const commands = extractShellCommands(command)
+    .map(normalizeCommandForDecision)
+    .filter(Boolean);
+  const protectedPathDecision = decideProtectedBashPathReferences(
+    pathAnalysisSegments(command),
+    startupCwd,
+    cwd,
+    activePolicy.protectedPathRules ?? [],
+  );
+  const readValidationError = validateReadCommands(
+    command,
+    commands,
+    activePolicy.protectedPathRules ?? [],
+  );
+  const pathSegments = pathAnalysisSegments(command);
+  // A path-level deny must win over an earlier ask.
+  const deniedPathAnalysis = analyzeBashPathReferences(
+    pathSegments,
+    startupCwd,
+    cwd,
+    activePolicy,
+    activePolicy.protectedPathRules ?? [],
+    false,
+  );
+  const pathAnalysis = deniedPathAnalysis.decision
+    ? deniedPathAnalysis
+    : analyzeBashPathReferences(
+        pathSegments,
+        startupCwd,
+        cwd,
+        activePolicy,
+        activePolicy.protectedPathRules ?? [],
+      );
+  const pathDecision = deniedPathAnalysis.decision ?? pathAnalysis.decision;
+  const pathTrace = deniedPathAnalysis.decision
+    ? deniedPathAnalysis.trace
+    : (pathAnalysis.trace ?? deniedPathAnalysis.trace);
+  const commandDecisions =
+    commands.length > 0
+      ? commands.map((item) => evaluateBash(item, activePolicy))
+      : [evaluateBash("", activePolicy)];
+
+  return {
+    parseErrors,
+    commands,
+    protectedPathDecision,
+    readValidationError,
+    pathDecision,
+    pathTrace,
+    commandDecisions,
+  };
+}
+
 export async function gateBash(
   command: string,
   startupCwd: string,
   ctx: ExtensionContext,
   activePolicy = defaultPolicy,
 ) {
-  const parseErrors = classifyShell(command).errors;
+  const evaluation = evaluateBashGate(
+    command,
+    startupCwd,
+    ctx.cwd ?? startupCwd,
+    activePolicy,
+  );
+  const {
+    parseErrors,
+    protectedPathDecision,
+    readValidationError,
+    pathDecision,
+    commandDecisions: decisions,
+  } = evaluation;
+  if (protectedPathDecision) {
+    return {
+      block: true,
+      reason: appendPolicySteering(
+        `Bash path reference denied by protected-path policy.\n\nRaw command:\n${command}\n\nPath:\n${protectedPathDecision.path}\n\nMatched protected path:\n${protectedPathDecision.matchPath}`,
+        [protectedPathDecision.rule],
+      ),
+    };
+  }
+
   if (parseErrors.length > 0) {
     const details = parseErrors
       .map((error) => `- offset ${error.pos}: ${error.message}`)
@@ -637,14 +897,6 @@ export async function gateBash(
     }
   }
 
-  const commands = extractShellCommands(command)
-    .map(normalizeCommandForDecision)
-    .filter(Boolean);
-  const readValidationError = validateReadCommands(
-    command,
-    commands,
-    activePolicy.protectedPathRules ?? [],
-  );
   if (readValidationError) {
     return {
       block: true,
@@ -652,30 +904,6 @@ export async function gateBash(
     };
   }
 
-  const decisions =
-    commands.length > 0
-      ? commands.map((cmd) => evaluateBash(cmd, activePolicy))
-      : [evaluateBash("", activePolicy)];
-
-  if (decisions.some(({ decision }) => decision === "deny")) {
-    return {
-      block: true,
-      reason: appendPolicySteering(
-        `Command denied by explicit rule.\n\nRaw command:\n${command}\n\nParsed command segments:\n${formatParsedCommands(command, activePolicy)}`,
-        decisions
-          .filter(({ decision }) => decision === "deny")
-          .map(({ rule }) => rule),
-      ),
-    };
-  }
-
-  const pathDecision = decideBashPathReferences(
-    pathAnalysisSegments(command),
-    startupCwd,
-    ctx.cwd ?? startupCwd,
-    activePolicy,
-    activePolicy.protectedPathRules ?? [],
-  );
   if (pathDecision?.decision === "deny") {
     return {
       block: true,
@@ -699,6 +927,18 @@ export async function gateBash(
           approval.guidance,
         ),
       };
+  }
+
+  if (decisions.some(({ decision }) => decision === "deny")) {
+    return {
+      block: true,
+      reason: appendPolicySteering(
+        `Command denied by explicit rule.\n\nRaw command:\n${command}\n\nParsed command segments:\n${formatParsedCommands(command, activePolicy)}`,
+        decisions
+          .filter(({ decision }) => decision === "deny")
+          .map(({ rule }) => rule),
+      ),
+    };
   }
 
   if (decisions.some(({ decision }) => decision === "ask")) {
@@ -727,6 +967,40 @@ export function decideBash(
   return evaluateBash(command, activePolicy).decision;
 }
 
+export type RuleExplanation = {
+  pattern: string;
+  decision: Decision;
+  score: Specificity;
+  index: number;
+  tiebreak?: "literal-segments" | "literal-characters" | "composition-order";
+};
+
+type DisplayableRule = {
+  decision: Decision;
+  pattern?: string;
+  match?: Record<string, string>;
+};
+
+export type PermissionExplanation = {
+  tool: string;
+  input: string;
+  profile: string;
+  compositionChain: string[];
+  decision: Decision;
+  winner?: RuleExplanation;
+  matches: RuleExplanation[];
+  pathWinner?: RuleExplanation;
+  pathMatches?: RuleExplanation[];
+  protectedOverride?: {
+    decision: "allow" | "deny";
+    pattern: string;
+    guidance?: string;
+  };
+  protectedMatches?: RuleExplanation[];
+  notes: string[];
+  fallback: Decision;
+};
+
 function evaluateBash(
   command: string,
   activePolicy: ProfilePolicy,
@@ -737,6 +1011,450 @@ function evaluateBash(
     "ask",
     matchesCommandPattern,
   );
+}
+
+export function explainPermission(
+  policy: ProfilePolicy,
+  profileName: string,
+  tool: string,
+  input: string,
+  cwd: string = process.cwd(),
+  startupCwd: string = cwd,
+  rawConfig?: RawProfileConfig,
+): PermissionExplanation {
+  const compositionChain = resolveCompositionChain(profileName, rawConfig);
+
+  if (tool === "bash") {
+    return explainBashPermission(
+      policy,
+      profileName,
+      input,
+      cwd,
+      startupCwd,
+      compositionChain,
+    );
+  }
+
+  if (isPathToolName(tool)) {
+    const rules: readonly PathRule[] = isReadToolName(tool)
+      ? policy.readPaths
+      : isWriteToolName(tool)
+        ? policy.writePaths
+        : [];
+    const context = tool as PathContext;
+    const fallback: Decision = "allow";
+    const requestedPath = toolPath(tool, { path: input }) ?? input;
+    const absolutePath = resolveRequestedPath(requestedPath, cwd);
+    const ranked = rankPathRules(absolutePath, startupCwd, rules, context);
+    const winner = ranked[0];
+
+    const protectedRanked = rankPathRules(
+      absolutePath,
+      startupCwd,
+      policy.protectedPathRules ?? [],
+      context,
+    );
+    const protectedWinner = protectedRanked[0];
+    const protectedOverride:
+      PermissionExplanation["protectedOverride"] | undefined = protectedWinner
+      ? {
+          decision: protectedWinner.item.decision,
+          pattern: protectedWinner.item.pattern,
+          guidance: protectedWinner.item.guidance,
+        }
+      : undefined;
+
+    return {
+      tool,
+      input,
+      profile: profileName,
+      compositionChain,
+      decision:
+        protectedOverride?.decision === "deny"
+          ? "deny"
+          : (winner?.item.decision ?? fallback),
+      winner: winner ? ruleExplanation(winner) : undefined,
+      matches: ranked.map(ruleExplanation),
+      protectedOverride,
+      protectedMatches: protectedRanked.map(ruleExplanation),
+      notes: [],
+      fallback,
+    };
+  }
+
+  const customRules = policy.tools[tool];
+  if (customRules) {
+    const ranked = rankCustomToolRules(input, customRules);
+    const winner = ranked[0];
+    const fallback: Decision = "ask";
+    return {
+      tool,
+      input,
+      profile: profileName,
+      compositionChain,
+      decision: winner?.item.decision ?? fallback,
+      winner: winner ? ruleExplanation(winner) : undefined,
+      matches: ranked.map(ruleExplanation),
+      protectedOverride: undefined,
+      notes: [],
+      fallback,
+    };
+  }
+
+  return {
+    tool,
+    input,
+    profile: profileName,
+    compositionChain,
+    decision: "allow",
+    winner: undefined,
+    matches: [],
+    protectedOverride: undefined,
+    notes: [`No policy configured for tool '${tool}'; call proceeds.`],
+    fallback: "allow",
+  };
+}
+
+type BashSegmentExplanation = {
+  segment: string;
+  command: string;
+  decision: Decision;
+  winner?: RankedItem<Rule>;
+  matches: RankedItem<Rule>[];
+};
+
+type BashPathLayerDecision = {
+  decision: Decision;
+  decidedBy: "protected-path" | "path-rule";
+  protectedOverride?: PermissionExplanation["protectedOverride"];
+  pathRule?: { decision: Decision; pattern: string; guidance?: string };
+};
+
+function explainBashPermission(
+  policy: ProfilePolicy,
+  profileName: string,
+  input: string,
+  cwd: string,
+  startupCwd: string,
+  compositionChain: string[],
+): PermissionExplanation {
+  const evaluation = evaluateBashGate(input, startupCwd, cwd, policy);
+  const commands = evaluation.commands.length > 0 ? evaluation.commands : [""];
+  const rules = policy.tools.bash ?? [];
+  const fallback: Decision = "ask";
+  const {
+    parseErrors,
+    protectedPathDecision,
+    readValidationError,
+    pathDecision,
+    pathTrace,
+  } = evaluation;
+  const pathLayer = protectedPathDecision
+    ? protectedPathLayerDecision(protectedPathDecision)
+    : pathDecision && pathDecision.decision !== "allow"
+      ? {
+          decision: pathDecision.decision,
+          decidedBy: "path-rule" as const,
+          pathRule: {
+            decision: pathDecision.decision,
+            pattern: pathDecision.rule?.pattern ?? pathDecision.matchPath,
+            guidance: pathDecision.rule?.guidance,
+          },
+        }
+      : undefined;
+
+  const segmentExplanations: BashSegmentExplanation[] = commands.map(
+    (command, index) => {
+      const ranked = rankCommandRules(command, rules);
+      const winner = ranked[0];
+      return {
+        segment: command,
+        command,
+        decision: evaluation.commandDecisions[index]?.decision ?? fallback,
+        winner,
+        matches: ranked,
+      };
+    },
+  );
+
+  const mostRestrictiveCommand = segmentExplanations.reduce(
+    (most, current) =>
+      restrictiveness(current.decision) > restrictiveness(most.decision)
+        ? current
+        : most,
+    segmentExplanations[0],
+  );
+
+  let finalDecision: Decision = mostRestrictiveCommand.decision;
+  let decidedBy:
+    | "command-rule"
+    | "protected-path"
+    | "path-rule"
+    | "read-validation"
+    | "parse-error" = "command-rule";
+
+  if (
+    pathLayer?.decidedBy === "protected-path" &&
+    pathLayer.decision === "deny"
+  ) {
+    finalDecision = "deny";
+    decidedBy = "protected-path";
+  } else if (parseErrors.length > 0) {
+    finalDecision = "ask";
+    decidedBy = "parse-error";
+  } else if (readValidationError) {
+    finalDecision = "deny";
+    decidedBy = "read-validation";
+  } else if (pathLayer?.decision === "deny") {
+    finalDecision = "deny";
+    decidedBy = pathLayer.decidedBy;
+  } else if (pathLayer?.decision === "ask") {
+    finalDecision = "ask";
+    decidedBy = pathLayer.decidedBy;
+  } else if (mostRestrictiveCommand.decision === "deny") {
+    finalDecision = "deny";
+    decidedBy = "command-rule";
+  }
+
+  const bashPathExplanation = pathTrace
+    ? {
+        protectedMatches: pathTrace.protectedMatches.map(ruleExplanation),
+        pathWinner: pathTrace.pathMatches[0]
+          ? ruleExplanation(pathTrace.pathMatches[0])
+          : undefined,
+        pathMatches: pathTrace.pathMatches.map(ruleExplanation),
+        protectedOverride: pathTrace.protectedMatches[0]
+          ? {
+              decision: pathTrace.protectedMatches[0].item.decision,
+              pattern: pathTrace.protectedMatches[0].item.pattern,
+              guidance: pathTrace.protectedMatches[0].item.guidance,
+            }
+          : undefined,
+      }
+    : {
+        protectedMatches: undefined,
+        pathWinner: undefined,
+        pathMatches: undefined,
+        protectedOverride: undefined,
+      };
+
+  const notes: string[] = [];
+  if (segmentExplanations.length > 1) {
+    notes.push(
+      `Compound command with ${segmentExplanations.length} segments; showing the most restrictive decision.`,
+    );
+  }
+  if (readValidationError) {
+    notes.push(`Shell read validation: ${readValidationError}`);
+  }
+  if (decidedBy === "path-rule" && pathLayer?.pathRule) {
+    notes.push(
+      `Bash path-reference rule: [${pathLayer.pathRule.decision}] ${pathLayer.pathRule.pattern}`,
+    );
+  }
+
+  if (parseErrors.length > 0) {
+    notes.push(
+      protectedPathDecision
+        ? "Shell parse/classification errors were present, but a definite protected-path deny short-circuits approval."
+        : "Shell parse/classification errors require approval before policy evaluation of ordinary rules; non-interactive execution blocks.",
+    );
+  }
+
+  return {
+    tool: "bash",
+    input,
+    profile: profileName,
+    compositionChain,
+    decision: finalDecision,
+    winner:
+      decidedBy === "command-rule" && mostRestrictiveCommand.winner
+        ? ruleExplanation(mostRestrictiveCommand.winner)
+        : undefined,
+    matches: mostRestrictiveCommand.matches.map(ruleExplanation),
+    protectedOverride:
+      pathLayer?.protectedOverride ?? bashPathExplanation.protectedOverride,
+    protectedMatches: bashPathExplanation.protectedMatches,
+    pathWinner: bashPathExplanation.pathWinner,
+    pathMatches: bashPathExplanation.pathMatches,
+    notes,
+    fallback,
+  };
+}
+
+function restrictiveness(decision: Decision): number {
+  if (decision === "deny") return 2;
+  if (decision === "ask") return 1;
+  return 0;
+}
+
+function resolveCompositionChain(
+  profileName: string,
+  rawConfig?: RawProfileConfig,
+): string[] {
+  const definitions = rawConfig?.profiles ?? loadRawProfileConfig()?.profiles;
+  const resolving = new Set<string>();
+
+  const resolve = (name: string): string[] => {
+    const builtinChain = builtinCompositionChains[name];
+    if (builtinChain) return [...builtinChain];
+    if (name.startsWith("ruleset:") || name.startsWith("transform:")) {
+      return [name];
+    }
+
+    const definition = definitions?.[name];
+    if (!definition || resolving.has(name)) return [name];
+
+    resolving.add(name);
+    const chain = [
+      ...(definition.extends ?? []).flatMap(resolve),
+      ...(definition.transforms ?? []),
+      `custom profile: ${name}`,
+    ];
+    resolving.delete(name);
+    return chain;
+  };
+
+  return resolve(profileName);
+}
+
+function rankCommandRules(
+  command: string,
+  rules: readonly Rule[],
+): RankedItem<Rule>[] {
+  return rankMatchingRules(
+    rules,
+    (rule) => matchesCommandPattern(rule.pattern, command),
+    (rule) => commandPatternSpecificity(rule.pattern),
+  );
+}
+
+function rankCustomToolRules(
+  input: string,
+  rules: readonly CustomToolRule[],
+): RankedItem<CustomToolRule>[] {
+  const parsedInput = safeJsonParse(input) ?? input;
+  return rankMatchingRules(
+    rules,
+    (rule) => customToolRuleMatches(rule, parsedInput),
+    (rule) => customToolMatchSpecificity(rule.match),
+  );
+}
+
+function safeJsonParse(value: string): unknown {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return undefined;
+  }
+}
+
+function ruleExplanation<T extends DisplayableRule>(
+  ranked: RankedItem<T>,
+): RuleExplanation {
+  return {
+    pattern:
+      ranked.item.pattern ??
+      (ranked.item.match ? JSON.stringify(ranked.item.match) : "(catch-all)"),
+    decision: ranked.item.decision,
+    score: ranked.score,
+    index: ranked.index,
+    tiebreak: ranked.tiebreak,
+  };
+}
+
+function protectedPathLayerDecision(decision: {
+  rule?: PathRule;
+  matchPath: string;
+}): BashPathLayerDecision {
+  return {
+    decision: "deny",
+    decidedBy: "protected-path",
+    protectedOverride: {
+      decision: "deny",
+      pattern: decision.rule?.pattern ?? decision.matchPath,
+      guidance: decision.rule?.guidance,
+    },
+  };
+}
+
+export function formatExplanation(explanation: PermissionExplanation): string {
+  const lines: string[] = [];
+  lines.push(`Profile: ${explanation.profile}`);
+  if (explanation.compositionChain.length > 0) {
+    lines.push(`Composition: ${explanation.compositionChain.join(" → ")}`);
+  }
+  lines.push(`Tool: ${explanation.tool}`);
+  lines.push(`Input: ${explanation.input}`);
+  lines.push(`Decision: ${explanation.decision}`);
+
+  if (explanation.protectedOverride) {
+    const label =
+      explanation.protectedOverride.decision === "deny"
+        ? "Protected-layer override"
+        : "Protected-layer winner";
+    lines.push(
+      `${label}: ${explanation.protectedOverride.decision} (${explanation.protectedOverride.pattern})`,
+    );
+    if (explanation.protectedOverride.guidance) {
+      lines.push(`  guidance: ${explanation.protectedOverride.guidance}`);
+    }
+  }
+
+  if (explanation.protectedMatches?.length) {
+    lines.push("Protected matches:");
+    for (const match of explanation.protectedMatches) {
+      lines.push(
+        `  [${match.decision}] ${match.pattern} (segments=${match.score.literalSegments}, chars=${match.score.literalCharacters}, index=${match.index})`,
+      );
+    }
+  }
+
+  if (explanation.winner) {
+    const winner = explanation.winner;
+    const tiebreak = winner.tiebreak ? ` (tiebreak: ${winner.tiebreak})` : "";
+    lines.push(
+      `Winner: [${winner.decision}] ${winner.pattern} (segments=${winner.score.literalSegments}, chars=${winner.score.literalCharacters}, index=${winner.index})${tiebreak}`,
+    );
+  }
+
+  if (explanation.pathWinner) {
+    const winner = explanation.pathWinner;
+    lines.push(
+      `Path-layer winner: [${winner.decision}] ${winner.pattern} (segments=${winner.score.literalSegments}, chars=${winner.score.literalCharacters}, index=${winner.index})`,
+    );
+  }
+
+  if (explanation.pathMatches?.length) {
+    lines.push("Path matches:");
+    for (const match of explanation.pathMatches) {
+      lines.push(
+        `  [${match.decision}] ${match.pattern} (segments=${match.score.literalSegments}, chars=${match.score.literalCharacters}, index=${match.index})`,
+      );
+    }
+  }
+
+  if (explanation.matches.length > 0) {
+    lines.push("Matches:");
+    for (const match of explanation.matches) {
+      lines.push(
+        `  [${match.decision}] ${match.pattern} (segments=${match.score.literalSegments}, chars=${match.score.literalCharacters}, index=${match.index})`,
+      );
+    }
+  } else {
+    lines.push(
+      `Matches: (none — falling back to default ${explanation.fallback})`,
+    );
+  }
+
+  if (explanation.notes.length > 0) {
+    lines.push("Notes:");
+    for (const note of explanation.notes) {
+      lines.push(`  - ${note}`);
+    }
+  }
+
+  return lines.join("\n");
 }
 
 export function formatParsedCommands(

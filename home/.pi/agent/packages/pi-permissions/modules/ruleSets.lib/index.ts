@@ -1,6 +1,7 @@
 import type { ProfilePolicy } from "../policyHelpers";
 import { defaultGitRules, gitCommitRules, gitRefsRules } from "./git";
 import { defaultGuardRules } from "./guards";
+import { defaultProtectedPathRules } from "../protectedPaths";
 import {
   dependencyMutationAllowRules,
   dependencyMutationGuardRules,
@@ -33,6 +34,8 @@ export type RuleSetName =
   | "ruleset:deps-mutations-allow"
   | "ruleset:shell-guards"
   | "ruleset:path-guards"
+  | "ruleset:read-only-shell"
+  | "ruleset:read-only-path"
   | "ruleset:git-commit"
   | "ruleset:git-refs"
   | "ruleset:test-run"
@@ -76,6 +79,17 @@ export const ruleSetRegistry: Record<RuleSetName, RuleSetPolicy> = {
   "ruleset:path-guards": {
     readPaths: defaultReadPaths(),
     writePaths: defaultWritePaths(),
+    protectedPathRules: defaultProtectedPathRules,
+  },
+  "ruleset:read-only-shell": {
+    tools: {
+      bash: readOnlyShellRules,
+    },
+  },
+  "ruleset:read-only-path": {
+    readPaths: readOnlyPathRules,
+    writePaths: readOnlyWritePathRules,
+    protectedPathRules: defaultProtectedPathRules,
   },
   "ruleset:git-commit": {
     tools: {
@@ -105,10 +119,4 @@ export function ruleSetNames(): RuleSetName[] {
   return Object.keys(ruleSetRegistry) as RuleSetName[];
 }
 
-export {
-  defaultGuardRules,
-  readOnlyPathRules,
-  readOnlyShellRules,
-  readOnlyWritePathRules,
-  testFilePatterns,
-};
+export { defaultGuardRules, testFilePatterns };

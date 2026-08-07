@@ -1,6 +1,18 @@
 import { extendProfile } from "../policyHelpers";
 import { ruleSetRegistry } from "../ruleSets.lib/index";
-import { baseProfile } from "./base";
+import { baseCompositionChain, baseProfile } from "./base";
+
+export const committerCompositionChain = [
+  ...baseCompositionChain,
+  "ruleset:git-commit",
+  "builtin:committer",
+] as const;
+
+export const gitFullCompositionChain = [
+  ...committerCompositionChain,
+  "ruleset:git-refs",
+  "builtin:git-full",
+] as const;
 
 /** Local git mutation tier: stage, commit, and rewrite local history. */
 export const committerProfile = extendProfile(baseProfile, {

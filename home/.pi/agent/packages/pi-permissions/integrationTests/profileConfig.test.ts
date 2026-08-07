@@ -76,6 +76,32 @@ describe("profile configuration", () => {
     );
   });
 
+  it("rejects transforms on a profile without inherited policy", () => {
+    const configPath = writeConfig(
+      JSON.stringify({
+        profiles: {
+          standalone: {
+            transforms: ["transform:deny-all"],
+            tools: { bash: [{ pattern: "*", decision: "allow" }] },
+            readPaths: [{ pattern: "**", decision: "allow" }],
+            writePaths: [{ pattern: "**", decision: "allow" }],
+          },
+        },
+      }),
+    );
+
+    try {
+      loadProfileConfig(genericPolicyConfig, configPath);
+      throw new Error("expected loadProfileConfig to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ProfileConfigLoadError);
+      expect((error as ProfileConfigLoadError).configPath).toBe(configPath);
+      expect((error as ProfileConfigLoadError).details).toBe(
+        "/profiles/standalone/transforms: transforms require at least one extends target",
+      );
+    }
+  });
+
   it("lints inherited conflicts against the fully resolved child profile", () => {
     const warnSpy = vi
       .spyOn(console, "warn")
@@ -179,7 +205,7 @@ describe("profile configuration", () => {
     ]);
   });
 
-  it("clears inherited custom tool rules while preserving an empty configured policy", () => {
+  it("preserves inherited custom tool rules when a child appends an empty list", () => {
     const config = loadProfileConfig(
       genericPolicyConfig,
       writeConfig(`{
@@ -202,10 +228,12 @@ describe("profile configuration", () => {
       }`),
     );
 
-    expect(config.profiles["deployment-child"].tools.deploy).toEqual([]);
+    expect(config.profiles["deployment-child"].tools.deploy).toEqual([
+      { decision: "deny", match: { environment: "production" } },
+    ]);
   });
 
-  it("leaves Bash commands at the ask default when an override clears the inherited command rules", () => {
+  it("preserves inherited Bash rules when a child appends an empty list", () => {
     const config = loadProfileConfig(
       genericPolicyConfig,
       writeConfig(
@@ -218,9 +246,18 @@ describe("profile configuration", () => {
     );
 
     const quietBash = config.profiles["quiet-bash"];
-    expect(quietBash.tools.bash).toBeUndefined();
-    expect(decideBash("git status --short", quietBash)).toBe("ask");
-    expect(decideBash("npm test", quietBash)).toBe("ask");
+    expect(quietBash.tools.bash).toEqual(
+      genericPolicyConfig.profiles["builtin:default"].tools.bash,
+    );
+    expect(decideBash("git status --short", quietBash)).toBe(
+      decideBash(
+        "git status --short",
+        genericPolicyConfig.profiles["builtin:default"],
+      ),
+    );
+    expect(decideBash("npm test", quietBash)).toBe(
+      decideBash("npm test", genericPolicyConfig.profiles["builtin:default"]),
+    );
   });
 
   it("accepts a fully custom profile without extends", () => {
@@ -387,9 +424,10 @@ describe("profile configuration", () => {
     ).toThrowError("unknown inherited profile 'default'");
   });
 
-  it("throws a typed error for unknown or cyclic inheritance and invalid defaults", () => {
-    const unknownInheritedConfigPath = writeConfig(
-      JSON.stringify({
+  it.each([
+    {
+      label: "unknown inherited profile",
+      contents: JSON.stringify({
         defaultProfile: "client-work",
         profiles: {
           "client-work": {
@@ -398,9 +436,11 @@ describe("profile configuration", () => {
           },
         },
       }),
-    );
-    const cyclicConfigPath = writeConfig(
-      JSON.stringify({
+      messageFragment: "unknown inherited profile",
+    },
+    {
+      label: "cyclic inheritance",
+      contents: JSON.stringify({
         defaultProfile: "first",
         profiles: {
           first: {
@@ -413,30 +453,47 @@ describe("profile configuration", () => {
           },
         },
       }),
-    );
-    const invalidDefaultConfigPath = writeConfig(
-      JSON.stringify({
+      messageFragment: "cyclic profile inheritance detected",
+    },
+    {
+      label: "missing default profile",
+      contents: JSON.stringify({
         defaultProfile: "missing",
         profiles: {
           default: genericPolicyConfig.profiles["builtin:default"],
         },
       }),
-    );
+      messageFragment: "profile 'missing' is not configured",
+    },
+    {
+      label: "inherited constructor property",
+      contents: JSON.stringify({
+        defaultProfile: "constructor",
+        profiles: {},
+      }),
+      messageFragment: "profile 'constructor' is not configured",
+    },
+    {
+      label: "__proto__ profile",
+      contents: JSON.stringify({
+        defaultProfile: "__proto__",
+        profiles: Object.fromEntries([
+          ["__proto__", genericPolicyConfig.profiles["builtin:default"]],
+        ]),
+      }),
+      messageFragment: "profile '__proto__' is not configured",
+    },
+  ])("throws a typed error for $label", ({ contents, messageFragment }) => {
+    const configPath = writeConfig(contents);
 
-    for (const [configPath, messageFragment] of [
-      [unknownInheritedConfigPath, "unknown inherited profile"],
-      [cyclicConfigPath, "cyclic profile inheritance detected"],
-      [invalidDefaultConfigPath, "profile 'missing' is not configured"],
-    ] as const) {
-      try {
-        loadProfileConfig(genericPolicyConfig, configPath);
-        throw new Error("expected loadProfileConfig to throw");
-      } catch (error) {
-        expect(error).toBeInstanceOf(ProfileConfigLoadError);
-        expect((error as ProfileConfigLoadError).configPath).toBe(configPath);
-        expect((error as Error).message).toContain(configPath);
-        expect((error as Error).message).toContain(messageFragment);
-      }
+    try {
+      loadProfileConfig(genericPolicyConfig, configPath);
+      throw new Error("expected loadProfileConfig to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ProfileConfigLoadError);
+      expect((error as ProfileConfigLoadError).configPath).toBe(configPath);
+      expect((error as Error).message).toContain(configPath);
+      expect((error as Error).message).toContain(messageFragment);
     }
   });
 });
@@ -563,79 +620,80 @@ async function emitToolCall(harness: ReturnType<typeof createHarness>) {
   );
 }
 
-describe("extension harness profile configuration failures", () => {
-  it("keeps registration operational and blocks invalid configurations in both UI and non-UI contexts", async () => {
-    const cases = [
-      {
-        label: "invalid JSONC",
-        contents: '{ "profiles": ',
-        messageFragment: "JSONC parse error",
+const invalidExtensionConfigCases = [
+  {
+    label: "invalid JSONC",
+    contents: '{ "profiles": ',
+    messageFragment: "JSONC parse error",
+  },
+  {
+    label: "schema-invalid legacy field",
+    contents: JSON.stringify({
+      profiles: {
+        default: {
+          ...genericPolicyConfig.profiles["builtin:default"],
+          bashPathReferences: [],
+        },
       },
-      {
-        label: "schema-invalid legacy field",
-        contents: JSON.stringify({
-          profiles: {
-            default: {
-              ...genericPolicyConfig.profiles["builtin:default"],
-              bashPathReferences: [],
-            },
-          },
-        }),
-        messageFragment: "schema validation failed",
+    }),
+    messageFragment: "schema validation failed",
+  },
+  {
+    label: "unknown inherited profile",
+    contents: JSON.stringify({
+      defaultProfile: "default",
+      profiles: {
+        "client-work": {
+          ...genericPolicyConfig.profiles["builtin:default"],
+          extends: ["missing"],
+        },
       },
-      {
-        label: "unknown inherited profile",
-        contents: JSON.stringify({
-          defaultProfile: "default",
-          profiles: {
-            "client-work": {
-              ...genericPolicyConfig.profiles["builtin:default"],
-              extends: ["missing"],
-            },
-          },
-        }),
-        messageFragment: "unknown inherited profile",
+    }),
+    messageFragment: "unknown inherited profile",
+  },
+  {
+    label: "reserved-name definition overrides a shipped profile",
+    contents: JSON.stringify({
+      defaultProfile: "builtin:default",
+      profiles: {
+        "builtin:default": { extends: ["missing"] },
       },
-      {
-        label: "reserved-name definition overrides a shipped profile",
-        contents: JSON.stringify({
-          defaultProfile: "builtin:default",
-          profiles: {
-            "builtin:default": { extends: ["missing"] },
-          },
-        }),
-        messageFragment: "reserved profile name",
+    }),
+    messageFragment: "reserved profile name",
+  },
+  {
+    label: "cyclic inheritance",
+    contents: JSON.stringify({
+      defaultProfile: "first",
+      profiles: {
+        first: {
+          ...genericPolicyConfig.profiles["builtin:default"],
+          extends: ["second"],
+        },
+        second: {
+          ...genericPolicyConfig.profiles["builtin:default"],
+          extends: ["first"],
+        },
       },
-      {
-        label: "cyclic inheritance",
-        contents: JSON.stringify({
-          defaultProfile: "first",
-          profiles: {
-            first: {
-              ...genericPolicyConfig.profiles["builtin:default"],
-              extends: ["second"],
-            },
-            second: {
-              ...genericPolicyConfig.profiles["builtin:default"],
-              extends: ["first"],
-            },
-          },
-        }),
-        messageFragment: "cyclic profile inheritance detected",
+    }),
+    messageFragment: "cyclic profile inheritance detected",
+  },
+  {
+    label: "invalid default profile",
+    contents: JSON.stringify({
+      defaultProfile: "missing",
+      profiles: {
+        default: genericPolicyConfig.profiles["builtin:default"],
       },
-      {
-        label: "invalid default profile",
-        contents: JSON.stringify({
-          defaultProfile: "missing",
-          profiles: {
-            default: genericPolicyConfig.profiles["builtin:default"],
-          },
-        }),
-        messageFragment: "profile 'missing' is not configured",
-      },
-    ] as const;
+    }),
+    messageFragment: "profile 'missing' is not configured",
+  },
+] as const;
 
-    for (const testCase of cases) {
+describe("extension harness profile configuration failures", () => {
+  it.each(invalidExtensionConfigCases)(
+    "keeps registration operational and blocks $label in both UI and non-UI contexts",
+    async (testCase) => {
       const configPath = writeConfig(testCase.contents);
       process.env.PI_PERMISSIONS_PROFILE_CONFIG = configPath;
 
@@ -643,6 +701,7 @@ describe("extension harness profile configuration failures", () => {
       expect(uiHarness.commands).toEqual([
         "profile",
         "read-only",
+        "permissions",
         "socrates",
         "socrates-off",
       ]);
@@ -678,8 +737,8 @@ describe("extension harness profile configuration failures", () => {
       expect(nonUiToolResult?.block).toBe(true);
       expect(nonUiToolResult?.reason).toContain(configPath);
       expect(nonUiToolResult?.reason).toContain(testCase.messageFragment);
-    }
-  });
+    },
+  );
 
   it("keeps the shipped profiles active when the profile config file is missing", async () => {
     const directory = fs.mkdtempSync(

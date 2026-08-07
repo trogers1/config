@@ -357,6 +357,44 @@ describe("unbash shell classification", () => {
     );
   });
 
+  const policySubcommandCases: ReadonlyArray<[string, string[]]> = [
+    ["cargo build --release", ["build"]],
+    ["cargo test", ["test"]],
+    ["cargo check", ["check"]],
+    ["cargo clippy", ["clippy"]],
+    ["go build", ["build"]],
+    ["go test", ["test"]],
+  ];
+
+  it.each(policySubcommandCases)(
+    "derives literal subcommands from the active command policy: %s",
+    (command, subcommands) => {
+      const result = classifyShell(command, { subcommands });
+
+      expect(result.errors).toEqual([]);
+      for (const value of subcommands) {
+        expect(result.tokens, value).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ kind: "proven-non-path", value }),
+          ]),
+        );
+      }
+    },
+  );
+
+  it("leaves operands after a policy-derived subcommand conservatively ambiguous", () => {
+    const result = classifyShell("cargo test --package demo", {
+      subcommands: ["test"],
+    });
+
+    expect(result.tokens).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "proven-non-path", value: "test" }),
+        expect.objectContaining({ kind: "ambiguous", value: "demo" }),
+      ]),
+    );
+  });
+
   it("reports malformed shell rather than relying on a recovered AST", () => {
     const result = classifyShell("cat 'unterminated");
 

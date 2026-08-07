@@ -141,6 +141,26 @@ describe("policy configuration contract", () => {
     expect(Value.Check(schema, invalidProfileFile)).toBe(false);
   });
 
+  it("requires extends when transforms are present in the generated schema", () => {
+    const schema = JSON.parse(
+      fs.readFileSync(
+        new URL("../schemas/profiles.schema.json", import.meta.url),
+        "utf8",
+      ),
+    ) as TSchema;
+
+    expect(
+      Value.Check(schema, {
+        profiles: {
+          standalone: {
+            transforms: ["transform:deny-all"],
+            ...baseProfile,
+          },
+        },
+      }),
+    ).toBe(false);
+  });
+
   it("encodes the non-empty matcher constraint and reserved-name rejection in the generated schema", () => {
     type SchemaShape = {
       properties: {
@@ -469,12 +489,17 @@ describe("profile composition", () => {
     expect(baseProfile.tools.bash).toHaveLength(2);
   });
 
-  it("preserves empty custom tool overrides so configured tools default to ask", () => {
-    const extended = extendProfile(baseProfile, {
-      tools: { deploy: [] },
-    });
+  it("treats an empty custom tool override as an append identity", () => {
+    const base = {
+      ...baseProfile,
+      tools: {
+        ...baseProfile.tools,
+        deploy: [{ decision: "deny", match: { environment: "production" } }],
+      },
+    } satisfies ProfilePolicy;
+    const extended = extendProfile(base, { tools: { deploy: [] } });
 
-    expect(extended.tools.deploy).toEqual([]);
+    expect(extended.tools.deploy).toEqual(base.tools.deploy);
   });
 
   it("appends path overrides so custom profiles keep inherited boundaries", () => {
@@ -485,12 +510,12 @@ describe("profile composition", () => {
     expect(baseProfile.readPaths).toHaveLength(1);
   });
 
-  it("can remove inherited bash rules while inheriting path rules", () => {
+  it("treats an empty Bash override as an append identity", () => {
     const extended = extendProfile(baseProfile, {
       tools: { bash: [] },
     });
 
-    expect(extended.tools.bash).toBeUndefined();
+    expect(extended.tools.bash).toEqual(baseProfile.tools.bash);
     expect(extended.readPaths).toEqual(baseProfile.readPaths);
     expect(extended.readPaths).not.toBe(baseProfile.readPaths);
     expect(extended.writePaths).toEqual(baseProfile.writePaths);

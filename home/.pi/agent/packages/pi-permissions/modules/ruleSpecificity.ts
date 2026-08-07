@@ -1,10 +1,20 @@
-type Specificity = {
+export type Specificity = {
   literalSegments: number;
   literalCharacters: number;
 };
 
+type TiebreakReason =
+  "literal-segments" | "literal-characters" | "composition-order";
+
 type ScoredRule = Specificity & {
   index: number;
+};
+
+export type RankedItem<T> = {
+  item: T;
+  index: number;
+  score: Specificity;
+  tiebreak?: TiebreakReason;
 };
 
 function compareSpecificity(left: ScoredRule, right: ScoredRule): number {
@@ -17,33 +27,58 @@ function compareSpecificity(left: ScoredRule, right: ScoredRule): number {
   return left.index - right.index;
 }
 
+function tiebreakReason(
+  winner: Specificity,
+  loser: Specificity,
+): TiebreakReason {
+  if (winner.literalSegments !== loser.literalSegments) {
+    return "literal-segments";
+  }
+  if (winner.literalCharacters !== loser.literalCharacters) {
+    return "literal-characters";
+  }
+  return "composition-order";
+}
+
+export function rankMatchingRules<T>(
+  items: readonly T[],
+  isMatch: (item: T) => boolean,
+  score: (item: T) => Specificity,
+): RankedItem<T>[] {
+  const matches: RankedItem<T>[] = [];
+
+  for (let index = 0; index < items.length; index++) {
+    const item = items[index];
+    if (!isMatch(item)) continue;
+    matches.push({ item, index, score: score(item) });
+  }
+
+  matches.sort((left, right) => {
+    const comparison = compareSpecificity(
+      { ...left.score, index: left.index },
+      { ...right.score, index: right.index },
+    );
+    // Sort descending: most specific first.
+    return comparison === 0 ? right.index - left.index : -comparison;
+  });
+
+  for (let rank = 0; rank < matches.length; rank++) {
+    const current = matches[rank];
+    const next = matches[rank + 1];
+    if (!next) continue;
+    current.tiebreak = tiebreakReason(current.score, next.score);
+  }
+
+  return matches;
+}
+
 export function chooseMostSpecific<T>(
   items: readonly T[],
   isMatch: (item: T) => boolean,
   score: (item: T) => Specificity,
 ): { item: T; index: number; score: Specificity } | undefined {
-  let winner: { item: T; index: number; score: Specificity } | undefined;
-
-  for (let index = 0; index < items.length; index++) {
-    const item = items[index];
-    if (!isMatch(item)) continue;
-    const candidate = { item, index, score: score(item) };
-    if (!winner) {
-      winner = candidate;
-      continue;
-    }
-
-    if (
-      compareSpecificity(
-        { ...candidate.score, index: candidate.index },
-        { ...winner.score, index: winner.index },
-      ) > 0
-    ) {
-      winner = candidate;
-    }
-  }
-
-  return winner;
+  const ranked = rankMatchingRules(items, isMatch, score);
+  return ranked[0];
 }
 
 export function commandPatternSpecificity(pattern: string): Specificity {

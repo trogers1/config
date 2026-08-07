@@ -199,7 +199,8 @@
               }
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "dependentRequired": { "transforms": ["extends"] }
         }
       },
       "additionalProperties": false

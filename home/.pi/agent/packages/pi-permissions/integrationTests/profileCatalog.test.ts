@@ -55,6 +55,33 @@ describe("shipped profile catalog", () => {
     ).resolves.toBeUndefined();
   });
 
+  it.each([
+    "npm run test -- --watch",
+    "npm test -- --watch",
+    "pnpm run test -- --watch",
+    "pnpm test -- --watch",
+    "yarn run test -- --watch",
+    "yarn test -- --watch",
+    "cargo build --release",
+    "cargo test",
+    "cargo check",
+    "cargo clippy",
+    "go build",
+    "go test",
+  ])(
+    "builtin:reviewer allows advertised test/build commands without prompting: %s",
+    async (command) => {
+      const harness = await harnessFor("builtin:reviewer");
+      await expect(
+        harness.callToolWithoutPrompt({
+          toolName: "bash",
+          input: { command },
+        }),
+        command,
+      ).resolves.toBeUndefined();
+    },
+  );
+
   it("builtin:scribe-only denies writes outside docs but allows README.md", async () => {
     const harness = await harnessFor("builtin:scribe-only");
 

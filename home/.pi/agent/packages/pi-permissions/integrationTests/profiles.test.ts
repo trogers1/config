@@ -113,7 +113,7 @@ describe("permissions extension", () => {
     ).resolves.toBeUndefined();
   });
 
-  it("asks interactively and blocks non-interactively when an override clears the inherited Bash command rules", async () => {
+  it("preserves inherited Bash behavior when an override appends an empty rule list", async () => {
     vi.stubEnv(
       "PI_PERMISSIONS_PROFILE_CONFIG",
       writeTempConfig(
@@ -126,29 +126,302 @@ describe("permissions extension", () => {
       ),
     );
 
-    // With no command rules left, every Bash command falls to the safe ask
-    // default: an interactive session prompts, even for a command the
-    // inherited default profile would have allowed outright.
     const interactive = createExtensionHarness({ confirm: false });
     await interactive.start();
-    const prompted = await interactive.callTool({
-      toolName: "bash",
-      input: { command: "git status --short" },
-    });
-    expect(interactive.ui.confirm).toHaveBeenCalledWith(
-      "Allow bash command?",
-      expect.stringContaining("git status --short"),
-    );
-    expect(prompted).toMatchObject({ block: true });
+    await expect(
+      interactive.callToolWithoutPrompt({
+        toolName: "bash",
+        input: { command: "git status --short" },
+      }),
+    ).resolves.toBeUndefined();
 
     const nonInteractive = createExtensionHarness({ hasUI: false });
     await nonInteractive.start();
-    const blocked = await nonInteractive.callTool({
-      toolName: "bash",
-      input: { command: "git status --short" },
-    });
-    expect(blocked).toMatchObject({ block: true });
+    await expect(
+      nonInteractive.callTool({
+        toolName: "bash",
+        input: { command: "git status --short" },
+      }),
+    ).resolves.toBeUndefined();
     expect(nonInteractive.ui.confirm).not.toHaveBeenCalled();
+  });
+
+  it("applies protected Bash rules before matching command rules", async () => {
+    vi.stubEnv(
+      "PI_PERMISSIONS_PROFILE_CONFIG",
+      writeTempConfig(
+        JSON.stringify({
+          defaultProfile: "layer-order",
+          profiles: {
+            "layer-order": {
+              tools: {
+                bash: [{ pattern: "rm -rf *", decision: "deny" }],
+              },
+              readPaths: [{ pattern: "**", decision: "allow" }],
+              writePaths: [{ pattern: "**", decision: "allow" }],
+              protectedPathRules: [{ pattern: "**/.env*", decision: "deny" }],
+            },
+          },
+        }),
+      ),
+    );
+    const harness = createExtensionHarness();
+    await harness.start();
+
+    const result = await harness.callTool({
+      toolName: "bash",
+      input: { command: "rm -rf .env" },
+    });
+
+    expect(result).toMatchObject({ block: true });
+    expect(result?.reason).toContain("protected-path policy");
+    expect(result?.reason).not.toContain("Command denied by explicit rule");
+
+    await harness.runCommand("permissions", "explain bash rm -rf .env");
+    const explanation = lastCallArgument(harness.ui.notify, 0);
+    expect(explanation).toContain("Protected-layer override: deny (**/.env*)");
+    expect(explanation).not.toContain("Winner: [deny] rm -rf *");
+
+    harness.ui.confirm.mockClear();
+    const afterDynamicOperand = await harness.callTool({
+      toolName: "bash",
+      input: { command: 'cp "$SRC" .env' },
+    });
+    expect(afterDynamicOperand).toMatchObject({ block: true });
+    expect(afterDynamicOperand?.reason).toContain("protected-path policy");
+    expect(harness.ui.confirm).not.toHaveBeenCalled();
+
+    await harness.runCommand("permissions", 'explain bash cp "$SRC" .env');
+    const dynamicExplanation = lastCallArgument(harness.ui.notify, 0);
+    expect(dynamicExplanation).toContain(
+      "Protected-layer override: deny (**/.env*)",
+    );
+
+    for (const command of [
+      'cd "$DIR"; cat /tmp/.env',
+      'cd "$DIR" | cat /tmp/.env',
+    ]) {
+      harness.ui.confirm.mockClear();
+      const compoundResult = await harness.callTool({
+        toolName: "bash",
+        input: { command },
+      });
+      expect(compoundResult, command).toMatchObject({ block: true });
+      expect(compoundResult?.reason, command).toContain(
+        "protected-path policy",
+      );
+      expect(harness.ui.confirm, command).not.toHaveBeenCalled();
+    }
+
+    await harness.runCommand(
+      "permissions",
+      'explain bash cd "$DIR" | cat /tmp/.env',
+    );
+    expect(lastCallArgument(harness.ui.notify, 0)).toContain(
+      "Protected-layer override: deny (**/.env*)",
+    );
+  });
+
+  it.each([
+    ["[[ -r README.md ]]", "Bash [[ ... ]] expression"],
+    ["[ -r README.md ]", "Bash [ ... ] expression"],
+    ["test -r README.md", "Bash test expression"],
+    ["if [ -z configured ]; then true; fi", "Bash [ ... ] expression"],
+    ["while test -e marker; do break; done", "Bash test expression"],
+    ["(( count += 1 ))", "Bash (( ... )) arithmetic expression"],
+    ['let "count += 1"', "Bash let arithmetic expression"],
+    [
+      'for ((i = 0; i < 3; i++)); do echo "$i"; done',
+      "Bash arithmetic for expression",
+    ],
+  ])(
+    "asks before evaluating opaque Bash expression: %s",
+    async (command, expression) => {
+      vi.stubEnv(
+        "PI_PERMISSIONS_PROFILE_CONFIG",
+        writeTempConfig(
+          JSON.stringify({
+            defaultProfile: "test-expression",
+            profiles: {
+              "test-expression": {
+                tools: {
+                  bash: [{ pattern: "*", decision: "allow" }],
+                },
+                readPaths: [{ pattern: "**", decision: "allow" }],
+                writePaths: [{ pattern: "**", decision: "allow" }],
+              },
+            },
+          }),
+        ),
+      );
+      const harness = createExtensionHarness({ confirm: false });
+      await harness.start();
+
+      const result = await harness.callTool({
+        toolName: "bash",
+        input: { command },
+      });
+
+      expect(result).toMatchObject({ block: true });
+      expect(result?.reason).toContain(expression);
+      expect(harness.ui.confirm).toHaveBeenCalledWith(
+        "Bash command references a gated path?",
+        expect.stringContaining(expression),
+      );
+    },
+  );
+
+  it("finds a later Bash path deny before prompting for an earlier ask", async () => {
+    vi.stubEnv(
+      "PI_PERMISSIONS_PROFILE_CONFIG",
+      writeTempConfig(
+        JSON.stringify({
+          defaultProfile: "path-stage-order",
+          profiles: {
+            "path-stage-order": {
+              tools: {
+                bash: [{ pattern: "*", decision: "allow" }],
+              },
+              readPaths: [{ pattern: "**", decision: "allow" }],
+              writePaths: [
+                { pattern: "**", decision: "allow" },
+                {
+                  pattern: "ask.txt",
+                  decision: "ask",
+                  contexts: ["bash"],
+                },
+                {
+                  pattern: "deny.txt",
+                  decision: "deny",
+                  contexts: ["bash"],
+                },
+              ],
+            },
+          },
+        }),
+      ),
+    );
+    const harness = createExtensionHarness({ confirm: true });
+    await harness.start();
+
+    const result = await harness.callTool({
+      toolName: "bash",
+      input: { command: "cp ask.txt deny.txt" },
+    });
+
+    expect(result).toMatchObject({ block: true });
+    expect(result?.reason).toContain("Bash path reference denied by policy");
+    expect(result?.reason).toContain("deny.txt");
+    expect(harness.ui.confirm).not.toHaveBeenCalled();
+  });
+
+  it("denies a relative protected path after a dynamic pipeline CWD without prompting", async () => {
+    vi.stubEnv(
+      "PI_PERMISSIONS_PROFILE_CONFIG",
+      writeTempConfig(
+        JSON.stringify({
+          defaultProfile: "protected-pipeline",
+          profiles: {
+            "protected-pipeline": {
+              tools: {
+                bash: [{ pattern: "*", decision: "allow" }],
+              },
+              readPaths: [{ pattern: "**", decision: "allow" }],
+              writePaths: [{ pattern: "**", decision: "allow" }],
+              protectedPathRules: [{ pattern: "**/.env*", decision: "deny" }],
+            },
+          },
+        }),
+      ),
+    );
+    const harness = createExtensionHarness({ confirm: true });
+    await harness.start();
+
+    const result = await harness.callTool({
+      toolName: "bash",
+      input: { command: 'cd "$DIR" | cat .env' },
+    });
+
+    expect(result).toMatchObject({ block: true });
+    expect(result?.reason).toContain("protected-path policy");
+    expect(result?.reason).toContain(".env");
+    expect(harness.ui.confirm).not.toHaveBeenCalled();
+  });
+
+  it("checks protected paths inside assignment-prefix command substitutions", async () => {
+    vi.stubEnv(
+      "PI_PERMISSIONS_PROFILE_CONFIG",
+      writeTempConfig(
+        JSON.stringify({
+          defaultProfile: "protected-assignment",
+          profiles: {
+            "protected-assignment": {
+              tools: {
+                bash: [{ pattern: "*", decision: "allow" }],
+              },
+              readPaths: [{ pattern: "**", decision: "allow" }],
+              writePaths: [{ pattern: "**", decision: "allow" }],
+              protectedPathRules: [{ pattern: "**/.env*", decision: "deny" }],
+            },
+          },
+        }),
+      ),
+    );
+    const harness = createExtensionHarness({ confirm: true });
+    await harness.start();
+
+    const result = await harness.callTool({
+      toolName: "bash",
+      input: { command: "SECRET=$(base64 .env) env" },
+    });
+
+    expect(result).toMatchObject({ block: true });
+    expect(result?.reason).toContain("protected-path policy");
+    expect(result?.reason).toContain(".env");
+    expect(harness.ui.confirm).not.toHaveBeenCalled();
+  });
+
+  it("applies ordinary Bash path rules before matching command rules", async () => {
+    vi.stubEnv(
+      "PI_PERMISSIONS_PROFILE_CONFIG",
+      writeTempConfig(
+        JSON.stringify({
+          defaultProfile: "layer-order",
+          profiles: {
+            "layer-order": {
+              tools: {
+                bash: [{ pattern: "cp * *", decision: "deny" }],
+              },
+              readPaths: [{ pattern: "**", decision: "allow" }],
+              writePaths: [
+                { pattern: "**", decision: "allow" },
+                {
+                  pattern: "src/**",
+                  decision: "deny",
+                  contexts: ["bash"],
+                },
+              ],
+            },
+          },
+        }),
+      ),
+    );
+    const harness = createExtensionHarness();
+    await harness.start();
+
+    const result = await harness.callTool({
+      toolName: "bash",
+      input: { command: "cp a.txt src/b.txt" },
+    });
+
+    expect(result).toMatchObject({ block: true });
+    expect(result?.reason).toContain("Bash path reference denied by policy");
+    expect(result?.reason).not.toContain("Command denied by explicit rule");
+
+    await harness.runCommand("permissions", "explain bash cp a.txt src/b.txt");
+    const explanation = lastCallArgument(harness.ui.notify, 0);
+    expect(explanation).toContain("Bash path-reference rule: [deny] src/**");
+    expect(explanation).not.toContain("Winner: [deny] cp * *");
   });
 
   it("uses the shipped base profile when no custom profile module exists", async () => {
@@ -171,6 +444,187 @@ describe("permissions extension", () => {
     );
     expect(completions?.map((completion) => completion.value)).not.toContain(
       "socrates",
+    );
+  });
+
+  it("explains the exact built-in composition chain through the registered command", async () => {
+    const harness = createExtensionHarness();
+    await harness.start();
+
+    await harness.runCommand("permissions", "explain bash git status");
+
+    expect(lastCallArgument(harness.ui.notify, 0)).toContain(
+      "Composition: ruleset:shell → ruleset:git → ruleset:packageManagers → ruleset:deps-mutations-guard → ruleset:shell-guards → ruleset:path-guards → builtin:default",
+    );
+  });
+
+  it("explains a denial from PI_SUBAGENT_PERMISSIBLE_GLOBS through the registered command", async () => {
+    vi.stubEnv("PI_SUBAGENT_PERMISSIBLE_GLOBS", "src/**");
+    const harness = createExtensionHarness();
+    await harness.start();
+
+    const enforced = await harness.callTool({
+      toolName: "edit",
+      input: { path: "README.md", edits: [] },
+    });
+    expect(enforced).toMatchObject({ block: true });
+    expect(enforced?.reason).toContain("PI_SUBAGENT_PERMISSIBLE_GLOBS");
+
+    await harness.runCommand("permissions", "explain edit README.md");
+    const explanation = lastCallArgument(harness.ui.notify, 0);
+    expect(explanation).toContain("Decision: deny");
+    expect(explanation).toContain("PI_SUBAGENT_PERMISSIBLE_GLOBS");
+  });
+
+  it("explains the decision enforced after protected ripgrep arguments are injected", async () => {
+    vi.stubEnv(
+      "PI_PERMISSIONS_PROFILE_CONFIG",
+      writeTempConfig(
+        JSON.stringify({
+          defaultProfile: "search-explain-parity",
+          profiles: {
+            "search-explain-parity": {
+              tools: {
+                bash: [
+                  { pattern: "*", decision: "deny" },
+                  { pattern: "rg needle .", decision: "allow" },
+                ],
+              },
+              readPaths: [{ pattern: "**", decision: "allow" }],
+              writePaths: [{ pattern: "**", decision: "allow" }],
+              protectedPathRules: [{ pattern: "**/.env*", decision: "deny" }],
+            },
+          },
+        }),
+      ),
+    );
+    const harness = createExtensionHarness();
+    await harness.start();
+
+    const enforced = await harness.callTool({
+      toolName: "bash",
+      input: { command: "rg needle ." },
+    });
+    expect(enforced).toMatchObject({ block: true });
+    expect(enforced?.reason).toContain("Command denied by explicit rule");
+
+    await harness.runCommand("permissions", "explain bash rg needle .");
+    const explanation = lastCallArgument(harness.ui.notify, 0);
+    expect(explanation).toContain("Decision: deny");
+    expect(explanation).toContain("**/.env*");
+  });
+
+  it("ranks protected and ordinary path rules for Bash through the registered command", async () => {
+    vi.stubEnv(
+      "PI_PERMISSIONS_PROFILE_CONFIG",
+      writeTempConfig(
+        JSON.stringify({
+          defaultProfile: "bash-path-explanation",
+          profiles: {
+            "bash-path-explanation": {
+              tools: {
+                bash: [
+                  { pattern: "*", decision: "deny" },
+                  { pattern: "cat *", decision: "allow" },
+                ],
+              },
+              readPaths: [{ pattern: "**", decision: "allow" }],
+              writePaths: [
+                {
+                  pattern: "**",
+                  decision: "ask",
+                  contexts: ["bash"],
+                },
+                {
+                  pattern: ".env.template",
+                  decision: "allow",
+                  contexts: ["bash"],
+                },
+              ],
+              protectedPathRules: [
+                { pattern: "**/.env*", decision: "deny" },
+                { pattern: ".env.template", decision: "allow" },
+              ],
+            },
+          },
+        }),
+      ),
+    );
+    const harness = createExtensionHarness();
+    await harness.start();
+
+    await expect(
+      harness.callToolWithoutPrompt({
+        toolName: "bash",
+        input: { command: "cat .env.template" },
+      }),
+    ).resolves.toBeUndefined();
+
+    await harness.runCommand("permissions", "explain bash cat .env.template");
+    const explanation = lastCallArgument(harness.ui.notify, 0);
+    expect(explanation).toContain(
+      "Protected-layer winner: allow (.env.template)",
+    );
+    expect(explanation).toContain("Protected matches:");
+    expect(explanation).toContain("[deny] **/.env*");
+    expect(explanation).toContain("Path-layer winner: [allow] .env.template");
+    expect(explanation).toContain("Path matches:");
+    expect(explanation).toContain("[ask] **");
+  });
+
+  it.each([
+    [
+      "builtin:read-only",
+      "ruleset:read-only-path → ruleset:read-only-shell → builtin:read-only",
+    ],
+    [
+      "builtin:reviewer",
+      "ruleset:read-only-path → ruleset:read-only-shell → builtin:read-only → ruleset:test-run → builtin:reviewer",
+    ],
+    [
+      "builtin:tests-hidden",
+      "ruleset:shell → ruleset:git → ruleset:packageManagers → ruleset:deps-mutations-guard → ruleset:shell-guards → ruleset:path-guards → builtin:default → ruleset:test-write-protection → builtin:tests-hidden",
+    ],
+  ])(
+    "explains the exact non-default composition chain for %s through the registered command",
+    async (profileName, expectedChain) => {
+      vi.stubEnv("PI_SUBAGENT_PROFILE", profileName);
+      const harness = createExtensionHarness();
+      await harness.start();
+
+      await harness.runCommand("permissions", "explain bash git status");
+
+      expect(lastCallArgument(harness.ui.notify, 0)).toContain(
+        `Composition: ${expectedChain}`,
+      );
+    },
+  );
+
+  it("recursively explains custom parents, rule sets, and transforms through the registered command", async () => {
+    vi.stubEnv(
+      "PI_PERMISSIONS_PROFILE_CONFIG",
+      writeTempConfig(
+        JSON.stringify({
+          defaultProfile: "child",
+          profiles: {
+            parent: {
+              extends: ["builtin:committer", "ruleset:test-run"],
+            },
+            child: {
+              extends: ["parent"],
+              transforms: ["transform:deny-asks"],
+            },
+          },
+        }),
+      ),
+    );
+    const harness = createExtensionHarness();
+    await harness.start();
+
+    await harness.runCommand("permissions", "explain bash git status");
+
+    expect(lastCallArgument(harness.ui.notify, 0)).toContain(
+      "Composition: ruleset:shell → ruleset:git → ruleset:packageManagers → ruleset:deps-mutations-guard → ruleset:shell-guards → ruleset:path-guards → builtin:default → ruleset:git-commit → builtin:committer → ruleset:test-run → custom profile: parent → transform:deny-asks → custom profile: child",
     );
   });
 

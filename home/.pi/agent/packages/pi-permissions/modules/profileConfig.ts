@@ -15,6 +15,7 @@ import {
   warnOnPolicyRuleConflicts,
   type PolicyConfig,
   type ProfileConfigFile,
+  type ProfileConfigProfile,
   type ProfilePolicy,
   type ProfileTransformName,
 } from "./policyHelpers";
@@ -32,6 +33,11 @@ export class ProfileConfigLoadError extends Error {
     this.details = details;
   }
 }
+
+export type RawProfileConfig = {
+  defaultProfile?: string;
+  profiles: Record<string, ProfileConfigProfile>;
+};
 
 function throwProfileConfigError(configPath: string, details: string): never {
   throw new ProfileConfigLoadError(configPath, details);
@@ -54,8 +60,36 @@ function isRuleSetName(name: string): name is keyof typeof ruleSetRegistry {
 }
 
 /**
- * Read user-owned profile data synchronously. Configuration is deliberately
- * JSON-only: loading it must not execute code or delay Pi's startup lifecycle.
+ * Read the raw user-owned profile file without resolving inheritance or
+ * transforms. Returns `undefined` when the file is missing or invalid so that
+ * callers can fall back to other behavior.
+ */
+export function loadRawProfileConfig(
+  configPath = defaultProfileConfigPath,
+): RawProfileConfig | undefined {
+  if (!fs.existsSync(configPath)) return undefined;
+
+  try {
+    const errors: ParseError[] = [];
+    const parsed: unknown = parse(fs.readFileSync(configPath, "utf8"), errors, {
+      allowTrailingComma: true,
+    });
+    if (errors.length > 0) return undefined;
+
+    const validationError = Value.Errors(profileConfigFileSchema, parsed)[0];
+    if (validationError) return undefined;
+    if (!isProfileConfigFile(parsed)) return undefined;
+
+    return parsed;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Read user-owned profile data synchronously and resolve inheritance and
+ * transforms. Configuration is deliberately JSON-only: loading it must not
+ * execute code or delay Pi's startup lifecycle.
  */
 export function loadProfileConfig(
   fallback: PolicyConfig,
@@ -85,16 +119,32 @@ export function loadProfileConfig(
       parsed.profiles !== null
     ) {
       for (const name of Object.keys(parsed.profiles)) {
-        if (!isReservedProfileName(name)) continue;
-        const reservedPrefix = isBuiltinProfileName(name)
-          ? builtinProfilePrefix
-          : name.startsWith("ruleset:")
-            ? "ruleset:"
-            : "transform:";
-        throwProfileConfigError(
-          configPath,
-          `/profiles/${name}: reserved profile name '${name}' begins with '${reservedPrefix}'`,
-        );
+        const definition: unknown = Object.getOwnPropertyDescriptor(
+          parsed.profiles,
+          name,
+        )?.value;
+        if (isReservedProfileName(name)) {
+          const reservedPrefix = isBuiltinProfileName(name)
+            ? builtinProfilePrefix
+            : name.startsWith("ruleset:")
+              ? "ruleset:"
+              : "transform:";
+          throwProfileConfigError(
+            configPath,
+            `/profiles/${name}: reserved profile name '${name}' begins with '${reservedPrefix}'`,
+          );
+        }
+        if (
+          typeof definition === "object" &&
+          definition !== null &&
+          Object.hasOwn(definition, "transforms") &&
+          !Object.hasOwn(definition, "extends")
+        ) {
+          throwProfileConfigError(
+            configPath,
+            `/profiles/${name}/transforms: transforms require at least one extends target`,
+          );
+        }
       }
     }
 
@@ -113,7 +163,7 @@ export function loadProfileConfig(
     const builtins = fallback.profiles;
     const userDefinitions = profileFile.profiles;
 
-    const resolvedUsers: Record<string, ProfilePolicy> = {};
+    const resolvedUsers = new Map<string, ProfilePolicy>();
     const resolving = new Set<string>();
 
     const applyTransforms = (
@@ -154,7 +204,8 @@ export function loadProfileConfig(
         );
       }
 
-      if (Object.hasOwn(resolvedUsers, target)) return resolvedUsers[target];
+      const cachedProfile = resolvedUsers.get(target);
+      if (cachedProfile) return cachedProfile;
 
       const definition = Object.hasOwn(userDefinitions, target)
         ? userDefinitions[target]
@@ -198,16 +249,17 @@ export function loadProfileConfig(
       // Rule sets may be partial while they are folded, but every named user
       // profile must be complete before it enters the resolved profile map.
       assertProfilePolicy(resolved);
-      resolvedUsers[target] = resolved;
+      resolvedUsers.set(target, resolved);
       resolving.delete(target);
       return resolved;
     };
 
     for (const name of Object.keys(userDefinitions)) resolveProfile(name);
 
+    const resolvedUserProfiles = Object.fromEntries(resolvedUsers);
     const profiles: Record<string, ProfilePolicy> = {
       ...builtins,
-      ...resolvedUsers,
+      ...resolvedUserProfiles,
     };
 
     const config: PolicyConfig = {
@@ -222,7 +274,7 @@ export function loadProfileConfig(
         error instanceof Error ? error.message : String(error),
       );
     }
-    warnOnPolicyRuleConflicts({ profiles: resolvedUsers });
+    warnOnPolicyRuleConflicts({ profiles: resolvedUserProfiles });
     return config;
   } catch (error) {
     if (error instanceof ProfileConfigLoadError) throw error;

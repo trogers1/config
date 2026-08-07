@@ -1,8 +1,37 @@
 import type { ProfilePolicy } from "../policyHelpers";
 import { extendProfile } from "../policyHelpers";
 import { ruleSetRegistry } from "../ruleSets.lib/index";
-import { baseProfile, bashRules } from "./base";
-import { readOnlyProfile } from "./core";
+import { baseCompositionChain, baseProfile, bashRules } from "./base";
+import { readOnlyCompositionChain, readOnlyProfile } from "./core";
+
+export const reviewerCompositionChain = [
+  ...readOnlyCompositionChain,
+  "ruleset:test-run",
+  "builtin:reviewer",
+] as const;
+
+export const scribeOnlyCompositionChain = [
+  ...baseCompositionChain,
+  "ruleset:docs-write",
+  "builtin:scribe-only",
+] as const;
+
+export const depsMutatorCompositionChain = [
+  "ruleset:shell",
+  "ruleset:git",
+  "ruleset:packageManagers",
+  "ruleset:deps-mutations-allow",
+  "ruleset:shell-guards",
+  "ruleset:path-guards",
+  "builtin:deps-mutator",
+] as const;
+
+// no-shell retains default path policy but deliberately replaces, rather than
+// extends, default Bash rules; do not report discarded shell rule sets.
+export const noShellCompositionChain = [
+  "ruleset:path-guards",
+  "builtin:no-shell",
+] as const;
 
 /** Read code and run tests/builds; writes stay tmp + handoff + progress. */
 export const reviewerProfile = extendProfile(readOnlyProfile, {

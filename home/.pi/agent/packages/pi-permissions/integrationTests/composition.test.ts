@@ -4,7 +4,10 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { decideBash } from "../extensions/permissions";
 import { policyConfig as genericPolicyConfig } from "../modules/policy";
-import type { ProfilePolicy } from "../modules/policyHelpers";
+import type {
+  ProfilePolicy,
+  ProtectedPathRule,
+} from "../modules/policyHelpers";
 import { loadProfileConfig } from "../modules/profileConfig";
 
 const temporaryDirectories: string[] = [];
@@ -71,7 +74,7 @@ describe("profile composition", () => {
     ).toBe("ask");
   });
 
-  it("transform:deny-asks converts every ask to deny", () => {
+  it("transform:deny-asks converts every ordinary ask to deny", () => {
     const config = loadProfileConfig(
       genericPolicyConfig,
       writeConfig({
@@ -89,7 +92,7 @@ describe("profile composition", () => {
     ).toBe("deny");
   });
 
-  it("transform:allow-asks converts every ask to allow", () => {
+  it("transform:allow-asks converts every ordinary ask to allow", () => {
     const config = loadProfileConfig(
       genericPolicyConfig,
       writeConfig({
@@ -107,7 +110,7 @@ describe("profile composition", () => {
     ).toBe("allow");
   });
 
-  it("transform:ask-all converts every allow to ask", () => {
+  it("transform:ask-all converts every ordinary allow to ask", () => {
     const config = loadProfileConfig(
       genericPolicyConfig,
       writeConfig({
@@ -125,7 +128,7 @@ describe("profile composition", () => {
     );
   });
 
-  it("transform:deny-all converts every decision to deny", () => {
+  it("transform:deny-all converts every ordinary decision to deny", () => {
     const config = loadProfileConfig(
       genericPolicyConfig,
       writeConfig({
@@ -145,6 +148,38 @@ describe("profile composition", () => {
     expect(
       decideBash("python scripts/build.py", config.profiles.paranoid),
     ).toBe("deny");
+  });
+
+  it.each([
+    "transform:deny-asks",
+    "transform:allow-asks",
+    "transform:ask-all",
+    "transform:deny-all",
+  ])("%s leaves inherited protected-path rules unchanged", (transform) => {
+    const protectedPathRules: ProtectedPathRule[] = [
+      { pattern: "safe.env", decision: "allow" },
+      { pattern: "**/.env*", decision: "deny" },
+    ];
+    const config = loadProfileConfig(
+      genericPolicyConfig,
+      writeConfig({
+        profiles: {
+          parent: {
+            tools: { bash: [{ pattern: "*", decision: "ask" }] },
+            ...minimalPaths,
+            protectedPathRules,
+          },
+          child: {
+            extends: ["parent"],
+            transforms: [transform],
+          },
+        },
+      }),
+    );
+
+    expect(config.profiles.child.protectedPathRules).toEqual(
+      protectedPathRules,
+    );
   });
 
   it("empty transforms arrays are accepted as a no-op", () => {

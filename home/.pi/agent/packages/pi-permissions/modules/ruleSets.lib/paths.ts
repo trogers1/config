@@ -20,8 +20,11 @@ const piReferencePathRules: ReadonlyArray<Omit<ReadPathRule, "contexts">> = [
     pattern: "/**/node_modules/@earendil-works/pi-coding-agent/docs/**",
     decision: "allow",
   },
+  // Pi packages are trusted implementation dependencies. This portable
+  // pattern covers both the installed ~/.pi package directory and its source
+  // under a configuration checkout without encoding a user's home path.
   {
-    pattern: "/**/home/.pi/agent/packages/**/node_modules/**",
+    pattern: "/**/.pi/agent/packages/**/node_modules/**",
     decision: "allow",
   },
 ];
@@ -163,16 +166,6 @@ export function defaultWritePaths(
     { pattern: "..", decision: "ask", contexts: ["bash"] },
     { pattern: "../**", decision: "ask" },
     { pattern: "/tmp/**", decision: "allow" },
-    {
-      pattern: "../**/.pi/agent/skills/address-comments/scripts/*.sh",
-      decision: "allow",
-      contexts: ["bash"],
-    },
-    {
-      pattern: "../**/.pi/agent/skills/address-comments/*",
-      decision: "allow",
-      contexts: ["bash"],
-    },
     ...piReferencePathRules.map((rule) => ({
       ...rule,
       contexts: ["bash" as const],
