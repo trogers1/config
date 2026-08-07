@@ -29,4 +29,6 @@ Write `flow.md` for a developer who is unfamiliar with the change. It must inclu
 
 Use concrete symbol and file names, links such as ``[`path/to/file.ts`](path/to/file.ts)``, and readable pseudocode rather than copying implementation. Add Mermaid diagrams when they make a non-trivial interaction or state transition easier to understand. Keep the document branch-specific and omit unrelated pre-existing architecture.
 
+Use mermaid diagrams liberally to help illustrate code-flow (both of the entire change set and for complicated subsystems within it). A combination of pseudo-code and diagrams (with links to actual implementation) is very helpful when reviewing and understanding.
+
 Before completing the review, verify that every relevant file in the branch diff is represented in `flow.md` either individually or in an explicitly named group, and mention in the final response that `flow.md` was written.
