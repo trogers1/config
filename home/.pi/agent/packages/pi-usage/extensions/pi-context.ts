@@ -12,11 +12,6 @@ const baseContext = {
 	ui,
 };
 
-export const sessionStartContextSchema = Type.Object({
-	...baseContext,
-	modelRegistry: Type.Object({ refresh: callable }),
-});
-
 export const liveMessageContextSchema = Type.Object({
 	...baseContext,
 	modelRegistry: Type.Object({
@@ -81,22 +76,4 @@ export function assertPiShape<Schema extends TSchema, TValue>({
 
 	// Check above proves that this runtime value has TypeBox's declared shape.
 	return value as TValue & Static<Schema>;
-}
-
-export function notifyCompatibilityError({
-	value,
-	error,
-}: {
-	value: unknown;
-	error: unknown;
-}): void {
-	if (!(error instanceof Error)) return;
-	if (!error.message.startsWith('pi-usage is incompatible with this Pi runtime:')) return;
-	const notify =
-		value &&
-		typeof value === 'object' &&
-		typeof (value as { ui?: { notify?: unknown } }).ui?.notify === 'function'
-			? (value as { ui: { notify: (message: string, type: 'error') => void } }).ui.notify
-			: undefined;
-	notify?.(error.message, 'error');
 }

@@ -20,8 +20,6 @@ import {
 	assertPiShape,
 	assistantUsageMessageSchema,
 	liveMessageContextSchema,
-	notifyCompatibilityError,
-	sessionStartContextSchema,
 	shutdownContextSchema,
 	usageCommandContextSchema,
 } from './pi-context';
@@ -30,23 +28,12 @@ export default function piUsageExtension(pi: ExtensionAPI) {
 	let liveInsertCount = 0;
 	const processInstanceId = crypto.randomUUID();
 
-	pi.on('session_start', async (_event, ctx: ExtensionContext) => {
-		try {
-			const sessionContext = assertPiShape({
-				value: ctx,
-				schema: sessionStartContextSchema,
-				boundary: 'session_start context',
-			});
-			await sessionContext.modelRegistry.refresh();
-			updateLimitsStatus(sessionContext);
-		} catch (error) {
-			notifyCompatibilityError({ value: ctx, error });
-			if (ctx.hasUI === false) {
-				const errorMessage = error instanceof Error ? error.message : String(error);
-				process.stderr.write(`pi-usage: ${errorMessage}\n`);
-			}
-			throw error;
-		}
+	pi.on('session_start', (_event, ctx: ExtensionContext) => {
+		// Pi waits for session_start handlers before it enables normal input handling.
+		// Provider-catalog refreshes can perform network I/O, so never await one here:
+		// doing so makes the editor and slash-command completion appear frozen. Pi has
+		// initialized the registry already; /usage import refreshes it when needed.
+		updateLimitsStatus(ctx);
 	});
 
 	pi.on('message_end', async (event: unknown, ctx: ExtensionContext) => {

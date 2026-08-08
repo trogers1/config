@@ -97,7 +97,9 @@ describe('pi-usage extension', () => {
 		piUsageExtension(harness.api);
 
 		await harness.emit('session_start', { reason: 'startup' });
-		expect(harness.modelRegistry.refresh).toHaveBeenCalledOnce();
+		// session_start must not refresh a provider catalog: Pi awaits startup
+		// handlers before allowing the user to submit prompts or use commands.
+		expect(harness.modelRegistry.refresh).not.toHaveBeenCalled();
 		await harness.emit('message_end', { message: pricedMessage });
 		harness.modelRegistry.find.mockReturnValue(undefined);
 		await harness.emit('message_end', { message: fallbackMessage });
@@ -419,20 +421,13 @@ describe('pi-usage extension', () => {
 		expect(total.total).toBeCloseTo(0.008);
 	});
 
-	it('reports an actionable error when Pi no longer supplies a required capability', async () => {
+	it('starts without refreshing the provider catalog', async () => {
 		const harness = createPiUsageHarness({ cwd: home });
-		Reflect.deleteProperty(harness.context.modelRegistry, 'refresh');
+		harness.modelRegistry.refresh.mockImplementation(() => new Promise(() => {}));
 		piUsageExtension(harness.api);
 
-		await expect(harness.emit('session_start', { reason: 'startup' })).rejects.toThrow(
-			/session_start context requires \/modelRegistry must have required properties refresh/
-		);
-		expect(harness.notifications).toEqual([
-			expect.objectContaining({
-				type: 'error',
-				message: expect.stringContaining('pi-usage is incompatible with this Pi runtime'),
-			}),
-		]);
+		await harness.emit('session_start', { reason: 'startup' });
+		expect(harness.modelRegistry.refresh).not.toHaveBeenCalled();
 	});
 
 	it('handles concurrent writers without errors or lost records', async () => {
