@@ -1,5 +1,5 @@
 {
-  "defaultProvider": "openai",
+  "defaultProvider": "openai-codex",
   "defaultModel": "gpt-5.6-terra",
   "defaultThinkingLevel": "medium",
   "hideThinkingBlock": false,
@@ -10,5 +10,10 @@
     "./packages/pi-permissions-subagents"
   ],
   "lastChangelogVersion": "0.84.1",
-  "theme": "dark"
+  "theme": "dark",
+  "enabledModels": [
+    "openai-codex/gpt-5.6-terra",
+    "openai-codex/gpt-5.6-sol",
+    "openai-codex/gpt-5.6-luna"
+  ]
 }
