@@ -31,6 +31,7 @@ export interface AgentConfig {
 	description: string;
 	tools?: string[];
 	model?: string;
+	/** Fallback permissions profile when the parent does not expose an active profile. */
 	profile?: string;
 	systemPrompt: string;
 	source: AgentSource;

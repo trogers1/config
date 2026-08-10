@@ -140,6 +140,8 @@ const defaultPolicy: ProfilePolicy = {
 
 const moduleDir = typeof __dirname === "string" ? __dirname : process.cwd();
 const profileEntryType = "pi-permissions-profile";
+/** Exposes the active parent policy to subagent launchers in this Pi process. */
+const activeProfileEnvKey = "PI_PERMISSIONS_ACTIVE_PROFILE";
 const readToolNames = ["read", "grep", "find", "ls"] as const;
 const writeToolNames = ["edit", "write"] as const;
 const pathToolNames = [...readToolNames, ...writeToolNames] as const;
@@ -310,6 +312,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
 
   function setActiveProfile(profile: ProfileName): void {
     activeProfile = profile;
+    process.env[activeProfileEnvKey] = activeProfile;
     ensureReadToolsActive();
     pi.appendEntry(profileEntryType, { profile, timestamp: Date.now() });
   }
@@ -317,6 +320,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
   pi.on("session_start", (_event, ctx) => {
     ensureReadToolsActive();
     restoreActiveProfile(ctx);
+    process.env[activeProfileEnvKey] = activeProfile;
 
     const errorReason = configurationErrorReason();
     if (errorReason) {

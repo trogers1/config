@@ -38,16 +38,20 @@ describe("KNOWN_STOP_REASONS", () => {
 describe("subagent tool", () => {
 	const originalPiPath = process.env.PI_SUBAGENT_PI_PATH;
 	const originalRecordPath = process.env.PI_SUBAGENT_TEST_RECORD;
+	const originalParentProfile = process.env.PI_PERMISSIONS_ACTIVE_PROFILE;
 
 	beforeEach(() => {
 		delete process.env.PI_SUBAGENT_PI_PATH;
 		delete process.env.PI_SUBAGENT_TEST_RECORD;
 		delete process.env.PI_SUBAGENT_DEPTH;
+		delete process.env.PI_PERMISSIONS_ACTIVE_PROFILE;
 	});
 
 	afterEach(() => {
 		process.env.PI_SUBAGENT_PI_PATH = originalPiPath ?? "";
 		process.env.PI_SUBAGENT_TEST_RECORD = originalRecordPath ?? "";
+		if (originalParentProfile === undefined) delete process.env.PI_PERMISSIONS_ACTIVE_PROFILE;
+		else process.env.PI_PERMISSIONS_ACTIVE_PROFILE = originalParentProfile;
 		delete process.env.PI_SUBAGENT_DEPTH;
 	});
 
@@ -105,12 +109,29 @@ describe("subagent tool", () => {
 		const text = getToolResultText(result);
 		expect(text).toContain("Implemented the cache.");
 		expect(text).toMatch(/session: `[-0-9a-f]+`/);
+		expect((result.details as { results: Array<{ profile?: string }> }).results[0].profile).toBe(
+			"builtin:worker",
+		);
 
 		const records = spawnRecord(projectDir);
 		expect(records).toHaveLength(1);
 		expect(records[0].env.PI_SUBAGENT_PROFILE).toBe("builtin:worker");
 		expect(records[0].env.PI_SUBAGENT_PERMISSIBLE_GLOBS).toBe("src");
 		expect(records[0].env.PI_SUBAGENT_DEPTH).toBe("1");
+	});
+
+	it("applies the parent's active permissions profile to a worker", async () => {
+		const projectDir = setupProjectDir();
+		process.env.PI_PERMISSIONS_ACTIVE_PROFILE = "personal";
+
+		const result = await runSingle(
+			projectDir,
+			{ output: "Done" },
+			{ agent: "worker", task: "Do something" },
+		);
+
+		expect((result.details as { results: Array<{ profile?: string }> }).results[0].profile).toBe("personal");
+		expect(spawnRecord(projectDir)[0].env.PI_SUBAGENT_PROFILE).toBe("personal");
 	});
 
 	it("validates parameters against the registered TypeBox schema before execution", async () => {

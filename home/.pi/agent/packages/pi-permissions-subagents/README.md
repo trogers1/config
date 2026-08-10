@@ -121,13 +121,13 @@ encodes the discipline.
 Workers are spawned as `pi` subprocesses, so they load `pi-permissions` and run
 under its policy. The packages integrate through two environment variables:
 
-1. **Per-agent `profile:` frontmatter.** The extension exports the declared
-   profile as `PI_SUBAGENT_PROFILE`; `pi-permissions` selects it at session
-   start, including when a persisted worker session is resumed.
-   - `scout`, `planner`, `reviewer` → `builtin:read-only`.
-   - `worker` → `builtin:worker`, a default-like non-interactive profile where
-     common build/test commands are allowed and confirmation-gated actions
-     become deny-with-guidance.
+1. **Parent permissions profile.** The extension exports the parent session's
+   active profile as `PI_SUBAGENT_PROFILE`, so workers keep the parent's policy
+   when a persisted worker session is resumed. An agent's `profile:` frontmatter
+   is only the fallback when `pi-permissions` is not loaded in the parent.
+   - With `pi-permissions`, every worker inherits the parent's active profile.
+   - Without it, `scout`, `planner`, and `reviewer` fall back to
+     `builtin:read-only`; `worker` falls back to `builtin:worker`.
 
 2. **Per-task write-scope enforcement.** When a task declares `writes`, the
    extension exports the entries as comma-separated

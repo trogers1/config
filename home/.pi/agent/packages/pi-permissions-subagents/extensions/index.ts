@@ -49,6 +49,8 @@ const MAX_PARALLEL_TASKS = 8;
 const MAX_CONCURRENCY = 4;
 const COLLAPSED_ITEM_COUNT = 10;
 const PER_TASK_OUTPUT_CAP = 50 * 1024;
+/** Set by pi-permissions in the parent process; inherited by worker subprocesses. */
+const PARENT_PROFILE_ENV_KEY = "PI_PERMISSIONS_ACTIVE_PROFILE";
 
 /**
  * Parent-side worker compaction. Extension-triggered ctx.compact() is broken
@@ -412,6 +414,8 @@ function formatToolCall(
 interface SingleResult {
 	agent: string;
 	agentSource: "builtin" | "user" | "project" | "unknown";
+	/** Effective permissions profile inherited from the parent (or agent fallback). */
+	profile?: string;
 	task: string;
 	label?: string;
 	exitCode: number; // -1 = still running
@@ -643,6 +647,14 @@ async function resolveSessionFile(cwd: string, sessionId: string): Promise<strin
 
 type OnUpdateCallback = (partial: AgentToolResult<SubagentDetails>) => void;
 
+/**
+ * Workers inherit the parent's active permissions profile. An agent's frontmatter
+ * profile is retained only as a fallback for use without pi-permissions.
+ */
+function workerProfile(agent: AgentConfig): string | undefined {
+	return process.env[PARENT_PROFILE_ENV_KEY]?.trim() || agent.profile;
+}
+
 interface RunAgentOptions {
 	agentName: string;
 	task: string;
@@ -678,7 +690,8 @@ function compactWorkerSession(
 	return new Promise((resolve) => {
 		const invocation = getPiInvocation(args);
 		const spawnEnv: NodeJS.ProcessEnv = { ...process.env };
-		if (agent.profile) spawnEnv.PI_SUBAGENT_PROFILE = agent.profile;
+		const profile = workerProfile(agent);
+		if (profile) spawnEnv.PI_SUBAGENT_PROFILE = profile;
 		let proc: ReturnType<typeof spawn>;
 		try {
 			proc = spawn(invocation.command, invocation.args, {
@@ -794,6 +807,7 @@ async function runSingleAgent(
 	const sessionId = opts.sessionId ?? crypto.randomUUID();
 	const sessionLabel = slugify(opts.label ?? opts.task, 24);
 	const sessionName = `subagent:${agent.name}:${sessionLabel}:${shortId(sessionId)}`;
+	const profile = workerProfile(agent);
 
 	const args: string[] = ["--mode", "json", "-p", "--session-id", sessionId, "--name", sessionName];
 	if (agent.model) args.push("--model", agent.model);
@@ -805,6 +819,7 @@ async function runSingleAgent(
 	const currentResult: SingleResult = {
 		agent: agent.name,
 		agentSource: agent.source,
+		profile,
 		task: opts.task,
 		label: opts.label,
 		exitCode: 0,
@@ -856,7 +871,7 @@ async function runSingleAgent(
 					...process.env,
 					PI_SUBAGENT_DEPTH: "1",
 				};
-				if (agent.profile) spawnEnv.PI_SUBAGENT_PROFILE = agent.profile;
+				if (profile) spawnEnv.PI_SUBAGENT_PROFILE = profile;
 				if (opts.writes?.length) spawnEnv.PI_SUBAGENT_PERMISSIBLE_GLOBS = opts.writes.join(",");
 
 				const proc = spawn(invocation.command, invocation.args, {
@@ -1614,6 +1629,9 @@ export default function (pi: ExtensionAPI) {
 
 			const violationLine = (r: SingleResult) =>
 				r.scopeViolations.length ? theme.fg("warning", `⚠ out-of-scope edits: ${r.scopeViolations.join(", ")}`) : "";
+			const agentLabel = (r: SingleResult) =>
+				theme.fg("toolTitle", theme.bold(r.agent)) +
+				theme.fg("muted", ` (${r.profile ?? r.agentSource})`);
 
 			if (details.mode === "single" && details.results.length === 1) {
 				const r = details.results[0];
@@ -1624,7 +1642,7 @@ export default function (pi: ExtensionAPI) {
 
 				if (expanded) {
 					const container = new Container();
-					let header = `${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${theme.fg("muted", ` (${r.agentSource})`)}`;
+					let header = `${icon} ${agentLabel(r)}`;
 					if (isError && r.stopReason) header += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
 					container.addChild(new Text(header, 0, 0));
 					if (isError && r.errorMessage)
@@ -1666,7 +1684,7 @@ export default function (pi: ExtensionAPI) {
 					return container;
 				}
 
-				let text = `${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${theme.fg("muted", ` (${r.agentSource})`)}`;
+				let text = `${icon} ${agentLabel(r)}`;
 				if (isError && r.stopReason) text += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
 				if (isError && r.errorMessage) text += `\n${theme.fg("error", `Error: ${r.errorMessage}`)}`;
 				else if (displayItems.length === 0) text += `\n${theme.fg("muted", "(no output)")}`;
@@ -1727,7 +1745,7 @@ export default function (pi: ExtensionAPI) {
 
 						container.addChild(new Spacer(1));
 						container.addChild(
-							new Text(`${theme.fg("muted", `─── Step ${r.step}: `) + theme.fg("accent", r.agent)} ${rIcon}`, 0, 0),
+							new Text(`${theme.fg("muted", `─── Step ${r.step}: `) + agentLabel(r)} ${rIcon}`, 0, 0),
 						);
 						container.addChild(new Text(theme.fg("muted", "Task: ") + theme.fg("dim", r.task), 0, 0));
 
@@ -1769,7 +1787,7 @@ export default function (pi: ExtensionAPI) {
 				for (const r of details.results) {
 					const rIcon = r.exitCode === 0 ? theme.fg("success", "✓") : theme.fg("error", "✗");
 					const displayItems = getDisplayItems(r.messages);
-					text += `\n\n${theme.fg("muted", `─── Step ${r.step}: `)}${theme.fg("accent", r.agent)} ${rIcon}`;
+					text += `\n\n${theme.fg("muted", `─── Step ${r.step}: `)}${agentLabel(r)} ${rIcon}`;
 					if (displayItems.length === 0) text += `\n${theme.fg("muted", "(no output)")}`;
 					else text += `\n${renderDisplayItems(displayItems, 5)}`;
 					const stepSession = sessionLine(r, false);
@@ -1807,7 +1825,7 @@ export default function (pi: ExtensionAPI) {
 						const finalOutput = getFinalOutput(r.messages);
 
 						container.addChild(new Spacer(1));
-						container.addChild(new Text(`${theme.fg("muted", "─── ") + theme.fg("accent", r.agent)} ${rIcon}`, 0, 0));
+						container.addChild(new Text(`${theme.fg("muted", "─── ") + agentLabel(r)} ${rIcon}`, 0, 0));
 						container.addChild(new Text(theme.fg("muted", "Task: ") + theme.fg("dim", r.task), 0, 0));
 
 						// Show tool calls
@@ -1851,7 +1869,7 @@ export default function (pi: ExtensionAPI) {
 								? theme.fg("error", "✗")
 								: theme.fg("success", "✓");
 					const displayItems = getDisplayItems(r.messages);
-					text += `\n\n${theme.fg("muted", "─── ")}${theme.fg("accent", r.agent)} ${rIcon}`;
+					text += `\n\n${theme.fg("muted", "─── ")}${agentLabel(r)} ${rIcon}`;
 					if (displayItems.length === 0)
 						text += `\n${theme.fg("muted", r.exitCode === -1 ? "(running...)" : "(no output)")}`;
 					else text += `\n${renderDisplayItems(displayItems, 5)}`;
