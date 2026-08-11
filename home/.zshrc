@@ -69,6 +69,13 @@ export PATH="$HOME/.opencode/bin:$PATH"
 
 # rancher-desktop
 export PATH="$HOME/.rd/bin:$PATH"
+# Rancher Desktop uses a per-user Docker socket; Docker Desktop works via its default socket.
+if [[ -z "${DOCKER_HOST:-}" && -S "$HOME/.rd/docker.sock" ]]; then
+   # https://docs.rancherdesktop.io/how-to-guides/using-testcontainers/
+  export DOCKER_HOST="unix://$HOME/.rd/docker.sock"
+  export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock
+  export TESTCONTAINERS_HOST_OVERRIDE=$(rdctl info --field ip-address)
+fi
 
 # go
 # export PATH="/usr/local/go/bin:$PATH"
