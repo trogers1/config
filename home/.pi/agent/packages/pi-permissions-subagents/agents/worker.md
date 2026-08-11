@@ -1,7 +1,7 @@
 ---
 name: worker
 description: General-purpose implementation agent with full capabilities and isolated context
-model: openai/gpt-5.4-mini
+model: openai/gpt-5.6-luna
 profile: builtin:worker
 ---
 
