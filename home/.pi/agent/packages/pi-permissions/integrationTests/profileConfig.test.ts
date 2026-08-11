@@ -701,6 +701,7 @@ describe("extension harness profile configuration failures", () => {
       expect(uiHarness.commands).toEqual([
         "profile",
         "read-only",
+        "sandbox",
         "permissions",
         "socrates",
         "socrates-off",

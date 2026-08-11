@@ -1,4 +1,5 @@
 import {
+  createSyntheticSourceInfo,
   type BeforeAgentStartEvent,
   type BeforeAgentStartEventResult,
   type CustomEntry,
@@ -12,6 +13,9 @@ import {
   type SessionStartEvent,
   type ToolCallEvent,
   type ToolCallEventResult,
+  type ToolDefinition,
+  type UserBashEvent,
+  type UserBashEventResult,
 } from "@earendil-works/pi-coding-agent";
 import { vi, type Mock } from "vitest";
 import permissionsExtension from "../../extensions/permissions";
@@ -35,6 +39,7 @@ type HandledEvents = {
   session_shutdown: SessionShutdownEvent;
   before_agent_start: BeforeAgentStartEvent;
   tool_call: ToolCallEvent;
+  user_bash: UserBashEvent;
 };
 
 type HandlerStore = {
@@ -45,10 +50,20 @@ type HandlerStore = {
         ? BeforeAgentStartEventResult
         : K extends "tool_call"
           ? ToolCallEventResult
-          : void
+          : K extends "user_bash"
+            ? UserBashEventResult
+            : void
     >
   >;
 };
+
+type ToolRegistration = ToolDefinition & {
+  sourceInfo?: ReturnType<typeof createSyntheticSourceInfo>;
+};
+
+const inheritedSubagentProfile = process.env.PI_SUBAGENT_PROFILE;
+const inheritedSubagentPermissibleGlobs =
+  process.env.PI_SUBAGENT_PERMISSIBLE_GLOBS;
 
 export function createExtensionHarness(
   options: {
@@ -62,18 +77,17 @@ export function createExtensionHarness(
   } = {},
 ) {
   const contextCwd = options.contextCwd ?? process.cwd();
-  // Mirrors pi 0.81.x: every built-in tool is registered, but only the
-  // coding set (read, bash, edit, write) is active by default.
+  const builtInToolNames = [
+    "read",
+    "bash",
+    "edit",
+    "write",
+    "grep",
+    "find",
+    "ls",
+  ];
   const registeredToolNames = new Set(
-    options.registeredTools ?? [
-      "read",
-      "bash",
-      "edit",
-      "write",
-      "grep",
-      "find",
-      "ls",
-    ],
+    options.registeredTools ?? builtInToolNames,
   );
   const activeToolNames = new Set(
     (options.activeTools ?? ["read", "bash", "edit", "write"]).filter((name) =>
@@ -87,8 +101,10 @@ export function createExtensionHarness(
     session_shutdown: [],
     before_agent_start: [],
     tool_call: [],
+    user_bash: [],
   };
   const commands = new Map<string, CommandRegistration>();
+  const tools = new Map<string, ToolRegistration>();
   let started = false;
   let nextEntryId = entries.length + 1;
 
@@ -119,11 +135,9 @@ export function createExtensionHarness(
     ui,
     sessionManager,
   };
-  // Runtime boundary: the harness stores the narrow shape and exposes the SDK context type here.
   const extensionContext = context as unknown as ExtensionCommandContext;
 
   const setActiveToolsMock = vi.fn((toolNames: string[]) => {
-    // Real pi ignores names that are not registered.
     activeToolNames.clear();
     for (const name of toolNames) {
       if (registeredToolNames.has(name)) activeToolNames.add(name);
@@ -140,27 +154,77 @@ export function createExtensionHarness(
     registerCommand(name: string, registration: CommandRegistration) {
       commands.set(name, registration);
     },
+    registerTool: ((tool: Parameters<ExtensionAPI["registerTool"]>[0]) => {
+      const sourceInfo = createSyntheticSourceInfo(
+        `./extensions/${tool.name}.ts`,
+        {
+          source: "permissions-extension",
+          scope: "project",
+          origin: "top-level",
+        },
+      );
+      tools.set(tool.name, { ...tool, sourceInfo });
+      registeredToolNames.add(tool.name);
+    }) as ExtensionAPI["registerTool"],
     appendEntry(customType: string, data: unknown) {
-      entries.push(createCustomEntry(customType, data, nextEntryId++));
+      entries.push(
+        createCustomEntry({ customType, data, sequence: nextEntryId++ }),
+      );
     },
     getActiveTools: () => [...activeToolNames],
     getAllTools: () =>
-      [...registeredToolNames].map((name) => ({
-        name,
-      })) as unknown as ReturnType<ExtensionAPI["getAllTools"]>,
+      [...registeredToolNames].map((name) => {
+        const tool = tools.get(name);
+        if (tool) {
+          return {
+            name: tool.name,
+            description: tool.description,
+            parameters: tool.parameters,
+            sourceInfo: tool.sourceInfo,
+          };
+        }
+        return {
+          name,
+          sourceInfo: createSyntheticSourceInfo(`./builtin/${name}.ts`, {
+            source: "builtin",
+            scope: "temporary",
+            origin: "top-level",
+          }),
+        };
+      }) as unknown as ReturnType<ExtensionAPI["getAllTools"]>,
     setActiveTools: setActiveToolsMock,
   } satisfies Pick<
     ExtensionAPI,
     | "on"
     | "registerCommand"
+    | "registerTool"
     | "appendEntry"
     | "getActiveTools"
     | "getAllTools"
     | "setActiveTools"
   >;
 
-  // Runtime boundary: the real extension factory expects the full SDK API.
+  const currentSubagentProfile = process.env.PI_SUBAGENT_PROFILE;
+  const currentSubagentPermissibleGlobs =
+    process.env.PI_SUBAGENT_PERMISSIBLE_GLOBS;
+  const clearSubagentProfile =
+    currentSubagentProfile === inheritedSubagentProfile;
+  const clearSubagentPermissibleGlobs =
+    currentSubagentPermissibleGlobs === inheritedSubagentPermissibleGlobs;
+  if (clearSubagentProfile) delete process.env.PI_SUBAGENT_PROFILE;
+  if (clearSubagentPermissibleGlobs)
+    delete process.env.PI_SUBAGENT_PERMISSIBLE_GLOBS;
   permissionsExtension(pi as unknown as ExtensionAPI);
+  if (currentSubagentProfile === undefined) {
+    delete process.env.PI_SUBAGENT_PROFILE;
+  } else {
+    process.env.PI_SUBAGENT_PROFILE = currentSubagentProfile;
+  }
+  if (currentSubagentPermissibleGlobs === undefined) {
+    delete process.env.PI_SUBAGENT_PERMISSIBLE_GLOBS;
+  } else {
+    process.env.PI_SUBAGENT_PERMISSIBLE_GLOBS = currentSubagentPermissibleGlobs;
+  }
 
   function ensureStarted(operation: string): void {
     if (!started) {
@@ -234,6 +298,16 @@ export function createExtensionHarness(
     return result;
   }
 
+  async function dispatchUserBash(
+    event: UserBashEvent,
+  ): Promise<UserBashEventResult | undefined> {
+    for (const handler of handlers.user_bash) {
+      const handlerResult = await handler(event, extensionContext);
+      if (handlerResult) return handlerResult;
+    }
+    return undefined;
+  }
+
   async function callTool(event: Omit<ToolCallEvent, "type" | "toolCallId">) {
     ensureStarted("callTool");
     return await dispatchToolCall({
@@ -241,6 +315,27 @@ export function createExtensionHarness(
       type: "tool_call",
       toolCallId: "test-tool-call",
     });
+  }
+
+  async function executeRegisteredTool({
+    name,
+    params,
+    options = {},
+  }: {
+    name: string;
+    params: unknown;
+    options?: { signal?: AbortSignal };
+  }) {
+    ensureStarted("executeRegisteredTool");
+    const tool = tools.get(name);
+    if (!tool) throw new Error(`Tool not registered: ${name}`);
+    return await tool.execute(
+      "test-tool-call",
+      params,
+      options.signal,
+      undefined,
+      extensionContext,
+    );
   }
 
   return {
@@ -251,16 +346,50 @@ export function createExtensionHarness(
     ui,
     setActiveToolsMock,
     getActiveTools: () => [...activeToolNames],
+    getAllTools: () => pi.getAllTools(),
+    onUserBash(handler: HandlerStore["user_bash"][number]) {
+      handlers.user_bash.push(handler);
+    },
     /** Simulates another extension or the user deactivating a tool mid-session. */
-    deactivateTool(name: string) {
+    deactivateTool(nameOrTool: string | { name: string }) {
+      const name =
+        typeof nameOrTool === "string" ? nameOrTool : nameOrTool.name;
       activeToolNames.delete(name);
     },
-    async start(reason: SessionStartEvent["reason"] = "startup") {
+    async start({
+      reason = "startup",
+    }: { reason?: SessionStartEvent["reason"] } = {}) {
       started = true;
       await dispatchSessionStart({ type: "session_start", reason });
     },
     async callTool(event: Omit<ToolCallEvent, "type" | "toolCallId">) {
       return await callTool(event);
+    },
+    async executeTool(
+      nameOrEvent:
+        | string
+        | {
+            name: string;
+            params: unknown;
+            options?: { signal?: AbortSignal };
+          },
+      params?: unknown,
+      options: { signal?: AbortSignal } = {},
+    ) {
+      if (typeof nameOrEvent === "string") {
+        return await executeRegisteredTool({
+          name: nameOrEvent,
+          params,
+          options,
+        });
+      }
+      return await executeRegisteredTool(nameOrEvent);
+    },
+    async callUserBash(
+      event: Omit<UserBashEvent, "type">,
+    ): Promise<UserBashEventResult | undefined> {
+      ensureStarted("callUserBash");
+      return await dispatchUserBash({ ...event, type: "user_bash" });
     },
     async callToolWithoutPrompt(
       event: Omit<ToolCallEvent, "type" | "toolCallId">,
@@ -274,7 +403,11 @@ export function createExtensionHarness(
       }
       return result;
     },
-    async beforeAgent(systemPrompt = "Base system prompt") {
+    async beforeAgent({
+      systemPrompt = "Base system prompt",
+    }: {
+      systemPrompt?: string;
+    } = {}) {
       ensureStarted("beforeAgent");
       return await dispatchBeforeAgentStart({
         type: "before_agent_start",
@@ -291,13 +424,29 @@ export function createExtensionHarness(
       });
       started = false;
     },
-    async runCommand(name: string, args = "") {
+    async runCommand(
+      nameOrEvent: string | { name: string; args?: string },
+      args = "",
+    ) {
       ensureStarted("runCommand");
+      const name =
+        typeof nameOrEvent === "string" ? nameOrEvent : nameOrEvent.name;
+      const commandArgs =
+        typeof nameOrEvent === "string" ? args : (nameOrEvent.args ?? "");
       const command = commands.get(name);
       if (!command) throw new Error(`Command not registered: ${name}`);
-      await command.handler(args, extensionContext);
+      await command.handler(commandArgs, extensionContext);
     },
-    command(name: string) {
+    replaceToolSource(name: string, source: string) {
+      const tool = tools.get(name);
+      if (!tool) throw new Error(`Tool not registered: ${name}`);
+      tool.sourceInfo = createSyntheticSourceInfo(`./extensions/${name}.ts`, {
+        source,
+        scope: "project",
+        origin: "top-level",
+      });
+    },
+    command({ name }: { name: string }) {
       const command = commands.get(name);
       if (!command) throw new Error(`Command not registered: ${name}`);
       return command;
@@ -308,17 +457,27 @@ export function createExtensionHarness(
 function normalizeEntries(entries: SessionEntryInput[]): SdkSessionEntry[] {
   return entries.map((entry, index) =>
     entry.type === "custom"
-      ? createCustomEntry(entry.customType, entry.data, index + 1, entry)
+      ? createCustomEntry({
+          customType: entry.customType,
+          data: entry.data,
+          sequence: index + 1,
+          entry,
+        })
       : entry,
   );
 }
 
-function createCustomEntry(
-  customType: string,
-  data: unknown,
-  sequence: number,
-  entry: Partial<CustomEntry> = {},
-): SdkSessionEntry {
+function createCustomEntry({
+  customType,
+  data,
+  sequence,
+  entry = {},
+}: {
+  customType: string;
+  data: unknown;
+  sequence: number;
+  entry?: Partial<CustomEntry>;
+}): SdkSessionEntry {
   return {
     type: "custom",
     id: entry.id ?? `custom-entry-${sequence}`,
@@ -329,6 +488,12 @@ function createCustomEntry(
   };
 }
 
-export function lastCallArgument(mock: Mock, index: number): unknown {
+export function lastCallArgument({
+  mock,
+  index,
+}: {
+  mock: Mock;
+  index: number;
+}): unknown {
   return mock.mock.calls.at(-1)?.[index];
 }

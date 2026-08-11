@@ -182,6 +182,46 @@
                 "additionalProperties": false
               }
             },
+            "sandbox": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "required": ["network"],
+                  "properties": {
+                    "network": {
+                      "anyOf": [
+                        { "type": "string", "const": "allow" },
+                        { "type": "string", "const": "deny" }
+                      ]
+                    },
+                    "extraWritePaths": {
+                      "type": "array",
+                      "items": { "type": "string", "minLength": 1 }
+                    },
+                    "extraDenyReadPaths": {
+                      "type": "array",
+                      "items": { "type": "string", "minLength": 1 }
+                    },
+                    "extraDenyWritePaths": {
+                      "type": "array",
+                      "items": { "type": "string", "minLength": 1 }
+                    },
+                    "kernelUnenforcedProtectedPaths": {
+                      "type": "array",
+                      "items": { "type": "string", "minLength": 1 }
+                    },
+                    "onUnavailable": {
+                      "anyOf": [
+                        { "type": "string", "const": "block" },
+                        { "type": "string", "const": "warn" }
+                      ]
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                { "type": "boolean", "const": false }
+              ]
+            },
             "extends": {
               "type": "array",
               "items": { "type": "string" },

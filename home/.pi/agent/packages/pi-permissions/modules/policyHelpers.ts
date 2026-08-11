@@ -79,6 +79,26 @@ const profileColorSchema = Type.Union([
   Type.Literal("white"),
 ]);
 
+const sandboxConfigSchema = Type.Object(
+  {
+    network: Type.Union([Type.Literal("allow"), Type.Literal("deny")]),
+    extraWritePaths: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+    extraDenyReadPaths: Type.Optional(
+      Type.Array(Type.String({ minLength: 1 })),
+    ),
+    extraDenyWritePaths: Type.Optional(
+      Type.Array(Type.String({ minLength: 1 })),
+    ),
+    kernelUnenforcedProtectedPaths: Type.Optional(
+      Type.Array(Type.String({ minLength: 1 })),
+    ),
+    onUnavailable: Type.Optional(
+      Type.Union([Type.Literal("block"), Type.Literal("warn")]),
+    ),
+  },
+  { additionalProperties: false },
+);
+
 const decisionRuleProperties = {
   decision: decisionSchema,
   guidance: Type.Optional(Type.String()),
@@ -174,6 +194,9 @@ const profileProperties = {
   readPaths: Type.Array(readPathRuleSchema, { minItems: 1 }),
   writePaths: Type.Array(writePathRuleSchema, { minItems: 1 }),
   protectedPathRules: Type.Optional(Type.Array(protectedPathRuleSchema)),
+  sandbox: Type.Optional(
+    Type.Union([sandboxConfigSchema, Type.Literal(false)]),
+  ),
 };
 
 const profileSchema = Type.Object(profileProperties, {
@@ -200,6 +223,7 @@ const profileConfigProfileSchema = Type.Object(
     tools: Type.Optional(profileProperties.tools),
     readPaths: Type.Optional(profileProperties.readPaths),
     writePaths: Type.Optional(profileProperties.writePaths),
+    sandbox: profileProperties.sandbox,
   },
   {
     additionalProperties: false,
@@ -223,6 +247,7 @@ export type WritePathRule = Static<typeof writePathRuleSchema>;
 export type PathRule = ReadPathRule | WritePathRule;
 export type ProtectedPathRule = Static<typeof protectedPathRuleSchema>;
 export type ProfileColor = Static<typeof profileColorSchema>;
+export type SandboxConfig = Static<typeof sandboxConfigSchema>;
 export type ProfilePolicy = Static<typeof profileSchema>;
 type PolicyConfigShape = Static<typeof policyConfigSchema>;
 export type PolicyConfig<Names extends string = string> = Omit<
@@ -280,6 +305,7 @@ export function assertProfilePolicy(
 
   if (isProfilePolicyShape(policy)) {
     assertNoProtectedPathRuleConflicts(policy.protectedPathRules ?? []);
+    assertSandboxConfig(policy);
   }
 }
 
@@ -299,6 +325,7 @@ export function assertPolicyConfig(
 
   for (const profile of Object.values(config.profiles)) {
     assertNoProtectedPathRuleConflicts(profile.protectedPathRules ?? []);
+    assertSandboxConfig(profile);
   }
 
   if (!Object.hasOwn(config.profiles, config.defaultProfile)) {
@@ -321,6 +348,43 @@ export function definePolicyConfig<
 
 function isProfilePolicyShape(policy: unknown): policy is ProfilePolicy {
   return Value.Check(profileSchema, policy);
+}
+
+function isSandboxConfig(value: unknown): value is SandboxConfig {
+  return typeof value === "object" && value !== null;
+}
+
+function assertSandboxConfig(policy: ProfilePolicy): void {
+  const sandbox = policy.sandbox;
+  if (!isSandboxConfig(sandbox)) return;
+  for (const value of [
+    ...(sandbox.extraWritePaths ?? []),
+    ...(sandbox.extraDenyReadPaths ?? []),
+    ...(sandbox.extraDenyWritePaths ?? []),
+  ]) {
+    assertSandboxPath(value, "sandbox path");
+  }
+
+  for (const waiver of sandbox.kernelUnenforcedProtectedPaths ?? []) {
+    assertSandboxPath(waiver, "kernel waiver");
+    if (
+      !(policy.protectedPathRules ?? []).some(
+        (rule) => rule.decision === "deny" && rule.pattern === waiver,
+      )
+    ) {
+      throw new Error(
+        `Invalid pi-permissions profile: sandbox.kernelUnenforcedProtectedPaths entry '${waiver}' does not match an effective protected deny rule`,
+      );
+    }
+  }
+}
+
+function assertSandboxPath(value: string, label: string): void {
+  if (/\0|\r|\n/.test(value)) {
+    throw new Error(
+      `Invalid pi-permissions profile: ${label} contains a newline or NUL byte`,
+    );
+  }
 }
 
 function assertNoProtectedPathRuleConflicts(

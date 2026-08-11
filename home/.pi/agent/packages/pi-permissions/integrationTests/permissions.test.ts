@@ -110,6 +110,7 @@ function createExtensionHarness() {
     ) {
       commands.set(name, command);
     },
+    registerTool: vi.fn(),
     appendEntry: vi.fn(),
     getActiveTools: () => [...activeTools],
     getAllTools: () => registeredTools.map((name) => ({ name })),

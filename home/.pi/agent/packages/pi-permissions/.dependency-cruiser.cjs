@@ -64,6 +64,14 @@ module.exports = {
       to: { path: "^modules/profiles\\.lib/index\\.ts$" },
     },
     {
+      name: "sandbox-lib-no-index-self-import",
+      severity: "error",
+      comment:
+        "Files inside sandbox.lib import siblings directly, never through sandbox.lib/index.ts, so the index stays a true public boundary and knip can flag unused exports (docs/.lib_definition.md). index.test.ts is exempt so the public entrypoint itself remains testable.",
+      from: { path: "^modules/sandbox\\.lib/", pathNot: "index\\.test\\.ts$" },
+      to: { path: "^modules/sandbox\\.lib/index\\.ts$" },
+    },
+    {
       name: "ruleSets-lib-no-index-self-import",
       severity: "error",
       comment:

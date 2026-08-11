@@ -17,7 +17,6 @@ flowchart LR
 
 For each rule collection, matching rules are ranked by literal segments, then literal characters, then later composed position. Therefore a broad wildcard is a fallback and inheritance ordering matters only for equivalent specificity.
 
-
 Built-in profile, rule-set, and transform names are reserved under the `builtin:`,
 `ruleset:`, and `transform:` namespaces respectively and cannot be overridden by user configuration.
 
@@ -63,6 +62,8 @@ obvious (`deps-mutator`, `git-full`). Profiles may define optional `color`,
 - `/profile` shows the active profile and available profiles.
 - `/profile <name>` switches to a profile.
 - `/read-only` switches to the `builtin:read-only` permissions profile.
+- `/sandbox` reports the active sandbox state, backend, network posture,
+  writable roots, subagent scope, Bash-tool ownership, and translation coverage.
 - `/permissions explain <tool> <input>` explains which rule decided access for
   the given tool and input. For example:
   - `/permissions explain bash git status`
@@ -78,6 +79,30 @@ does not reflect the `PI_SUBAGENT_PERMISSIBLE_GLOBS` subagent narrowing layer.
 
 Profile changes are persisted in the Pi session, so resumed sessions restore
 their last selected profile.
+
+## Sandbox execution
+
+Sandboxing is opt-in per profile through the `sandbox` field. It adds an OS
+boundary behind the normal permission gate: approved LLM Bash calls run through
+the package-owned `bash` override, and its child process tree is contained.
+User-authored `!`/`!!` commands use the same sandbox operations when this
+package's `user_bash` handler runs. An earlier handler from another extension
+can intercept user Bash first, so it cannot be an unconditional containment
+claim.
+
+macOS is the currently verified backend target and uses `sandbox-exec` through
+`@anthropic-ai/sandbox-runtime`. A sandbox-enabled profile on an unavailable
+platform/backend either blocks Bash (the default) or emits a warning and falls
+back to local Bash when it explicitly sets `onUnavailable: "warn"`.
+
+The sandbox applies only to Bash execution. Pi's in-process `read`, `grep`,
+`find`, `ls`, `write`, and `edit` tools, custom tools, and other extensions
+remain outside this process boundary and continue through the ordinary
+permission gate.
+
+See [the sandbox guide](docs/sandbox.md) for configuration, `network` posture,
+filesystem derivation, protected-path waivers, coverage reporting, lifecycle,
+and operational limits.
 
 ## Required read-only tools
 
@@ -301,7 +326,9 @@ The package consumes the environment variables exported by
 
 The permissible-scope layer only narrows the selected profile, so
 protected-path and command restrictions still apply inside an allowed scope.
-Pi's dedicated read tools retain the profile's normal read access.
+For sandboxed Bash, the same scopes also narrow kernel writable roots, covering
+implicit child-process writes that do not appear as command operands. Pi's
+dedicated read tools retain the profile's normal read access.
 
 Profile status metadata is configured per profile:
 

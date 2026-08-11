@@ -57,9 +57,9 @@ describe("permissions extension", () => {
 
     await harness.start();
 
-    expect(lastCallArgument(harness.ui.setStatus, 1)).toContain(
-      "builtin:read-only",
-    );
+    expect(
+      lastCallArgument({ mock: harness.ui.setStatus, index: 1 }),
+    ).toContain("builtin:read-only");
     await expect(
       harness.callTool({
         toolName: "write",
@@ -177,8 +177,11 @@ describe("permissions extension", () => {
     expect(result?.reason).toContain("protected-path policy");
     expect(result?.reason).not.toContain("Command denied by explicit rule");
 
-    await harness.runCommand("permissions", "explain bash rm -rf .env");
-    const explanation = lastCallArgument(harness.ui.notify, 0);
+    await harness.runCommand({
+      name: "permissions",
+      args: "explain bash rm -rf .env",
+    });
+    const explanation = lastCallArgument({ mock: harness.ui.notify, index: 0 });
     expect(explanation).toContain("Protected-layer override: deny (**/.env*)");
     expect(explanation).not.toContain("Winner: [deny] rm -rf *");
 
@@ -191,8 +194,14 @@ describe("permissions extension", () => {
     expect(afterDynamicOperand?.reason).toContain("protected-path policy");
     expect(harness.ui.confirm).not.toHaveBeenCalled();
 
-    await harness.runCommand("permissions", 'explain bash cp "$SRC" .env');
-    const dynamicExplanation = lastCallArgument(harness.ui.notify, 0);
+    await harness.runCommand({
+      name: "permissions",
+      args: 'explain bash cp "$SRC" .env',
+    });
+    const dynamicExplanation = lastCallArgument({
+      mock: harness.ui.notify,
+      index: 0,
+    });
     expect(dynamicExplanation).toContain(
       "Protected-layer override: deny (**/.env*)",
     );
@@ -213,11 +222,11 @@ describe("permissions extension", () => {
       expect(harness.ui.confirm, command).not.toHaveBeenCalled();
     }
 
-    await harness.runCommand(
-      "permissions",
-      'explain bash cd "$DIR" | cat /tmp/.env',
-    );
-    expect(lastCallArgument(harness.ui.notify, 0)).toContain(
+    await harness.runCommand({
+      name: "permissions",
+      args: 'explain bash cd "$DIR" | cat /tmp/.env',
+    });
+    expect(lastCallArgument({ mock: harness.ui.notify, index: 0 })).toContain(
       "Protected-layer override: deny (**/.env*)",
     );
   });
@@ -418,8 +427,11 @@ describe("permissions extension", () => {
     expect(result?.reason).toContain("Bash path reference denied by policy");
     expect(result?.reason).not.toContain("Command denied by explicit rule");
 
-    await harness.runCommand("permissions", "explain bash cp a.txt src/b.txt");
-    const explanation = lastCallArgument(harness.ui.notify, 0);
+    await harness.runCommand({
+      name: "permissions",
+      args: "explain bash cp a.txt src/b.txt",
+    });
+    const explanation = lastCallArgument({ mock: harness.ui.notify, index: 0 });
     expect(explanation).toContain("Bash path-reference rule: [deny] src/**");
     expect(explanation).not.toContain("Winner: [deny] cp * *");
   });
@@ -429,11 +441,11 @@ describe("permissions extension", () => {
     const harness = createExtensionHarness();
     await harness.start();
 
-    expect(lastCallArgument(harness.ui.setStatus, 1)).toContain(
-      "builtin:default",
-    );
+    expect(
+      lastCallArgument({ mock: harness.ui.setStatus, index: 1 }),
+    ).toContain("builtin:default");
     const completions = await harness
-      .command("profile")
+      .command({ name: "profile" })
       .getArgumentCompletions?.("");
     expect(completions?.map((completion) => completion.value)).toEqual(
       expect.arrayContaining([
@@ -451,9 +463,12 @@ describe("permissions extension", () => {
     const harness = createExtensionHarness();
     await harness.start();
 
-    await harness.runCommand("permissions", "explain bash git status");
+    await harness.runCommand({
+      name: "permissions",
+      args: "explain bash git status",
+    });
 
-    expect(lastCallArgument(harness.ui.notify, 0)).toContain(
+    expect(lastCallArgument({ mock: harness.ui.notify, index: 0 })).toContain(
       "Composition: ruleset:shell → ruleset:git → ruleset:packageManagers → ruleset:deps-mutations-guard → ruleset:shell-guards → ruleset:path-guards → builtin:default",
     );
   });
@@ -470,8 +485,11 @@ describe("permissions extension", () => {
     expect(enforced).toMatchObject({ block: true });
     expect(enforced?.reason).toContain("PI_SUBAGENT_PERMISSIBLE_GLOBS");
 
-    await harness.runCommand("permissions", "explain edit README.md");
-    const explanation = lastCallArgument(harness.ui.notify, 0);
+    await harness.runCommand({
+      name: "permissions",
+      args: "explain edit README.md",
+    });
+    const explanation = lastCallArgument({ mock: harness.ui.notify, index: 0 });
     expect(explanation).toContain("Decision: deny");
     expect(explanation).toContain("PI_SUBAGENT_PERMISSIBLE_GLOBS");
   });
@@ -508,8 +526,11 @@ describe("permissions extension", () => {
     expect(enforced).toMatchObject({ block: true });
     expect(enforced?.reason).toContain("Command denied by explicit rule");
 
-    await harness.runCommand("permissions", "explain bash rg needle .");
-    const explanation = lastCallArgument(harness.ui.notify, 0);
+    await harness.runCommand({
+      name: "permissions",
+      args: "explain bash rg needle .",
+    });
+    const explanation = lastCallArgument({ mock: harness.ui.notify, index: 0 });
     expect(explanation).toContain("Decision: deny");
     expect(explanation).toContain("**/.env*");
   });
@@ -560,8 +581,11 @@ describe("permissions extension", () => {
       }),
     ).resolves.toBeUndefined();
 
-    await harness.runCommand("permissions", "explain bash cat .env.template");
-    const explanation = lastCallArgument(harness.ui.notify, 0);
+    await harness.runCommand({
+      name: "permissions",
+      args: "explain bash cat .env.template",
+    });
+    const explanation = lastCallArgument({ mock: harness.ui.notify, index: 0 });
     expect(explanation).toContain(
       "Protected-layer winner: allow (.env.template)",
     );
@@ -592,9 +616,12 @@ describe("permissions extension", () => {
       const harness = createExtensionHarness();
       await harness.start();
 
-      await harness.runCommand("permissions", "explain bash git status");
+      await harness.runCommand({
+        name: "permissions",
+        args: "explain bash git status",
+      });
 
-      expect(lastCallArgument(harness.ui.notify, 0)).toContain(
+      expect(lastCallArgument({ mock: harness.ui.notify, index: 0 })).toContain(
         `Composition: ${expectedChain}`,
       );
     },
@@ -621,9 +648,12 @@ describe("permissions extension", () => {
     const harness = createExtensionHarness();
     await harness.start();
 
-    await harness.runCommand("permissions", "explain bash git status");
+    await harness.runCommand({
+      name: "permissions",
+      args: "explain bash git status",
+    });
 
-    expect(lastCallArgument(harness.ui.notify, 0)).toContain(
+    expect(lastCallArgument({ mock: harness.ui.notify, index: 0 })).toContain(
       "Composition: ruleset:shell → ruleset:git → ruleset:packageManagers → ruleset:deps-mutations-guard → ruleset:shell-guards → ruleset:path-guards → builtin:default → ruleset:git-commit → builtin:committer → ruleset:test-run → custom profile: parent → transform:deny-asks → custom profile: child",
     );
   });
@@ -741,9 +771,9 @@ describe("permissions extension", () => {
     const harness = createExtensionHarness();
     await harness.start();
 
-    expect(lastCallArgument(harness.ui.setStatus, 1)).toContain(
-      "builtin:default",
-    );
+    expect(
+      lastCallArgument({ mock: harness.ui.setStatus, index: 1 }),
+    ).toContain("builtin:default");
   });
 
   it("selects the most-specific profile directory for a startup inside a descendant", async () => {
@@ -770,7 +800,9 @@ describe("permissions extension", () => {
     });
     await harness.start();
 
-    expect(lastCallArgument(harness.ui.setStatus, 1)).toContain("inner-review");
+    expect(
+      lastCallArgument({ mock: harness.ui.setStatus, index: 1 }),
+    ).toContain("inner-review");
   });
 
   it("selects profiles bound with ~ directories", async () => {
@@ -797,7 +829,9 @@ describe("permissions extension", () => {
     });
     await harness.start();
 
-    expect(lastCallArgument(harness.ui.setStatus, 1)).toContain("home-bound");
+    expect(
+      lastCallArgument({ mock: harness.ui.setStatus, index: 1 }),
+    ).toContain("home-bound");
   });
 
   it("selects profiles bound with startup-relative directories", async () => {
@@ -820,9 +854,9 @@ describe("permissions extension", () => {
     });
     await harness.start();
 
-    expect(lastCallArgument(harness.ui.setStatus, 1)).toContain(
-      "relative-bound",
-    );
+    expect(
+      lastCallArgument({ mock: harness.ui.setStatus, index: 1 }),
+    ).toContain("relative-bound");
   });
 
   it("lets a configured profile directory override a persisted profile on resume", async () => {
@@ -850,11 +884,11 @@ describe("permissions extension", () => {
         },
       ],
     });
-    await harness.start("resume");
+    await harness.start({ reason: "resume" });
 
-    expect(lastCallArgument(harness.ui.setStatus, 1)).toContain(
-      "workspace-bound",
-    );
+    expect(
+      lastCallArgument({ mock: harness.ui.setStatus, index: 1 }),
+    ).toContain("workspace-bound");
   });
 
   it("uses a later-declared profile to break equal directory matches", async () => {
@@ -865,9 +899,9 @@ describe("permissions extension", () => {
     const harness = createExtensionHarness({ contextCwd: "/workspace" });
     await harness.start();
 
-    expect(lastCallArgument(harness.ui.setStatus, 1)).toContain(
-      "address-comments",
-    );
+    expect(
+      lastCallArgument({ mock: harness.ui.setStatus, index: 1 }),
+    ).toContain("address-comments");
   });
 
   it("lets PI_SUBAGENT_PROFILE override a persisted profile on resume", async () => {
@@ -882,11 +916,11 @@ describe("permissions extension", () => {
         },
       ],
     });
-    await harness.start("resume");
+    await harness.start({ reason: "resume" });
 
-    expect(lastCallArgument(harness.ui.setStatus, 1)).toContain(
-      "builtin:worker",
-    );
+    expect(
+      lastCallArgument({ mock: harness.ui.setStatus, index: 1 }),
+    ).toContain("builtin:worker");
     // The worker policy is active rather than the persisted read-only policy.
     await expect(
       harness.callToolWithoutPrompt({
@@ -907,9 +941,9 @@ describe("permissions extension", () => {
     });
     await harness.start();
 
-    expect(lastCallArgument(harness.ui.setStatus, 1)).toContain(
-      "builtin:worker",
-    );
+    expect(
+      lastCallArgument({ mock: harness.ui.setStatus, index: 1 }),
+    ).toContain("builtin:worker");
     await expect(
       harness.callToolWithoutPrompt({
         toolName: "bash",
@@ -1188,11 +1222,11 @@ describe("permissions extension", () => {
           },
         ],
       });
-      await harness.start("resume");
+      await harness.start({ reason: "resume" });
 
       // Profile restoration must not clear the configuration error: the gate
       // stays in its loud fail-closed state until the file is fixed.
-      expect(lastCallArgument(harness.ui.setStatus, 1)).toBe(
+      expect(lastCallArgument({ mock: harness.ui.setStatus, index: 1 })).toBe(
         "invalid-permissions",
       );
       expect(harness.ui.notify).toHaveBeenCalledWith(
@@ -1224,7 +1258,7 @@ describe("permissions extension", () => {
       const harness = createExtensionHarness({ hasUI: false });
       await harness.start();
 
-      expect(lastCallArgument(harness.ui.setStatus, 1)).toBe(
+      expect(lastCallArgument({ mock: harness.ui.setStatus, index: 1 })).toBe(
         "invalid-permissions",
       );
 
@@ -1245,7 +1279,7 @@ describe("permissions extension", () => {
     await expect(
       harness.callTool({ toolName: "bash", input: { command: "git status" } }),
     ).rejects.toThrow("Harness must be started before callTool");
-    await expect(harness.runCommand("profile")).rejects.toThrow(
+    await expect(harness.runCommand({ name: "profile" })).rejects.toThrow(
       "Harness must be started before runCommand",
     );
   });
@@ -1255,10 +1289,12 @@ describe("permissions extension", () => {
 
     await harness.start();
 
-    expect(lastCallArgument(harness.ui.setStatus, 0)).toBe("permissions");
-    expect(lastCallArgument(harness.ui.setStatus, 1)).toContain(
-      "builtin:default",
+    expect(lastCallArgument({ mock: harness.ui.setStatus, index: 0 })).toBe(
+      "permissions",
     );
+    expect(
+      lastCallArgument({ mock: harness.ui.setStatus, index: 1 }),
+    ).toContain("builtin:default");
 
     await harness.shutdown();
     expect(harness.ui.setStatus).toHaveBeenLastCalledWith(
@@ -1271,48 +1307,50 @@ describe("permissions extension", () => {
     const harness = createExtensionHarness();
     await harness.start();
 
-    await harness.runCommand("profile");
+    await harness.runCommand({ name: "profile" });
     expect(harness.ui.notify).toHaveBeenLastCalledWith(
       expect.stringContaining("Active profile: builtin:default"),
       "info",
     );
 
-    await harness.runCommand("profile", "missing");
+    await harness.runCommand({ name: "profile", args: "missing" });
     expect(harness.ui.notify).toHaveBeenLastCalledWith(
       expect.stringContaining("Unknown profile 'missing'"),
       "error",
     );
 
-    await harness.runCommand("profile", "builtin:read-only");
+    await harness.runCommand({ name: "profile", args: "builtin:read-only" });
     expect(harness.entries.at(-1)).toMatchObject({
       customType: "pi-permissions-profile",
       data: { profile: "builtin:read-only" },
     });
     const completions = await harness
-      .command("profile")
+      .command({ name: "profile" })
       .getArgumentCompletions?.("builtin:read");
     expect(completions?.map((completion) => completion.value)).toEqual([
       "builtin:read-only",
     ]);
-    expect(lastCallArgument(harness.ui.setStatus, 1)).toContain("🔎");
-    expect(lastCallArgument(harness.ui.setStatus, 1)).toContain(
-      "builtin:read-only",
-    );
+    expect(
+      lastCallArgument({ mock: harness.ui.setStatus, index: 1 }),
+    ).toContain("🔎");
+    expect(
+      lastCallArgument({ mock: harness.ui.setStatus, index: 1 }),
+    ).toContain("builtin:read-only");
   });
 
   it("restores the persisted read-only profile and its tool policy", async () => {
     const firstSession = createExtensionHarness();
     await firstSession.start();
-    await firstSession.runCommand("read-only");
+    await firstSession.runCommand({ name: "read-only" });
 
     const resumedSession = createExtensionHarness({
       entries: firstSession.entries,
     });
-    await resumedSession.start("resume");
+    await resumedSession.start({ reason: "resume" });
 
-    expect(lastCallArgument(resumedSession.ui.setStatus, 1)).toContain(
-      "builtin:read-only",
-    );
+    expect(
+      lastCallArgument({ mock: resumedSession.ui.setStatus, index: 1 }),
+    ).toContain("builtin:read-only");
 
     const write = await resumedSession.callTool({
       toolName: "write",
@@ -1553,7 +1591,7 @@ describe("permissions extension", () => {
     }
 
     for (const profile of ["builtin:read-only", "socrates"] as const) {
-      await harness.runCommand("profile", profile);
+      await harness.runCommand({ name: "profile", args: profile });
       const denied = await harness.callTool({
         toolName: "bash",
         input: { command: "cat .env" },
@@ -1570,7 +1608,7 @@ describe("permissions extension", () => {
     ).resolves.toMatchObject({ block: true });
 
     // Return to the default profile for safe-reader allow checks.
-    await harness.runCommand("profile", "builtin:default");
+    await harness.runCommand({ name: "profile", args: "builtin:default" });
     for (const command of [
       "cat README.md",
       "sed -n '1,20p' README.md",
@@ -1624,7 +1662,7 @@ describe("permissions extension", () => {
       harness.callTool({ toolName: "edit", input: editInput }),
     ).resolves.toMatchObject({ block: true });
 
-    await harness.runCommand("profile", "read-secrets");
+    await harness.runCommand({ name: "profile", args: "read-secrets" });
     await expect(
       harness.callToolWithoutPrompt({ toolName: "read", input: readInput }),
     ).resolves.toBeUndefined();
@@ -1632,7 +1670,7 @@ describe("permissions extension", () => {
       harness.callToolWithoutPrompt({ toolName: "edit", input: editInput }),
     ).resolves.toBeUndefined();
 
-    await harness.runCommand("profile", "scratch-review");
+    await harness.runCommand({ name: "profile", args: "scratch-review" });
     await expect(
       harness.callToolWithoutPrompt({ toolName: "read", input: readInput }),
     ).resolves.toBeUndefined();
@@ -1721,7 +1759,7 @@ describe("permissions extension", () => {
     });
     expect(defaultCommit).toMatchObject({ block: true });
 
-    await harness.runCommand("profile", "address-comments");
+    await harness.runCommand({ name: "profile", args: "address-comments" });
     await expect(
       harness.callToolWithoutPrompt({
         toolName: "bash",
@@ -1729,7 +1767,7 @@ describe("permissions extension", () => {
       }),
     ).resolves.toBeUndefined();
 
-    await harness.runCommand("profile", "review-tools");
+    await harness.runCommand({ name: "profile", args: "review-tools" });
     await expect(
       harness.callToolWithoutPrompt({
         toolName: "bash",
@@ -1742,15 +1780,17 @@ describe("permissions extension", () => {
     const harness = createExtensionHarness();
     await harness.start();
 
-    await harness.runCommand("read-only");
+    await harness.runCommand({ name: "read-only" });
     expect(harness.entries.at(-1)).toMatchObject({
       customType: "pi-permissions-profile",
       data: { profile: "builtin:read-only" },
     });
-    expect(lastCallArgument(harness.ui.setStatus, 1)).toContain("🔎");
-    expect(lastCallArgument(harness.ui.setStatus, 1)).toContain(
-      "builtin:read-only",
-    );
+    expect(
+      lastCallArgument({ mock: harness.ui.setStatus, index: 1 }),
+    ).toContain("🔎");
+    expect(
+      lastCallArgument({ mock: harness.ui.setStatus, index: 1 }),
+    ).toContain("builtin:read-only");
 
     await expect(
       harness.callToolWithoutPrompt({
@@ -1870,7 +1910,7 @@ describe("permissions extension", () => {
   it("gates ambiguous Bash reader operands as writes under read-only while dedicated reads use readPaths", async () => {
     const harness = createExtensionHarness({ hasUI: false });
     await harness.start();
-    await harness.runCommand("read-only");
+    await harness.runCommand({ name: "read-only" });
 
     // Dedicated read tools evaluate readPaths and keep their normal access.
     await expect(
@@ -2027,8 +2067,8 @@ describe("permissions extension", () => {
       const harness = createExtensionHarness();
       await harness.start();
 
-      harness.deactivateTool("grep");
-      await harness.runCommand("profile", "builtin:read-only");
+      harness.deactivateTool({ name: "grep" });
+      await harness.runCommand({ name: "profile", args: "builtin:read-only" });
 
       expect(harness.getActiveTools()).toContain("grep");
     });

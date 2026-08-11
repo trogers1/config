@@ -25,6 +25,7 @@ import {
 } from "../modules/shell/searchPolicy";
 import { validateReadCommands } from "../modules/shell/readCommands";
 import {
+  createBashTool,
   isToolCallEventType,
   type ExtensionAPI,
   type ExtensionContext,
@@ -67,6 +68,12 @@ import {
   builtinCompositionChains,
   policyConfig as genericPolicyConfig,
 } from "../modules/policy";
+import { parseSubagentPermissibleRules } from "../modules/subagentScopes";
+import {
+  clearSandboxCaches,
+  resolveSandbox,
+  type SandboxResolution,
+} from "../modules/sandbox.lib";
 
 export {
   assertPolicyConfig,
@@ -224,7 +231,45 @@ export default function (pi: ExtensionAPI) {
     return `profile: ${emoji}${colorize(ansi.bold(profileName))}`;
   }
 
+  function formatSandboxStatus(profileName: ProfileName): string | undefined {
+    const sandbox = activePolicy(profileName).sandbox;
+    if (typeof sandbox !== "object") return undefined;
+    return `sandbox: ${sandbox.onUnavailable === "warn" ? "off" : "blocked"}`;
+  }
+
+  function formatSandboxReport(
+    resolution: Extract<SandboxResolution, { kind: "active" }>,
+  ): string {
+    const filesystem = resolution.spec.filesystem;
+    const report = resolution.report;
+    const scopes = filesystem.scopeRoots.length
+      ? filesystem.scopeRoots.join(", ")
+      : "none";
+    const coverage = [
+      `uncovered=${report.uncoveredRestrictions.length}`,
+      `waived=${report.waivedRestrictions.length}`,
+      `untranslated-allows=${report.untranslatedAllows.length}`,
+      `no-kernel-meaning=${report.noKernelMeaning.length}`,
+    ].join(", ");
+    const provenance = isBashToolOwned()
+      ? "pi-permissions bash override"
+      : "bash tool ownership is not current";
+    return [
+      `Sandbox active for ${activeProfile}: ${resolution.prepared.backend} 🔒`,
+      `network=${resolution.spec.network}`,
+      `writable-roots=${filesystem.writeAllowRoots.join(", ") || "none"}`,
+      `subagent-scope=${scopes}`,
+      `tool=${provenance}`,
+      `coverage: ${coverage}`,
+    ].join("; ");
+  }
+
   const startupCwd = path.resolve(process.cwd());
+  // Capture Pi's standard local Bash implementation once; the registered
+  // override delegates to it whenever sandboxing is disabled or explicitly
+  // configured to fall back with a warning.
+  const packageBashTool = createBashTool(startupCwd);
+  const packageBashSource = { key: undefined as string | undefined };
   const subagentProfile = process.env.PI_SUBAGENT_PROFILE?.trim();
   const subagentPermissibleRules = parseSubagentPermissibleRules(
     process.env.PI_SUBAGENT_PERMISSIBLE_GLOBS,
@@ -232,6 +277,7 @@ export default function (pi: ExtensionAPI) {
   const profileConfigErrorReason = profileConfigLoad.error?.message;
   let subagentProfileErrorReason: string | undefined;
   let activeProfile: ProfileName = policyConfig.defaultProfile;
+  let profileActivationQueue: Promise<void> = Promise.resolve();
   const configurationErrorReason = () =>
     profileConfigErrorReason ?? subagentProfileErrorReason;
 
@@ -241,6 +287,118 @@ export default function (pi: ExtensionAPI) {
     ctx.ui.setStatus("permissions", "invalid-permissions");
     if (ctx.hasUI) ctx.ui.notify(errorReason, "error");
     return true;
+  }
+
+  async function refreshSandboxStatus(ctx: ExtensionContext): Promise<void> {
+    const policy = activePolicy(activeProfile);
+    const sessionCwd = ctx.cwd ?? startupCwd;
+    const resolution = await resolveSandbox({
+      profile: activeProfile,
+      policy,
+      startupCwd: sessionCwd,
+      subagentScopes: subagentPermissibleRules,
+      configurationError: configurationErrorReason(),
+    });
+
+    if (resolution.kind === "none") {
+      ctx.ui.setStatus("sandbox", undefined);
+      return;
+    }
+
+    if (resolution.kind === "unavailable") {
+      ctx.ui.setStatus("sandbox", formatSandboxStatus(activeProfile));
+      if (ctx.hasUI) {
+        ctx.ui.notify(
+          resolution.reason,
+          resolution.onUnavailable === "warn" ? "warning" : "error",
+        );
+      }
+      return;
+    }
+
+    ctx.ui.setStatus("sandbox", `sandbox: ${resolution.prepared.backend} 🔒`);
+  }
+
+  function sandboxUnavailableResult(reason: string) {
+    return {
+      content: [
+        { type: "text" as const, text: `Bash sandbox unavailable: ${reason}` },
+      ],
+      details: {
+        exitCode: 126,
+        durationMs: 0,
+        output: `Bash sandbox unavailable: ${reason}`,
+      },
+    };
+  }
+
+  async function executeBashWithExitCode<T>(
+    execute: () => Promise<T>,
+  ): Promise<T> {
+    try {
+      const result = (await execute()) as Record<string, unknown>;
+      const details =
+        (result.details as Record<string, unknown> | undefined) ?? {};
+      return {
+        ...result,
+        details: {
+          ...details,
+          ...(typeof details.exitCode === "number" ? {} : { exitCode: 0 }),
+        },
+      } as T;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const match = message.match(/Command exited with code (\d+)/);
+      const exitCode = match
+        ? Number(match[1])
+        : /timed out|aborted/i.test(message)
+          ? 124
+          : undefined;
+      if (exitCode === undefined) throw error;
+      return {
+        content: [{ type: "text" as const, text: message }],
+        details: { exitCode },
+      } as T;
+    }
+  }
+
+  function isBashToolOwned(): boolean {
+    const bashTool = pi.getAllTools().find((tool) => tool.name === "bash");
+    const currentSourceKey = bashTool
+      ? JSON.stringify(bashTool.sourceInfo)
+      : undefined;
+    return Boolean(
+      packageBashSource.key && currentSourceKey === packageBashSource.key,
+    );
+  }
+
+  function ensureBashToolOwnership(): void {
+    if (!isBashToolOwned()) {
+      throw new Error(
+        "pi-permissions' bash override no longer owns the effective bash tool; sandboxed execution is blocked",
+      );
+    }
+  }
+
+  function activateProfile(
+    profile: ProfileName,
+    ctx: ExtensionContext,
+    message?: string,
+  ): Promise<void> {
+    const activation = profileActivationQueue.then(async () => {
+      activeProfile = profile;
+      // Subagent launchers inherit this process environment; update it with
+      // the committed profile before rebuilding its sandbox state.
+      process.env[activeProfileEnvKey] = activeProfile;
+      ensureReadToolsActive();
+      await clearSandboxCaches();
+      pi.appendEntry(profileEntryType, { profile, timestamp: Date.now() });
+      await refreshSandboxStatus(ctx);
+      ctx.ui.setStatus("permissions", formatProfileStatus(activeProfile));
+      if (message) ctx.ui.notify(message, "info");
+    });
+    profileActivationQueue = activation.catch(() => undefined);
+    return activation;
   }
 
   function formatInvalidSubagentProfileReason(profile: string): string {
@@ -310,14 +468,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
     pi.setActiveTools([...activeTools, ...inactive]);
   }
 
-  function setActiveProfile(profile: ProfileName): void {
-    activeProfile = profile;
-    process.env[activeProfileEnvKey] = activeProfile;
-    ensureReadToolsActive();
-    pi.appendEntry(profileEntryType, { profile, timestamp: Date.now() });
-  }
-
-  pi.on("session_start", (_event, ctx) => {
+  pi.on("session_start", async (_event, ctx) => {
     ensureReadToolsActive();
     restoreActiveProfile(ctx);
     process.env[activeProfileEnvKey] = activeProfile;
@@ -331,11 +482,14 @@ The permissions gate remains loaded and will fail closed until the profile is co
       return;
     }
 
+    await refreshSandboxStatus(ctx);
     ctx.ui.setStatus("permissions", formatProfileStatus(activeProfile));
   });
 
-  pi.on("session_shutdown", (_event, ctx) => {
+  pi.on("session_shutdown", async (_event, ctx) => {
+    ctx.ui.setStatus("sandbox", undefined);
     ctx.ui.setStatus("permissions", undefined);
+    await clearSandboxCaches();
   });
 
   pi.registerCommand("profile", {
@@ -369,9 +523,11 @@ The permissions gate remains loaded and will fail closed until the profile is co
         return;
       }
 
-      setActiveProfile(requested);
-      ctx.ui.setStatus("permissions", formatProfileStatus(activeProfile));
-      ctx.ui.notify(`Switched to profile: ${activeProfile}`, "info");
+      await activateProfile(
+        requested,
+        ctx,
+        `Switched to profile: ${activeProfile}`,
+      );
     },
   });
 
@@ -385,11 +541,94 @@ The permissions gate remains loaded and will fail closed until the profile is co
         return;
       }
 
-      setActiveProfile(readOnlyName);
-      ctx.ui.setStatus("permissions", formatProfileStatus(activeProfile));
-      ctx.ui.notify("Read-only profile enabled", "info");
+      await activateProfile(readOnlyName, ctx, "Read-only profile enabled");
     },
   });
+
+  pi.registerCommand("sandbox", {
+    description: "Show the active sandbox posture",
+    handler: async (_args, ctx) => {
+      if (preserveConfigurationErrorStatus(ctx)) return;
+      const resolution = await resolveSandbox({
+        profile: activeProfile,
+        policy: activePolicy(activeProfile),
+        startupCwd: ctx.cwd ?? startupCwd,
+        subagentScopes: subagentPermissibleRules,
+        configurationError: configurationErrorReason(),
+      });
+
+      if (resolution.kind === "none") {
+        ctx.ui.notify(`Sandbox: off for ${activeProfile}.`, "info");
+        return;
+      }
+
+      if (resolution.kind === "unavailable") {
+        ctx.ui.notify(
+          `Sandbox unavailable for ${activeProfile}: ${resolution.reason}`,
+          resolution.onUnavailable === "warn" ? "warning" : "error",
+        );
+        return;
+      }
+
+      ctx.ui.notify(formatSandboxReport(resolution), "info");
+    },
+  });
+
+  pi.registerTool({
+    ...packageBashTool,
+    async execute(toolCallId, params, signal, onUpdate, ctx) {
+      const resolution = await resolveSandbox({
+        profile: activeProfile,
+        policy: activePolicy(activeProfile),
+        startupCwd: ctx.cwd ?? startupCwd,
+        subagentScopes: subagentPermissibleRules,
+        configurationError: configurationErrorReason(),
+      });
+
+      if (resolution.kind === "none") {
+        return await executeBashWithExitCode(() =>
+          createBashTool(ctx.cwd ?? startupCwd).execute(
+            toolCallId,
+            params,
+            signal,
+            onUpdate,
+          ),
+        );
+      }
+
+      if (resolution.kind === "unavailable") {
+        if (resolution.onUnavailable === "warn") {
+          if (ctx.hasUI) {
+            ctx.ui.notify(resolution.reason, "warning");
+          }
+          return await executeBashWithExitCode(() =>
+            createBashTool(ctx.cwd ?? startupCwd).execute(
+              toolCallId,
+              params,
+              signal,
+              onUpdate,
+            ),
+          );
+        }
+
+        return sandboxUnavailableResult(resolution.reason);
+      }
+
+      ensureBashToolOwnership();
+      const sandboxedBash = createBashTool(ctx.cwd ?? startupCwd, {
+        operations: resolution.prepared.operations,
+      });
+      return await executeBashWithExitCode(() =>
+        sandboxedBash.execute(toolCallId, params, signal, onUpdate),
+      );
+    },
+  });
+  const registeredPackageBash = pi
+    .getAllTools()
+    .find((tool) => tool.name === "bash");
+  packageBashSource.key = registeredPackageBash
+    ? JSON.stringify(registeredPackageBash.sourceInfo)
+    : undefined;
 
   pi.registerCommand("permissions", {
     description:
@@ -481,9 +720,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
         return;
       }
 
-      setActiveProfile("socrates");
-      ctx.ui.setStatus("permissions", formatProfileStatus(activeProfile));
-      ctx.ui.notify("Socrates profile enabled", "info");
+      await activateProfile("socrates", ctx, "Socrates profile enabled");
     },
   });
 
@@ -491,24 +728,94 @@ The permissions gate remains loaded and will fail closed until the profile is co
     description: "Switch back to the configured default permissions profile",
     handler: async (_args, ctx) => {
       if (preserveConfigurationErrorStatus(ctx)) return;
-      setActiveProfile(policyConfig.defaultProfile);
-      ctx.ui.setStatus("permissions", formatProfileStatus(activeProfile));
-      ctx.ui.notify(
+      await activateProfile(
+        policyConfig.defaultProfile,
+        ctx,
         `Socrates profile disabled; active profile: ${activeProfile}`,
-        "info",
       );
     },
   });
 
-  pi.on("before_agent_start", (event) => {
+  pi.on("before_agent_start", async (event, ctx) => {
     const policy = activePolicy(activeProfile);
-    if (!policy.promptFile) return undefined;
+    const promptSections = [`# Active profile: ${activeProfile}`];
+    const resolution = await resolveSandbox({
+      profile: activeProfile,
+      policy,
+      startupCwd: ctx.cwd ?? startupCwd,
+      subagentScopes: subagentPermissibleRules,
+      configurationError: configurationErrorReason(),
+    });
 
-    const promptPath = resolvePolicyRelativePath(policy.promptFile);
-    const prompt = fs.readFileSync(promptPath, "utf8").trim();
+    if (resolution.kind === "active") {
+      promptSections.push(
+        `Bash commands run in a kernel sandbox (${resolution.prepared.backend}). Network is ${resolution.spec.network}.`,
+      );
+    } else if (resolution.kind === "unavailable") {
+      promptSections.push(
+        resolution.onUnavailable === "warn"
+          ? "Bash sandboxing is unavailable; this profile explicitly permits a visible unsandboxed fallback."
+          : "Bash sandboxing is unavailable, so Bash commands are blocked.",
+      );
+    }
+
+    if (policy.promptFile) {
+      const promptPath = resolvePolicyRelativePath(policy.promptFile);
+      const prompt = fs.readFileSync(promptPath, "utf8").trim();
+      promptSections.push(prompt);
+    }
+
+    if (promptSections.length === 1) return undefined;
     return {
-      systemPrompt: `${event.systemPrompt}\n\n# Active profile: ${activeProfile}\n\n${prompt}`,
+      systemPrompt: `${event.systemPrompt}\n\n${promptSections.join("\n\n")}`,
     };
+  });
+
+  pi.on("user_bash", async (_event, ctx) => {
+    const errorReason = configurationErrorReason();
+    if (errorReason) {
+      return {
+        result: {
+          output: errorReason,
+          exitCode: 126,
+          cancelled: false,
+          truncated: false,
+        },
+      };
+    }
+
+    const policy = activePolicy(activeProfile);
+    const resolution = await resolveSandbox({
+      profile: activeProfile,
+      policy,
+      startupCwd: ctx.cwd ?? startupCwd,
+      subagentScopes: subagentPermissibleRules,
+      configurationError: configurationErrorReason(),
+    });
+
+    if (resolution.kind === "unavailable") {
+      if (resolution.onUnavailable === "warn") {
+        if (ctx.hasUI) {
+          ctx.ui.notify(resolution.reason, "warning");
+        }
+        return undefined;
+      }
+
+      return {
+        result: {
+          output: `Bash sandbox unavailable: ${resolution.reason}`,
+          exitCode: 126,
+          cancelled: false,
+          truncated: false,
+        },
+      };
+    }
+
+    if (resolution.kind === "active") {
+      return { operations: resolution.prepared.operations };
+    }
+
+    return undefined;
   });
 
   pi.on("tool_call", async (event, ctx) => {
@@ -521,10 +828,11 @@ The permissions gate remains loaded and will fail closed until the profile is co
 
     if (isToolCallEventType("bash", event)) {
       const command = event.input.command ?? "";
+      const effectiveCwd = ctx.cwd ?? startupCwd;
       const scopeDecision = decideSubagentBashScope(
         command,
         startupCwd,
-        ctx.cwd ?? startupCwd,
+        effectiveCwd,
         policy,
         subagentPermissibleRules,
       );
@@ -534,7 +842,45 @@ The permissions gate remains loaded and will fail closed until the profile is co
         command,
         policy.protectedPathRules ?? [],
       );
-      return await gateBash(event.input.command, startupCwd, ctx, policy);
+      const gateResult = await gateBash(
+        event.input.command,
+        effectiveCwd,
+        ctx,
+        policy,
+      );
+      if (gateResult) return gateResult;
+
+      const sandboxResolution = await resolveSandbox({
+        profile: activeProfile,
+        policy,
+        startupCwd: effectiveCwd,
+        subagentScopes: subagentPermissibleRules,
+        configurationError: configurationErrorReason(),
+      });
+
+      if (sandboxResolution.kind === "active" && !isBashToolOwned()) {
+        return {
+          block: true,
+          reason:
+            "pi-permissions' bash override no longer owns the effective bash tool; sandboxed execution is blocked",
+        };
+      }
+
+      if (sandboxResolution.kind === "unavailable") {
+        if (sandboxResolution.onUnavailable === "warn") {
+          if (ctx.hasUI) {
+            ctx.ui.notify(sandboxResolution.reason, "warning");
+          }
+          return undefined;
+        }
+
+        return {
+          block: true,
+          reason: `Bash sandbox unavailable: ${sandboxResolution.reason}`,
+        };
+      }
+
+      return undefined;
     }
 
     if (isToolCallEventType("grep", event)) {
@@ -630,34 +976,52 @@ The permissions gate remains loaded and will fail closed until the profile is co
   });
 }
 
-function parseSubagentPermissibleRules(
-  value: string | undefined,
-): Rule[] | undefined {
-  if (value === undefined) return undefined;
+function isOpaqueInterpreterCommand(command: string): boolean {
+  // These flags place program source in an argument. Optional interpreter
+  // flags (for example `node --input-type=module -e`) remain part of the
+  // invocation rather than becoming shell path operands.
+  return /^(?:env\s+)?(?:node(?:\s+--?[\w-]+(?:=\S+)?)*\s+(?:-e|--eval|-p|--print)|python(?:3)?(?:\s+--?[\w-]+(?:=\S+)?)*\s+(?:-c|--command)|ruby\s+(?:-e|--eval)|perl\s+(?:-e|--eval))\b/.test(
+    command.trim(),
+  );
+}
 
-  const scopes = value
-    .split(",")
-    .map((scope) =>
-      scope.trim().replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/$/, ""),
-    )
-    .filter(Boolean);
-  const guidance =
-    "This subagent may only access paths in its declared permissible scope.";
-  const rules: Rule[] = [{ pattern: "**", decision: "deny", guidance }];
-
-  for (const scope of scopes) {
-    if (scope === ".") {
-      rules.push({ pattern: "**", decision: "allow" });
-      rules.push({ pattern: "..", decision: "deny", guidance });
-      rules.push({ pattern: "../**", decision: "deny", guidance });
-    } else if (/[*?[]/.test(scope)) {
-      rules.push({ pattern: scope, decision: "allow" });
-    } else {
-      rules.push({ pattern: scope, decision: "allow" });
-      rules.push({ pattern: `${scope}/**`, decision: "allow" });
+/** Detect shell composition while ignoring quoted interpreter source. */
+function hasShellControlSyntax(command: string): boolean {
+  let quote: "'" | '"' | undefined;
+  let escaped = false;
+  for (const character of command) {
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (character === "\\" && quote !== "'") {
+      escaped = true;
+      continue;
+    }
+    if (quote !== undefined) {
+      if (character === quote) quote = undefined;
+      continue;
+    }
+    if (character === "'" || character === '"') {
+      quote = character;
+      continue;
+    }
+    if (
+      character === ";" ||
+      character === "|" ||
+      character === "&" ||
+      character === "{" ||
+      character === "}" ||
+      character === "(" ||
+      character === ")" ||
+      character === "`" ||
+      character === "<" ||
+      character === ">"
+    ) {
+      return true;
     }
   }
-  return rules;
+  return false;
 }
 
 function pathAnalysisSegments(command: string): string[] {
@@ -675,6 +1039,16 @@ function pathAnalysisSegments(command: string): string[] {
     return splitShellCommands(command);
   }
   return [command];
+}
+
+/**
+ * Interpreter source is opaque to the shell path parser, but only for that
+ * individual command segment. Later shell commands must still be analyzed.
+ */
+function effectivePathAnalysisSegments(command: string): string[] {
+  return pathAnalysisSegments(command).map((segment) =>
+    isOpaqueInterpreterCommand(segment) ? "" : segment,
+  );
 }
 
 function explainSubagentScope(
@@ -696,7 +1070,7 @@ function explainSubagentScope(
       writePaths: subagentPermissibleRules as [Rule, ...Rule[]],
     };
     const decision = decideBashPathReferences(
-      pathAnalysisSegments(input),
+      effectivePathAnalysisSegments(input),
       startupCwd,
       cwd,
       scopedPolicy,
@@ -760,7 +1134,7 @@ function decideSubagentBashScope(
     writePaths: subagentPermissibleRules as [Rule, ...Rule[]],
   };
   const decision = decideBashPathReferences(
-    pathAnalysisSegments(command),
+    effectivePathAnalysisSegments(command),
     startupCwd,
     cwd,
     scopedPolicy,
@@ -802,18 +1176,23 @@ function evaluateBashGate(
   const commands = extractShellCommands(command)
     .map(normalizeCommandForDecision)
     .filter(Boolean);
+  const pathSegments = effectivePathAnalysisSegments(command);
   const protectedPathDecision = decideProtectedBashPathReferences(
-    pathAnalysisSegments(command),
+    pathSegments,
     startupCwd,
     cwd,
     activePolicy.protectedPathRules ?? [],
   );
-  const readValidationError = validateReadCommands(
-    command,
-    commands,
-    activePolicy.protectedPathRules ?? [],
-  );
-  const pathSegments = pathAnalysisSegments(command);
+  // Inline interpreter source is not shell syntax and can contain arbitrary
+  // filesystem APIs. The kernel sandbox, rather than a brittle source parser,
+  // contains it. Mixed shell composition is rejected before this evaluation.
+  const readValidationError = isOpaqueInterpreterCommand(command)
+    ? undefined
+    : validateReadCommands(
+        command,
+        commands,
+        activePolicy.protectedPathRules ?? [],
+      );
   // A path-level deny must win over an earlier ask.
   const deniedPathAnalysis = analyzeBashPathReferences(
     pathSegments,
@@ -858,6 +1237,14 @@ export async function gateBash(
   ctx: ExtensionContext,
   activePolicy = defaultPolicy,
 ) {
+  if (isOpaqueInterpreterCommand(command) && hasShellControlSyntax(command)) {
+    return {
+      block: true,
+      reason:
+        "Opaque interpreter commands cannot be combined with shell control syntax; split the interpreter invocation from subsequent shell commands.",
+    };
+  }
+
   const evaluation = evaluateBashGate(
     command,
     startupCwd,
