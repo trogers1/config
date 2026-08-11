@@ -3,6 +3,7 @@
     "command": "git status --short",
     "expected": {
       "builtin:default": "allow",
+      "builtin:default-with-net": "allow",
       "builtin:worker": "allow",
       "builtin:read-only": "allow",
       "builtin:tests-hidden": "allow",
@@ -20,6 +21,7 @@
     "command": "git log --oneline",
     "expected": {
       "builtin:default": "allow",
+      "builtin:default-with-net": "allow",
       "builtin:worker": "allow",
       "builtin:read-only": "allow",
       "builtin:tests-hidden": "allow",
@@ -37,6 +39,7 @@
     "command": "git branch --list",
     "expected": {
       "builtin:default": "allow",
+      "builtin:default-with-net": "allow",
       "builtin:worker": "allow",
       "builtin:read-only": "allow",
       "builtin:tests-hidden": "allow",
@@ -54,6 +57,7 @@
     "command": "git branch -d feature/test",
     "expected": {
       "builtin:default": "deny",
+      "builtin:default-with-net": "deny",
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "deny",
@@ -71,6 +75,7 @@
     "command": "git branch -D feature/test",
     "expected": {
       "builtin:default": "deny",
+      "builtin:default-with-net": "deny",
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "deny",
@@ -88,6 +93,7 @@
     "command": "git tag --list",
     "expected": {
       "builtin:default": "allow",
+      "builtin:default-with-net": "allow",
       "builtin:worker": "allow",
       "builtin:read-only": "allow",
       "builtin:tests-hidden": "allow",
@@ -105,6 +111,7 @@
     "command": "git tag -a v1.0.0",
     "expected": {
       "builtin:default": "deny",
+      "builtin:default-with-net": "deny",
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "deny",
@@ -122,6 +129,7 @@
     "command": "git commit -m test",
     "expected": {
       "builtin:default": "deny",
+      "builtin:default-with-net": "deny",
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "deny",
@@ -139,6 +147,7 @@
     "command": "git push origin main",
     "expected": {
       "builtin:default": "deny",
+      "builtin:default-with-net": "deny",
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "deny",
@@ -156,6 +165,7 @@
     "command": "git checkout main",
     "expected": {
       "builtin:default": "deny",
+      "builtin:default-with-net": "deny",
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "deny",
@@ -173,6 +183,7 @@
     "command": "git pull",
     "expected": {
       "builtin:default": "allow",
+      "builtin:default-with-net": "allow",
       "builtin:worker": "allow",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "allow",
@@ -190,6 +201,7 @@
     "command": "npm test",
     "expected": {
       "builtin:default": "allow",
+      "builtin:default-with-net": "allow",
       "builtin:worker": "allow",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "allow",
@@ -207,6 +219,7 @@
     "command": "npm run build",
     "expected": {
       "builtin:default": "allow",
+      "builtin:default-with-net": "allow",
       "builtin:worker": "allow",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "allow",
@@ -224,6 +237,7 @@
     "command": "npm install lodash",
     "expected": {
       "builtin:default": "deny",
+      "builtin:default-with-net": "deny",
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "deny",
@@ -241,6 +255,7 @@
     "command": "npm publish",
     "expected": {
       "builtin:default": "deny",
+      "builtin:default-with-net": "deny",
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "deny",
@@ -258,6 +273,7 @@
     "command": "npx vitest src/example.test.ts",
     "expected": {
       "builtin:default": "ask",
+      "builtin:default-with-net": "ask",
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "deny",
@@ -275,6 +291,7 @@
     "command": "find . -type f",
     "expected": {
       "builtin:default": "allow",
+      "builtin:default-with-net": "allow",
       "builtin:worker": "allow",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "allow",
@@ -292,6 +309,7 @@
     "command": "find . -delete",
     "expected": {
       "builtin:default": "deny",
+      "builtin:default-with-net": "deny",
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "deny",
@@ -309,6 +327,7 @@
     "command": "find /tmp -delete",
     "expected": {
       "builtin:default": "deny",
+      "builtin:default-with-net": "deny",
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "deny",
@@ -326,6 +345,7 @@
     "command": "find -delete",
     "expected": {
       "builtin:default": "deny",
+      "builtin:default-with-net": "deny",
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "deny",
@@ -343,6 +363,7 @@
     "command": "find -exec rm -f {} \\;",
     "expected": {
       "builtin:default": "deny",
+      "builtin:default-with-net": "deny",
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "deny",
@@ -360,6 +381,7 @@
     "command": "find -execdir rm -f {} \\;",
     "expected": {
       "builtin:default": "deny",
+      "builtin:default-with-net": "deny",
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "deny",
@@ -377,6 +399,7 @@
     "command": "find /tmp -exec echo {} \\;",
     "expected": {
       "builtin:default": "deny",
+      "builtin:default-with-net": "deny",
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "deny",
@@ -394,6 +417,7 @@
     "command": "cat README.md",
     "expected": {
       "builtin:default": "allow",
+      "builtin:default-with-net": "allow",
       "builtin:worker": "allow",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "allow",
@@ -411,6 +435,7 @@
     "command": "grep foo src",
     "expected": {
       "builtin:default": "deny",
+      "builtin:default-with-net": "deny",
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "deny",
@@ -428,6 +453,7 @@
     "command": "grep foo /tmp",
     "expected": {
       "builtin:default": "deny",
+      "builtin:default-with-net": "deny",
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "deny",
@@ -445,6 +471,7 @@
     "command": "git grep foo",
     "expected": {
       "builtin:default": "deny",
+      "builtin:default-with-net": "deny",
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "deny",
@@ -462,6 +489,7 @@
     "command": "git grep foo /tmp",
     "expected": {
       "builtin:default": "deny",
+      "builtin:default-with-net": "deny",
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "deny",
@@ -479,6 +507,7 @@
     "command": "git fsck --lost-found",
     "expected": {
       "builtin:default": "deny",
+      "builtin:default-with-net": "deny",
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "deny",
@@ -496,6 +525,7 @@
     "command": "git fsck --full",
     "expected": {
       "builtin:default": "ask",
+      "builtin:default-with-net": "ask",
       "builtin:worker": "deny",
       "builtin:read-only": "allow",
       "builtin:tests-hidden": "ask",
@@ -513,6 +543,7 @@
     "command": "head README.md",
     "expected": {
       "builtin:default": "allow",
+      "builtin:default-with-net": "allow",
       "builtin:worker": "allow",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "allow",
@@ -530,6 +561,7 @@
     "command": "tail README.md",
     "expected": {
       "builtin:default": "allow",
+      "builtin:default-with-net": "allow",
       "builtin:worker": "allow",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "allow",
@@ -547,6 +579,7 @@
     "command": "git config --get user.name",
     "expected": {
       "builtin:default": "allow",
+      "builtin:default-with-net": "allow",
       "builtin:worker": "allow",
       "builtin:read-only": "allow",
       "builtin:tests-hidden": "allow",
@@ -564,6 +597,7 @@
     "command": "git reflog",
     "expected": {
       "builtin:default": "allow",
+      "builtin:default-with-net": "allow",
       "builtin:worker": "allow",
       "builtin:read-only": "allow",
       "builtin:tests-hidden": "allow",
@@ -581,6 +615,7 @@
     "command": "git merge-tree HEAD HEAD HEAD",
     "expected": {
       "builtin:default": "allow",
+      "builtin:default-with-net": "allow",
       "builtin:worker": "allow",
       "builtin:read-only": "allow",
       "builtin:tests-hidden": "allow",
@@ -598,6 +633,7 @@
     "command": "git merge-tree --write-tree HEAD HEAD",
     "expected": {
       "builtin:default": "deny",
+      "builtin:default-with-net": "deny",
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "deny",
@@ -615,6 +651,7 @@
     "command": "git diff-tree HEAD",
     "expected": {
       "builtin:default": "allow",
+      "builtin:default-with-net": "allow",
       "builtin:worker": "allow",
       "builtin:read-only": "allow",
       "builtin:tests-hidden": "allow",
@@ -632,6 +669,7 @@
     "command": "git symbolic-ref HEAD",
     "expected": {
       "builtin:default": "ask",
+      "builtin:default-with-net": "ask",
       "builtin:worker": "deny",
       "builtin:read-only": "allow",
       "builtin:tests-hidden": "ask",
@@ -649,6 +687,7 @@
     "command": "git symbolic-ref --short HEAD",
     "expected": {
       "builtin:default": "ask",
+      "builtin:default-with-net": "ask",
       "builtin:worker": "deny",
       "builtin:read-only": "allow",
       "builtin:tests-hidden": "ask",
@@ -666,6 +705,7 @@
     "command": "sed -i '' -e 's/foo/bar/' HEAD",
     "expected": {
       "builtin:default": "deny",
+      "builtin:default-with-net": "deny",
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "deny",
@@ -683,6 +723,7 @@
     "command": "git diff --output patch.diff",
     "expected": {
       "builtin:default": "deny",
+      "builtin:default-with-net": "deny",
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "deny",
@@ -700,6 +741,7 @@
     "command": "git diff --output /tmp/patch.diff",
     "expected": {
       "builtin:default": "deny",
+      "builtin:default-with-net": "deny",
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "deny",
@@ -717,6 +759,7 @@
     "command": "echo hi",
     "expected": {
       "builtin:default": "ask",
+      "builtin:default-with-net": "ask",
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "ask",
@@ -734,6 +777,7 @@
     "command": "echo \"---\"",
     "expected": {
       "builtin:default": "allow",
+      "builtin:default-with-net": "allow",
       "builtin:worker": "allow",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "allow",
@@ -751,6 +795,7 @@
     "command": "python scripts/build.py",
     "expected": {
       "builtin:default": "ask",
+      "builtin:default-with-net": "ask",
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "ask",
@@ -768,6 +813,7 @@
     "command": "glab mr view 123",
     "expected": {
       "builtin:default": "ask",
+      "builtin:default-with-net": "ask",
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "ask",
@@ -785,6 +831,7 @@
     "command": "git rm src/example.ts",
     "expected": {
       "builtin:default": "ask",
+      "builtin:default-with-net": "ask",
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "ask",
@@ -802,6 +849,7 @@
     "command": "npm test",
     "expected": {
       "builtin:default": "allow",
+      "builtin:default-with-net": "allow",
       "builtin:worker": "allow",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "allow",
@@ -819,6 +867,7 @@
     "command": "echo \"---\"",
     "expected": {
       "builtin:default": "allow",
+      "builtin:default-with-net": "allow",
       "builtin:worker": "allow",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "allow",
@@ -836,6 +885,7 @@
     "command": "npm install lodash",
     "expected": {
       "builtin:default": "deny",
+      "builtin:default-with-net": "deny",
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "deny",
@@ -853,6 +903,7 @@
     "command": "git status --short",
     "expected": {
       "builtin:default": "allow",
+      "builtin:default-with-net": "allow",
       "builtin:worker": "allow",
       "builtin:read-only": "allow",
       "builtin:tests-hidden": "allow",
@@ -870,6 +921,7 @@
     "command": "git push origin main",
     "expected": {
       "builtin:default": "deny",
+      "builtin:default-with-net": "deny",
       "builtin:worker": "deny",
       "builtin:read-only": "deny",
       "builtin:tests-hidden": "deny",

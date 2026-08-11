@@ -22,6 +22,11 @@ export const baseCompositionChain = [
   "builtin:default",
 ] as const;
 
+export const defaultWithNetCompositionChain = [
+  ...baseCompositionChain,
+  "builtin:default-with-net",
+] as const;
+
 /**
  * The standard posture every permissive profile derives from. Composed
  * entirely from rule sets: read-mostly shell/git/package-manager rules,
@@ -30,6 +35,7 @@ export const baseCompositionChain = [
 export const baseProfile: ProfilePolicy = {
   color: "blue",
   emoji: "🛠️",
+  sandbox: { network: "deny" },
   // No promptFile means: keep Pi's normal system prompt unchanged.
   // Tool policies resolve by specificity first; composition order only breaks ties.
   // For bash, patterns match normalized command segments.
@@ -43,4 +49,10 @@ export const baseProfile: ProfilePolicy = {
   protectedPathRules: [
     ...(ruleSetRegistry["ruleset:path-guards"].protectedPathRules ?? []),
   ],
+};
+
+/** Standard posture with an explicit opt-in to unrestricted networking. */
+export const defaultWithNetProfile: ProfilePolicy = {
+  ...baseProfile,
+  sandbox: { network: "allow" },
 };

@@ -50,6 +50,7 @@ export const scribeOnlyProfile = extendProfile(baseProfile, {
 export const depsMutatorProfile: ProfilePolicy = {
   ...baseProfile,
   color: "yellow",
+  sandbox: { network: "allow" },
   emoji: "📦",
   // Same composition as builtin:default with the dependency-mutation guard
   // rule set swapped for its allow twin.

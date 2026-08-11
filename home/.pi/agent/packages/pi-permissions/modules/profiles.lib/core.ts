@@ -37,6 +37,7 @@ const readOnlyPathPosture = ruleSetRegistry["ruleset:read-only-path"];
 export const readOnlyProfile: ProfilePolicy = {
   color: "green",
   emoji: "🔎",
+  sandbox: { network: "deny" },
   tools: readOnlyShellPosture.tools!,
   readPaths: readOnlyPathPosture.readPaths!,
   writePaths: readOnlyPathPosture.writePaths!,

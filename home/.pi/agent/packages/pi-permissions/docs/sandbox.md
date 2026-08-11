@@ -1,7 +1,7 @@
 # Bash sandboxing
 
 `pi-permissions` can apply kernel-enforced containment to Bash processes. It is
-an opt-in profile capability: the normal permission gate still determines
+a profile capability: the normal permission gate still determines
 whether a request is allowed, asked, or denied; the sandbox constrains the
 approved command and every descendant process.
 
@@ -34,7 +34,13 @@ agent boundary, run Pi itself in a container or VM.
 
 ## Profile configuration
 
-Set `sandbox` on a profile to enable containment:
+All shipped profiles configure sandboxing. `builtin:default` and the restricted
+workflow profiles deny network access; `builtin:default-with-net`,
+`builtin:deps-mutator`, and `builtin:git-full` allow it. Custom profiles inherit
+the sandbox posture of their resolved parent unless they set `sandbox` to a new
+object or `false`.
+
+Set `sandbox` on a custom profile to choose its posture:
 
 ```jsonc
 {

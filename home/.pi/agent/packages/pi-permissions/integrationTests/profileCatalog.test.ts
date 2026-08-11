@@ -1,7 +1,11 @@
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { policyConfig } from "../modules/policy";
-import type { ProfilePolicy } from "../modules/policyHelpers";
+import {
+  builtinProfileNames,
+  type BuiltinProfileName,
+  type ProfilePolicy,
+} from "../modules/policyHelpers";
 import { createExtensionHarness } from "./support/extensionHarness";
 
 const missingProfileConfigPath = path.resolve(
@@ -158,6 +162,38 @@ describe("shipped profile catalog", () => {
         input: { command: "git push origin main" },
       }),
     ).resolves.toBeUndefined();
+  });
+
+  it("assigns sandbox network posture across every built-in profile", () => {
+    const expectedNetworkPostures = {
+      "builtin:default": "deny",
+      "builtin:default-with-net": "allow",
+      "builtin:worker": "deny",
+      "builtin:read-only": "deny",
+      "builtin:tests-hidden": "deny",
+      "builtin:tests-only": "deny",
+      "builtin:committer": "deny",
+      "builtin:reviewer": "deny",
+      "builtin:scribe-only": "deny",
+      "builtin:deps-mutator": "allow",
+      "builtin:no-shell": "deny",
+      "builtin:implementation-only": "deny",
+      "builtin:git-full": "allow",
+    } as const satisfies Record<BuiltinProfileName, "allow" | "deny">;
+    const profiles = policyConfig.profiles as Record<string, ProfilePolicy>;
+
+    expect(Object.keys(expectedNetworkPostures)).toEqual(builtinProfileNames);
+    for (const [name, expectedNetwork] of Object.entries(
+      expectedNetworkPostures,
+    )) {
+      const sandbox = profiles[name].sandbox;
+      expect(
+        typeof sandbox === "object" && sandbox !== null
+          ? sandbox.network
+          : undefined,
+        name,
+      ).toBe(expectedNetwork);
+    }
   });
 
   it("tests-hidden is renamed from tests-disallowed", () => {

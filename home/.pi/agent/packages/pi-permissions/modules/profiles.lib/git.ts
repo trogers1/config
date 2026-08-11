@@ -25,5 +25,6 @@ export const committerProfile = extendProfile(baseProfile, {
 export const gitFullProfile = extendProfile(committerProfile, {
   ...ruleSetRegistry["ruleset:git-refs"],
   color: "red",
+  sandbox: { network: "allow" },
   emoji: "🔥",
 });

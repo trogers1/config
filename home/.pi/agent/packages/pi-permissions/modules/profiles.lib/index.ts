@@ -1,5 +1,10 @@
 import { definePolicyConfig } from "../policyHelpers";
-import { baseCompositionChain, baseProfile } from "./base";
+import {
+  baseCompositionChain,
+  baseProfile,
+  defaultWithNetCompositionChain,
+  defaultWithNetProfile,
+} from "./base";
 import {
   readOnlyCompositionChain,
   readOnlyProfile,
@@ -35,6 +40,7 @@ const configuredPolicy = definePolicyConfig({
   defaultProfile: "builtin:default",
   profiles: {
     "builtin:default": baseProfile,
+    "builtin:default-with-net": defaultWithNetProfile,
     "builtin:worker": workerProfile,
     "builtin:read-only": readOnlyProfile,
     "builtin:tests-hidden": testsHiddenProfile,
@@ -65,6 +71,7 @@ export const policyConfig = deepFreeze(configuredPolicy);
 /** Ordered provenance used by the explainer for shipped profiles. */
 export const builtinCompositionChains: Record<string, readonly string[]> = {
   "builtin:default": baseCompositionChain,
+  "builtin:default-with-net": defaultWithNetCompositionChain,
   "builtin:worker": workerCompositionChain,
   "builtin:read-only": readOnlyCompositionChain,
   "builtin:tests-hidden": testsHiddenCompositionChain,

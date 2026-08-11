@@ -23,6 +23,7 @@ const customProfileNamePattern = `^(?!(?:${reservedProfilePrefixes
 
 export const builtinProfileNames = [
   "builtin:default",
+  "builtin:default-with-net",
   "builtin:worker",
   "builtin:read-only",
   "builtin:tests-hidden",

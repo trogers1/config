@@ -38,20 +38,21 @@ different specificity.
 
 ## Profile catalog
 
-| Profile                       | Purpose                                                                                            |
-| ----------------------------- | -------------------------------------------------------------------------------------------------- |
-| `builtin:default`             | general-purpose main session: shell, git, package-manager, and guard rule sets                     |
-| `builtin:worker`              | default with `transform:deny-asks`; non-interactive subagents                                      |
-| `builtin:read-only`           | inspection tools only; writes limited to tmp/handoff/progress                                      |
-| `builtin:tests-only`          | default plus writes gated to test files                                                            |
-| `builtin:tests-hidden`        | default plus test files protected from read and write                                              |
-| `builtin:committer`           | default plus git-write rules (add/commit/rm/mv/reset/restore/checkout/rebase/cherry-pick/worktree) |
-| `builtin:reviewer`            | read-only plus test/build run rules                                                                |
-| `builtin:scribe-only`         | default plus writes gated to Markdown, docs/, and /tmp                                             |
-| `builtin:deps-mutator`        | default plus package-manager mutation allows                                                       |
-| `builtin:no-shell`            | default path policy with all Bash commands denied                                                  |
-| `builtin:implementation-only` | default plus test-file write denies                                                                |
-| `builtin:git-full`            | committer plus push/branch/tag/switch allows                                                       |
+| Profile                       | Purpose                                                                                                     |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `builtin:default`             | general-purpose main session: shell, git, package-manager, guard rule sets, and network-denied Bash sandbox |
+| `builtin:default-with-net`    | default posture with unrestricted sandbox network access                                                    |
+| `builtin:worker`              | default with `transform:deny-asks`; non-interactive subagents                                               |
+| `builtin:read-only`           | inspection tools only; writes limited to tmp/handoff/progress                                               |
+| `builtin:tests-only`          | default plus writes gated to test files                                                                     |
+| `builtin:tests-hidden`        | default plus test files protected from read and write                                                       |
+| `builtin:committer`           | default plus git-write rules (add/commit/rm/mv/reset/restore/checkout/rebase/cherry-pick/worktree)          |
+| `builtin:reviewer`            | read-only plus test/build run rules                                                                         |
+| `builtin:scribe-only`         | default plus writes gated to Markdown, docs/, and /tmp                                                      |
+| `builtin:deps-mutator`        | default plus package-manager mutation allows                                                                |
+| `builtin:no-shell`            | default path policy with all Bash commands denied                                                           |
+| `builtin:implementation-only` | default plus test-file write denies                                                                         |
+| `builtin:git-full`            | committer plus push/branch/tag/switch allows                                                                |
 
 Dangerous or guardrail-loosening profiles are named to make their behavior
 obvious (`deps-mutator`, `git-full`). Profiles may define optional `color`,
@@ -82,7 +83,12 @@ their last selected profile.
 
 ## Sandbox execution
 
-Sandboxing is opt-in per profile through the `sandbox` field. It adds an OS
+All shipped profiles enable the Bash sandbox. `builtin:default` denies network
+access; choose `builtin:default-with-net` when Bash needs unrestricted network
+access. `builtin:deps-mutator` and `builtin:git-full` also enable network access
+for dependency and remote-Git workflows. The other shipped profiles deny it.
+
+Sandboxing is configured per profile through the `sandbox` field. It adds an OS
 boundary behind the normal permission gate: approved LLM Bash calls run through
 the package-owned `bash` override, and its child process tree is contained.
 User-authored `!`/`!!` commands use the same sandbox operations when this

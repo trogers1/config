@@ -226,14 +226,33 @@
     },
     "gitlab-skills": {
       "extends": ["builtin:default"],
+      "sandbox": { "network": "allow" },
       "tools": {
         "bash": [
-          { "pattern": "bash *skills/address-comments/scripts/fetch-open-mr.sh*", "decision": "allow" },
-          { "pattern": "bash *skills/address-comments/scripts/fetch-mr-discussions.sh*", "decision": "allow" },
-          { "pattern": "bash *skills/address-comments/scripts/enrich-discussions.sh*", "decision": "allow" },
-          { "pattern": "bash *skills/address-comments/scripts/render-comments-md.sh*", "decision": "allow" },
-          { "pattern": "bash *skills/address-comments/scripts/refresh-robot-comments-md.sh*", "decision": "allow" },
-          { "pattern": "bash *skills/address-comments/scripts/refresh-all-comments-md.sh*", "decision": "allow" },
+          {
+            "pattern": "bash *skills/address-comments/scripts/fetch-open-mr.sh*",
+            "decision": "allow",
+          },
+          {
+            "pattern": "bash *skills/address-comments/scripts/fetch-mr-discussions.sh*",
+            "decision": "allow",
+          },
+          {
+            "pattern": "bash *skills/address-comments/scripts/enrich-discussions.sh*",
+            "decision": "allow",
+          },
+          {
+            "pattern": "bash *skills/address-comments/scripts/render-comments-md.sh*",
+            "decision": "allow",
+          },
+          {
+            "pattern": "bash *skills/address-comments/scripts/refresh-robot-comments-md.sh*",
+            "decision": "allow",
+          },
+          {
+            "pattern": "bash *skills/address-comments/scripts/refresh-all-comments-md.sh*",
+            "decision": "allow",
+          },
         ],
       },
       "readPaths": [
@@ -261,25 +280,41 @@
             "pattern": "npx prettier",
             "decision": "deny",
             "guidance": "Do not invoke Prettier through npx. Use the repository's configured formatter or make targeted edits with Pi's edit tool.",
-            "alternatives": ["npm run prettier:write", "npm run fix:prettier", "Use the edit tool for targeted changes"],
+            "alternatives": [
+              "npm run prettier:write",
+              "npm run fix:prettier",
+              "Use the edit tool for targeted changes",
+            ],
           },
           {
             "pattern": "npx prettier *",
             "decision": "deny",
             "guidance": "Do not invoke Prettier through npx. Use the repository's configured formatter or make targeted edits with Pi's edit tool.",
-            "alternatives": ["npm run prettier:write", "npm run fix:prettier", "Use the edit tool for targeted changes"],
+            "alternatives": [
+              "npm run prettier:write",
+              "npm run fix:prettier",
+              "Use the edit tool for targeted changes",
+            ],
           },
           {
             "pattern": "**/node_modules/.bin/*",
             "decision": "deny",
             "guidance": "Do not invoke packages directly. Use the repository's configured scripts.",
-            "alternatives": ["npm run prettier:write", "npm run fix:prettier", "npm test", "Use the edit tool to add needed scripts to package.json (or equivalent)"],
+            "alternatives": [
+              "npm run prettier:write",
+              "npm run fix:prettier",
+              "npm test",
+              "Use the edit tool to add needed scripts to package.json (or equivalent)",
+            ],
           },
           {
             "pattern": "npx vitest",
             "decision": "deny",
             "guidance": "Do not invoke Vitest through npx. Inspect package.json and use the repository's configured test script instead.",
-            "alternatives": ["npm test", "npm test -- <requested test filters>"],
+            "alternatives": [
+              "npm test",
+              "npm test -- <requested test filters>",
+            ],
           },
           {
             "pattern": "npx vitest *",
@@ -292,6 +327,7 @@
     },
     "performance-review": {
       "extends": ["builtin:default"],
+      "sandbox": { "network": "allow" },
       "color": "red",
       "emoji": "📋",
       "tools": {
@@ -308,5 +344,5 @@
       "color": "cyan",
       "emoji": "🧠",
     },
-  }
+  },
 }
