@@ -277,7 +277,7 @@ describe("specificity-first rule resolution", () => {
     ).toMatchObject({ decision: "deny" });
   });
 
-  it("warns for conflicts in a fully resolved profile and names that profile", () => {
+  it("hides built-in profile conflicts unless DEBUG=true", () => {
     const warnSpy = vi
       .spyOn(console, "warn")
       .mockImplementation(() => undefined);
@@ -285,15 +285,20 @@ describe("specificity-first rule resolution", () => {
       { pattern: "git status", decision: "allow" },
       { pattern: "git status", decision: "deny" },
     ]);
-
-    definePolicyConfig({
-      defaultProfile: "builtin:default",
+    const config = {
+      defaultProfile: "builtin:default" as const,
       profiles: { "builtin:default": conflicted },
-    });
+    };
 
+    definePolicyConfig(config);
+    expect(warnSpy).not.toHaveBeenCalled();
+
+    process.env.DEBUG = "true";
+    definePolicyConfig(config);
     expect(warnSpy).toHaveBeenCalledWith(
       "Profile 'builtin:default' has conflicting bash rules for pattern 'git status': 'allow' conflicts with later 'deny'.",
     );
+    delete process.env.DEBUG;
   });
 
   it("warns for path conflicts with overlapping contexts", () => {

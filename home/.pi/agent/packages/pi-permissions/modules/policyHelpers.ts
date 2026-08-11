@@ -542,11 +542,20 @@ function mapProfileRules(
   };
 }
 
+function shouldWarnForProfileRuleConflicts(profileName: string): boolean {
+  return (
+    process.env.DEBUG === "true" ||
+    (!profileName.startsWith("builtin:") && !profileName.startsWith("ruleset:"))
+  );
+}
+
 export function warnOnPolicyRuleConflicts(
   policyConfig: Pick<PolicyConfig, "profiles">,
 ): void {
   for (const [profileName, profile] of Object.entries(policyConfig.profiles)) {
-    warnOnProfileRuleConflicts(profileName, profile);
+    if (shouldWarnForProfileRuleConflicts(profileName)) {
+      warnOnProfileRuleConflicts(profileName, profile);
+    }
   }
 }
 
