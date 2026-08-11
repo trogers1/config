@@ -97,8 +97,7 @@ function createExtensionHarness() {
     "ls",
   ];
   const activeTools = new Set(["read", "bash", "edit", "write"]);
-  const packageBashSourceInfo = { source: "permissions-extension" };
-  let packageBashRegistered = false;
+  let packageBashTool: { name: string; execute?: unknown } | undefined;
   const api = {
     on(
       event: string,
@@ -112,17 +111,15 @@ function createExtensionHarness() {
     ) {
       commands.set(name, command);
     },
-    registerTool: vi.fn((tool: { name: string }) => {
-      if (tool.name === "bash") packageBashRegistered = true;
+    registerTool: vi.fn((tool: { name: string; execute?: unknown }) => {
+      if (tool.name === "bash") packageBashTool = tool;
     }),
     appendEntry: vi.fn(),
     getActiveTools: () => [...activeTools],
     getAllTools: () =>
       registeredTools.map((name) => ({
         name,
-        ...(name === "bash" && packageBashRegistered
-          ? { sourceInfo: packageBashSourceInfo }
-          : {}),
+        ...(name === "bash" && packageBashTool ? packageBashTool : {}),
       })),
     setActiveTools(toolNames: string[]) {
       activeTools.clear();

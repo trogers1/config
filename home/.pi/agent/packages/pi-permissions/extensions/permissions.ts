@@ -269,7 +269,9 @@ export default function (pi: ExtensionAPI) {
   // override delegates to it whenever sandboxing is disabled or explicitly
   // configured to fall back with a warning.
   const packageBashTool = createBashTool(startupCwd);
-  const packageBashSource = { key: undefined as string | undefined };
+  // Tool source metadata may change when Pi rebuilds its tool registry. This
+  // marker survives those rebuilds and identifies this registered wrapper.
+  const packageBashOwnershipMarker = "\n[pi-permissions sandbox wrapper]";
   const subagentProfile = process.env.PI_SUBAGENT_PROFILE?.trim();
   const subagentPermissibleRules = parseSubagentPermissibleRules(
     process.env.PI_SUBAGENT_PERMISSIBLE_GLOBS,
@@ -364,12 +366,7 @@ export default function (pi: ExtensionAPI) {
 
   function isBashToolOwned(): boolean {
     const bashTool = pi.getAllTools().find((tool) => tool.name === "bash");
-    const currentSourceKey = bashTool
-      ? JSON.stringify(bashTool.sourceInfo)
-      : undefined;
-    return Boolean(
-      packageBashSource.key && currentSourceKey === packageBashSource.key,
-    );
+    return bashTool?.description?.endsWith(packageBashOwnershipMarker) ?? false;
   }
 
   function ensureBashToolOwnership(): void {
@@ -576,6 +573,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
 
   pi.registerTool({
     ...packageBashTool,
+    description: `${packageBashTool.description}${packageBashOwnershipMarker}`,
     async execute(toolCallId, params, signal, onUpdate, ctx) {
       const resolution = await resolveSandbox({
         profile: activeProfile,
@@ -623,13 +621,6 @@ The permissions gate remains loaded and will fail closed until the profile is co
       );
     },
   });
-  const registeredPackageBash = pi
-    .getAllTools()
-    .find((tool) => tool.name === "bash");
-  packageBashSource.key = registeredPackageBash
-    ? JSON.stringify(registeredPackageBash.sourceInfo)
-    : undefined;
-
   pi.registerCommand("permissions", {
     description:
       "Explain which rule decided access: /permissions explain <tool> <input>",
