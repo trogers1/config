@@ -163,9 +163,15 @@ unknown implementation outside the requested boundary.
 
 ## Status and inspection
 
-Use `/sandbox` to inspect the current posture. Active output includes the
-backend, network mode, effective writable roots, subagent scope, Bash-tool
-ownership, and coverage summary. The report distinguishes:
+Use `/sandbox` to inspect the current posture. Use `/sandbox-off` to disable
+Bash sandboxing for the current session. `/sandbox-on` clears that override and
+returns to the active profile's configured posture. Use `/sandbox-on-force` to
+explicitly force a conservative no-network sandbox for a profile with
+`sandbox: false`; filesystem restrictions still derive from that profile's
+resolved policy. The override is persisted in session history. The status
+indicator uses `🔐` when sandboxing is on and `❌` when it is off. Active output
+includes the backend, network mode, effective writable roots, subagent scope,
+Bash-tool ownership, and coverage summary. The report distinguishes:
 
 | Coverage category       | Meaning                                                                                  |
 | ----------------------- | ---------------------------------------------------------------------------------------- |

@@ -147,6 +147,7 @@ const defaultPolicy: ProfilePolicy = {
 
 const moduleDir = typeof __dirname === "string" ? __dirname : process.cwd();
 const profileEntryType = "pi-permissions-profile";
+const sandboxEntryType = "pi-permissions-sandbox";
 /** Exposes the active parent policy to subagent launchers in this Pi process. */
 const activeProfileEnvKey = "PI_PERMISSIONS_ACTIVE_PROFILE";
 const readToolNames = ["read", "grep", "find", "ls"] as const;
@@ -166,6 +167,12 @@ function readStringProperty(value: unknown, key: string): string | undefined {
   if (typeof value !== "object" || value === null) return undefined;
   const property: unknown = Reflect.get(value, key);
   return typeof property === "string" ? property : undefined;
+}
+
+type SandboxOverride = "inherit" | "enabled" | "disabled";
+
+function isSandboxOverride(value: string): value is SandboxOverride {
+  return value === "inherit" || value === "enabled" || value === "disabled";
 }
 
 export default function (pi: ExtensionAPI) {
@@ -231,10 +238,10 @@ export default function (pi: ExtensionAPI) {
     return `profile: ${emoji}${colorize(ansi.bold(profileName))}`;
   }
 
-  function formatSandboxStatus(profileName: ProfileName): string | undefined {
-    const sandbox = activePolicy(profileName).sandbox;
+  function formatSandboxStatus(policy: ProfilePolicy): string | undefined {
+    const sandbox = policy.sandbox;
     if (typeof sandbox !== "object") return undefined;
-    return `sandbox: ${sandbox.onUnavailable === "warn" ? "off" : "blocked"}`;
+    return `sandbox: ${sandbox.onUnavailable === "warn" ? "unavailable" : "blocked"} 🔐`;
   }
 
   function formatSandboxReport(
@@ -279,9 +286,31 @@ export default function (pi: ExtensionAPI) {
   const profileConfigErrorReason = profileConfigLoad.error?.message;
   let subagentProfileErrorReason: string | undefined;
   let activeProfile: ProfileName = policyConfig.defaultProfile;
+  let sandboxOverride: SandboxOverride = "inherit";
   let profileActivationQueue: Promise<void> = Promise.resolve();
   const configurationErrorReason = () =>
     profileConfigErrorReason ?? subagentProfileErrorReason;
+
+  function effectiveSandboxPolicy(profile: ProfileName): ProfilePolicy {
+    const policy = activePolicy(profile);
+    if (sandboxOverride !== "enabled" || typeof policy.sandbox === "object") {
+      return policy;
+    }
+    // Forced sandboxing retains the profile's resolved filesystem policy but
+    // supplies the narrowest network posture when it opted out entirely.
+    return { ...policy, sandbox: { network: "deny" } };
+  }
+
+  async function resolveActiveSandbox(cwd: string): Promise<SandboxResolution> {
+    if (sandboxOverride === "disabled") return { kind: "none" };
+    return await resolveSandbox({
+      profile: activeProfile,
+      policy: effectiveSandboxPolicy(activeProfile),
+      startupCwd: cwd,
+      subagentScopes: subagentPermissibleRules,
+      configurationError: configurationErrorReason(),
+    });
+  }
 
   function preserveConfigurationErrorStatus(ctx: ExtensionContext): boolean {
     const errorReason = configurationErrorReason();
@@ -292,23 +321,18 @@ export default function (pi: ExtensionAPI) {
   }
 
   async function refreshSandboxStatus(ctx: ExtensionContext): Promise<void> {
-    const policy = activePolicy(activeProfile);
-    const sessionCwd = ctx.cwd ?? startupCwd;
-    const resolution = await resolveSandbox({
-      profile: activeProfile,
-      policy,
-      startupCwd: sessionCwd,
-      subagentScopes: subagentPermissibleRules,
-      configurationError: configurationErrorReason(),
-    });
+    const resolution = await resolveActiveSandbox(ctx.cwd ?? startupCwd);
 
     if (resolution.kind === "none") {
-      ctx.ui.setStatus("sandbox", undefined);
+      ctx.ui.setStatus("sandbox", "sandbox: ❌ off");
       return;
     }
 
     if (resolution.kind === "unavailable") {
-      ctx.ui.setStatus("sandbox", formatSandboxStatus(activeProfile));
+      ctx.ui.setStatus(
+        "sandbox",
+        formatSandboxStatus(effectiveSandboxPolicy(activeProfile)),
+      );
       if (ctx.hasUI) {
         ctx.ui.notify(
           resolution.reason,
@@ -318,7 +342,7 @@ export default function (pi: ExtensionAPI) {
       return;
     }
 
-    ctx.ui.setStatus("sandbox", `sandbox: ${resolution.prepared.backend} 🔒`);
+    ctx.ui.setStatus("sandbox", `sandbox: ${resolution.prepared.backend} 🔐`);
   }
 
   function sandboxUnavailableResult(reason: string) {
@@ -406,14 +430,24 @@ The permissions gate remains loaded and will fail closed until the profile is co
 
   function restoreActiveProfile(ctx: ExtensionContext): void {
     activeProfile = policyConfig.defaultProfile;
+    sandboxOverride = "inherit";
     subagentProfileErrorReason = undefined;
 
     for (const entry of ctx.sessionManager.getEntries()) {
-      if (entry.type !== "custom" || entry.customType !== profileEntryType)
-        continue;
-      const profile = readStringProperty(entry.data, "profile");
-      if (profile && isProfileName(profile)) {
-        activeProfile = profile;
+      if (entry.type !== "custom") continue;
+
+      if (entry.customType === profileEntryType) {
+        const profile = readStringProperty(entry.data, "profile");
+        if (profile && isProfileName(profile)) {
+          activeProfile = profile;
+        }
+      }
+
+      if (entry.customType === sandboxEntryType) {
+        const override = readStringProperty(entry.data, "override");
+        if (override && isSandboxOverride(override)) {
+          sandboxOverride = override;
+        }
       }
     }
 
@@ -542,17 +576,55 @@ The permissions gate remains loaded and will fail closed until the profile is co
     },
   });
 
+  async function setSandboxOverride(
+    override: SandboxOverride,
+    ctx: ExtensionContext,
+    message: string,
+  ): Promise<void> {
+    sandboxOverride = override;
+    pi.appendEntry(sandboxEntryType, { override, timestamp: Date.now() });
+    await clearSandboxCaches();
+    await refreshSandboxStatus(ctx);
+    ctx.ui.notify(message, "info");
+  }
+
+  pi.registerCommand("sandbox-on", {
+    description: "Use the active profile's Bash sandbox configuration",
+    handler: async (_args, ctx) => {
+      if (preserveConfigurationErrorStatus(ctx)) return;
+      await setSandboxOverride(
+        "inherit",
+        ctx,
+        "Bash sandboxing now follows the active profile 🔐",
+      );
+    },
+  });
+
+  pi.registerCommand("sandbox-off", {
+    description: "Disable Bash sandboxing for this session",
+    handler: async (_args, ctx) => {
+      if (preserveConfigurationErrorStatus(ctx)) return;
+      await setSandboxOverride("disabled", ctx, "Bash sandboxing disabled ❌");
+    },
+  });
+
+  pi.registerCommand("sandbox-on-force", {
+    description: "Force a no-network Bash sandbox for this session",
+    handler: async (_args, ctx) => {
+      if (preserveConfigurationErrorStatus(ctx)) return;
+      await setSandboxOverride(
+        "enabled",
+        ctx,
+        "Bash sandboxing forced on with network denied 🔐",
+      );
+    },
+  });
+
   pi.registerCommand("sandbox", {
     description: "Show the active sandbox posture",
     handler: async (_args, ctx) => {
       if (preserveConfigurationErrorStatus(ctx)) return;
-      const resolution = await resolveSandbox({
-        profile: activeProfile,
-        policy: activePolicy(activeProfile),
-        startupCwd: ctx.cwd ?? startupCwd,
-        subagentScopes: subagentPermissibleRules,
-        configurationError: configurationErrorReason(),
-      });
+      const resolution = await resolveActiveSandbox(ctx.cwd ?? startupCwd);
 
       if (resolution.kind === "none") {
         ctx.ui.notify(`Sandbox: off for ${activeProfile}.`, "info");
@@ -575,13 +647,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
     ...packageBashTool,
     description: `${packageBashTool.description}${packageBashOwnershipMarker}`,
     async execute(toolCallId, params, signal, onUpdate, ctx) {
-      const resolution = await resolveSandbox({
-        profile: activeProfile,
-        policy: activePolicy(activeProfile),
-        startupCwd: ctx.cwd ?? startupCwd,
-        subagentScopes: subagentPermissibleRules,
-        configurationError: configurationErrorReason(),
-      });
+      const resolution = await resolveActiveSandbox(ctx.cwd ?? startupCwd);
 
       if (resolution.kind === "none") {
         return await executeBashWithExitCode(() =>
@@ -730,15 +796,11 @@ The permissions gate remains loaded and will fail closed until the profile is co
   pi.on("before_agent_start", async (event, ctx) => {
     const policy = activePolicy(activeProfile);
     const promptSections = [`# Active profile: ${activeProfile}`];
-    const resolution = await resolveSandbox({
-      profile: activeProfile,
-      policy,
-      startupCwd: ctx.cwd ?? startupCwd,
-      subagentScopes: subagentPermissibleRules,
-      configurationError: configurationErrorReason(),
-    });
+    const resolution = await resolveActiveSandbox(ctx.cwd ?? startupCwd);
 
-    if (resolution.kind === "active") {
+    if (resolution.kind === "none") {
+      promptSections.push("Bash sandboxing is disabled for this session.");
+    } else if (resolution.kind === "active") {
       promptSections.push(
         `Bash commands run in a kernel sandbox (${resolution.prepared.backend}). Network is ${resolution.spec.network}.`,
       );
@@ -775,14 +837,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
       };
     }
 
-    const policy = activePolicy(activeProfile);
-    const resolution = await resolveSandbox({
-      profile: activeProfile,
-      policy,
-      startupCwd: ctx.cwd ?? startupCwd,
-      subagentScopes: subagentPermissibleRules,
-      configurationError: configurationErrorReason(),
-    });
+    const resolution = await resolveActiveSandbox(ctx.cwd ?? startupCwd);
 
     if (resolution.kind === "unavailable") {
       if (resolution.onUnavailable === "warn") {
@@ -841,13 +896,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
       );
       if (gateResult) return gateResult;
 
-      const sandboxResolution = await resolveSandbox({
-        profile: activeProfile,
-        policy,
-        startupCwd: effectiveCwd,
-        subagentScopes: subagentPermissibleRules,
-        configurationError: configurationErrorReason(),
-      });
+      const sandboxResolution = await resolveActiveSandbox(effectiveCwd);
 
       if (sandboxResolution.kind === "active" && !isBashToolOwned()) {
         return {

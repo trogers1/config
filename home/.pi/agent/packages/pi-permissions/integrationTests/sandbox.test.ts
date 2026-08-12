@@ -1,11 +1,35 @@
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { createExtensionHarness } from "./support/extensionHarness";
 
 const tempDirectories: string[] = [];
+
+// These are OS-acceptance tests, so they must be able to initialize a real
+// Seatbelt boundary. macOS rejects nested sandbox-exec invocations.
+beforeAll(() => {
+  const probe = spawnSync(
+    "/usr/bin/sandbox-exec",
+    ["-p", "(version 1) (allow default)", "/usr/bin/true"],
+    { encoding: "utf8" },
+  );
+  const output = `${probe.stdout ?? ""}${probe.stderr ?? ""}`;
+  const errorCode =
+    probe.error && "code" in probe.error && typeof probe.error.code === "string"
+      ? probe.error.code
+      : undefined;
+  if (
+    errorCode === "EPERM" ||
+    /sandbox_apply: Operation not permitted/i.test(output)
+  ) {
+    throw new Error(
+      "sandbox.test.ts is an OS-acceptance suite and must run outside an existing macOS sandbox; sandbox-exec cannot create a nested sandbox.",
+    );
+  }
+});
 
 afterEach(() => {
   delete process.env.PI_PERMISSIONS_PROFILE_CONFIG;
@@ -215,6 +239,46 @@ describe("sandbox full-harness OS acceptance", () => {
     expect(
       fs.existsSync(path.join(sandboxedRoot, "allowed", "disclosed")),
     ).toBe(false);
+
+    // The session commands must provide the same boundary transition without
+    // requiring a profile-config change or a new Pi session.
+    const toggledRoot = fixture();
+    writeProfileConfig({});
+    const harness = createExtensionHarness({
+      contextCwd: toggledRoot,
+      hasUI: false,
+    });
+    await harness.start();
+    try {
+      await harness.runCommand("sandbox-off");
+      expect(
+        exitCodeFrom({
+          result: await harness.executeTool({
+            name: "bash",
+            params: { command: expression, timeout: 10 },
+          }),
+        }),
+      ).toBe(0);
+      expect(
+        fs.readFileSync(path.join(toggledRoot, "allowed", "disclosed"), "utf8"),
+      ).toBe("do-not-disclose");
+
+      fs.rmSync(path.join(toggledRoot, "allowed", "disclosed"));
+      await harness.runCommand("sandbox-on");
+      expect(
+        exitCodeFrom({
+          result: await harness.executeTool({
+            name: "bash",
+            params: { command: expression, timeout: 10 },
+          }),
+        }),
+      ).not.toBe(0);
+      expect(
+        fs.existsSync(path.join(toggledRoot, "allowed", "disclosed")),
+      ).toBe(false);
+    } finally {
+      await harness.shutdown();
+    }
   });
 
   it("selects inherited, replacement, and explicitly disabled sandbox postures from a composed custom profile", async () => {
@@ -636,6 +700,98 @@ describe("sandbox full-harness OS acceptance", () => {
     } finally {
       await harness.shutdown();
     }
+  });
+
+  describe("sandbox session override matrix", () => {
+    const commands = ["sandbox-on", "sandbox-off", "sandbox-on-force"] as const;
+    const cases = [true, false].flatMap((profileSandboxEnabled) =>
+      commands.flatMap((previousCommand) =>
+        commands.map((command) => ({
+          profileSandboxEnabled,
+          previousCommand,
+          command,
+        })),
+      ),
+    );
+
+    it.each(cases)(
+      "$command from $previousCommand follows the $profileSandboxEnabled profile sandbox",
+      async ({ profileSandboxEnabled, previousCommand, command }) => {
+        const root = fixture();
+        writeProfileConfig({ sandboxEnabled: profileSandboxEnabled });
+        const harness = createExtensionHarness({
+          contextCwd: root,
+          hasUI: false,
+        });
+        const toolDisclosure = node({
+          source:
+            "require('fs').writeFileSync('allowed/tool-disclosed', require('fs').readFileSync('protected/secret'))",
+        });
+        const userDisclosure = node({
+          source:
+            "require('fs').writeFileSync('allowed/user-disclosed', require('fs').readFileSync('protected/secret'))",
+        });
+        const sandboxed =
+          command === "sandbox-on-force" ||
+          (command === "sandbox-on" && profileSandboxEnabled);
+
+        await harness.start();
+        try {
+          // Set every possible prior override before applying the command
+          // under test, so all state transitions are exercised.
+          await harness.runCommand(previousCommand);
+          await harness.runCommand(command);
+
+          expect(harness.ui.setStatus).toHaveBeenLastCalledWith(
+            "sandbox",
+            sandboxed ? "sandbox: macos 🔐" : "sandbox: ❌ off",
+          );
+
+          const userBash = await harness.callUserBash({
+            cwd: root,
+            command: userDisclosure,
+            excludeFromContext: false,
+          });
+          if (sandboxed) {
+            if (
+              !userBash ||
+              !("operations" in userBash) ||
+              !userBash.operations
+            ) {
+              throw new Error(
+                "Active sandbox did not provide user_bash operations",
+              );
+            }
+            expect(
+              (
+                await userBash.operations.exec(userDisclosure, root, {
+                  onData: () => undefined,
+                  timeout: 10,
+                })
+              ).exitCode,
+            ).not.toBe(0);
+            expect(
+              fs.existsSync(path.join(root, "allowed", "user-disclosed")),
+            ).toBe(false);
+          } else {
+            expect(userBash).toBeUndefined();
+          }
+
+          const toolExitCode = exitCodeFrom({
+            result: await harness.executeTool({
+              name: "bash",
+              params: { command: toolDisclosure, timeout: 10 },
+            }),
+          });
+          expect(toolExitCode === 0).toBe(!sandboxed);
+          expect(
+            fs.existsSync(path.join(root, "allowed", "tool-disclosed")),
+          ).toBe(!sandboxed);
+        } finally {
+          await harness.shutdown();
+        }
+      },
+    );
   });
 
   it("returns no user_bash override when the selected profile disables sandboxing", async () => {

@@ -106,7 +106,7 @@ describe("sandbox unavailable-backend lifecycle", () => {
     ).toMatchObject({ result: { exitCode: 126 } });
     expect(harness.ui.setStatus).toHaveBeenCalledWith(
       "sandbox",
-      "sandbox: blocked",
+      "sandbox: blocked 🔐",
     );
   });
 
@@ -170,7 +170,7 @@ describe("sandbox unavailable-backend lifecycle", () => {
     ).resolves.toBeUndefined();
     expect(harness.ui.setStatus).toHaveBeenCalledWith(
       "sandbox",
-      "sandbox: off",
+      "sandbox: unavailable 🔐",
     );
     expect(harness.ui.notify).toHaveBeenCalledWith(
       "sandbox runtime is unavailable",
