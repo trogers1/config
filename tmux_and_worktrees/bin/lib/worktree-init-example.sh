@@ -28,11 +28,13 @@ if [ -f package-lock.json ]; then
     npm ci
 fi
 
-# Share Terraform initialization data with the main checkout. Do not replace
-# an existing worktree-specific directory or symlink. Use an absolute source
-# path because these directories may be nested below the worktree root.
+# Share Terraform initialization data and local configuration with the main
+# checkout. Do not replace an existing worktree-specific file, directory, or
+# symlink. Use absolute source paths because these may be nested below root.
 repo_root="$(cd "$REPO_ROOT" && pwd -P)"
-find "$repo_root/terraform" -type d -name .terraform -print 2>/dev/null |
+terraform_root="$repo_root/terraform"
+
+find "$terraform_root" -type d -name .terraform -print 2>/dev/null |
 while IFS= read -r terraform_dir; do
     relative_dir="${terraform_dir#"$repo_root"/}"
 
@@ -40,5 +42,18 @@ while IFS= read -r terraform_dir; do
         mkdir -p "$(dirname "$relative_dir")"
         ln -s "$terraform_dir" "$relative_dir"
         log "Linked $relative_dir from main checkout"
+    fi
+done
+
+# State and tfvars files commonly hold per-developer or environment-specific
+# values and are deliberately untracked. Mirror them at their original paths.
+find "$terraform_root" -type f \( -name '*.tfstate' -o -name '*.tfstate.*' -o -name '*.tfvars' \) -print 2>/dev/null |
+while IFS= read -r terraform_file; do
+    relative_file="${terraform_file#"$repo_root"/}"
+
+    if [ ! -e "$relative_file" ] && [ ! -L "$relative_file" ]; then
+        mkdir -p "$(dirname "$relative_file")"
+        ln -s "$terraform_file" "$relative_file"
+        log "Linked $relative_file from main checkout"
     fi
 done

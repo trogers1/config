@@ -72,15 +72,42 @@ run_startup_script() {
     local wt_path="$2"
     local startup_script="$SCRIPT_DIR/lib/worktree-init-example.sh"
 
-    if [ -f "$repo_root/.worktree-init.sh" ]; then
+    # An empty placeholder should not suppress the bundled baseline setup.
+    # Use a non-empty project script only when it actually supplies setup.
+    if [ -s "$repo_root/.worktree-init.sh" ]; then
         startup_script="$repo_root/.worktree-init.sh"
-    elif [ -f "$repo_root/scripts/worktree-init.sh" ]; then
+    elif [ -s "$repo_root/scripts/worktree-init.sh" ]; then
         startup_script="$repo_root/scripts/worktree-init.sh"
     fi
 
     log "Running startup script: $startup_script"
     (cd "$wt_path" && REPO_ROOT="$repo_root" WORKTREE_PATH="$wt_path" bash "$startup_script")
 }
+
+if [ "${1:-}" = "init" ]; then
+    if [ "$#" -gt 2 ]; then
+        echo "Usage: dtree init [branch]" >&2
+        exit 1
+    fi
+
+    tmux_worktree_require_git
+    tmux_worktree_require_git_repo
+    repo_root="$(tmux_worktree_main_repo_root)"
+    branch="${2:-$(tmux_worktree_git_current_branch)}"
+    if [ -z "$branch" ]; then
+        echo "[dtree] Cannot determine a branch. Use: dtree init <branch>" >&2
+        exit 1
+    fi
+
+    wt_path="$(tmux_worktree_path_for_branch "$repo_root" "$branch")"
+    if [ -z "$wt_path" ] || [ "$wt_path" = "$repo_root" ]; then
+        echo "[dtree] No linked worktree found for branch: $branch" >&2
+        exit 1
+    fi
+
+    run_startup_script "$repo_root" "$wt_path"
+    exit 0
+fi
 
 branch="${1:-}"
 base_branch="${2:-}"

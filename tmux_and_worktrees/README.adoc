@@ -12,6 +12,7 @@ This directory contains a portable tmux/worktree workflow you can copy into its 
 Writing-mode `nvim` overrides are passed explicitly by `wopen`/`wnew`, so plain
 `dnew` does not depend on inherited shell environment for editor mode.
 * `dtree <branch> [base]` -> create/switch to a git worktree + tmux session (defaults base to current branch)
+* `dtree init [branch]` -> rerun the worktree startup script (defaults to the current branch's worktree)
 * `dclose [branch]` -> kill the tmux session only, leaving the checkout/worktree intact
 * `dkill [branch] [--force]` -> kill the worktree tmux session and delete that worktree + local branch
 * `dmerge [branch] [target] [--keep]` -> interactively choose merge target and clean up
@@ -133,8 +134,10 @@ current one.
 
 == Worktree startup
 
-Before opening a newly created worktree session, `dtree` runs one startup script.
-It uses the first project-specific script it finds in the main checkout:
+Before opening a newly created worktree session, `dtree` runs one startup script. Run
+`dtree init [branch]` to rerun that script later without creating a session; it defaults
+to the current branch's linked worktree and rejects the primary checkout.
+It uses the first non-empty project-specific script it finds in the main checkout:
 
 * `.worktree-init.sh`
 * `scripts/worktree-init.sh`
@@ -144,8 +147,8 @@ Otherwise, it runs the bundled example script,
 
 * symlinks `.env` from the main checkout when it exists
 * runs `npm ci` when `package-lock.json` exists
-* symlinks Terraform state files (`terraform/**.tfstate` and `terraform/**.tfstate.*`) from
-  the main checkout when they exist
+* symlinks Terraform state files (`terraform/**.tfstate` and `terraform/**.tfstate.*`) and
+  variable files (`terraform/**.tfvars`) from the main checkout when they exist
 
 Copy that example into one of the project-specific locations and adapt it for
 project setup. The script runs with its working directory set to the new
