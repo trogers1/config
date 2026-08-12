@@ -175,6 +175,25 @@ function isSandboxOverride(value: string): value is SandboxOverride {
   return value === "inherit" || value === "enabled" || value === "disabled";
 }
 
+const PERMISSION_BLOCK_PREFIX = "[⛔️ by pi-permissions] " as const;
+
+/** Mark every tool-call denial with a machine-readable, stable prefix. */
+function markPermissionBlock<
+  T extends { block?: boolean; reason?: string } | undefined,
+>(result: T): T {
+  if (
+    result?.block &&
+    result.reason &&
+    !result.reason.startsWith(PERMISSION_BLOCK_PREFIX)
+  ) {
+    return {
+      ...result,
+      reason: `${PERMISSION_BLOCK_PREFIX}${result.reason}`,
+    };
+  }
+  return result;
+}
+
 export default function (pi: ExtensionAPI) {
   const profileConfigPath =
     process.env.PI_PERMISSIONS_PROFILE_CONFIG?.trim() || undefined;
@@ -865,154 +884,158 @@ The permissions gate remains loaded and will fail closed until the profile is co
   });
 
   pi.on("tool_call", async (event, ctx) => {
-    const errorReason = configurationErrorReason();
-    if (errorReason) {
-      return { block: true, reason: errorReason };
-    }
+    return markPermissionBlock(
+      await (async () => {
+        const errorReason = configurationErrorReason();
+        if (errorReason) {
+          return { block: true, reason: errorReason };
+        }
 
-    const policy = activePolicy(activeProfile);
+        const policy = activePolicy(activeProfile);
 
-    if (isToolCallEventType("bash", event)) {
-      const command = event.input.command ?? "";
-      const effectiveCwd = ctx.cwd ?? startupCwd;
-      const scopeDecision = decideSubagentBashScope(
-        command,
-        startupCwd,
-        effectiveCwd,
-        policy,
-        subagentPermissibleRules,
-      );
-      if (scopeDecision) return scopeDecision;
+        if (isToolCallEventType("bash", event)) {
+          const command = event.input.command ?? "";
+          const effectiveCwd = ctx.cwd ?? startupCwd;
+          const scopeDecision = decideSubagentBashScope(
+            command,
+            startupCwd,
+            effectiveCwd,
+            policy,
+            subagentPermissibleRules,
+          );
+          if (scopeDecision) return scopeDecision;
 
-      event.input.command = injectRipgrepProtectedPathGlobs(
-        command,
-        policy.protectedPathRules ?? [],
-      );
-      const gateResult = await gateBash(
-        event.input.command,
-        effectiveCwd,
-        ctx,
-        policy,
-      );
-      if (gateResult) return gateResult;
+          event.input.command = injectRipgrepProtectedPathGlobs(
+            command,
+            policy.protectedPathRules ?? [],
+          );
+          const gateResult = await gateBash(
+            event.input.command,
+            effectiveCwd,
+            ctx,
+            policy,
+          );
+          if (gateResult) return gateResult;
 
-      const sandboxResolution = await resolveActiveSandbox(effectiveCwd);
+          const sandboxResolution = await resolveActiveSandbox(effectiveCwd);
 
-      if (sandboxResolution.kind === "active" && !isBashToolOwned()) {
-        return {
-          block: true,
-          reason:
-            "pi-permissions' bash override no longer owns the effective bash tool; sandboxed execution is blocked",
-        };
-      }
-
-      if (sandboxResolution.kind === "unavailable") {
-        if (sandboxResolution.onUnavailable === "warn") {
-          if (ctx.hasUI) {
-            ctx.ui.notify(sandboxResolution.reason, "warning");
+          if (sandboxResolution.kind === "active" && !isBashToolOwned()) {
+            return {
+              block: true,
+              reason:
+                "pi-permissions' bash override no longer owns the effective bash tool; sandboxed execution is blocked",
+            };
           }
+
+          if (sandboxResolution.kind === "unavailable") {
+            if (sandboxResolution.onUnavailable === "warn") {
+              if (ctx.hasUI) {
+                ctx.ui.notify(sandboxResolution.reason, "warning");
+              }
+              return undefined;
+            }
+
+            return {
+              block: true,
+              reason: `Bash sandbox unavailable: ${sandboxResolution.reason}`,
+            };
+          }
+
           return undefined;
         }
 
-        return {
-          block: true,
-          reason: `Bash sandbox unavailable: ${sandboxResolution.reason}`,
-        };
-      }
+        if (isToolCallEventType("grep", event)) {
+          const reason = injectGrepProtectedPathGlob(
+            event.input,
+            policy.protectedPathRules ?? [],
+          );
+          if (reason) return { block: true, reason };
+        }
 
-      return undefined;
-    }
+        if (!isPathToolName(event.toolName)) {
+          const customRules = policy.tools[event.toolName];
+          if (!customRules) return undefined;
+          return await gateCustomTool(
+            event.toolName,
+            event.input,
+            customRules,
+            ctx,
+          );
+        }
 
-    if (isToolCallEventType("grep", event)) {
-      const reason = injectGrepProtectedPathGlob(
-        event.input,
-        policy.protectedPathRules ?? [],
-      );
-      if (reason) return { block: true, reason };
-    }
+        const rules = isReadToolName(event.toolName)
+          ? policy.readPaths
+          : isWriteToolName(event.toolName)
+            ? policy.writePaths
+            : undefined;
+        if (!rules) return undefined;
 
-    if (!isPathToolName(event.toolName)) {
-      const customRules = policy.tools[event.toolName];
-      if (!customRules) return undefined;
-      return await gateCustomTool(
-        event.toolName,
-        event.input,
-        customRules,
-        ctx,
-      );
-    }
+        const requestedPath = toolPath(event.toolName, event.input);
+        const absolutePath = resolveRequestedPath(
+          requestedPath,
+          ctx.cwd ?? startupCwd,
+        );
+        if (
+          (event.toolName === "edit" || event.toolName === "write") &&
+          subagentPermissibleRules
+        ) {
+          const scopeDecision = evaluatePathByPattern(
+            absolutePath,
+            startupCwd,
+            subagentPermissibleRules,
+            "deny",
+            event.toolName,
+            policy.protectedPathRules ?? [],
+          );
+          if (scopeDecision.decision !== "allow") {
+            return {
+              block: true,
+              reason: appendPolicySteering(
+                `${event.toolName} denied: path is outside PI_SUBAGENT_PERMISSIBLE_GLOBS: ${displayPath(absolutePath, startupCwd)}`,
+                [scopeDecision.rule],
+              ),
+            };
+          }
+        }
+        const policyDecision = evaluatePathByPattern(
+          absolutePath,
+          startupCwd,
+          rules,
+          "allow",
+          event.toolName,
+          policy.protectedPathRules ?? [],
+        );
+        const matchPath = policyDecision.matchPath;
 
-    const rules = isReadToolName(event.toolName)
-      ? policy.readPaths
-      : isWriteToolName(event.toolName)
-        ? policy.writePaths
-        : undefined;
-    if (!rules) return undefined;
+        if (policyDecision.decision === "deny") {
+          return {
+            block: true,
+            reason: appendPolicySteering(
+              `${event.toolName} denied by policy for path: ${displayPath(absolutePath, startupCwd)}`,
+              [policyDecision.rule],
+            ),
+          };
+        }
 
-    const requestedPath = toolPath(event.toolName, event.input);
-    const absolutePath = resolveRequestedPath(
-      requestedPath,
-      ctx.cwd ?? startupCwd,
+        if (policyDecision.decision === "ask") {
+          const approval = await confirmOrBlock(
+            ctx,
+            `Allow ${event.toolName}?`,
+            `${event.toolName} wants to access:\n${absolutePath}\n\nMatched policy path:\n${matchPath}`,
+          );
+          if (!approval.approved)
+            return {
+              block: true,
+              reason: appendUserGuidance(
+                `${event.toolName} was not approved: ${absolutePath}`,
+                approval.guidance,
+              ),
+            };
+        }
+
+        return undefined;
+      })(),
     );
-    if (
-      (event.toolName === "edit" || event.toolName === "write") &&
-      subagentPermissibleRules
-    ) {
-      const scopeDecision = evaluatePathByPattern(
-        absolutePath,
-        startupCwd,
-        subagentPermissibleRules,
-        "deny",
-        event.toolName,
-        policy.protectedPathRules ?? [],
-      );
-      if (scopeDecision.decision !== "allow") {
-        return {
-          block: true,
-          reason: appendPolicySteering(
-            `${event.toolName} denied: path is outside PI_SUBAGENT_PERMISSIBLE_GLOBS: ${displayPath(absolutePath, startupCwd)}`,
-            [scopeDecision.rule],
-          ),
-        };
-      }
-    }
-    const policyDecision = evaluatePathByPattern(
-      absolutePath,
-      startupCwd,
-      rules,
-      "allow",
-      event.toolName,
-      policy.protectedPathRules ?? [],
-    );
-    const matchPath = policyDecision.matchPath;
-
-    if (policyDecision.decision === "deny") {
-      return {
-        block: true,
-        reason: appendPolicySteering(
-          `${event.toolName} denied by policy for path: ${displayPath(absolutePath, startupCwd)}`,
-          [policyDecision.rule],
-        ),
-      };
-    }
-
-    if (policyDecision.decision === "ask") {
-      const approval = await confirmOrBlock(
-        ctx,
-        `Allow ${event.toolName}?`,
-        `${event.toolName} wants to access:\n${absolutePath}\n\nMatched policy path:\n${matchPath}`,
-      );
-      if (!approval.approved)
-        return {
-          block: true,
-          reason: appendUserGuidance(
-            `${event.toolName} was not approved: ${absolutePath}`,
-            approval.guidance,
-          ),
-        };
-    }
-
-    return undefined;
   });
 }
 
