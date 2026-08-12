@@ -41,6 +41,7 @@ import {
 	ensureRunDir,
 	extractFilesChanged,
 	slugify,
+	type PermissionBlock,
 	type UsageStats,
 	writeHandoffFile,
 } from "./handoff.ts";
@@ -432,6 +433,8 @@ interface SingleResult {
 	writes?: string[];
 	filesChanged: string[];
 	scopeViolations: string[];
+	/** Calls rejected by pi-permissions; retained for TUI and handoff auditing. */
+	permissionBlocks: PermissionBlock[];
 	startedAt?: Date;
 	endedAt?: Date;
 	workerCwd: string;
@@ -462,6 +465,30 @@ function emptyUsage(): UsageStats {
 		cost: 0,
 		contextTokens: 0,
 		turns: 0,
+	};
+}
+
+function isPermissionBlock(toolResult: ToolResultMessage): boolean {
+	if (!toolResult.isError) return false;
+	const text = toolResult.content
+		.filter((part): part is Extract<(typeof toolResult.content)[number], { type: "text" }> => part.type === "text")
+		.map((part) => part.text)
+		.join("\n");
+	// pi-permissions prefixes every tool-call denial with this stable marker.
+	return text.includes("[⛔️ by pi-permissions]");
+}
+
+function permissionBlockFromResult(toolResult: ToolResultMessage): PermissionBlock | undefined {
+	if (!isPermissionBlock(toolResult)) return undefined;
+	const text = toolResult.content
+		.filter((part): part is Extract<(typeof toolResult.content)[number], { type: "text" }> => part.type === "text")
+		.map((part) => part.text)
+		.join(" ")
+		.replace(/\s+/g, " ")
+		.trim();
+	return {
+		toolName: toolResult.toolName,
+		reason: text.length > 240 ? `${text.slice(0, 240)}…` : text,
 	};
 }
 
@@ -558,24 +585,41 @@ function resultMetaLines(r: SingleResult): string[] {
 			`⚠ OUT-OF-SCOPE EDITS (declared writes: ${(r.writes ?? []).join(", ")}): ${r.scopeViolations.join(", ")}`,
 		);
 	}
+	for (const block of r.permissionBlocks) {
+		lines.push(`⛔ BLOCKED BY PI-PERMISSIONS (${block.toolName}): ${block.reason}`);
+	}
 	return lines;
 }
 
-type DisplayItem = { type: "text"; text: string } | { type: "toolCall"; name: string; args: Record<string, unknown> };
+type DisplayItem =
+	| { type: "text"; text: string }
+	| { type: "toolCall"; name: string; args: Record<string, unknown>; permissionBlock?: PermissionBlock };
 
+/**
+ * Tool calls and results are separate JSON events. Associate a blocked result
+ * with its original call so the existing streamed call row changes in place
+ * from the neutral arrow to a red blocked marker.
+ */
 function getDisplayItems(messages: Message[]): DisplayItem[] {
+	const permissionBlocksByCallId = new Map<string, PermissionBlock>();
+	for (const msg of messages) {
+		if (msg.role !== "toolResult") continue;
+		const block = permissionBlockFromResult(msg);
+		if (block) permissionBlocksByCallId.set(msg.toolCallId, block);
+	}
+
 	const items: DisplayItem[] = [];
 	for (const msg of messages) {
-		if (msg.role === "assistant") {
-			for (const part of msg.content) {
-				if (part.type === "text") items.push({ type: "text", text: part.text });
-				else if (part.type === "toolCall")
-					items.push({
-						type: "toolCall",
-						name: part.name,
-						args: part.arguments,
-					});
-			}
+		if (msg.role !== "assistant") continue;
+		for (const part of msg.content) {
+			if (part.type === "text") items.push({ type: "text", text: part.text });
+			else if (part.type === "toolCall")
+				items.push({
+					type: "toolCall",
+					name: part.name,
+					args: part.arguments,
+					permissionBlock: permissionBlocksByCallId.get(part.id),
+				});
 		}
 	}
 	return items;
@@ -793,6 +837,7 @@ async function runSingleAgent(
 			filesChanged: [],
 			scopeViolations: [],
 			compactions: [],
+			permissionBlocks: [],
 			workerCwd,
 		};
 	}
@@ -833,6 +878,7 @@ async function runSingleAgent(
 		filesChanged: [],
 		scopeViolations: [],
 		compactions: [],
+		permissionBlocks: [],
 		startedAt: new Date(),
 		workerCwd,
 	};
@@ -952,6 +998,8 @@ async function runSingleAgent(
 
 					if (event.type === "tool_result_end") {
 						currentResult.messages.push(event.message);
+						const permissionBlock = permissionBlockFromResult(event.message);
+						if (permissionBlock) currentResult.permissionBlocks.push(permissionBlock);
 						emitUpdate();
 					}
 
@@ -1070,6 +1118,7 @@ async function runSingleAgent(
 					writes: opts.writes,
 					filesChanged: currentResult.filesChanged,
 					scopeViolations: currentResult.scopeViolations,
+					permissionBlocks: currentResult.permissionBlocks,
 					finalOutput: getResultOutput(currentResult),
 					workerCwd,
 				});
@@ -1416,6 +1465,7 @@ export default function (pi: ExtensionAPI) {
 						filesChanged: [],
 						scopeViolations: [],
 						compactions: [],
+						permissionBlocks: [],
 						workerCwd: params.tasks[i].cwd ?? ctx.cwd,
 					};
 				}
@@ -1601,6 +1651,15 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			const mdTheme = getMarkdownTheme();
+			const renderToolCall = (item: Extract<DisplayItem, { type: "toolCall" }>) => {
+				const call = formatToolCall(item.name, item.args, theme.fg.bind(theme));
+				if (!item.permissionBlock) return theme.fg("muted", "→ ") + call;
+				return (
+					theme.fg("error", "⛔ ") +
+					call +
+					theme.fg("error", ` blocked by pi-permissions: ${item.permissionBlock.reason}`)
+				);
+			};
 
 			const renderDisplayItems = (items: DisplayItem[], limit?: number) => {
 				const toShow = limit ? items.slice(-limit) : items;
@@ -1612,7 +1671,7 @@ export default function (pi: ExtensionAPI) {
 						const preview = expanded ? item.text : item.text.split("\n").slice(0, 3).join("\n");
 						text += `${theme.fg("toolOutput", preview)}\n`;
 					} else {
-						text += `${theme.fg("muted", "→ ") + formatToolCall(item.name, item.args, theme.fg.bind(theme))}\n`;
+						text += `${renderToolCall(item)}\n`;
 					}
 				}
 				return text.trimEnd();
@@ -1630,8 +1689,7 @@ export default function (pi: ExtensionAPI) {
 			const violationLine = (r: SingleResult) =>
 				r.scopeViolations.length ? theme.fg("warning", `⚠ out-of-scope edits: ${r.scopeViolations.join(", ")}`) : "";
 			const agentLabel = (r: SingleResult) =>
-				theme.fg("toolTitle", theme.bold(r.agent)) +
-				theme.fg("muted", ` (${r.profile ?? r.agentSource})`);
+				theme.fg("toolTitle", theme.bold(r.agent)) + theme.fg("muted", ` (${r.profile ?? r.agentSource})`);
 
 			if (details.mode === "single" && details.results.length === 1) {
 				const r = details.results[0];
@@ -1744,9 +1802,7 @@ export default function (pi: ExtensionAPI) {
 						const finalOutput = getFinalOutput(r.messages);
 
 						container.addChild(new Spacer(1));
-						container.addChild(
-							new Text(`${theme.fg("muted", `─── Step ${r.step}: `) + agentLabel(r)} ${rIcon}`, 0, 0),
-						);
+						container.addChild(new Text(`${theme.fg("muted", `─── Step ${r.step}: `) + agentLabel(r)} ${rIcon}`, 0, 0));
 						container.addChild(new Text(theme.fg("muted", "Task: ") + theme.fg("dim", r.task), 0, 0));
 
 						// Show tool calls

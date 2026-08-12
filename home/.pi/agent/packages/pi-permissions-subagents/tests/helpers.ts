@@ -28,6 +28,8 @@ export interface FakePiOptions {
 	model?: string;
 	/** Replace the normal message_end event, for protocol-boundary tests. */
 	rawEvent?: unknown;
+	/** Emit a pi-permissions-blocked tool result before the final assistant message. */
+	permissionBlock?: { toolName?: string; reason?: string };
 }
 
 /**
@@ -84,6 +86,21 @@ console.log(JSON.stringify({
   type: "message_end",
   message: { role: "user", content: [{ type: "text", text: output }], timestamp: Date.now() },
 }));
+${
+	options.permissionBlock
+		? `console.log(JSON.stringify({
+  type: "tool_result_end",
+  message: {
+    role: "toolResult",
+    toolCallId: "blocked-call",
+    toolName: ${JSON.stringify(options.permissionBlock.toolName ?? "write")},
+    content: [{ type: "text", text: ${JSON.stringify(options.permissionBlock.reason ?? "write denied by policy for path: secret.txt")} }],
+    isError: true,
+    timestamp: Date.now(),
+  },
+}));`
+		: ""
+}
 console.log(JSON.stringify(event));
 process.exit(${options.exitCode ?? 0});
 `;

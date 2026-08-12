@@ -109,9 +109,7 @@ describe("subagent tool", () => {
 		const text = getToolResultText(result);
 		expect(text).toContain("Implemented the cache.");
 		expect(text).toMatch(/session: `[-0-9a-f]+`/);
-		expect((result.details as { results: Array<{ profile?: string }> }).results[0].profile).toBe(
-			"builtin:worker",
-		);
+		expect((result.details as { results: Array<{ profile?: string }> }).results[0].profile).toBe("builtin:worker");
 
 		const records = spawnRecord(projectDir);
 		expect(records).toHaveLength(1);
@@ -124,11 +122,7 @@ describe("subagent tool", () => {
 		const projectDir = setupProjectDir();
 		process.env.PI_PERMISSIONS_ACTIVE_PROFILE = "personal";
 
-		const result = await runSingle(
-			projectDir,
-			{ output: "Done" },
-			{ agent: "worker", task: "Do something" },
-		);
+		const result = await runSingle(projectDir, { output: "Done" }, { agent: "worker", task: "Do something" });
 
 		expect((result.details as { results: Array<{ profile?: string }> }).results[0].profile).toBe("personal");
 		expect(spawnRecord(projectDir)[0].env.PI_SUBAGENT_PROFILE).toBe("personal");
@@ -236,6 +230,32 @@ describe("subagent tool", () => {
 		const gitignorePath = join(projectDir, ".pi", "orchestration", ".gitignore");
 		expect(existsSync(gitignorePath)).toBe(true);
 		expect(readFileSync(gitignorePath, "utf-8")).toBe("*\n");
+	});
+
+	it("reports pi-permissions-blocked worker actions in the result and handoff", async () => {
+		const projectDir = setupProjectDir();
+		const runDir = join(projectDir, ".pi", "orchestration", "blocked-action");
+
+		const result = await runSingle(
+			projectDir,
+			{
+				output: "Finished safely.",
+				permissionBlock: { toolName: "write", reason: "[⛔️ by pi-permissions] write denied by policy for path: .env" },
+			},
+			{ agent: "worker", task: "Try to update config", runDir },
+		);
+
+		expect(getToolResultText(result)).toContain(
+			"⛔ BLOCKED BY PI-PERMISSIONS (write): [⛔️ by pi-permissions] write denied by policy",
+		);
+		const details = result.details as {
+			results: Array<{ permissionBlocks: Array<{ toolName: string; reason: string }> }>;
+		};
+		expect(details.results[0].permissionBlocks).toEqual([
+			{ toolName: "write", reason: "[⛔️ by pi-permissions] write denied by policy for path: .env" },
+		]);
+		const handoff = readFileSync(join(runDir, "handoff-worker-try-to-update-config.md"), "utf-8");
+		expect(handoff).toContain("⛔ Blocked by pi-permissions");
 	});
 
 	it("flags out-of-scope edits against declared writes", async () => {

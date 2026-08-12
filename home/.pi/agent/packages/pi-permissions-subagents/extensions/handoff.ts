@@ -21,6 +21,11 @@ export interface UsageStats {
 	turns: number;
 }
 
+export interface PermissionBlock {
+	toolName: string;
+	reason: string;
+}
+
 export interface HandoffRecord {
 	fileBase: string; // filename without extension, e.g. "01-worker-add-index"
 	agent: string;
@@ -41,6 +46,8 @@ export interface HandoffRecord {
 	writes?: string[];
 	filesChanged: string[];
 	scopeViolations: string[];
+	/** Tool calls rejected by pi-permissions, collected from the worker event stream. */
+	permissionBlocks: PermissionBlock[];
 	finalOutput: string;
 	workerCwd: string;
 }
@@ -158,6 +165,13 @@ export function writeHandoffFile(runDir: string, rec: HandoffRecord): string {
 	}
 	if (rec.scopeViolations.length) {
 		lines.push(`- **⚠ Out-of-scope edits**: ${rec.scopeViolations.map((f) => `\`${f}\``).join(", ")}`);
+	}
+	if (rec.permissionBlocks.length) {
+		lines.push(
+			`- **⛔ Blocked by pi-permissions**: ${rec.permissionBlocks
+				.map((block) => `\`${block.toolName}\`: ${block.reason}`)
+				.join("; ")}`,
+		);
 	}
 	if (rec.errorMessage) lines.push(`- **Error**: ${rec.errorMessage}`);
 
