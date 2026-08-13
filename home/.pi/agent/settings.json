@@ -7,7 +7,8 @@
     "./packages/pi-permissions",
     "./packages/pi-webfetch",
     "./packages/pi-usage",
-    "./packages/pi-permissions-subagents"
+    "./packages/pi-permissions-subagents",
+    "./packages/pi-skill-toggle"
   ],
   "lastChangelogVersion": "0.84.1",
   "theme": "dark",

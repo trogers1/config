@@ -7,6 +7,7 @@ description: >-
   refactors, test backfills) that cheaper models can implement in isolated
   sessions. Not for small or tightly-coupled work — delegation overhead
   exceeds the savings there.
+disable-model-invocation: true
 ---
 
 # Orchestrate

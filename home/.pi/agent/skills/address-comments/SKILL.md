@@ -4,6 +4,7 @@ description: >-
   Refresh unresolved GitLab MR threads marked with :robot:, implement requested
   changes or investigate questions, verify, and annotate comments.md with Robot
   resolution notes for a supplied MR URL.
+disable-model-invocation: true
 ---
 
 # Address MR Comments

@@ -1,0 +1,53 @@
+{
+  "name": "pi-skill-toggle",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "keywords": [
+    "pi-package"
+  ],
+  "scripts": {
+    "check:all": "npm run check:types && npm run check:lint && npm run check:deps && npm run check:knip && npm run check:prettier",
+    "check:deps": "depcruise src vitest.config.ts --config .dependency-cruiser.cjs",
+    "check:knip": "knip",
+    "check:lint": "eslint .",
+    "check:prettier": "prettier --check .",
+    "check:types": "tsc --noEmit",
+    "fix:prettier": "prettier --write .",
+    "pretest": "npm run check:all",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "@earendil-works/pi-tui": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.84.1",
+    "@earendil-works/pi-tui": "^0.84.1",
+    "@types/node": "^26.1.1",
+    "dependency-cruiser": "^18.1.0",
+    "eslint": "^10.7.0",
+    "knip": "^6.29.0",
+    "prettier": "^3.9.5",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.65.0",
+    "vitest": "^4.1.10"
+  }
+}

@@ -4,6 +4,7 @@ description: >-
   Export all human GitLab MR review comments to comments.md with MR, thread, and
   per-comment links plus local code paths. Use when reviewing an MR, triaging
   feedback, or building a full comment snapshot (not only Robot-tagged threads).
+disable-model-invocation: true
 ---
 
 # Export MR Comments
