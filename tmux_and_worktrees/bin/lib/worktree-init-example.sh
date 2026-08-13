@@ -45,9 +45,9 @@ while IFS= read -r terraform_dir; do
     fi
 done
 
-# State and tfvars files commonly hold per-developer or environment-specific
+# tfvars files commonly hold per-developer or environment-specific
 # values and are deliberately untracked. Mirror them at their original paths.
-find "$terraform_root" -type f \( -name '*.tfstate' -o -name '*.tfstate.*' -o -name '*.tfvars' \) -print 2>/dev/null |
+find "$terraform_root" -type f -name '*.tfvars' -print 2>/dev/null |
 while IFS= read -r terraform_file; do
     relative_file="${terraform_file#"$repo_root"/}"
 
