@@ -76,6 +76,8 @@ describe("permissions extension", () => {
           defaultProfile: "deploy-check",
           profiles: {
             "deploy-check": {
+              description:
+                "Deployment tool policy with production denial and staging approval.",
               extends: ["builtin:default"],
               tools: {
                 deploy: [
@@ -120,7 +122,12 @@ describe("permissions extension", () => {
         JSON.stringify({
           defaultProfile: "quiet-bash",
           profiles: {
-            "quiet-bash": { extends: ["builtin:default"], tools: { bash: [] } },
+            "quiet-bash": {
+              description:
+                "Quiet Bash profile preserving inherited default command policy.",
+              extends: ["builtin:default"],
+              tools: { bash: [] },
+            },
           },
         }),
       ),
@@ -154,6 +161,8 @@ describe("permissions extension", () => {
           defaultProfile: "layer-order",
           profiles: {
             "layer-order": {
+              description:
+                "Bash command and protected-path precedence ordering policy.",
               tools: {
                 bash: [{ pattern: "rm -rf *", decision: "deny" }],
               },
@@ -253,6 +262,8 @@ describe("permissions extension", () => {
             defaultProfile: "test-expression",
             profiles: {
               "test-expression": {
+                description:
+                  "Bash opaque-expression prompting and path access policy.",
                 tools: {
                   bash: [{ pattern: "*", decision: "allow" }],
                 },
@@ -288,6 +299,8 @@ describe("permissions extension", () => {
           defaultProfile: "path-stage-order",
           profiles: {
             "path-stage-order": {
+              description:
+                "Bash path ask and deny precedence across staged references.",
               tools: {
                 bash: [{ pattern: "*", decision: "allow" }],
               },
@@ -332,6 +345,8 @@ describe("permissions extension", () => {
           defaultProfile: "protected-pipeline",
           profiles: {
             "protected-pipeline": {
+              description:
+                "Protected .env path denial through dynamic Bash pipelines.",
               tools: {
                 bash: [{ pattern: "*", decision: "allow" }],
               },
@@ -365,6 +380,8 @@ describe("permissions extension", () => {
           defaultProfile: "protected-assignment",
           profiles: {
             "protected-assignment": {
+              description:
+                "Protected .env path denial in assignment command substitutions.",
               tools: {
                 bash: [{ pattern: "*", decision: "allow" }],
               },
@@ -398,6 +415,8 @@ describe("permissions extension", () => {
           defaultProfile: "layer-order",
           profiles: {
             "layer-order": {
+              description:
+                "Bash command and ordinary path precedence ordering policy.",
               tools: {
                 bash: [{ pattern: "cp * *", decision: "deny" }],
               },
@@ -502,6 +521,8 @@ describe("permissions extension", () => {
           defaultProfile: "search-explain-parity",
           profiles: {
             "search-explain-parity": {
+              description:
+                "Ripgrep protection and Bash decision explanation parity policy.",
               tools: {
                 bash: [
                   { pattern: "*", decision: "deny" },
@@ -543,6 +564,8 @@ describe("permissions extension", () => {
           defaultProfile: "bash-path-explanation",
           profiles: {
             "bash-path-explanation": {
+              description:
+                "Bash command, path, and protected-path explanation ranking policy.",
               tools: {
                 bash: [
                   { pattern: "*", decision: "deny" },
@@ -635,9 +658,13 @@ describe("permissions extension", () => {
           defaultProfile: "child",
           profiles: {
             parent: {
+              description:
+                "Parent profile composing committer permissions and test execution rules.",
               extends: ["builtin:committer", "ruleset:test-run"],
             },
             child: {
+              description:
+                "Child profile applying deny-ask transforms to the composed parent policy.",
               extends: ["parent"],
               transforms: ["transform:deny-asks"],
             },
@@ -718,6 +745,8 @@ describe("permissions extension", () => {
         defaultProfile: "isolated",
         profiles: {
           isolated: {
+            description:
+              "Isolated custom deployment profile allowing the deploy tool.",
             extends: ["builtin:default"],
             tools: { deploy: [{ decision: "allow" }] },
           },
@@ -730,6 +759,8 @@ describe("permissions extension", () => {
         defaultProfile: "isolated",
         profiles: {
           isolated: {
+            description:
+              "Isolated custom deployment profile denying the deploy tool.",
             extends: ["builtin:default"],
             tools: { deploy: [{ decision: "deny" }] },
           },
@@ -783,10 +814,14 @@ describe("permissions extension", () => {
         JSON.stringify({
           profiles: {
             "outer-review": {
+              description:
+                "Workspace review profile bound to the outer project directory.",
               extends: ["builtin:default"],
               directories: ["/workspace"],
             },
             "inner-review": {
+              description:
+                "Nested coaching review profile with the most-specific directory binding.",
               extends: ["builtin:default"],
               directories: ["/workspace/coaching"],
             },
@@ -812,6 +847,8 @@ describe("permissions extension", () => {
         JSON.stringify({
           profiles: {
             "home-bound": {
+              description:
+                "Home-directory-bound default permissions profile for nested startup paths.",
               extends: ["builtin:default"],
               directories: ["~/pi-permissions-home-binding-test"],
             },
@@ -841,6 +878,8 @@ describe("permissions extension", () => {
         JSON.stringify({
           profiles: {
             "relative-bound": {
+              description:
+                "Startup-relative integration test profile directory binding.",
               extends: ["builtin:default"],
               directories: ["integrationTests"],
             },
@@ -866,6 +905,8 @@ describe("permissions extension", () => {
         JSON.stringify({
           profiles: {
             "workspace-bound": {
+              description:
+                "Workspace-bound profile overriding persisted profile selection on resume.",
               extends: ["builtin:default"],
               directories: ["/workspace"],
             },
@@ -1303,14 +1344,14 @@ describe("permissions extension", () => {
     );
   });
 
-  it("shows, validates, autocompletes, and switches profiles through /profile", async () => {
+  it("opens the picker, validates, autocompletes, and switches profiles through /profile", async () => {
     const harness = createExtensionHarness();
     await harness.start();
 
     await harness.runCommand({ name: "profile" });
-    expect(harness.ui.notify).toHaveBeenLastCalledWith(
-      expect.stringContaining("Active profile: builtin:default"),
-      "info",
+    expect(harness.ui.custom).toHaveBeenCalledOnce();
+    expect(harness.shortcuts.get("ctrl+shift+g")?.description).toBe(
+      "Search and switch permissions profiles",
     );
 
     await harness.runCommand({ name: "profile", args: "missing" });
@@ -1634,10 +1675,14 @@ describe("permissions extension", () => {
         JSON.stringify({
           profiles: {
             "read-secrets": {
+              description:
+                "Protected .env read and edit access override profile.",
               extends: ["builtin:default"],
               protectedPathRules: [{ pattern: ".env", decision: "allow" }],
             },
             "scratch-review": {
+              description:
+                "Scratch review profile allowing read, edit, and prompted Bash access.",
               tools: { bash: [{ pattern: "*", decision: "ask" }] },
               readPaths: [{ pattern: "*", decision: "allow" }],
               writePaths: [{ pattern: "*", decision: "allow" }],
@@ -1988,6 +2033,8 @@ describe("permissions extension", () => {
           defaultProfile: "script-steering",
           profiles: {
             "script-steering": {
+              description:
+                "Bash script denial policy steering npx vitest usage to the test script.",
               extends: ["builtin:default"],
               tools: {
                 bash: [

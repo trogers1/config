@@ -28,6 +28,8 @@ describe("sandbox profile composition", () => {
       writeConfig({
         profiles: {
           base: {
+            description:
+              "Base profile for inherited denied-network sandbox configuration",
             extends: ["builtin:default"],
             sandbox: {
               network: "deny",
@@ -35,6 +37,8 @@ describe("sandbox profile composition", () => {
             },
           },
           child: {
+            description:
+              "Child profile inheriting sandbox configuration from its base",
             extends: ["base"],
           },
         },
@@ -53,6 +57,8 @@ describe("sandbox profile composition", () => {
       writeConfig({
         profiles: {
           base: {
+            description:
+              "Base profile for inherited allowed-network sandbox configuration",
             extends: ["builtin:default"],
             sandbox: {
               network: "allow",
@@ -60,6 +66,8 @@ describe("sandbox profile composition", () => {
             },
           },
           child: {
+            description:
+              "Child profile explicitly disabling inherited sandbox protection",
             extends: ["base"],
             sandbox: false,
           },
@@ -76,6 +84,8 @@ describe("sandbox profile composition", () => {
       writeConfig({
         profiles: {
           base: {
+            description:
+              "Base profile for sandbox replacement and deny-read metadata",
             extends: ["builtin:default"],
             sandbox: {
               network: "deny",
@@ -84,6 +94,8 @@ describe("sandbox profile composition", () => {
             },
           },
           child: {
+            description:
+              "Child profile replacing inherited sandbox configuration",
             extends: ["base"],
             sandbox: {
               network: "allow",
@@ -102,6 +114,8 @@ describe("sandbox profile composition", () => {
       writeConfig({
         profiles: {
           base: {
+            description:
+              "Base profile preserving sandbox metadata through rule transforms",
             extends: ["builtin:default"],
             transforms: ["transform:deny-asks"],
             sandbox: {

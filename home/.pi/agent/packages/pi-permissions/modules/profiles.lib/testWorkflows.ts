@@ -24,6 +24,7 @@ export const implementationOnlyCompositionChain = [
  * repository root all deny. The agent implements against test results.
  */
 export const testsHiddenProfile = extendProfile(baseProfile, {
+  description: "Tests-hidden profile: hides test files from reads and writes.",
   color: "orange",
   emoji: "🕶️",
   promptFile: "prompts/tests-hidden.md",
@@ -48,6 +49,7 @@ export const testsHiddenProfile = extendProfile(baseProfile, {
 
 /** Inverse of tests-hidden: may only write test files and /tmp. */
 export const testsOnlyProfile = extendProfile(baseProfile, {
+  description: "Tests-only profile: writes are restricted to test files.",
   color: "green",
   emoji: "🔬",
   promptFile: "prompts/tests-only.md",
@@ -85,6 +87,7 @@ export const testsOnlyProfile = extendProfile(baseProfile, {
 /** Tests stay readable as the specification; only writes to them deny. */
 export const implementationOnlyProfile = extendProfile(baseProfile, {
   ...ruleSetRegistry["ruleset:test-write-protection"],
+  description: "Implementation-only profile: test-file writes are denied.",
   color: "orange",
   emoji: "🏗️",
 });

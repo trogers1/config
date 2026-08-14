@@ -185,6 +185,7 @@ const readPathRuleSchema = pathRuleSchema(readPathContextSchema);
 const writePathRuleSchema = pathRuleSchema(writePathContextSchema);
 
 const profileProperties = {
+  description: Type.Optional(Type.String({ minLength: 1 })),
   promptFile: Type.Optional(Type.Union([Type.String(), Type.Null()])),
   color: Type.Optional(profileColorSchema),
   emoji: Type.Optional(Type.String()),
@@ -219,6 +220,7 @@ const profileTransformsSchema = Type.Array(profileTransformNameSchema);
 const profileConfigProfileSchema = Type.Object(
   {
     ...profileProperties,
+    description: Type.String({ minLength: 1 }),
     extends: Type.Optional(profileExtendsSchema),
     transforms: Type.Optional(profileTransformsSchema),
     tools: Type.Optional(profileProperties.tools),
@@ -267,8 +269,10 @@ export type ProfileConfigProfile = Omit<
 };
 export type ProfilePolicyOverride = Omit<
   ProfileConfigProfile,
-  "extends" | "transforms"
->;
+  "description" | "extends" | "transforms"
+> & {
+  description?: string;
+};
 
 /** JSON Schema source of truth for ~/.pi/agent/permissions/profiles.jsonc. */
 export const profileConfigFileSchema = Type.Object(

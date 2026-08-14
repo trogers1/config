@@ -39,14 +39,20 @@ describe("profile composition", () => {
       writeConfig({
         profiles: {
           left: {
+            description:
+              "Left parent profile for composition conflict resolution",
             ...minimalPaths,
             tools: { bash: [{ pattern: "demo", decision: "allow" }] },
           },
           right: {
+            description:
+              "Right parent profile for composition conflict resolution",
             ...minimalPaths,
             tools: { bash: [{ pattern: "demo", decision: "deny" }] },
           },
           composed: {
+            description:
+              "Composed profile testing left-to-right inheritance precedence",
             extends: ["left", "right"],
             ...minimalPaths,
           },
@@ -63,6 +69,8 @@ describe("profile composition", () => {
       writeConfig({
         profiles: {
           reopened: {
+            description:
+              "Reopened profile testing read-only and default composition",
             extends: ["builtin:read-only", "builtin:default"],
           },
         },
@@ -80,6 +88,8 @@ describe("profile composition", () => {
       writeConfig({
         profiles: {
           "worker-like": {
+            description:
+              "Worker profile transforming approval prompts into denials",
             extends: ["builtin:default"],
             transforms: ["transform:deny-asks"],
           },
@@ -98,6 +108,8 @@ describe("profile composition", () => {
       writeConfig({
         profiles: {
           "auto-approve": {
+            description:
+              "Auto-approve profile transforming approval prompts into allows",
             extends: ["builtin:default"],
             transforms: ["transform:allow-asks"],
           },
@@ -116,6 +128,8 @@ describe("profile composition", () => {
       writeConfig({
         profiles: {
           paranoid: {
+            description:
+              "Paranoid profile transforming ordinary allows into asks",
             extends: ["builtin:default"],
             transforms: ["transform:ask-all"],
           },
@@ -134,6 +148,8 @@ describe("profile composition", () => {
       writeConfig({
         profiles: {
           paranoid: {
+            description:
+              "Paranoid profile transforming every decision into denial",
             extends: ["builtin:default"],
             transforms: ["transform:deny-all"],
           },
@@ -165,11 +181,15 @@ describe("profile composition", () => {
       writeConfig({
         profiles: {
           parent: {
+            description:
+              "Parent profile carrying protected paths through transforms",
             tools: { bash: [{ pattern: "*", decision: "ask" }] },
             ...minimalPaths,
             protectedPathRules,
           },
           child: {
+            description:
+              "Child profile preserving inherited protected path rules",
             extends: ["parent"],
             transforms: [transform],
           },
@@ -188,6 +208,8 @@ describe("profile composition", () => {
       writeConfig({
         profiles: {
           unchanged: {
+            description:
+              "Unchanged profile testing an empty transform list no-op",
             extends: ["builtin:default"],
             transforms: [],
           },
@@ -206,6 +228,8 @@ describe("profile composition", () => {
       writeConfig({
         profiles: {
           "worker-like": {
+            description:
+              "Worker profile preserving deliberate policy overrides after transforms",
             extends: ["builtin:default"],
             transforms: ["transform:deny-asks"],
             tools: {
@@ -240,6 +264,8 @@ describe("profile composition", () => {
       writeConfig({
         profiles: {
           ordered: {
+            description:
+              "Ordered profile testing left-to-right transform evaluation",
             extends: ["builtin:default"],
             transforms: ["transform:allow-asks", "transform:deny-asks"],
           },
@@ -259,6 +285,8 @@ describe("profile composition", () => {
         writeConfig({
           profiles: {
             invalid: {
+              description:
+                "Invalid profile testing unknown transform validation errors",
               extends: ["builtin:default"],
               transforms: ["transform:missing"],
             },
@@ -275,6 +303,8 @@ describe("profile composition", () => {
         writeConfig({
           profiles: {
             invalid: {
+              description:
+                "Invalid profile testing empty extends validation errors",
               extends: [],
               readPaths: [{ pattern: "*", decision: "allow" }],
               writePaths: [{ pattern: "*", decision: "allow" }],
@@ -296,6 +326,8 @@ describe("profile composition", () => {
       writeConfig({
         profiles: {
           "override-status": {
+            description:
+              "Override profile testing warnings for conflicting Bash rules",
             extends: ["builtin:default"],
             tools: {
               bash: [{ pattern: "git status", decision: "deny" }],

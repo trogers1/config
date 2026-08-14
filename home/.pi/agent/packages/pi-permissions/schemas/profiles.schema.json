@@ -10,7 +10,9 @@
       "patternProperties": {
         "^(?!(?:builtin:|ruleset:|transform:)).+$": {
           "type": "object",
+          "required": ["description"],
           "properties": {
+            "description": { "type": "string", "minLength": 1 },
             "promptFile": {
               "anyOf": [{ "type": "string" }, { "type": "null" }]
             },

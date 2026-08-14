@@ -89,6 +89,8 @@ function writeProfileConfig({
       defaultProfile: "sandbox-acceptance",
       profiles: {
         "sandbox-acceptance": {
+          description:
+            "Sandbox acceptance profile for protected paths and filesystem boundaries",
           // Unparsed interpreter expressions remain ordinary `ask` decisions;
           // this transform intentionally auto-approves them so these tests
           // prove the registered Bash override supplies the OS boundary.
@@ -116,6 +118,8 @@ function writeProfileConfig({
         // A disabled selected profile still needs a configured sandbox-capable
         // profile so the extension registers its one switchable Bash override.
         "sandbox-capable": {
+          description:
+            "Sandbox-capable fallback profile for switchable Bash boundaries",
           extends: ["builtin:default"],
           sandbox: { network: "deny" },
         },
@@ -137,15 +141,27 @@ function writeComposedProfileConfig(): void {
       defaultProfile: "inherited",
       profiles: {
         base: {
+          description:
+            "Base profile for composed denied-network sandbox posture",
           extends: ["builtin:default"],
           sandbox: { network: "deny" },
         },
-        inherited: { extends: ["base"] },
+        inherited: {
+          description: "Inherited profile selecting the base sandbox posture",
+          extends: ["base"],
+        },
         replacement: {
+          description:
+            "Replacement profile overriding the inherited sandbox network posture",
           extends: ["base"],
           sandbox: { network: "allow" },
         },
-        disabled: { extends: ["base"], sandbox: false },
+        disabled: {
+          description:
+            "Disabled profile explicitly turning off the inherited sandbox",
+          extends: ["base"],
+          sandbox: false,
+        },
       },
     }),
   );

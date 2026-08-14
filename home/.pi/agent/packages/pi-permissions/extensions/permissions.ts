@@ -30,6 +30,11 @@ import {
   type ExtensionAPI,
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import { Key } from "@earendil-works/pi-tui";
+import {
+  ProfilePicker,
+  type ProfilePickerItem,
+} from "../modules/profilePicker.lib";
 import {
   assertPolicyConfig,
   assertProfilePolicy,
@@ -68,6 +73,7 @@ import {
   builtinCompositionChains,
   policyConfig as genericPolicyConfig,
 } from "../modules/policy";
+import { formatProfileColor } from "../modules/profileColors";
 import { parseSubagentPermissibleRules } from "../modules/subagentScopes";
 import {
   clearSandboxCaches,
@@ -123,19 +129,6 @@ const ansi = {
   bold: (value: string) => `\x1b[1m${value}\x1b[0m`,
   dim: (value: string) => `\x1b[2m${value}\x1b[0m`,
 } as const;
-
-const profileColorFormatters: Record<ProfileColor, (value: string) => string> =
-  {
-    black: ansi.black,
-    red: ansi.red,
-    green: ansi.green,
-    yellow: ansi.yellow,
-    orange: ansi.yellow,
-    blue: ansi.blue,
-    magenta: ansi.magenta,
-    cyan: ansi.cyan,
-    white: ansi.white,
-  };
 
 const defaultPolicy: ProfilePolicy = {
   tools: {
@@ -249,12 +242,46 @@ export default function (pi: ExtensionAPI) {
     return policyConfig.profiles[profile];
   }
 
+  async function showProfilePicker(ctx: ExtensionContext): Promise<void> {
+    const items: ProfilePickerItem[] = profileNames().map((name) => {
+      const profile = activePolicy(name);
+      return {
+        name,
+        emoji: profile.emoji,
+        color: profile.color,
+        description: `${name === activeProfile ? "Active. " : ""}${profile.description}`,
+      };
+    });
+    const selected = await ctx.ui.custom<string | null>(
+      (tui, theme, _keybindings, done) => {
+        const picker = new ProfilePicker(items, theme, done, () => done(null));
+        return {
+          get focused() {
+            return picker.focused;
+          },
+          set focused(value: boolean) {
+            picker.focused = value;
+          },
+          render: (width) => picker.render(width),
+          invalidate: () => picker.invalidate(),
+          handleInput: (data) => {
+            picker.handleInput(data);
+            tui.requestRender();
+          },
+        };
+      },
+    );
+
+    if (selected) {
+      await activateProfile(selected, ctx, `Switched to profile: ${selected}`);
+    }
+  }
+
   function formatProfileStatus(profileName: ProfileName): string {
     const profile = activePolicy(profileName);
     const color = profile.color ?? "blue";
     const emoji = profile.emoji ? `${profile.emoji} ` : "";
-    const colorize = profileColorFormatters[color];
-    return `profile: ${emoji}${colorize(ansi.bold(profileName))}`;
+    return `profile: ${emoji}${formatProfileColor(color, ansi.bold(profileName))}`;
   }
 
   function formatSandboxStatus(policy: ProfilePolicy): string | undefined {
@@ -558,10 +585,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
       const requested = args.trim();
 
       if (!requested) {
-        ctx.ui.notify(
-          `Active profile: ${activeProfile}. Available: ${profileNames().join(", ")}`,
-          "info",
-        );
+        await showProfilePicker(ctx);
         return;
       }
 
@@ -578,6 +602,15 @@ The permissions gate remains loaded and will fail closed until the profile is co
         ctx,
         `Switched to profile: ${activeProfile}`,
       );
+    },
+  });
+
+  // Ctrl+G is Pi's external-editor binding, so use the unclaimed Ctrl+Shift+G.
+  pi.registerShortcut(Key.ctrlShift("g"), {
+    description: "Search and switch permissions profiles",
+    handler: async (ctx) => {
+      if (preserveConfigurationErrorStatus(ctx)) return;
+      await showProfilePicker(ctx);
     },
   });
 

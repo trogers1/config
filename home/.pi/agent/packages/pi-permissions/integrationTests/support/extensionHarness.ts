@@ -21,6 +21,7 @@ import { vi, type Mock } from "vitest";
 import permissionsExtension from "../../extensions/permissions";
 
 type CommandRegistration = Omit<RegisteredCommand, "name" | "sourceInfo">;
+type ShortcutRegistration = Parameters<ExtensionAPI["registerShortcut"]>[1];
 
 type SessionEntryInput =
   | SdkSessionEntry
@@ -104,6 +105,7 @@ export function createExtensionHarness(
     user_bash: [],
   };
   const commands = new Map<string, CommandRegistration>();
+  const shortcuts = new Map<string, ShortcutRegistration>();
   const tools = new Map<string, ToolRegistration>();
   let started = false;
   let nextEntryId = entries.length + 1;
@@ -112,6 +114,7 @@ export function createExtensionHarness(
     confirm: vi.fn().mockResolvedValue(options.confirm ?? false),
     editor: vi.fn().mockResolvedValue(options.editorResult),
     input: vi.fn().mockResolvedValue(undefined),
+    custom: vi.fn().mockResolvedValue(null),
     notify: vi.fn(),
     setStatus: vi.fn(),
     setWorkingVisible: vi.fn(),
@@ -120,6 +123,7 @@ export function createExtensionHarness(
     | "confirm"
     | "editor"
     | "input"
+    | "custom"
     | "notify"
     | "setStatus"
     | "setWorkingVisible"
@@ -153,6 +157,9 @@ export function createExtensionHarness(
     },
     registerCommand(name: string, registration: CommandRegistration) {
       commands.set(name, registration);
+    },
+    registerShortcut(shortcut, registration) {
+      shortcuts.set(shortcut, registration);
     },
     registerTool: ((tool: Parameters<ExtensionAPI["registerTool"]>[0]) => {
       const sourceInfo = createSyntheticSourceInfo(
@@ -197,6 +204,7 @@ export function createExtensionHarness(
     ExtensionAPI,
     | "on"
     | "registerCommand"
+    | "registerShortcut"
     | "registerTool"
     | "appendEntry"
     | "getActiveTools"
@@ -340,6 +348,7 @@ export function createExtensionHarness(
 
   return {
     commands,
+    shortcuts,
     context,
     entries,
     errors,

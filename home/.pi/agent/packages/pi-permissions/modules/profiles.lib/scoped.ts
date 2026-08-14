@@ -36,6 +36,8 @@ export const noShellCompositionChain = [
 /** Read code and run tests/builds; writes stay tmp + handoff + progress. */
 export const reviewerProfile = extendProfile(readOnlyProfile, {
   ...ruleSetRegistry["ruleset:test-run"],
+  description:
+    "Reviewer profile: read-only review with test and build commands.",
   color: "cyan",
   emoji: "🧐",
 });
@@ -43,12 +45,15 @@ export const reviewerProfile = extendProfile(readOnlyProfile, {
 /** Writes gated to Markdown documentation, docs/, and /tmp scratch. */
 export const scribeOnlyProfile = extendProfile(baseProfile, {
   ...ruleSetRegistry["ruleset:docs-write"],
+  description:
+    "Docs scribe profile: writes restricted to Markdown, docs, and /tmp.",
   color: "white",
   emoji: "📜",
 });
 
 export const depsMutatorProfile: ProfilePolicy = {
   ...baseProfile,
+  description: "Dependency mutator profile: allows package-manager mutations.",
   color: "yellow",
   sandbox: { network: "allow" },
   emoji: "📦",
@@ -67,6 +72,8 @@ export const depsMutatorProfile: ProfilePolicy = {
 
 export const noShellProfile: ProfilePolicy = {
   ...baseProfile,
+  description:
+    "No-shell profile: default path policy with all Bash commands denied.",
   color: "green",
   emoji: "🛡️",
   tools: {

@@ -32,6 +32,26 @@ describe("shipped profile catalog", () => {
     return harness;
   }
 
+  it("provides nonempty, workflow-keyword-rich descriptions for picker search", () => {
+    const requiredKeywords: Partial<Record<BuiltinProfileName, string>> = {
+      "builtin:committer": "git",
+      "builtin:git-full": "git",
+      "builtin:scribe-only": "docs",
+      "builtin:tests-only": "tests",
+      "builtin:tests-hidden": "tests",
+      "builtin:worker": "worker",
+      "builtin:no-shell": "shell",
+      "builtin:implementation-only": "implementation",
+    };
+
+    for (const profile of builtinProfileNames) {
+      const description = policyConfig.profiles[profile].description;
+      expect(description, profile).toMatch(/\S/);
+      const keyword = requiredKeywords[profile];
+      if (keyword) expect(description?.toLowerCase()).toContain(keyword);
+    }
+  });
+
   it("builtin:committer allows git commit", async () => {
     const harness = await harnessFor("builtin:committer");
     await expect(

@@ -21,6 +21,7 @@ export const readOnlyCompositionChain = [
 /** The default working posture with every `ask` escalated to `deny`. */
 export const workerProfile = applyPolicyTransforms(
   extendProfile(baseProfile, {
+    description: "Worker profile: turns approval prompts into denials.",
     color: "magenta",
     emoji: "⚙️",
   }),
@@ -35,6 +36,8 @@ const readOnlyShellPosture = ruleSetRegistry["ruleset:read-only-shell"];
 const readOnlyPathPosture = ruleSetRegistry["ruleset:read-only-path"];
 
 export const readOnlyProfile: ProfilePolicy = {
+  description:
+    "Read-only inspection profile; writes limited to temporary and handoff files.",
   color: "green",
   emoji: "🔎",
   sandbox: { network: "deny" },

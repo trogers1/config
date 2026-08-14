@@ -33,6 +33,8 @@ export const defaultWithNetCompositionChain = [
  * dependency-mutation guards, destructive shell guards, and path guards.
  */
 export const baseProfile: ProfilePolicy = {
+  description:
+    "Default general-purpose main session with guarded shell and no network.",
   color: "blue",
   emoji: "🛠️",
   sandbox: { network: "deny" },
@@ -54,5 +56,6 @@ export const baseProfile: ProfilePolicy = {
 /** Standard posture with an explicit opt-in to unrestricted networking. */
 export const defaultWithNetProfile: ProfilePolicy = {
   ...baseProfile,
+  description: "Default profile with unrestricted sandbox network access.",
   sandbox: { network: "allow" },
 };

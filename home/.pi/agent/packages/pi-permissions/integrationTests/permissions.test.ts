@@ -111,6 +111,7 @@ function createExtensionHarness() {
     ) {
       commands.set(name, command);
     },
+    registerShortcut: vi.fn(),
     registerTool: vi.fn((tool: { name: string; execute?: unknown }) => {
       if (tool.name === "bash") packageBashTool = tool;
     }),
@@ -1256,6 +1257,7 @@ describe("extension harness custom tool inheritance", () => {
         "defaultProfile": "builtin:default",
         "profiles": {
           "deployment-base": {
+            "description": "Deployment base profile denying production custom-tool operations.",
             "extends": ["builtin:default"],
             "tools": {
               "deploy": [
@@ -1264,6 +1266,7 @@ describe("extension harness custom tool inheritance", () => {
             }
           },
           "deployment-child": {
+            "description": "Deployment child profile preserving inherited rules with an empty override.",
             "extends": ["deployment-base"],
             "tools": {
               "deploy": []
@@ -1363,6 +1366,7 @@ describe("extension harness custom tool inheritance", () => {
         "defaultProfile": "builtin:default",
         "profiles": {
           "deployment-base": {
+            "description": "Deployment base profile denying production custom-tool operations.",
             "extends": ["builtin:default"],
             "tools": {
               "deploy": [
@@ -1371,6 +1375,7 @@ describe("extension harness custom tool inheritance", () => {
             }
           },
           "deployment-child": {
+            "description": "Deployment child profile appending staging approval to inherited production denial.",
             "extends": ["deployment-base"],
             "tools": {
               "deploy": [

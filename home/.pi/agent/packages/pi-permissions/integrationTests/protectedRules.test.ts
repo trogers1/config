@@ -39,6 +39,7 @@ const minimalPaths = {
 describe("protected-path rules", () => {
   it("schema accepts protectedPathRules with allow and deny decisions", () => {
     const policy = {
+      description: "Protected rules schema profile for environment-file denial",
       ...minimalPaths,
       protectedPathRules: [{ pattern: "**/.env*", decision: "deny" }],
     } satisfies ProfilePolicy;
@@ -56,6 +57,8 @@ describe("protected-path rules", () => {
     // schema boundary, which must reject values that static TypeScript users
     // could not construct as ProfilePolicy.
     const policy = {
+      description:
+        "Invalid protected rules profile for rejecting ask decisions",
       ...minimalPaths,
       protectedPathRules: [{ pattern: "**/.env*", decision: "ask" }],
     };
@@ -70,10 +73,14 @@ describe("protected-path rules", () => {
 
   it("protected rules concatenate under extends like every other rule array", () => {
     const base = {
+      description:
+        "Base protected rules profile for inherited environment protection",
       ...minimalPaths,
       protectedPathRules: [{ pattern: "**/.env*", decision: "deny" }],
     } satisfies ProfilePolicy;
     const child = extendProfile(base, {
+      description:
+        "Child protected rules profile for concatenated path protection",
       protectedPathRules: [{ pattern: "**/.git/**", decision: "deny" }],
     } satisfies ProfilePolicyOverride);
 
@@ -82,10 +89,14 @@ describe("protected-path rules", () => {
 
   it("a more-specific authored allow weakens an inherited protected deny", () => {
     const base = {
+      description:
+        "Base protected rules profile for inherited environment protection",
       ...minimalPaths,
       protectedPathRules: [{ pattern: "**/.env*", decision: "deny" }],
     } satisfies ProfilePolicy;
     const child = extendProfile(base, {
+      description:
+        "Child protected rules profile for a specific template allow",
       protectedPathRules: [{ pattern: ".env.template", decision: "allow" }],
     } satisfies ProfilePolicyOverride);
 
@@ -101,6 +112,8 @@ describe("protected-path rules", () => {
         writeConfig({
           profiles: {
             conflict: {
+              description:
+                "Conflict profile for protected-path layer validation errors",
               extends: ["builtin:default"],
               protectedPathRules: [{ pattern: "**/.env*", decision: "allow" }],
             },
@@ -112,6 +125,8 @@ describe("protected-path rules", () => {
 
   it("rejects directly defined protected-rule conflicts during config assertion", () => {
     const conflictedProfile = {
+      description:
+        "Invalid protected rules profile for duplicate path conflicts",
       ...minimalPaths,
       protectedPathRules: [
         { pattern: "**/.env*", decision: "deny" },

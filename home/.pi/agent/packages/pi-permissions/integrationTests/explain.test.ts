@@ -596,6 +596,7 @@ describe("permissions explain", () => {
     const rawConfig = {
       profiles: {
         "my-profile": {
+          description: "A test profile.",
           extends: ["builtin:default"],
           transforms: ["transform:deny-asks"],
         },

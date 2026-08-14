@@ -60,7 +60,8 @@ obvious (`deps-mutator`, `git-full`). Profiles may define optional `color`,
 
 ## Commands
 
-- `/profile` shows the active profile and available profiles.
+- `/profile` opens a fuzzy-searchable profile picker. Type to search profile names and descriptions; use ↑/↓ and Return to select.
+- `Ctrl+Shift+G` opens the same picker without leaving a draft prompt. (`Ctrl+G` remains Pi's external-editor shortcut.)
 - `/profile <name>` switches to a profile.
 - `/read-only` switches to the `builtin:read-only` permissions profile.
 - `/sandbox` reports the active sandbox state, backend, network posture,
@@ -286,12 +287,15 @@ configuration is data, not executable code. Add the bundled schema as
   "defaultProfile": "client-work",
   "profiles": {
     "client-work": {
+      "description": "Client work profile for the client repository.",
       "extends": ["builtin:default"],
       "directories": ["~/Code/client"],
     },
   },
 }
 ```
+
+Every custom profile requires a nonempty `description`. The picker searches this text as well as the profile name, so include the profile's primary workflow keywords (for example, `git`, `docs`, or `tests`).
 
 `extends` is optional. When supplied, it names a built-in profile by its
 canonical name (for example `builtin:default`), a shipped rule set by its

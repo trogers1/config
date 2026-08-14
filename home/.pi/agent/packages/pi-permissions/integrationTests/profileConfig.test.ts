@@ -58,6 +58,7 @@ describe("profile configuration", () => {
       writeConfig(`{
         "profiles": {
           "standalone": {
+            "description": "Standalone profile for deployment conflict linting and rule diagnostics.",
             "tools": {
               "bash": [
                 { "pattern": "deploy *", "decision": "allow" },
@@ -81,6 +82,8 @@ describe("profile configuration", () => {
       JSON.stringify({
         profiles: {
           standalone: {
+            description:
+              "Standalone profile used to verify transform inheritance requirements.",
             transforms: ["transform:deny-all"],
             tools: { bash: [{ pattern: "*", decision: "allow" }] },
             readPaths: [{ pattern: "**", decision: "allow" }],
@@ -112,6 +115,7 @@ describe("profile configuration", () => {
       writeConfig(`{
         "profiles": {
           "base": {
+            "description": "Base deployment profile for inherited Bash rule conflict testing.",
             "tools": {
               "bash": [{ "pattern": "deploy *", "decision": "allow" }]
             },
@@ -119,6 +123,7 @@ describe("profile configuration", () => {
             "writePaths": [{ "pattern": "*", "decision": "allow" }]
           },
           "child": {
+            "description": "Child deployment profile that overrides inherited Bash permissions.",
             "extends": ["base"],
             "tools": {
               "bash": [{ "pattern": "deploy *", "decision": "deny" }]
@@ -141,6 +146,7 @@ describe("profile configuration", () => {
         "$schema": "https://example.test/profiles.schema.json",
         "profiles": {
           "client-work": {
+            "description": "Client workspace profile for editor and vendor access rules.",
             "extends": ["builtin:default"],
             "directories": ["/workspace/client",],
             "tools": {
@@ -178,6 +184,7 @@ describe("profile configuration", () => {
       writeConfig(`{
         "profiles": {
           "deployment-base": {
+            "description": "Base deployment profile for production tool restrictions.",
             "extends": ["builtin:default"],
             "tools": {
               "deploy": [
@@ -187,6 +194,7 @@ describe("profile configuration", () => {
             }
           },
           "deployment-child": {
+            "description": "Staging deployment profile extending the production tool policy.",
             "extends": ["deployment-base"],
             "tools": {
               "deploy": [
@@ -211,6 +219,7 @@ describe("profile configuration", () => {
       writeConfig(`{
         "profiles": {
           "deployment-base": {
+            "description": "Base deployment profile preserving inherited custom tool rules.",
             "extends": ["builtin:default"],
             "tools": {
               "deploy": [
@@ -219,6 +228,7 @@ describe("profile configuration", () => {
             }
           },
           "deployment-child": {
+            "description": "Child deployment profile preserving an empty custom tool override.",
             "extends": ["deployment-base"],
             "tools": {
               "deploy": []
@@ -239,7 +249,12 @@ describe("profile configuration", () => {
       writeConfig(
         JSON.stringify({
           profiles: {
-            "quiet-bash": { extends: ["builtin:default"], tools: { bash: [] } },
+            "quiet-bash": {
+              description:
+                "Quiet Bash profile retaining inherited command permissions.",
+              extends: ["builtin:default"],
+              tools: { bash: [] },
+            },
           },
         }),
       ),
@@ -263,6 +278,8 @@ describe("profile configuration", () => {
   it("accepts a fully custom profile without extends", () => {
     const standaloneProfile = {
       ...genericPolicyConfig.profiles["builtin:default"],
+      description:
+        "Standalone experimental profile for custom configuration loading.",
       emoji: "🧪",
     };
     const config = loadProfileConfig(
@@ -275,6 +292,23 @@ describe("profile configuration", () => {
     );
 
     expect(config.profiles.standalone).toMatchObject({ emoji: "🧪" });
+  });
+
+  it("rejects a valid profile when its description is omitted", () => {
+    const configPath = writeConfig(
+      JSON.stringify({
+        profiles: {
+          standalone: {
+            ...genericPolicyConfig.profiles["builtin:default"],
+            description: undefined,
+          },
+        },
+      }),
+    );
+
+    expect(() => loadProfileConfig(genericPolicyConfig, configPath)).toThrow(
+      "schema validation failed",
+    );
   });
 
   it("throws a typed error for invalid JSONC in an existing file", () => {
@@ -319,7 +353,11 @@ describe("profile configuration", () => {
       label: "unknown parent",
       contents: {
         profiles: {
-          default: { extends: ["missing"] },
+          default: {
+            description:
+              "Default profile used to verify unknown inheritance handling.",
+            extends: ["missing"],
+          },
         },
       },
       message: "unknown inherited profile",
@@ -328,8 +366,16 @@ describe("profile configuration", () => {
       label: "cycle",
       contents: {
         profiles: {
-          default: { extends: ["worker"] },
-          worker: { extends: ["default"] },
+          default: {
+            description:
+              "Default profile participating in an inheritance cycle test.",
+            extends: ["worker"],
+          },
+          worker: {
+            description:
+              "Worker profile participating in an inheritance cycle test.",
+            extends: ["default"],
+          },
         },
       },
       message: "cyclic profile inheritance detected",
@@ -355,7 +401,11 @@ describe("profile configuration", () => {
       const configPath = writeConfig(
         JSON.stringify({
           profiles: {
-            [name]: { extends: ["builtin:default"] },
+            [name]: {
+              description:
+                "Reserved-name profile used to verify prefix validation.",
+              extends: ["builtin:default"],
+            },
           },
         }),
       );
@@ -381,13 +431,21 @@ describe("profile configuration", () => {
       writeConfig(
         JSON.stringify({
           profiles: {
-            "builtin-extends": { extends: ["builtin:default"] },
+            "builtin-extends": {
+              description: "Profile extending the shipped default policy.",
+              extends: ["builtin:default"],
+            },
             default: {
+              description:
+                "Custom default profile for inheritance resolution tests.",
               tools: { bash: [] },
               readPaths: [{ pattern: "*", decision: "allow" }],
               writePaths: [{ pattern: "*", decision: "allow" }],
             },
-            "custom-extends": { extends: ["default"] },
+            "custom-extends": {
+              description: "Profile extending a user-defined custom parent.",
+              extends: ["default"],
+            },
           },
         }),
       ),
@@ -401,7 +459,11 @@ describe("profile configuration", () => {
     const unknownBuiltinPath = writeConfig(
       JSON.stringify({
         profiles: {
-          custom: { extends: ["builtin:missing"] },
+          custom: {
+            description:
+              "Profile used to verify unknown built-in inheritance handling.",
+            extends: ["builtin:missing"],
+          },
         },
       }),
     );
@@ -414,7 +476,11 @@ describe("profile configuration", () => {
     const configPath = writeConfig(
       JSON.stringify({
         profiles: {
-          custom: { extends: ["default"] },
+          custom: {
+            description:
+              "Profile referencing a missing custom inheritance target.",
+            extends: ["default"],
+          },
         },
       }),
     );
@@ -656,7 +722,11 @@ const invalidExtensionConfigCases = [
     contents: JSON.stringify({
       defaultProfile: "builtin:default",
       profiles: {
-        "builtin:default": { extends: ["missing"] },
+        "builtin:default": {
+          description:
+            "Reserved profile used to verify extension failure handling.",
+          extends: ["missing"],
+        },
       },
     }),
     messageFragment: "reserved profile name",

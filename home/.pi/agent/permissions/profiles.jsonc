@@ -3,6 +3,7 @@
   "defaultProfile": "personal",
   "profiles": {
     "config-maintenance": {
+      "description": "Configuration maintenance profile for the Pi setup repository.",
       "extends": ["builtin:default"],
       "sandbox": false,
       "directories": ["~/Code/config", "~/code/config"],
@@ -84,6 +85,7 @@
       ],
     },
     "config-maintenance-tests-hidden": {
+      "description": "Configuration maintenance with tests hidden from the agent.",
       "extends": ["builtin:tests-hidden"],
       "sandbox": { "network": "deny" },
       "readPaths": [
@@ -156,6 +158,7 @@
       ],
     },
     "config-maintenance-tests-only": {
+      "description": "Configuration maintenance restricted to test-file changes.",
       "extends": ["builtin:tests-only"],
       "sandbox": { "network": "deny" },
       "readPaths": [
@@ -228,6 +231,7 @@
       ],
     },
     "gitlab-skills": {
+      "description": "GitLab skill scripts with network access for merge-request workflows.",
       "extends": ["builtin:default"],
       "sandbox": { "network": "allow" },
       "tools": {
@@ -276,6 +280,7 @@
       ],
     },
     "personal": {
+      "description": "Personal default profile with local coding workflow guardrails.",
       "extends": ["builtin:default", "gitlab-skills"],
       "tools": {
         "bash": [
@@ -329,6 +334,7 @@
       },
     },
     "performance-review": {
+      "description": "Performance review profile with GitHub and GitLab access.",
       "extends": ["builtin:default"],
       "sandbox": { "network": "allow" },
       "color": "red",
@@ -342,6 +348,7 @@
       },
     },
     "socrates": {
+      "description": "Read-only Socratic coaching profile.",
       "extends": ["builtin:read-only"],
       "promptFile": "~/.pi/agent/permissions/prompts/socrates.md",
       "color": "cyan",

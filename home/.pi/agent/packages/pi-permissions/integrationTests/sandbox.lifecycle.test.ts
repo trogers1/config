@@ -85,7 +85,12 @@ describe("sandbox unavailable-backend lifecycle", () => {
     process.env.PI_PERMISSIONS_PROFILE_CONFIG = writeTempProfileConfig({
       defaultProfile: "blocked",
       profiles: {
-        blocked: { extends: ["builtin:default"], sandbox: { network: "deny" } },
+        blocked: {
+          description:
+            "Unavailable sandbox backend fail-closed profile with denied network.",
+          extends: ["builtin:default"],
+          sandbox: { network: "deny" },
+        },
       },
     });
 
@@ -118,6 +123,7 @@ describe("sandbox unavailable-backend lifecycle", () => {
         defaultProfile: "sandboxed",
         profiles: {
           sandboxed: {
+            description: "Sandbox lifecycle profile denying network access.",
             extends: ["builtin:default"],
             sandbox: { network: "deny" },
           },
@@ -149,6 +155,8 @@ describe("sandbox unavailable-backend lifecycle", () => {
       defaultProfile: "warn",
       profiles: {
         warn: {
+          description:
+            "Sandbox lifecycle profile warning and falling back when unavailable.",
           extends: ["builtin:default"],
           sandbox: { network: "deny", onUnavailable: "warn" },
         },

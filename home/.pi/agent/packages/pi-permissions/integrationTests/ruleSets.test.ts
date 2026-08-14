@@ -49,6 +49,8 @@ describe("rule-set namespace", () => {
       writeConfig({
         profiles: {
           guarded: {
+            description:
+              "Shell guard ruleset profile denying dangerous Bash commands.",
             extends: ["ruleset:shell-guards"],
             ...minimalPaths,
           },
@@ -69,6 +71,7 @@ describe("rule-set namespace", () => {
       writeConfig({
         profiles: {
           comparison: {
+            description: "Read-only shell and path ruleset comparison profile.",
             extends: ["ruleset:read-only-path", "ruleset:read-only-shell"],
           },
         },
@@ -110,6 +113,8 @@ describe("rule-set namespace", () => {
         defaultProfile: "guarded-paths",
         profiles: {
           "guarded-paths": {
+            description:
+              "Sensitive-path protection ruleset profile for read access.",
             extends: ["ruleset:path-guards"],
             tools: { bash: [{ pattern: "*", decision: "allow" }] },
           },
@@ -136,6 +141,8 @@ describe("rule-set namespace", () => {
         writeConfig({
           profiles: {
             "ruleset:evil": {
+              description:
+                "Invalid reserved-name profile for namespace validation.",
               extends: ["builtin:default"],
             },
           },
@@ -151,6 +158,7 @@ describe("rule-set namespace", () => {
         writeConfig({
           profiles: {
             custom: {
+              description: "Invalid profile for unknown rule-set validation.",
               extends: ["ruleset:missing"],
               ...minimalPaths,
             },
@@ -167,6 +175,8 @@ describe("rule-set namespace", () => {
         writeConfig({
           profiles: {
             custom: {
+              description:
+                "Invalid profile for prototype inherited-profile validation.",
               extends: ["constructor"],
               ...minimalPaths,
             },
@@ -182,6 +192,8 @@ describe("rule-set namespace", () => {
       writeConfig({
         profiles: {
           mixed: {
+            description:
+              "Profile combining the default policy with shell guard rules.",
             extends: ["builtin:default", "ruleset:shell-guards"],
             ...minimalPaths,
           },
@@ -212,6 +224,8 @@ describe("rule-set namespace", () => {
       writeConfig({
         profiles: {
           "deps-work": {
+            description:
+              "Dependency mutation allow ruleset profile for package work.",
             extends: [
               "ruleset:packageManagers",
               "ruleset:deps-mutations-allow",
@@ -236,6 +250,8 @@ describe("rule-set namespace", () => {
       writeConfig({
         profiles: {
           guarded: {
+            description:
+              "Dependency mutation guard ruleset profile denying package changes.",
             extends: [
               "ruleset:packageManagers",
               "ruleset:deps-mutations-guard",
@@ -257,6 +273,8 @@ describe("rule-set namespace", () => {
       writeConfig({
         profiles: {
           committer: {
+            description:
+              "Git commit ruleset profile allowing commits and asking for pushes.",
             extends: ["ruleset:git-commit"],
             ...minimalPaths,
           },
@@ -281,6 +299,8 @@ describe("rule-set namespace", () => {
         writeConfig({
           profiles: {
             comparison: {
+              description:
+                "Rule-set registry comparison profile for JSONC resolution.",
               extends: [name],
               ...minimalPaths,
             },
