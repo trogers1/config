@@ -15,7 +15,8 @@ GITLAB_READ_PROJECT_ID="$(gitlab_read_project_id_from_url "$mr_url")"
 export GITLAB_READ_PROJECT_ID
 mr_url="$(gitlab_read_normalize_mr_url "$mr_url")"
 
-work_dir="$(mktemp -d)"
+# mktemp replaces XXXXXX with a collision-resistant suffix and creates it atomically.
+work_dir="$(mktemp -d /tmp/address-comments.XXXXXX)"
 trap 'rm -rf "$work_dir"' EXIT
 
 discussions_json="$work_dir/discussions.json"

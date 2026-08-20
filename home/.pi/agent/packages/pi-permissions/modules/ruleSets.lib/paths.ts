@@ -166,6 +166,9 @@ export function defaultWritePaths(
     { pattern: "..", decision: "ask", contexts: ["bash"] },
     { pattern: "../**", decision: "ask" },
     { pattern: "/tmp/**", decision: "allow" },
+    // macOS resolves /tmp to /private/tmp after sandbox policy evaluation.
+    { pattern: "/private/tmp", decision: "allow" },
+    { pattern: "/private/tmp/**", decision: "allow" },
     ...piReferencePathRules.map((rule) => ({
       ...rule,
       contexts: ["bash" as const],

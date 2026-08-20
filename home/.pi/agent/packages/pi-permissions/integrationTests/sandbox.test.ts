@@ -385,6 +385,18 @@ describe("sandbox full-harness OS acceptance", () => {
     );
   });
 
+  it("permits a /tmp mktemp directory through macOS's /private/tmp resolution", async () => {
+    const root = fixture();
+    const createAndRemoveTempDirectory = node({
+      source:
+        "const fs = require('fs'); const directory = fs.mkdtempSync('/tmp/pi-permissions-mktemp-'); fs.rmSync(directory, { recursive: true });",
+    });
+
+    expect(
+      await runThroughPi({ root, command: createAndRemoveTempDirectory }),
+    ).toBe(0);
+  });
+
   it("preserves a successful exit code when command output resembles a kernel denial", async () => {
     const root = fixture();
     expect(

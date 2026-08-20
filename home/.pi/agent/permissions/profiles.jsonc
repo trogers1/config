@@ -231,9 +231,16 @@
       ],
     },
     "gitlab-skills": {
-      "description": "GitLab skill scripts with network access for merge-request workflows.",
-      "extends": ["builtin:default"],
-      "sandbox": { "network": "allow" },
+      "description": "GitLab skill scripts with network access and gate-only .git access for merge-request workflows.",
+      "extends": ["personal"],
+      "sandbox": {
+        "network": "allow",
+        "kernelUnenforcedProtectedPaths": [
+          "**/.env*",
+          "**/.git",
+          "**/.git/**",
+        ],
+      },
       "tools": {
         "bash": [
           {
@@ -273,7 +280,7 @@
           "contexts": ["bash"],
         },
         {
-          "pattern": "/**/home/.pi/agent/skills/address-comments/*",
+          "pattern": "/**/.pi/agent/skills/address-comments/**",
           "decision": "allow",
           "contexts": ["bash"],
         },
@@ -281,7 +288,11 @@
     },
     "personal": {
       "description": "Personal default profile with local coding workflow guardrails.",
-      "extends": ["builtin:default", "gitlab-skills"],
+      "extends": ["builtin:default"],
+      "sandbox": {
+        "network": "deny",
+        "kernelUnenforcedProtectedPaths": ["**/.env*"],
+      },
       "tools": {
         "bash": [
           {
