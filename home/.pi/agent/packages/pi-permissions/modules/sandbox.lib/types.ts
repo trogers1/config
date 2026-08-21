@@ -24,6 +24,10 @@ export type SandboxFilesystemSpec = {
 export type SandboxSpec = {
   profile: string;
   network: "allow" | "deny";
+  /** Opt in to sandbox-runtime's macOS trustd IPC relaxation. */
+  enableWeakerNetworkIsolation: boolean;
+  /** Permit local Unix-domain and loopback listeners without external network access. */
+  allowLocalBinding: boolean;
   filesystem: SandboxFilesystemSpec;
   readRules: SandboxPathRule[];
   writeRules: SandboxPathRule[];

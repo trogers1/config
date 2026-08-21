@@ -212,6 +212,14 @@
                       "type": "array",
                       "items": { "type": "string", "minLength": 1 }
                     },
+                    "enableWeakerNetworkIsolation": {
+                      "type": "boolean",
+                      "description": "Permits macOS trustd IPC for Go TLS verification. This weakens network isolation and can permit data exfiltration; see https://github.com/anthropic-experimental/sandbox-runtime#security-limitations."
+                    },
+                    "allowLocalBinding": {
+                      "type": "boolean",
+                      "description": "Permits local Unix-domain and loopback socket listeners while network access remains denied."
+                    },
                     "onUnavailable": {
                       "anyOf": [
                         { "type": "string", "const": "block" },

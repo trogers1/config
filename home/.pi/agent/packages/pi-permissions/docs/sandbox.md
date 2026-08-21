@@ -52,6 +52,8 @@ Set `sandbox` on a custom profile to choose its posture:
         "extraWritePaths": ["build-cache"],
         "extraDenyReadPaths": ["~/Library/Keychains"],
         "extraDenyWritePaths": ["secrets/output"],
+        "enableWeakerNetworkIsolation": true,
+        "allowLocalBinding": true,
         "onUnavailable": "block",
       },
     },
@@ -72,11 +74,32 @@ Set `sandbox` on a custom profile to choose its posture:
 
 The optional path arrays are additive:
 
-| Field                 | Effect                                                               |
-| --------------------- | -------------------------------------------------------------------- |
-| `extraWritePaths`     | Additional writable roots when policy-derived writes are too narrow. |
-| `extraDenyReadPaths`  | Additional kernel-enforced read denials.                             |
-| `extraDenyWritePaths` | Additional kernel-enforced write denials.                            |
+| Field                          | Effect                                                                        |
+| ------------------------------ | ----------------------------------------------------------------------------- |
+| `extraWritePaths`              | Additional writable roots when policy-derived writes are too narrow.          |
+| `extraDenyReadPaths`           | Additional kernel-enforced read denials.                                      |
+| `extraDenyWritePaths`          | Additional kernel-enforced write denials.                                     |
+| `enableWeakerNetworkIsolation` | On macOS, permits sandbox-runtime's trustd IPC relaxation.                    |
+| `allowLocalBinding`            | Permits local Unix-domain and loopback listeners without external networking. |
+
+`enableWeakerNetworkIsolation` defaults to `false`. It is a sandbox-runtime
+option whose current macOS effect is permitting the `com.apple.trustd.agent`
+service. Enable it when a sandboxed Go-based TLS client—such as `glab`, a Go
+HTTP client, or another Go CLI—must validate a server certificate through
+macOS's trust service. This weakens network isolation by admitting that system
+IPC service and can create a data-exfiltration vector, but it does not disable
+certificate verification. Do not enable it merely to bypass an untrusted or
+invalid certificate.
+
+`allowLocalBinding` defaults to `false` when omitted; `builtin:default` enables
+it because a normal local build/test toolchain commonly needs a Unix-domain or
+loopback listener, such as `tsx`'s IPC socket. It does not allow external
+network access, but permits communication with other local processes that can
+reach the listener.
+
+See the [sandbox runtime security
+limitations](https://github.com/anthropic-experimental/sandbox-runtime#security-limitations)
+for the upstream implementation details and risk assessment.
 
 Configured filesystem paths reject NUL and line-break characters. `~` expands
 to the current user's home directory; relative paths resolve from Pi's startup

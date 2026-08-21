@@ -13,6 +13,8 @@ import type {
  * including its network proxy lifecycle. Keep it behind this boundary so the
  * policy compiler and extension never depend on runtime-specific types.
  */
+// See https://github.com/anthropic-experimental/sandbox-runtime#security-limitations
+// before forwarding enableWeakerNetworkIsolation to the runtime.
 function toRuntimeConfig(spec: SandboxSpec): SandboxRuntimeConfig {
   const filesystem = {
     denyRead: spec.filesystem.readDenyRoots,
@@ -24,15 +26,20 @@ function toRuntimeConfig(spec: SandboxSpec): SandboxRuntimeConfig {
     // sandbox-runtime treats an omitted allowlist as unrestricted networking.
     // Its exported TypeScript type requires allowlist fields even though its
     // runtime API deliberately supports their absence for this posture.
-    return { filesystem, network: {} } as SandboxRuntimeConfig;
+    return {
+      filesystem,
+      network: {},
+      enableWeakerNetworkIsolation: spec.enableWeakerNetworkIsolation,
+    } as SandboxRuntimeConfig;
   }
   return {
     filesystem,
+    enableWeakerNetworkIsolation: spec.enableWeakerNetworkIsolation,
     network: {
       allowedDomains: [],
       deniedDomains: ["*"],
       strictAllowlist: true,
-      allowLocalBinding: false,
+      allowLocalBinding: spec.allowLocalBinding,
     },
   };
 }

@@ -405,6 +405,9 @@ export function translatePolicy(
     spec: {
       profile: profileName,
       network: sandbox.network,
+      enableWeakerNetworkIsolation:
+        sandbox.enableWeakerNetworkIsolation ?? false,
+      allowLocalBinding: sandbox.allowLocalBinding ?? false,
       filesystem: {
         startupCwd: cwd,
         readAllowRoots: normalizeRoots(readAllowRoots),

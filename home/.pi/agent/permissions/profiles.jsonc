@@ -235,6 +235,7 @@
       "extends": ["personal"],
       "sandbox": {
         "network": "allow",
+        "enableWeakerNetworkIsolation": true,
         "kernelUnenforcedProtectedPaths": [
           "**/.env*",
           "**/.git",
@@ -290,7 +291,7 @@
       "description": "Personal default profile with local coding workflow guardrails.",
       "extends": ["builtin:default"],
       "sandbox": {
-        "network": "deny",
+        "network": "allow",
         "kernelUnenforcedProtectedPaths": ["**/.env*"],
       },
       "tools": {
@@ -347,7 +348,7 @@
     "performance-review": {
       "description": "Performance review profile with GitHub and GitLab access.",
       "extends": ["builtin:default"],
-      "sandbox": { "network": "allow" },
+      "sandbox": { "network": "allow", "enableWeakerNetworkIsolation": true },
       "color": "red",
       "emoji": "📋",
       "tools": {

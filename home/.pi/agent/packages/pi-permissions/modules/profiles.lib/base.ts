@@ -37,7 +37,9 @@ export const baseProfile: ProfilePolicy = {
     "Default general-purpose main session with guarded shell and no network.",
   color: "blue",
   emoji: "🛠️",
-  sandbox: { network: "deny" },
+  // Local IPC is required by common build and test tools (for example tsx),
+  // while external network access remains denied.
+  sandbox: { network: "deny", allowLocalBinding: true },
   // No promptFile means: keep Pi's normal system prompt unchanged.
   // Tool policies resolve by specificity first; composition order only breaks ties.
   // For bash, patterns match normalized command segments.

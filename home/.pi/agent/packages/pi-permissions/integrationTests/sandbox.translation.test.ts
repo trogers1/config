@@ -72,6 +72,55 @@ describe("sandbox policy translation", () => {
     });
   });
 
+  it("carries sandbox network opt-ins into the sandbox specification", () => {
+    const result = translatePolicy(
+      {
+        ...policyConfig.profiles["builtin:default"],
+        protectedPathRules: [],
+        sandbox: {
+          network: "deny",
+          enableWeakerNetworkIsolation: true,
+          allowLocalBinding: true,
+        },
+      },
+      "sandboxed",
+      process.cwd(),
+    );
+
+    expect(result.kind).toBe("active");
+    if (result.kind !== "active") return;
+    expect(result.spec.enableWeakerNetworkIsolation).toBe(true);
+    expect(result.spec.allowLocalBinding).toBe(true);
+  });
+
+  it("defaults local binding to denied", () => {
+    const result = translatePolicy(
+      {
+        ...policyConfig.profiles["builtin:default"],
+        protectedPathRules: [],
+        sandbox: { network: "deny" },
+      },
+      "sandboxed",
+      process.cwd(),
+    );
+
+    expect(result.kind).toBe("active");
+    if (result.kind !== "active") return;
+    expect(result.spec.allowLocalBinding).toBe(false);
+  });
+
+  it("enables local binding for the built-in default profile", () => {
+    const result = translatePolicy(
+      policyConfig.profiles["builtin:default"],
+      "builtin:default",
+      process.cwd(),
+    );
+
+    expect(result.kind).toBe("active");
+    if (result.kind !== "active") return;
+    expect(result.spec.allowLocalBinding).toBe(true);
+  });
+
   it.skipIf(process.platform !== "darwin")(
     "preserves protected-rule provenance while narrowing writable subagent roots",
     () => {
