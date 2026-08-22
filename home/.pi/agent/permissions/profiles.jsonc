@@ -292,7 +292,15 @@
       "extends": ["builtin:default"],
       "sandbox": {
         "network": "allow",
-        "kernelUnenforcedProtectedPaths": ["**/.env*"],
+        "extraWritePaths": [
+          "/var/folders/*/*/T/**",
+          "~/.local/share/lightcast-mcp/tokens/**",
+        ],
+        "kernelUnenforcedProtectedPaths": [
+          "**/.env*",
+          "**/.git",
+          "**/.git/**",
+        ],
       },
       "tools": {
         "bash": [

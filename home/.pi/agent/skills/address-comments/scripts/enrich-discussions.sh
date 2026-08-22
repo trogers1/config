@@ -11,7 +11,8 @@ mr_iid="${2:?merge request iid required}"
 
 gitlab_read_validate_iid "$mr_iid"
 
-reactions_map="$(mktemp)"
+# mktemp replaces XXXXXX with a collision-resistant suffix and creates it atomically.
+reactions_map="$(mktemp /tmp/address-comments-reactions.XXXXXX)"
 trap 'rm -f "$reactions_map"' EXIT
 echo '{}' >"$reactions_map"
 

@@ -4,7 +4,11 @@ import {
   type ProfilePolicy,
 } from "../policyHelpers";
 import { ruleSetRegistry } from "../ruleSets.lib/index";
-import { baseCompositionChain, baseProfile } from "./base";
+import {
+  baseCompositionChain,
+  baseProfile,
+  gitMetadataKernelWaiver,
+} from "./base";
 
 export const workerCompositionChain = [
   ...baseCompositionChain,
@@ -40,7 +44,10 @@ export const readOnlyProfile: ProfilePolicy = {
     "Read-only inspection profile; writes limited to temporary and handoff files.",
   color: "green",
   emoji: "🔎",
-  sandbox: { network: "deny" },
+  sandbox: {
+    network: "deny",
+    kernelUnenforcedProtectedPaths: gitMetadataKernelWaiver,
+  },
   tools: readOnlyShellPosture.tools!,
   readPaths: readOnlyPathPosture.readPaths!,
   writePaths: readOnlyPathPosture.writePaths!,

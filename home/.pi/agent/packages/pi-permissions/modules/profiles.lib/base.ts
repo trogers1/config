@@ -27,6 +27,10 @@ export const defaultWithNetCompositionChain = [
   "builtin:default-with-net",
 ] as const;
 
+// Git is only usable when its metadata can be read and, for mutation tiers,
+// written. Command rules still determine which Git operations are permitted.
+export const gitMetadataKernelWaiver = ["**/.git", "**/.git/**"];
+
 /**
  * The standard posture every permissive profile derives from. Composed
  * entirely from rule sets: read-mostly shell/git/package-manager rules,
@@ -39,7 +43,11 @@ export const baseProfile: ProfilePolicy = {
   emoji: "🛠️",
   // Local IPC is required by common build and test tools (for example tsx),
   // while external network access remains denied.
-  sandbox: { network: "deny", allowLocalBinding: true },
+  sandbox: {
+    network: "deny",
+    allowLocalBinding: true,
+    kernelUnenforcedProtectedPaths: gitMetadataKernelWaiver,
+  },
   // No promptFile means: keep Pi's normal system prompt unchanged.
   // Tool policies resolve by specificity first; composition order only breaks ties.
   // For bash, patterns match normalized command segments.
@@ -59,5 +67,8 @@ export const baseProfile: ProfilePolicy = {
 export const defaultWithNetProfile: ProfilePolicy = {
   ...baseProfile,
   description: "Default profile with unrestricted sandbox network access.",
-  sandbox: { network: "allow" },
+  sandbox: {
+    network: "allow",
+    kernelUnenforcedProtectedPaths: gitMetadataKernelWaiver,
+  },
 };

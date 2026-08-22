@@ -1,6 +1,10 @@
 import { extendProfile } from "../policyHelpers";
 import { ruleSetRegistry } from "../ruleSets.lib/index";
-import { baseCompositionChain, baseProfile } from "./base";
+import {
+  baseCompositionChain,
+  baseProfile,
+  gitMetadataKernelWaiver,
+} from "./base";
 
 export const committerCompositionChain = [
   ...baseCompositionChain,
@@ -28,6 +32,9 @@ export const gitFullProfile = extendProfile(committerProfile, {
   ...ruleSetRegistry["ruleset:git-refs"],
   description: "Full Git profile: commit, push, branches, tags, and switching.",
   color: "red",
-  sandbox: { network: "allow" },
+  sandbox: {
+    network: "allow",
+    kernelUnenforcedProtectedPaths: gitMetadataKernelWaiver,
+  },
   emoji: "🔥",
 });

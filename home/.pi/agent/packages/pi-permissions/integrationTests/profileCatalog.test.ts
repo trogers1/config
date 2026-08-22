@@ -184,6 +184,31 @@ describe("shipped profile catalog", () => {
     ).resolves.toBeUndefined();
   });
 
+  it("waives kernel .git protection for built-ins that permit Git operations", () => {
+    const gitCapableProfiles: BuiltinProfileName[] = [
+      "builtin:default",
+      "builtin:default-with-net",
+      "builtin:worker",
+      "builtin:read-only",
+      "builtin:tests-hidden",
+      "builtin:tests-only",
+      "builtin:committer",
+      "builtin:reviewer",
+      "builtin:scribe-only",
+      "builtin:deps-mutator",
+      "builtin:implementation-only",
+      "builtin:git-full",
+    ];
+
+    for (const name of gitCapableProfiles) {
+      const sandbox = policyConfig.profiles[name].sandbox;
+      expect(typeof sandbox === "object" && sandbox !== null, name).toBe(true);
+      expect(sandbox && sandbox.kernelUnenforcedProtectedPaths, name).toEqual(
+        expect.arrayContaining(["**/.git", "**/.git/**"]),
+      );
+    }
+  });
+
   it("assigns sandbox network posture across every built-in profile", () => {
     const expectedNetworkPostures = {
       "builtin:default": "deny",

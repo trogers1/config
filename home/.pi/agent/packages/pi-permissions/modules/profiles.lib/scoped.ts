@@ -1,7 +1,12 @@
 import type { ProfilePolicy } from "../policyHelpers";
 import { extendProfile } from "../policyHelpers";
 import { ruleSetRegistry } from "../ruleSets.lib/index";
-import { baseCompositionChain, baseProfile, bashRules } from "./base";
+import {
+  baseCompositionChain,
+  baseProfile,
+  bashRules,
+  gitMetadataKernelWaiver,
+} from "./base";
 import { readOnlyCompositionChain, readOnlyProfile } from "./core";
 
 export const reviewerCompositionChain = [
@@ -55,7 +60,10 @@ export const depsMutatorProfile: ProfilePolicy = {
   ...baseProfile,
   description: "Dependency mutator profile: allows package-manager mutations.",
   color: "yellow",
-  sandbox: { network: "allow" },
+  sandbox: {
+    network: "allow",
+    kernelUnenforcedProtectedPaths: gitMetadataKernelWaiver,
+  },
   emoji: "📦",
   // Same composition as builtin:default with the dependency-mutation guard
   // rule set swapped for its allow twin.
