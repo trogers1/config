@@ -1,24 +1,57 @@
 import { Type, type Static, type TSchema } from "typebox";
 import { Value } from "typebox/value";
 
-export const builtinProfilePrefix = "builtin:";
+const policyReferencePrefixSchemas = {
+  builtinProfile: Type.Literal("builtin:"),
+  shippedRuleset: Type.Literal("ruleset:"),
+  customRuleset: Type.Literal("customruleset:"),
+  transform: Type.Literal("transform:"),
+} as const;
+
+export const policyReferencePrefixSchema = Type.Union([
+  policyReferencePrefixSchemas.builtinProfile,
+  policyReferencePrefixSchemas.shippedRuleset,
+  policyReferencePrefixSchemas.customRuleset,
+  policyReferencePrefixSchemas.transform,
+]);
+export type PolicyReferencePrefix = Static<typeof policyReferencePrefixSchema>;
+export type PolicyReferenceKind = keyof typeof policyReferencePrefixSchemas;
+
+const reservedProfilePrefixKinds = [
+  "builtinProfile",
+  "shippedRuleset",
+  "customRuleset",
+  "transform",
+] as const satisfies readonly PolicyReferenceKind[];
+const compositionFragmentKinds = [
+  "shippedRuleset",
+  "customRuleset",
+  "transform",
+] as const satisfies readonly PolicyReferenceKind[];
+
+export function policyReferencePrefix(
+  kind: PolicyReferenceKind,
+): PolicyReferencePrefix {
+  return policyReferencePrefixSchemas[kind].const;
+}
+
+export function hasPolicyReferencePrefix(
+  name: string,
+  kind: PolicyReferenceKind,
+): boolean {
+  return name.startsWith(policyReferencePrefix(kind));
+}
 
 export function isBuiltinProfileName(name: string): boolean {
-  return name.startsWith(builtinProfilePrefix);
+  return hasPolicyReferencePrefix(name, "builtinProfile");
 }
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-const reservedProfilePrefixes = [
-  builtinProfilePrefix,
-  "ruleset:",
-  "transform:",
-] as const;
-
-const customProfileNamePattern = `^(?!(?:${reservedProfilePrefixes
-  .map((prefix) => escapeRegExp(prefix))
+const customProfileNamePattern = `^(?!(?:${reservedProfilePrefixKinds
+  .map((kind) => escapeRegExp(policyReferencePrefix(kind)))
   .join("|")})).+$`;
 
 export const builtinProfileNames = [
@@ -38,8 +71,24 @@ export const builtinProfileNames = [
 ] as const;
 export type BuiltinProfileName = (typeof builtinProfileNames)[number];
 
+export function reservedProfilePrefix(
+  name: string,
+): PolicyReferencePrefix | undefined {
+  const kind = reservedProfilePrefixKinds.find((candidate) =>
+    hasPolicyReferencePrefix(name, candidate),
+  );
+  return kind ? policyReferencePrefix(kind) : undefined;
+}
+
 export function isReservedProfileName(name: string): boolean {
-  return reservedProfilePrefixes.some((prefix) => name.startsWith(prefix));
+  return reservedProfilePrefix(name) !== undefined;
+}
+
+/** True for a non-profile element rendered directly in a composition chain. */
+export function isCompositionFragmentName(name: string): boolean {
+  return compositionFragmentKinds.some((kind) =>
+    hasPolicyReferencePrefix(name, kind),
+  );
 }
 
 const profileTransformNameSchema = Type.Union([
@@ -249,6 +298,17 @@ const profileConfigProfileSchema = Type.Object(
   },
 );
 
+/** A user-owned, partial policy fragment for composition through extends. */
+const customRuleSetPolicySchema = Type.Object(
+  {
+    tools: Type.Optional(profileProperties.tools),
+    readPaths: Type.Optional(profileProperties.readPaths),
+    writePaths: Type.Optional(profileProperties.writePaths),
+    protectedPathRules: Type.Optional(profileProperties.protectedPathRules),
+  },
+  { additionalProperties: false, minProperties: 1 },
+);
+
 export type Decision = Static<typeof decisionSchema>;
 export type Rule = Static<typeof ruleSchema>;
 export type CustomToolRule = Static<typeof customToolRuleSchema>;
@@ -267,6 +327,7 @@ export type ProtectedPathRule = Static<typeof protectedPathRuleSchema>;
 export type ProfileColor = Static<typeof profileColorSchema>;
 export type SandboxConfig = Static<typeof sandboxConfigSchema>;
 export type ProfilePolicy = Static<typeof profileSchema>;
+export type CustomRuleSetPolicy = Static<typeof customRuleSetPolicySchema>;
 type PolicyConfigShape = Static<typeof policyConfigSchema>;
 export type PolicyConfig<Names extends string = string> = Omit<
   PolicyConfigShape,
@@ -294,6 +355,15 @@ export const profileConfigFileSchema = Type.Object(
   {
     $schema: Type.Optional(Type.String()),
     defaultProfile: Type.Optional(Type.String()),
+    rulesets: Type.Optional(
+      Type.Unsafe<Record<string, CustomRuleSetPolicy>>({
+        type: "object",
+        patternProperties: {
+          "^.+$": customRuleSetPolicySchema,
+        },
+        additionalProperties: false,
+      }),
+    ),
     profiles: Type.Unsafe<Record<string, ProfileConfigProfile>>({
       type: "object",
       patternProperties: {
@@ -309,7 +379,11 @@ export const profileConfigFileSchema = Type.Object(
   },
 );
 type ProfileConfigFileShape = Static<typeof profileConfigFileSchema>;
-export type ProfileConfigFile = Omit<ProfileConfigFileShape, "profiles"> & {
+export type ProfileConfigFile = Omit<
+  ProfileConfigFileShape,
+  "profiles" | "rulesets"
+> & {
+  rulesets?: Record<string, CustomRuleSetPolicy>;
   profiles: Record<string, ProfileConfigProfile>;
 };
 

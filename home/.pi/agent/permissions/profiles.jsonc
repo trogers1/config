@@ -1,12 +1,8 @@
 {
   "$schema": "../../packages/pi-permissions/schemas/profiles.schema.json",
   "defaultProfile": "personal",
-  "profiles": {
-    "config-maintenance": {
-      "description": "Configuration maintenance profile for the Pi setup repository.",
-      "extends": ["builtin:default"],
-      "sandbox": false,
-      "directories": ["~/Code/config", "~/code/config"],
+  "rulesets": {
+    "infra-mutation-deny": {
       "tools": {
         "bash": [
           {
@@ -116,6 +112,8 @@
           },
         ],
       },
+    },
+    "config-symlink-boundaries": {
       "readPaths": [
         {
           "pattern": "/Users/*/.pi/agent/packages",
@@ -147,6 +145,52 @@
           "decision": "deny",
           "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Read the source under home/.pi/agent/... instead.",
         },
+      ],
+      "writePaths": [
+        {
+          "pattern": "/Users/*/.pi/agent/packages",
+          "decision": "deny",
+          "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Write to the source under home/.pi/agent/... instead.",
+        },
+        {
+          "pattern": "/Users/*/.pi/agent/packages/**",
+          "decision": "deny",
+          "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Write to the source under home/.pi/agent/... instead.",
+        },
+        {
+          "pattern": "/Users/*/.pi/agent/usage",
+          "decision": "deny",
+          "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Write to the source under home/.pi/agent/... instead.",
+        },
+        {
+          "pattern": "/Users/*/.pi/agent/usage/**",
+          "decision": "deny",
+          "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Write to the source under home/.pi/agent/... instead.",
+        },
+        {
+          "pattern": "/Users/*/.pi/agent/permissions",
+          "decision": "deny",
+          "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Write to the source under home/.pi/agent/... instead.",
+        },
+        {
+          "pattern": "/Users/*/.pi/agent/permissions/**",
+          "decision": "deny",
+          "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Write to the source under home/.pi/agent/... instead.",
+        },
+      ],
+    },
+  },
+  "profiles": {
+    "config-maintenance": {
+      "description": "Configuration maintenance profile for the Pi setup repository.",
+      "extends": [
+        "builtin:default",
+        "customruleset:infra-mutation-deny",
+        "customruleset:config-symlink-boundaries",
+      ],
+      "sandbox": false,
+      "directories": ["~/Code/config", "~/code/config"],
+      "readPaths": [
         {
           "pattern": "/Users/*/.nvm/versions/**/lib/node_modules/@earendil-works/pi-coding-agent/**",
           "decision": "allow",
@@ -161,399 +205,39 @@
           "pattern": "/Users/*/code/config/**",
           "decision": "allow",
         },
-        {
-          "pattern": "/Users/*/.pi/agent/packages",
-          "decision": "deny",
-          "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Write to the source under home/.pi/agent/... instead.",
-        },
-        {
-          "pattern": "/Users/*/.pi/agent/packages/**",
-          "decision": "deny",
-          "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Write to the source under home/.pi/agent/... instead.",
-        },
-        {
-          "pattern": "/Users/*/.pi/agent/usage",
-          "decision": "deny",
-          "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Write to the source under home/.pi/agent/... instead.",
-        },
-        {
-          "pattern": "/Users/*/.pi/agent/usage/**",
-          "decision": "deny",
-          "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Write to the source under home/.pi/agent/... instead.",
-        },
-        {
-          "pattern": "/Users/*/.pi/agent/permissions",
-          "decision": "deny",
-          "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Write to the source under home/.pi/agent/... instead.",
-        },
-        {
-          "pattern": "/Users/*/.pi/agent/permissions/**",
-          "decision": "deny",
-          "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Write to the source under home/.pi/agent/... instead.",
-        },
       ],
     },
     "config-maintenance-tests-hidden": {
       "description": "Configuration maintenance with tests hidden from the agent.",
-      "extends": ["builtin:tests-hidden"],
-      "sandbox": { "network": "deny" },
-      "tools": {
-        "bash": [
-          {
-            "pattern": "terraform apply*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "terraform destroy*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "terraform import*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "terraform refresh*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "terraform taint*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "terraform untaint*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "terraform state *",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "terraform force-unlock*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "terraform test*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "terraform * apply*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "terraform * destroy*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "*aws-tf apply*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "*aws-tf destroy*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "*auth0-tf apply*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "*auth0-tf destroy*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "*scripts/infra/activate-env*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "*scripts/infra/apply*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "*scripts/infra/deploy*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "*scripts/infra/destroy-preview*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "*scripts/infra/init-env*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "*scripts/infra/sync-secrets*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-        ],
+      "extends": [
+        "builtin:tests-hidden",
+        "customruleset:infra-mutation-deny",
+        "customruleset:config-symlink-boundaries",
+      ],
+      "sandbox": {
+        "network": "deny",
       },
       "readPaths": [
         {
-          "pattern": "/Users/*/.pi/agent/packages",
-          "decision": "deny",
-          "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Read the source under home/.pi/agent/... instead.",
-        },
-        {
-          "pattern": "/Users/*/.pi/agent/packages/**",
-          "decision": "deny",
-          "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Read the source under home/.pi/agent/... instead.",
-        },
-        {
-          "pattern": "/Users/*/.pi/agent/usage",
-          "decision": "deny",
-          "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Read the source under home/.pi/agent/... instead.",
-        },
-        {
-          "pattern": "/Users/*/.pi/agent/usage/**",
-          "decision": "deny",
-          "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Read the source under home/.pi/agent/... instead.",
-        },
-        {
-          "pattern": "/Users/*/.pi/agent/permissions",
-          "decision": "deny",
-          "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Read the source under home/.pi/agent/... instead.",
-        },
-        {
-          "pattern": "/Users/*/.pi/agent/permissions/**",
-          "decision": "deny",
-          "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Read the source under home/.pi/agent/... instead.",
-        },
-        {
           "pattern": "/Users/*/.nvm/versions/**/lib/node_modules/@earendil-works/pi-coding-agent/**",
           "decision": "allow",
-        },
-      ],
-      "writePaths": [
-        {
-          "pattern": "/Users/*/.pi/agent/packages",
-          "decision": "deny",
-          "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Write to the source under home/.pi/agent/... instead.",
-        },
-        {
-          "pattern": "/Users/*/.pi/agent/packages/**",
-          "decision": "deny",
-          "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Write to the source under home/.pi/agent/... instead.",
-        },
-        {
-          "pattern": "/Users/*/.pi/agent/usage",
-          "decision": "deny",
-          "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Write to the source under home/.pi/agent/... instead.",
-        },
-        {
-          "pattern": "/Users/*/.pi/agent/usage/**",
-          "decision": "deny",
-          "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Write to the source under home/.pi/agent/... instead.",
-        },
-        {
-          "pattern": "/Users/*/.pi/agent/permissions",
-          "decision": "deny",
-          "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Write to the source under home/.pi/agent/... instead.",
-        },
-        {
-          "pattern": "/Users/*/.pi/agent/permissions/**",
-          "decision": "deny",
-          "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Write to the source under home/.pi/agent/... instead.",
         },
       ],
     },
     "config-maintenance-tests-only": {
       "description": "Configuration maintenance restricted to test-file changes.",
-      "extends": ["builtin:tests-only"],
-      "sandbox": { "network": "deny" },
-      "tools": {
-        "bash": [
-          {
-            "pattern": "terraform apply*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "terraform destroy*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "terraform import*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "terraform refresh*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "terraform taint*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "terraform untaint*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "terraform state *",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "terraform force-unlock*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "terraform test*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "terraform * apply*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "terraform * destroy*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "*aws-tf apply*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "*aws-tf destroy*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "*auth0-tf apply*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "*auth0-tf destroy*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "*scripts/infra/activate-env*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "*scripts/infra/apply*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "*scripts/infra/deploy*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "*scripts/infra/destroy-preview*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "*scripts/infra/init-env*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "*scripts/infra/sync-secrets*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-        ],
+      "extends": [
+        "builtin:tests-only",
+        "customruleset:infra-mutation-deny",
+        "customruleset:config-symlink-boundaries",
+      ],
+      "sandbox": {
+        "network": "deny",
       },
       "readPaths": [
         {
-          "pattern": "/Users/*/.pi/agent/packages",
-          "decision": "deny",
-          "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Read the source under home/.pi/agent/... instead.",
-        },
-        {
-          "pattern": "/Users/*/.pi/agent/packages/**",
-          "decision": "deny",
-          "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Read the source under home/.pi/agent/... instead.",
-        },
-        {
-          "pattern": "/Users/*/.pi/agent/usage",
-          "decision": "deny",
-          "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Read the source under home/.pi/agent/... instead.",
-        },
-        {
-          "pattern": "/Users/*/.pi/agent/usage/**",
-          "decision": "deny",
-          "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Read the source under home/.pi/agent/... instead.",
-        },
-        {
-          "pattern": "/Users/*/.pi/agent/permissions",
-          "decision": "deny",
-          "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Read the source under home/.pi/agent/... instead.",
-        },
-        {
-          "pattern": "/Users/*/.pi/agent/permissions/**",
-          "decision": "deny",
-          "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Read the source under home/.pi/agent/... instead.",
-        },
-        {
           "pattern": "/Users/*/.nvm/versions/**/lib/node_modules/@earendil-works/pi-coding-agent/**",
           "decision": "allow",
-        },
-      ],
-      "writePaths": [
-        {
-          "pattern": "/Users/*/.pi/agent/packages",
-          "decision": "deny",
-          "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Write to the source under home/.pi/agent/... instead.",
-        },
-        {
-          "pattern": "/Users/*/.pi/agent/packages/**",
-          "decision": "deny",
-          "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Write to the source under home/.pi/agent/... instead.",
-        },
-        {
-          "pattern": "/Users/*/.pi/agent/usage",
-          "decision": "deny",
-          "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Write to the source under home/.pi/agent/... instead.",
-        },
-        {
-          "pattern": "/Users/*/.pi/agent/usage/**",
-          "decision": "deny",
-          "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Write to the source under home/.pi/agent/... instead.",
-        },
-        {
-          "pattern": "/Users/*/.pi/agent/permissions",
-          "decision": "deny",
-          "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Write to the source under home/.pi/agent/... instead.",
-        },
-        {
-          "pattern": "/Users/*/.pi/agent/permissions/**",
-          "decision": "deny",
-          "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Write to the source under home/.pi/agent/... instead.",
         },
       ],
     },
@@ -563,11 +247,7 @@
       "sandbox": {
         "network": "allow",
         "enableWeakerNetworkIsolation": true,
-        "kernelUnenforcedProtectedPaths": [
-          "**/.env*",
-          "**/.git",
-          "**/.git/**",
-        ],
+        "kernelUnenforcedProtectedPaths": ["**/.env*", "**/.git", "**/.git/**"],
       },
       "tools": {
         "bash": [
@@ -598,10 +278,16 @@
         ],
       },
       "readPaths": [
-        { "pattern": "/**/home/.pi/agent/packages/**", "decision": "allow" },
+        {
+          "pattern": "/**/home/.pi/agent/packages/**",
+          "decision": "allow",
+        },
       ],
       "writePaths": [
-        { "pattern": "/**/home/.pi/agent/packages/**", "decision": "allow" },
+        {
+          "pattern": "/**/home/.pi/agent/packages/**",
+          "decision": "allow",
+        },
         {
           "pattern": "/**/home/.pi/agent/skills/address-comments/scripts/*.sh",
           "decision": "allow",
@@ -616,126 +302,17 @@
     },
     "personal": {
       "description": "Personal default profile with local coding workflow guardrails.",
-      "extends": ["builtin:default"],
+      "extends": ["builtin:default", "customruleset:infra-mutation-deny"],
       "sandbox": {
         "network": "allow",
         "extraWritePaths": [
           "/var/folders/*/*/T/**",
           "~/.local/share/lightcast-mcp/tokens/**",
         ],
-        "kernelUnenforcedProtectedPaths": [
-          "**/.env*",
-          "**/.git",
-          "**/.git/**",
-        ],
+        "kernelUnenforcedProtectedPaths": ["**/.env*", "**/.git", "**/.git/**"],
       },
       "tools": {
         "bash": [
-          {
-            "pattern": "terraform apply*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "terraform destroy*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "terraform import*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "terraform refresh*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "terraform taint*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "terraform untaint*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "terraform state *",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "terraform force-unlock*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "terraform test*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "terraform * apply*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "terraform * destroy*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "*aws-tf apply*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "*aws-tf destroy*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "*auth0-tf apply*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "*auth0-tf destroy*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "*scripts/infra/activate-env*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "*scripts/infra/apply*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "*scripts/infra/deploy*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "*scripts/infra/destroy-preview*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "*scripts/infra/init-env*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "*scripts/infra/sync-secrets*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
           {
             "pattern": "npx prettier",
             "decision": "deny",
@@ -787,236 +364,34 @@
     },
     "performance-review": {
       "description": "Performance review profile with GitHub and GitLab access.",
-      "extends": ["builtin:default"],
-      "sandbox": { "network": "allow", "enableWeakerNetworkIsolation": true },
+      "extends": ["builtin:default", "customruleset:infra-mutation-deny"],
+      "sandbox": {
+        "network": "allow",
+        "enableWeakerNetworkIsolation": true,
+      },
       "color": "red",
       "emoji": "📋",
       "tools": {
         "bash": [
           {
-            "pattern": "terraform apply*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
+            "pattern": "glab *",
+            "decision": "allow",
           },
           {
-            "pattern": "terraform destroy*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
+            "pattern": "gh *",
+            "decision": "allow",
           },
           {
-            "pattern": "terraform import*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
+            "pattern": "jq *",
+            "decision": "allow",
           },
-          {
-            "pattern": "terraform refresh*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "terraform taint*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "terraform untaint*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "terraform state *",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "terraform force-unlock*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "terraform test*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "terraform * apply*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "terraform * destroy*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "*aws-tf apply*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "*aws-tf destroy*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "*auth0-tf apply*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "*auth0-tf destroy*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "*scripts/infra/activate-env*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "*scripts/infra/apply*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "*scripts/infra/deploy*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "*scripts/infra/destroy-preview*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "*scripts/infra/init-env*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "*scripts/infra/sync-secrets*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          { "pattern": "glab *", "decision": "allow" },
-          { "pattern": "gh *", "decision": "allow" },
-          { "pattern": "jq *", "decision": "allow" },
         ],
       },
     },
     "socrates": {
       "description": "Read-only Socratic coaching profile.",
-      "extends": ["builtin:read-only"],
+      "extends": ["builtin:read-only", "customruleset:infra-mutation-deny"],
       "promptFile": "~/.pi/agent/permissions/prompts/socrates.md",
-      "tools": {
-        "bash": [
-          {
-            "pattern": "terraform apply*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "terraform destroy*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "terraform import*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "terraform refresh*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "terraform taint*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "terraform untaint*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "terraform state *",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "terraform force-unlock*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "terraform test*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "terraform * apply*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "terraform * destroy*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "*aws-tf apply*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "*aws-tf destroy*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "*auth0-tf apply*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "*auth0-tf destroy*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "*scripts/infra/activate-env*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "*scripts/infra/apply*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "*scripts/infra/deploy*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "*scripts/infra/destroy-preview*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "*scripts/infra/init-env*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-          {
-            "pattern": "*scripts/infra/sync-secrets*",
-            "decision": "deny",
-            "guidance": "Infrastructure mutations are disabled in custom profiles. Do not change real infrastructure through Terraform, its wrappers, or infrastructure orchestrators.",
-          },
-        ],
-      },
       "color": "cyan",
       "emoji": "🧠",
     },

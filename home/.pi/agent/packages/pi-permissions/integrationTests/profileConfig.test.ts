@@ -10,7 +10,7 @@ import type {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import permissionsExtension, { decideBash } from "../extensions/permissions";
 import { policyConfig as genericPolicyConfig } from "../modules/policy";
-import { builtinProfilePrefix } from "../modules/policyHelpers";
+import { policyReferencePrefix } from "../modules/policyHelpers";
 import {
   ProfileConfigLoadError,
   loadProfileConfig,
@@ -419,7 +419,9 @@ describe("profile configuration", () => {
         expect((error as Error).message).toContain(configPath);
         expect((error as Error).message).toContain(name);
         expect((error as Error).message).toContain(
-          name.startsWith("transform:") ? "transform:" : builtinProfilePrefix,
+          name.startsWith(policyReferencePrefix("transform"))
+            ? policyReferencePrefix("transform")
+            : policyReferencePrefix("builtinProfile"),
         );
       }
     },

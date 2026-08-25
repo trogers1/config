@@ -40,6 +40,7 @@ import {
   assertProfilePolicy,
   definePolicyConfig,
   extendProfile,
+  isCompositionFragmentName,
   withProtectedPathRules,
   type CustomToolRule,
   type Decision,
@@ -1785,7 +1786,7 @@ function resolveCompositionChain(
   const resolve = (name: string): string[] => {
     const builtinChain = builtinCompositionChains[name];
     if (builtinChain) return [...builtinChain];
-    if (name.startsWith("ruleset:") || name.startsWith("transform:")) {
+    if (isCompositionFragmentName(name)) {
       return [name];
     }
 

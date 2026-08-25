@@ -7,12 +7,14 @@ import {
   applyPolicyTransforms,
   assertPolicyConfig,
   assertProfilePolicy,
-  builtinProfilePrefix,
   extendProfile,
+  hasPolicyReferencePrefix,
   isBuiltinProfileName,
-  isReservedProfileName,
+  policyReferencePrefix,
   profileConfigFileSchema,
+  reservedProfilePrefix,
   warnOnPolicyRuleConflicts,
+  type CustomRuleSetPolicy,
   type PolicyConfig,
   type ProfileConfigFile,
   type ProfileConfigProfile,
@@ -36,6 +38,7 @@ export class ProfileConfigLoadError extends Error {
 
 export type RawProfileConfig = {
   defaultProfile?: string;
+  rulesets?: Record<string, CustomRuleSetPolicy>;
   profiles: Record<string, ProfileConfigProfile>;
 };
 
@@ -55,7 +58,9 @@ function isProfileConfigFile(value: unknown): value is ProfileConfigFile {
   return Value.Check(profileConfigFileSchema, value);
 }
 
-function isRuleSetName(name: string): name is keyof typeof ruleSetRegistry {
+function isShippedRuleSetName(
+  name: string,
+): name is keyof typeof ruleSetRegistry {
   return Object.hasOwn(ruleSetRegistry, name);
 }
 
@@ -123,15 +128,11 @@ export function loadProfileConfig(
           parsed.profiles,
           name,
         )?.value;
-        if (isReservedProfileName(name)) {
-          const reservedPrefix = isBuiltinProfileName(name)
-            ? builtinProfilePrefix
-            : name.startsWith("ruleset:")
-              ? "ruleset:"
-              : "transform:";
+        const prefix = reservedProfilePrefix(name);
+        if (prefix) {
           throwProfileConfigError(
             configPath,
-            `/profiles/${name}: reserved profile name '${name}' begins with '${reservedPrefix}'`,
+            `/profiles/${name}: reserved profile name '${name}' begins with '${prefix}'`,
           );
         }
         if (
@@ -162,6 +163,7 @@ export function loadProfileConfig(
     const profileFile = parsed;
     const builtins = fallback.profiles;
     const userDefinitions = profileFile.profiles;
+    const customRulesets = profileFile.rulesets ?? {};
 
     const resolvedUsers = new Map<string, ProfilePolicy>();
     const resolving = new Set<string>();
@@ -178,7 +180,7 @@ export function loadProfileConfig(
       target: string,
       referrer: string = target,
     ): Partial<ProfilePolicy> => {
-      if (target.startsWith("transform:")) {
+      if (hasPolicyReferencePrefix(target, "transform")) {
         throwProfileConfigError(
           configPath,
           `/profiles/${referrer}/extends: reserved transform name '${target}' cannot be used as a profile`,
@@ -194,14 +196,29 @@ export function loadProfileConfig(
         }
         return builtin;
       }
-      if (isRuleSetName(target)) {
+      if (isShippedRuleSetName(target)) {
         return ruleSetRegistry[target];
       }
-      if (target.startsWith("ruleset:")) {
+      if (hasPolicyReferencePrefix(target, "shippedRuleset")) {
         throwProfileConfigError(
           configPath,
           `/profiles/${referrer}/extends: unknown rule set '${target}'`,
         );
+      }
+      if (hasPolicyReferencePrefix(target, "customRuleset")) {
+        const name = target.slice(
+          policyReferencePrefix("customRuleset").length,
+        );
+        const customRuleSet = Object.hasOwn(customRulesets, name)
+          ? customRulesets[name]
+          : undefined;
+        if (!customRuleSet) {
+          throwProfileConfigError(
+            configPath,
+            `/profiles/${referrer}/extends: unknown custom rule set '${target}'`,
+          );
+        }
+        return customRuleSet;
       }
 
       const cachedProfile = resolvedUsers.get(target);

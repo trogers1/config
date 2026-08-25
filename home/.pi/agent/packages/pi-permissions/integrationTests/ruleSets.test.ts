@@ -134,21 +134,82 @@ describe("rule-set namespace", () => {
     expect(harness.ui.confirm).not.toHaveBeenCalled();
   });
 
-  it("user profiles may not use the reserved ruleset: prefix", () => {
+  it("custom rule sets resolve as partial policies through customruleset: references", () => {
+    const config = loadProfileConfig(
+      genericPolicyConfig,
+      writeConfig({
+        rulesets: {
+          "infra-mutation-deny": {
+            tools: {
+              bash: [{ pattern: "terraform apply*", decision: "deny" }],
+            },
+          },
+        },
+        profiles: {
+          guarded: {
+            description:
+              "Custom rule-set profile denying infrastructure mutations.",
+            extends: ["builtin:default", "customruleset:infra-mutation-deny"],
+          },
+        },
+      }),
+    );
+
+    expect(decideBash("terraform apply", config.profiles.guarded)).toBe("deny");
+    expect(config.profiles["infra-mutation-deny"]).toBeUndefined();
+  });
+
+  it("user profiles may not use reserved rule-set prefixes", () => {
+    for (const name of ["ruleset:evil", "customruleset:evil"]) {
+      expect(() =>
+        loadProfileConfig(
+          genericPolicyConfig,
+          writeConfig({
+            profiles: {
+              [name]: {
+                description:
+                  "Invalid reserved-name profile for namespace validation.",
+                extends: ["builtin:default"],
+              },
+            },
+          }),
+        ),
+      ).toThrow(/reserved profile name/);
+    }
+  });
+
+  it("custom rule sets reject profile fields and unknown references fail loudly", () => {
     expect(() =>
       loadProfileConfig(
         genericPolicyConfig,
         writeConfig({
+          rulesets: {
+            invalid: { description: "Rule sets are not profiles." },
+          },
           profiles: {
-            "ruleset:evil": {
+            guarded: {
               description:
-                "Invalid reserved-name profile for namespace validation.",
+                "Profile with an invalid custom rule-set definition.",
               extends: ["builtin:default"],
             },
           },
         }),
       ),
-    ).toThrow(/reserved profile name/);
+    ).toThrow(/schema validation failed/);
+
+    expect(() =>
+      loadProfileConfig(
+        genericPolicyConfig,
+        writeConfig({
+          profiles: {
+            guarded: {
+              description: "Profile with a missing custom rule set.",
+              extends: ["builtin:default", "customruleset:missing"],
+            },
+          },
+        }),
+      ),
+    ).toThrow(/unknown custom rule set/);
   });
 
   it("unknown rule set names fail loudly", () => {

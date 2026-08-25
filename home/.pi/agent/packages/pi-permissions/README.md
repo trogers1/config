@@ -153,8 +153,8 @@ Shipped profiles are composed from reusable **rule sets** in
 `readPaths`, `writePaths`, and `protectedPathRules`, but no scalars
 (color/emoji/promptFile) and no transforms.
 
-Rule sets are addressable from JSONC through the reserved `ruleset:` namespace,
-interchangeably with profiles in `extends`:
+Shipped rule sets are addressable from JSONC through the reserved `ruleset:`
+namespace, interchangeably with profiles in `extends`:
 
 ```jsonc
 {
@@ -199,6 +199,37 @@ fsck --lost-found`, etc.).
 When authoring a from-scratch profile, include `ruleset:shell-guards` so the
 destructive shell guards stay in force. The two deps-mutations rule sets are
 decision twins generated from one subcommand table.
+
+### Custom rule sets
+
+`rulesets` declares user-owned partial policy fragments. They may contain
+only `tools`, `readPaths`, `writePaths`, and `protectedPathRules`; they cannot
+select directories, configure a sandbox, carry profile metadata, extend another
+policy, or apply transforms. Their map keys are unprefixed, nonempty names, and
+profiles reference them through `customruleset:<name>`:
+
+```jsonc
+{
+  "rulesets": {
+    "infra-mutation-deny": {
+      "tools": {
+        "bash": [{ "pattern": "terraform apply*", "decision": "deny" }],
+      },
+    },
+  },
+  "profiles": {
+    "safe-work": {
+      "description": "Normal development with infrastructure mutation guards.",
+      "extends": ["builtin:default", "customruleset:infra-mutation-deny"],
+    },
+  },
+}
+```
+
+`ruleset:` remains exclusively for shipped rule sets. This prevents a local
+configuration from shadowing a shipped rule set now or after a package upgrade.
+Custom rule sets are partial and are not selectable profiles: the final profile
+must still resolve to a complete policy.
 
 ## Multi-extends and transforms
 
@@ -299,7 +330,8 @@ Every custom profile requires a nonempty `description`. The picker searches this
 
 `extends` is optional. When supplied, it names a built-in profile by its
 canonical name (for example `builtin:default`), a shipped rule set by its
-`ruleset:` name, or another custom profile. Custom profile names are exact:
+`ruleset:` name, a custom rule set by its `customruleset:` name, or another
+custom profile. Custom profile names are exact:
 `extends: ["default"]` resolves only a custom profile literally named
 `default`; it does not fall back to `builtin:default`. Without `extends`, the
 profile is fully custom and must provide every required policy field.
@@ -311,8 +343,8 @@ keeps the extension registered but blocks permissions until the file is fixed.
 persisted profile selection. TypeScript consumers should import the public
 policy types from `taylor-pi-permissions/config`.
 
-User-defined profile names must not start with `builtin:`, `ruleset:`, or
-`transform:`. Defining a profile such as `builtin:default` in the user
+User-defined profile names must not start with `builtin:`, `ruleset:`,
+`customruleset:`, or `transform:`. Defining a profile such as `builtin:default` in the user
 configuration is a hard validation error; the extension remains registered but
 blocks every tool call until the reserved name is removed. There are no legacy
 aliases: old unnamespaced built-in selectors such as `worker` or `read-only`
