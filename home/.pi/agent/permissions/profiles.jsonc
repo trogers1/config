@@ -1,5 +1,5 @@
 {
-  "$schema": "../../packages/pi-permissions/schemas/profiles.schema.json",
+  "$schema": "../../packages/pi-guard/schemas/profiles.schema.json",
   "defaultProfile": "personal",
   "rulesets": {
     "infra-mutation-deny": {

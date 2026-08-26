@@ -1,0 +1,425 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["profiles"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "defaultProfile": { "type": "string" },
+    "rulesets": {
+      "type": "object",
+      "patternProperties": {
+        "^.+$": {
+          "type": "object",
+          "properties": {
+            "tools": {
+              "type": "object",
+              "properties": {
+                "bash": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["pattern", "decision"],
+                    "properties": {
+                      "pattern": { "type": "string" },
+                      "decision": {
+                        "anyOf": [
+                          { "type": "string", "const": "allow" },
+                          { "type": "string", "const": "ask" },
+                          { "type": "string", "const": "deny" }
+                        ]
+                      },
+                      "guidance": { "type": "string" },
+                      "alternatives": {
+                        "type": "array",
+                        "items": { "type": "string" }
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "patternProperties": {
+                "^(?!(?:bash|read|grep|find|ls|edit|write)$).+$": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["decision"],
+                    "properties": {
+                      "decision": {
+                        "anyOf": [
+                          { "type": "string", "const": "allow" },
+                          { "type": "string", "const": "ask" },
+                          { "type": "string", "const": "deny" }
+                        ]
+                      },
+                      "guidance": { "type": "string" },
+                      "alternatives": {
+                        "type": "array",
+                        "items": { "type": "string" }
+                      },
+                      "match": {
+                        "type": "object",
+                        "patternProperties": { "^.+$": { "type": "string" } },
+                        "additionalProperties": false,
+                        "minProperties": 1
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
+            "readPaths": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["pattern", "decision"],
+                "properties": {
+                  "pattern": { "type": "string" },
+                  "decision": {
+                    "anyOf": [
+                      { "type": "string", "const": "allow" },
+                      { "type": "string", "const": "ask" },
+                      { "type": "string", "const": "deny" }
+                    ]
+                  },
+                  "guidance": { "type": "string" },
+                  "alternatives": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  },
+                  "contexts": {
+                    "type": "array",
+                    "items": {
+                      "anyOf": [
+                        { "type": "string", "const": "read" },
+                        { "type": "string", "const": "grep" },
+                        { "type": "string", "const": "find" },
+                        { "type": "string", "const": "ls" }
+                      ]
+                    },
+                    "minItems": 1,
+                    "uniqueItems": true
+                  }
+                },
+                "additionalProperties": false
+              },
+              "minItems": 1
+            },
+            "writePaths": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["pattern", "decision"],
+                "properties": {
+                  "pattern": { "type": "string" },
+                  "decision": {
+                    "anyOf": [
+                      { "type": "string", "const": "allow" },
+                      { "type": "string", "const": "ask" },
+                      { "type": "string", "const": "deny" }
+                    ]
+                  },
+                  "guidance": { "type": "string" },
+                  "alternatives": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  },
+                  "contexts": {
+                    "type": "array",
+                    "items": {
+                      "anyOf": [
+                        { "type": "string", "const": "edit" },
+                        { "type": "string", "const": "write" },
+                        { "type": "string", "const": "bash" }
+                      ]
+                    },
+                    "minItems": 1,
+                    "uniqueItems": true
+                  }
+                },
+                "additionalProperties": false
+              },
+              "minItems": 1
+            },
+            "protectedPathRules": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["pattern", "decision"],
+                "properties": {
+                  "pattern": { "type": "string" },
+                  "decision": {
+                    "anyOf": [
+                      { "type": "string", "const": "allow" },
+                      { "type": "string", "const": "deny" }
+                    ]
+                  },
+                  "guidance": { "type": "string" }
+                },
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false,
+          "minProperties": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "profiles": {
+      "type": "object",
+      "patternProperties": {
+        "^(?!(?:builtin:|ruleset:|customruleset:|transform:)).+$": {
+          "type": "object",
+          "required": ["description"],
+          "properties": {
+            "description": { "type": "string", "minLength": 1 },
+            "promptFile": {
+              "anyOf": [{ "type": "string" }, { "type": "null" }]
+            },
+            "color": {
+              "anyOf": [
+                { "type": "string", "const": "black" },
+                { "type": "string", "const": "red" },
+                { "type": "string", "const": "green" },
+                { "type": "string", "const": "yellow" },
+                { "type": "string", "const": "orange" },
+                { "type": "string", "const": "blue" },
+                { "type": "string", "const": "magenta" },
+                { "type": "string", "const": "cyan" },
+                { "type": "string", "const": "white" }
+              ]
+            },
+            "emoji": { "type": "string" },
+            "directories": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 }
+            },
+            "tools": {
+              "type": "object",
+              "properties": {
+                "bash": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["pattern", "decision"],
+                    "properties": {
+                      "pattern": { "type": "string" },
+                      "decision": {
+                        "anyOf": [
+                          { "type": "string", "const": "allow" },
+                          { "type": "string", "const": "ask" },
+                          { "type": "string", "const": "deny" }
+                        ]
+                      },
+                      "guidance": { "type": "string" },
+                      "alternatives": {
+                        "type": "array",
+                        "items": { "type": "string" }
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "patternProperties": {
+                "^(?!(?:bash|read|grep|find|ls|edit|write)$).+$": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["decision"],
+                    "properties": {
+                      "decision": {
+                        "anyOf": [
+                          { "type": "string", "const": "allow" },
+                          { "type": "string", "const": "ask" },
+                          { "type": "string", "const": "deny" }
+                        ]
+                      },
+                      "guidance": { "type": "string" },
+                      "alternatives": {
+                        "type": "array",
+                        "items": { "type": "string" }
+                      },
+                      "match": {
+                        "type": "object",
+                        "patternProperties": { "^.+$": { "type": "string" } },
+                        "additionalProperties": false,
+                        "minProperties": 1
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
+            "readPaths": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["pattern", "decision"],
+                "properties": {
+                  "pattern": { "type": "string" },
+                  "decision": {
+                    "anyOf": [
+                      { "type": "string", "const": "allow" },
+                      { "type": "string", "const": "ask" },
+                      { "type": "string", "const": "deny" }
+                    ]
+                  },
+                  "guidance": { "type": "string" },
+                  "alternatives": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  },
+                  "contexts": {
+                    "type": "array",
+                    "items": {
+                      "anyOf": [
+                        { "type": "string", "const": "read" },
+                        { "type": "string", "const": "grep" },
+                        { "type": "string", "const": "find" },
+                        { "type": "string", "const": "ls" }
+                      ]
+                    },
+                    "minItems": 1,
+                    "uniqueItems": true
+                  }
+                },
+                "additionalProperties": false
+              },
+              "minItems": 1
+            },
+            "writePaths": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["pattern", "decision"],
+                "properties": {
+                  "pattern": { "type": "string" },
+                  "decision": {
+                    "anyOf": [
+                      { "type": "string", "const": "allow" },
+                      { "type": "string", "const": "ask" },
+                      { "type": "string", "const": "deny" }
+                    ]
+                  },
+                  "guidance": { "type": "string" },
+                  "alternatives": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  },
+                  "contexts": {
+                    "type": "array",
+                    "items": {
+                      "anyOf": [
+                        { "type": "string", "const": "edit" },
+                        { "type": "string", "const": "write" },
+                        { "type": "string", "const": "bash" }
+                      ]
+                    },
+                    "minItems": 1,
+                    "uniqueItems": true
+                  }
+                },
+                "additionalProperties": false
+              },
+              "minItems": 1
+            },
+            "protectedPathRules": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["pattern", "decision"],
+                "properties": {
+                  "pattern": { "type": "string" },
+                  "decision": {
+                    "anyOf": [
+                      { "type": "string", "const": "allow" },
+                      { "type": "string", "const": "deny" }
+                    ]
+                  },
+                  "guidance": { "type": "string" }
+                },
+                "additionalProperties": false
+              }
+            },
+            "sandbox": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "required": ["network"],
+                  "properties": {
+                    "network": {
+                      "anyOf": [
+                        { "type": "string", "const": "allow" },
+                        { "type": "string", "const": "deny" }
+                      ]
+                    },
+                    "extraWritePaths": {
+                      "type": "array",
+                      "items": { "type": "string", "minLength": 1 }
+                    },
+                    "extraDenyReadPaths": {
+                      "type": "array",
+                      "items": { "type": "string", "minLength": 1 }
+                    },
+                    "extraDenyWritePaths": {
+                      "type": "array",
+                      "items": { "type": "string", "minLength": 1 }
+                    },
+                    "kernelUnenforcedProtectedPaths": {
+                      "type": "array",
+                      "items": { "type": "string", "minLength": 1 }
+                    },
+                    "enableWeakerNetworkIsolation": {
+                      "type": "boolean",
+                      "description": "Permits macOS trustd IPC for Go TLS verification. This weakens network isolation and can permit data exfiltration; see https://github.com/anthropic-experimental/sandbox-runtime#security-limitations."
+                    },
+                    "allowLocalBinding": {
+                      "type": "boolean",
+                      "description": "Permits local Unix-domain and loopback socket listeners while network access remains denied."
+                    },
+                    "onUnavailable": {
+                      "anyOf": [
+                        { "type": "string", "const": "block" },
+                        { "type": "string", "const": "warn" }
+                      ]
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                { "type": "boolean", "const": false }
+              ]
+            },
+            "extends": {
+              "type": "array",
+              "items": { "type": "string" },
+              "minItems": 1
+            },
+            "transforms": {
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  { "type": "string", "const": "transform:deny-asks" },
+                  { "type": "string", "const": "transform:allow-asks" },
+                  { "type": "string", "const": "transform:ask-all" },
+                  { "type": "string", "const": "transform:deny-all" }
+                ]
+              }
+            }
+          },
+          "additionalProperties": false,
+          "dependentRequired": { "transforms": ["extends"] }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$id": "https://raw.githubusercontent.com/trogers1/config/main/home/.pi/agent/packages/pi-guard/schemas/profiles.schema.json",
+  "title": "pi-guard profile configuration",
+  "additionalProperties": false
+}

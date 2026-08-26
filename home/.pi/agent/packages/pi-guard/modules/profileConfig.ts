@@ -1,0 +1,303 @@
+import fs from "node:fs";
+import { homedir } from "node:os";
+import path from "node:path";
+import { parse, printParseErrorCode, type ParseError } from "jsonc-parser";
+import { Value } from "typebox/value";
+import {
+  applyPolicyTransforms,
+  assertPolicyConfig,
+  assertProfilePolicy,
+  extendProfile,
+  hasPolicyReferencePrefix,
+  isBuiltinProfileName,
+  policyReferencePrefix,
+  profileConfigFileSchema,
+  reservedProfilePrefix,
+  warnOnPolicyRuleConflicts,
+  type CustomRuleSetPolicy,
+  type PolicyConfig,
+  type ProfileConfigFile,
+  type ProfileConfigProfile,
+  type ProfilePolicy,
+  type ProfileTransformName,
+} from "./policyHelpers";
+import { ruleSetRegistry } from "./ruleSets.lib/index";
+
+export class ProfileConfigLoadError extends Error {
+  readonly configPath: string;
+  readonly details: string;
+
+  constructor(configPath: string, details: string) {
+    super(`Invalid pi-guard profile config at ${configPath}: ${details}`);
+    this.name = "ProfileConfigLoadError";
+    Object.setPrototypeOf(this, new.target.prototype);
+    this.configPath = configPath;
+    this.details = details;
+  }
+}
+
+export type RawProfileConfig = {
+  defaultProfile?: string;
+  rulesets?: Record<string, CustomRuleSetPolicy>;
+  profiles: Record<string, ProfileConfigProfile>;
+};
+
+function throwProfileConfigError(configPath: string, details: string): never {
+  throw new ProfileConfigLoadError(configPath, details);
+}
+
+const defaultProfileConfigPath = path.join(
+  homedir(),
+  ".pi",
+  "agent",
+  "permissions",
+  "profiles.jsonc",
+);
+
+function isProfileConfigFile(value: unknown): value is ProfileConfigFile {
+  return Value.Check(profileConfigFileSchema, value);
+}
+
+function isShippedRuleSetName(
+  name: string,
+): name is keyof typeof ruleSetRegistry {
+  return Object.hasOwn(ruleSetRegistry, name);
+}
+
+/**
+ * Read the raw user-owned profile file without resolving inheritance or
+ * transforms. Returns `undefined` when the file is missing or invalid so that
+ * callers can fall back to other behavior.
+ */
+export function loadRawProfileConfig(
+  configPath = defaultProfileConfigPath,
+): RawProfileConfig | undefined {
+  if (!fs.existsSync(configPath)) return undefined;
+
+  try {
+    const errors: ParseError[] = [];
+    const parsed: unknown = parse(fs.readFileSync(configPath, "utf8"), errors, {
+      allowTrailingComma: true,
+    });
+    if (errors.length > 0) return undefined;
+
+    const validationError = Value.Errors(profileConfigFileSchema, parsed)[0];
+    if (validationError) return undefined;
+    if (!isProfileConfigFile(parsed)) return undefined;
+
+    return parsed;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Read user-owned profile data synchronously and resolve inheritance and
+ * transforms. Configuration is deliberately JSON-only: loading it must not
+ * execute code or delay Pi's startup lifecycle.
+ */
+export function loadProfileConfig(
+  fallback: PolicyConfig,
+  configPath = defaultProfileConfigPath,
+): PolicyConfig {
+  if (!fs.existsSync(configPath)) return fallback;
+
+  try {
+    const errors: ParseError[] = [];
+    const parsed: unknown = parse(fs.readFileSync(configPath, "utf8"), errors, {
+      allowTrailingComma: true,
+    });
+    if (errors.length > 0) {
+      throwProfileConfigError(
+        configPath,
+        `JSONC parse error: ${errors
+          .map((error) => printParseErrorCode(error.error))
+          .join(", ")}`,
+      );
+    }
+
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      "profiles" in parsed &&
+      typeof parsed.profiles === "object" &&
+      parsed.profiles !== null
+    ) {
+      for (const name of Object.keys(parsed.profiles)) {
+        const definition: unknown = Object.getOwnPropertyDescriptor(
+          parsed.profiles,
+          name,
+        )?.value;
+        const prefix = reservedProfilePrefix(name);
+        if (prefix) {
+          throwProfileConfigError(
+            configPath,
+            `/profiles/${name}: reserved profile name '${name}' begins with '${prefix}'`,
+          );
+        }
+        if (
+          typeof definition === "object" &&
+          definition !== null &&
+          Object.hasOwn(definition, "transforms") &&
+          !Object.hasOwn(definition, "extends")
+        ) {
+          throwProfileConfigError(
+            configPath,
+            `/profiles/${name}/transforms: transforms require at least one extends target`,
+          );
+        }
+      }
+    }
+
+    const validationError = Value.Errors(profileConfigFileSchema, parsed)[0];
+    if (validationError) {
+      throwProfileConfigError(
+        configPath,
+        `schema validation failed at ${validationError.instancePath || "/"}: ${validationError.message}`,
+      );
+    }
+    if (!isProfileConfigFile(parsed)) {
+      throwProfileConfigError(configPath, "schema validation failed");
+    }
+
+    const profileFile = parsed;
+    const builtins = fallback.profiles;
+    const userDefinitions = profileFile.profiles;
+    const customRulesets = profileFile.rulesets ?? {};
+
+    const resolvedUsers = new Map<string, ProfilePolicy>();
+    const resolving = new Set<string>();
+
+    const applyTransforms = (
+      policy: Partial<ProfilePolicy>,
+      transforms: readonly ProfileTransformName[] | undefined,
+    ): Partial<ProfilePolicy> => {
+      if (!transforms || transforms.length === 0) return policy;
+      return applyPolicyTransforms(policy, transforms);
+    };
+
+    const resolveProfile = (
+      target: string,
+      referrer: string = target,
+    ): Partial<ProfilePolicy> => {
+      if (hasPolicyReferencePrefix(target, "transform")) {
+        throwProfileConfigError(
+          configPath,
+          `/profiles/${referrer}/extends: reserved transform name '${target}' cannot be used as a profile`,
+        );
+      }
+      if (isBuiltinProfileName(target)) {
+        const builtin = builtins[target];
+        if (!builtin) {
+          throwProfileConfigError(
+            configPath,
+            `/profiles/${referrer}/extends: unknown built-in profile '${target}'`,
+          );
+        }
+        return builtin;
+      }
+      if (isShippedRuleSetName(target)) {
+        return ruleSetRegistry[target];
+      }
+      if (hasPolicyReferencePrefix(target, "shippedRuleset")) {
+        throwProfileConfigError(
+          configPath,
+          `/profiles/${referrer}/extends: unknown rule set '${target}'`,
+        );
+      }
+      if (hasPolicyReferencePrefix(target, "customRuleset")) {
+        const name = target.slice(
+          policyReferencePrefix("customRuleset").length,
+        );
+        const customRuleSet = Object.hasOwn(customRulesets, name)
+          ? customRulesets[name]
+          : undefined;
+        if (!customRuleSet) {
+          throwProfileConfigError(
+            configPath,
+            `/profiles/${referrer}/extends: unknown custom rule set '${target}'`,
+          );
+        }
+        return customRuleSet;
+      }
+
+      const cachedProfile = resolvedUsers.get(target);
+      if (cachedProfile) return cachedProfile;
+
+      const definition = Object.hasOwn(userDefinitions, target)
+        ? userDefinitions[target]
+        : undefined;
+      if (!definition) {
+        const available = [
+          ...Object.keys(builtins),
+          ...Object.keys(ruleSetRegistry),
+          ...Object.keys(userDefinitions),
+        ].join(", ");
+        const suggestion = isBuiltinProfileName(referrer)
+          ? ""
+          : ` Did you mean 'builtin:${target}'?`;
+        throwProfileConfigError(
+          configPath,
+          `/profiles/${referrer}/extends: unknown inherited profile '${target}'. Available: ${available}.${suggestion}`,
+        );
+      }
+      if (resolving.has(target)) {
+        throwProfileConfigError(
+          configPath,
+          `/profiles/${target}/extends: cyclic profile inheritance detected`,
+        );
+      }
+      resolving.add(target);
+
+      const { extends: parents = [], transforms, ...override } = definition;
+      let resolved: Partial<ProfilePolicy>;
+      if (parents.length === 0) {
+        resolved = override;
+      } else {
+        resolved = resolveProfile(parents[0], target);
+        for (const parent of parents.slice(1)) {
+          resolved = extendProfile(resolved, resolveProfile(parent, target));
+        }
+        // Transforms normalize the fully composed inherited policy. The
+        // declaring profile's own rules are final, explicit overrides.
+        resolved = applyTransforms(resolved, transforms);
+        resolved = extendProfile(resolved, override);
+      }
+      // Rule sets may be partial while they are folded, but every named user
+      // profile must be complete before it enters the resolved profile map.
+      assertProfilePolicy(resolved);
+      resolvedUsers.set(target, resolved);
+      resolving.delete(target);
+      return resolved;
+    };
+
+    for (const name of Object.keys(userDefinitions)) resolveProfile(name);
+
+    const resolvedUserProfiles = Object.fromEntries(resolvedUsers);
+    const profiles: Record<string, ProfilePolicy> = {
+      ...builtins,
+      ...resolvedUserProfiles,
+    };
+
+    const config: PolicyConfig = {
+      defaultProfile: profileFile.defaultProfile ?? fallback.defaultProfile,
+      profiles,
+    };
+    try {
+      assertPolicyConfig(config);
+    } catch (error) {
+      throwProfileConfigError(
+        configPath,
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+    warnOnPolicyRuleConflicts({ profiles: resolvedUserProfiles });
+    return config;
+  } catch (error) {
+    if (error instanceof ProfileConfigLoadError) throw error;
+    throwProfileConfigError(
+      configPath,
+      `failed to read profile config: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}

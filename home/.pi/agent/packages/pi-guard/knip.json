@@ -1,0 +1,14 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "extensions/guard.ts",
+    "modules/policy.ts",
+    "integrationTests/*.test.ts"
+  ],
+  "project": [
+    "extensions/**/*.ts",
+    "modules/**/*.ts",
+    "integrationTests/**/*.ts",
+    "*.config.js"
+  ]
+}

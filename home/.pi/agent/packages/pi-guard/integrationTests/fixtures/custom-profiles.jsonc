@@ -1,0 +1,41 @@
+{
+  "$schema": "https://raw.githubusercontent.com/trogers1/config/main/home/.pi/agent/packages/pi-guard/schemas/profiles.schema.json",
+  "profiles": {
+    "review-tools": {
+      "description": "Review workspace profile for GitHub and GitLab CLI tooling.",
+      "extends": ["builtin:default"],
+      "directories": ["/workspace"],
+      "tools": {
+        "bash": [
+          { "pattern": "glab *", "decision": "allow" },
+          { "pattern": "gh *", "decision": "allow" },
+        ],
+      },
+    },
+    "fixture-read-only": {
+      "description": "Read-only fixture profile for validating custom Bash tool access.",
+      "extends": ["builtin:default"],
+      "tools": {
+        "bash": [{ "pattern": "fixture-only *", "decision": "allow" }],
+      },
+    },
+    "address-comments": {
+      "description": "Workspace profile for addressing review comments and committing changes.",
+      "extends": ["builtin:default"],
+      "directories": ["/workspace"],
+      "tools": {
+        "bash": [{ "pattern": "git commit -m *", "decision": "allow" }],
+      },
+    },
+    "protected-matrix": {
+      "description": "Protected-path profile for environment file and private data safeguards.",
+      "extends": ["builtin:default"],
+      "readPaths": [{ "pattern": "private/**", "decision": "ask" }],
+      "writePaths": [{ "pattern": "private/**", "decision": "ask" }],
+      "protectedPathRules": [
+        { "pattern": "**/.env*", "decision": "deny" },
+        { "pattern": "**/.env.template", "decision": "allow" },
+      ],
+    },
+  },
+}
