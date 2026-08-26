@@ -495,7 +495,10 @@ only in `src/generated`:
 The built-in test-focused profiles recognize conventional `test`, `tests`,
 `__tests__`, and `integrationTests` directories, plus `*.test.*`, `*.spec.*`,
 `*_test.*`, and `*.cy.*` file names. `builtin:tests-hidden` denies both
-dedicated reads and mutations for these paths. `builtin:tests-only` retains the
+dedicated reads and mutations for these paths. Its test-path protected rules
+are deliberately kernel-unenforced, however, so a sandboxed test runner can
+load and execute the tests; the agent-facing permission gate remains in force.
+`builtin:tests-only` retains the
 default read policy and limits dedicated edits/writes and analyzable Bash
 filesystem references to those test paths and `/tmp` scratch output; its Bash
 denial guidance steers inspection to the dedicated `read`, `grep`, `find`, and

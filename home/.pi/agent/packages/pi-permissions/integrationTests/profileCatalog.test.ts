@@ -12,6 +12,21 @@ const missingProfileConfigPath = path.resolve(
   "integrationTests/fixtures/does-not-exist.jsonc",
 );
 
+const hiddenTestPathPatterns = [
+  "**/test",
+  "**/test/**",
+  "**/tests",
+  "**/tests/**",
+  "**/__tests__",
+  "**/__tests__/**",
+  "**/integrationTests",
+  "**/integrationTests/**",
+  "**/*.test.*",
+  "**/*.spec.*",
+  "**/*_test.*",
+  "**/*.cy.*",
+];
+
 describe("shipped profile catalog", () => {
   beforeEach(() => {
     process.env.PI_PERMISSIONS_PROFILE_CONFIG = missingProfileConfigPath;
@@ -207,6 +222,14 @@ describe("shipped profile catalog", () => {
         expect.arrayContaining(["**/.git", "**/.git/**"]),
       );
     }
+  });
+
+  it("leaves hidden test paths kernel-readable so test runners can execute them", () => {
+    const sandbox = policyConfig.profiles["builtin:tests-hidden"].sandbox;
+    expect(typeof sandbox === "object" && sandbox !== null).toBe(true);
+    expect(sandbox && sandbox.kernelUnenforcedProtectedPaths).toEqual(
+      expect.arrayContaining(hiddenTestPathPatterns),
+    );
   });
 
   it("assigns sandbox network posture across every built-in profile", () => {

@@ -216,6 +216,22 @@
       ],
       "sandbox": {
         "network": "deny",
+        // Tests remain denied to agent tools by builtin:tests-hidden, but the
+        // test runner must be able to load them from its sandboxed process.
+        "kernelUnenforcedProtectedPaths": [
+          "**/test",
+          "**/test/**",
+          "**/tests",
+          "**/tests/**",
+          "**/__tests__",
+          "**/__tests__/**",
+          "**/integrationTests",
+          "**/integrationTests/**",
+          "**/*.test.*",
+          "**/*.spec.*",
+          "**/*_test.*",
+          "**/*.cy.*",
+        ],
       },
       "readPaths": [
         {

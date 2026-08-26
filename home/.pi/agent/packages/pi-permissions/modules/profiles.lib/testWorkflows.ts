@@ -28,6 +28,17 @@ export const testsHiddenProfile = extendProfile(baseProfile, {
   color: "orange",
   emoji: "🕶️",
   promptFile: "prompts/tests-hidden.md",
+  sandbox: {
+    network: "deny",
+    allowLocalBinding: true,
+    kernelUnenforcedProtectedPaths: [
+      "**/.git",
+      "**/.git/**",
+      // The permission gate still denies direct agent reads and mutations,
+      // while test-runner child processes can load the files they execute.
+      ...testFilePatterns,
+    ],
+  },
   // Protected rules also make grep/ripgrep exclude tests during broad
   // searches whose requested path is the repository root.
   protectedPathRules: testFilePatterns.map((pattern) => ({
