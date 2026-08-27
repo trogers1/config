@@ -262,7 +262,7 @@ type BuiltinProfileName =
 
 Inventory and update every producer or consumer of profile names, including files outside this package when applicable:
 
-- `~/.pi/agent/permissions/profiles.jsonc`
+- `~/.pi/agent/pi-guard/profiles.jsonc`
 - subagent launcher/environment code that sets `PI_SUBAGENT_PROFILE`
 - skill or prompt configuration that selects `worker` or `read-only`
 - persisted session fixtures
@@ -320,7 +320,7 @@ Use the narrowest relevant test first, then broaden:
 ```sh
 npm test -- --run integrationTests/profileConfig.test.ts
 npm test -- --run integrationTests/profiles.test.ts
-npm test -- --run integrationTests/permissions.test.ts
+npm test -- --run integrationTests/guard.test.ts
 npm test -- --run integrationTests/policy.test.ts
 npm run check:all
 npm test

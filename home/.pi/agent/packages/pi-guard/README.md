@@ -28,7 +28,7 @@ pi install npm:@trogers1/pi-guard@0.1.0
 Restart Pi after installing, then use `/profile` to inspect and select a
 posture. The shipped `builtin:default` profile is selected when no custom
 configuration chooses another profile. Your optional user configuration lives
-at `~/.pi/agent/permissions/profiles.jsonc`; start with this minimal example:
+at `~/.pi/agent/pi-guard/profiles.jsonc`; start with this minimal example:
 
 ```jsonc
 {
@@ -393,7 +393,7 @@ directory.
 
 The package ships portable profiles only. Add custom profiles and directory
 bindings in the user-owned JSON file
-`~/.pi/agent/permissions/profiles.jsonc`. The package reads it synchronously;
+`~/.pi/agent/pi-guard/profiles.jsonc`. The package reads it synchronously;
 configuration is data, not executable code. Add the bundled schema as
 `$schema` to get completion and validation in JSON-aware editors:
 

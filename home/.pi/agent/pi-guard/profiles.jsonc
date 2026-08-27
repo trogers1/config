@@ -136,12 +136,12 @@
           "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Read the source under home/.pi/agent/... instead.",
         },
         {
-          "pattern": "/Users/*/.pi/agent/permissions",
+          "pattern": "/Users/*/.pi/agent/pi-guard",
           "decision": "deny",
           "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Read the source under home/.pi/agent/... instead.",
         },
         {
-          "pattern": "/Users/*/.pi/agent/permissions/**",
+          "pattern": "/Users/*/.pi/agent/pi-guard/**",
           "decision": "deny",
           "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Read the source under home/.pi/agent/... instead.",
         },
@@ -168,12 +168,12 @@
           "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Write to the source under home/.pi/agent/... instead.",
         },
         {
-          "pattern": "/Users/*/.pi/agent/permissions",
+          "pattern": "/Users/*/.pi/agent/pi-guard",
           "decision": "deny",
           "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Write to the source under home/.pi/agent/... instead.",
         },
         {
-          "pattern": "/Users/*/.pi/agent/permissions/**",
+          "pattern": "/Users/*/.pi/agent/pi-guard/**",
           "decision": "deny",
           "guidance": "Pi packages/settings here are symlinks to this configuration checkout. Write to the source under home/.pi/agent/... instead.",
         },
@@ -412,7 +412,7 @@
     "socrates": {
       "description": "Read-only Socratic coaching profile.",
       "extends": ["builtin:read-only", "customruleset:infra-mutation-deny"],
-      "promptFile": "~/.pi/agent/permissions/prompts/socrates.md",
+      "promptFile": "~/.pi/agent/pi-guard/prompts/socrates.md",
       "color": "cyan",
       "emoji": "🧠",
     },

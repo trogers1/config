@@ -358,7 +358,7 @@ export type ProfilePolicyOverride = Omit<
   description?: string;
 };
 
-/** JSON Schema source of truth for ~/.pi/agent/permissions/profiles.jsonc. */
+/** JSON Schema source of truth for ~/.pi/agent/pi-guard/profiles.jsonc. */
 export const profileConfigFileSchema = Type.Object(
   {
     $schema: Type.Optional(Type.String()),

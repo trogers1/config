@@ -61,7 +61,7 @@ const defaultProfileConfigPath = path.join(
   homedir(),
   ".pi",
   "agent",
-  "permissions",
+  "pi-guard",
   "profiles.jsonc",
 );
 
