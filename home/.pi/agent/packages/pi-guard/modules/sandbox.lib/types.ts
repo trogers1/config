@@ -28,6 +28,8 @@ export type SandboxSpec = {
   enableWeakerNetworkIsolation: boolean;
   /** Permit local Unix-domain and loopback listeners without external network access. */
   allowLocalBinding: boolean;
+  /** Permit macOS Apple Events and LaunchServices handoffs (for example `open`). */
+  allowAppleEvents: boolean;
   filesystem: SandboxFilesystemSpec;
   readRules: SandboxPathRule[];
   writeRules: SandboxPathRule[];

@@ -54,6 +54,7 @@ Set `sandbox` on a custom profile to choose its posture:
         "extraDenyWritePaths": ["secrets/output"],
         "enableWeakerNetworkIsolation": true,
         "allowLocalBinding": true,
+        "allowAppleEvents": true,
         "onUnavailable": "block",
       },
     },
@@ -81,6 +82,7 @@ The optional path arrays are additive:
 | `extraDenyWritePaths`          | Additional kernel-enforced write denials.                                     |
 | `enableWeakerNetworkIsolation` | On macOS, permits sandbox-runtime's trustd IPC relaxation.                    |
 | `allowLocalBinding`            | Permits local Unix-domain and loopback listeners without external networking. |
+| `allowAppleEvents`             | On macOS, permits Apple Events and LaunchServices handoffs such as `open`.    |
 
 `enableWeakerNetworkIsolation` defaults to `false`. It is a sandbox-runtime
 option whose current macOS effect is permitting the `com.apple.trustd.agent`
@@ -90,6 +92,14 @@ macOS's trust service. This weakens network isolation by admitting that system
 IPC service and can create a data-exfiltration vector, but it does not disable
 certificate verification. Do not enable it merely to bypass an untrusted or
 invalid certificate.
+
+`allowAppleEvents` defaults to `false`. It is a macOS-only opt-in that permits
+Apple Events, the LaunchServices `lsopen` operation, and the small set of
+LaunchServices Mach services needed by `open`. It does not relax filesystem
+rules or network filtering, but it allows a sandboxed command to ask a host GUI
+application (such as the default browser) to act outside the sandbox. Enable it
+only for workflows, such as browser-launching test suites, that require that
+handoff.
 
 `allowLocalBinding` defaults to `false` when omitted; `builtin:default` enables
 it because a normal local build/test toolchain commonly needs a Unix-domain or

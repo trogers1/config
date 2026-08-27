@@ -30,11 +30,13 @@ function toRuntimeConfig(spec: SandboxSpec): SandboxRuntimeConfig {
       filesystem,
       network: {},
       enableWeakerNetworkIsolation: spec.enableWeakerNetworkIsolation,
+      allowAppleEvents: spec.allowAppleEvents,
     } as SandboxRuntimeConfig;
   }
   return {
     filesystem,
     enableWeakerNetworkIsolation: spec.enableWeakerNetworkIsolation,
+    allowAppleEvents: spec.allowAppleEvents,
     network: {
       allowedDomains: [],
       deniedDomains: ["*"],

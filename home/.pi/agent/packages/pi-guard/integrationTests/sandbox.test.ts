@@ -959,6 +959,32 @@ describe("sandbox full-harness OS acceptance", () => {
     }
   });
 
+  it.skipIf(process.platform !== "darwin")(
+    "permits sandboxed macOS open only with the Apple Events opt-in",
+    async () => {
+      const root = fixture();
+      // -g keeps the browser from taking focus. This deliberately exercises
+      // LaunchServices rather than asserting anything about browser networking.
+      const command = "open -g https://example.com";
+
+      expect(
+        await runThroughPi({
+          root,
+          command,
+          sandboxOverrides: { network: "allow" },
+        }),
+      ).not.toBe(0);
+      expect(
+        await runThroughPi({
+          root,
+          command,
+          sandboxOverrides: { network: "allow", allowAppleEvents: true },
+        }),
+      ).toBe(0);
+    },
+    30_000,
+  );
+
   it("permits remote HTTPS when the profile explicitly allows network access", async () => {
     const root = fixture();
     expect(

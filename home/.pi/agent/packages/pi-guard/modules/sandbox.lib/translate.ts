@@ -408,6 +408,7 @@ export function translatePolicy(
       enableWeakerNetworkIsolation:
         sandbox.enableWeakerNetworkIsolation ?? false,
       allowLocalBinding: sandbox.allowLocalBinding ?? false,
+      allowAppleEvents: sandbox.allowAppleEvents ?? false,
       filesystem: {
         startupCwd: cwd,
         readAllowRoots: normalizeRoots(readAllowRoots),

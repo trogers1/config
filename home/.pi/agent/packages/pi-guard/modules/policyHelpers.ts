@@ -157,6 +157,14 @@ const sandboxConfigSchema = Type.Object(
           "Permits local Unix-domain and loopback socket listeners while network access remains denied.",
       }),
     ),
+    // macOS-only escape hatch for GUI/Apple-event handoffs, such as `open`.
+    // This does not weaken filesystem restrictions.
+    allowAppleEvents: Type.Optional(
+      Type.Boolean({
+        description:
+          "Permits macOS Apple Events and LaunchServices handoffs (for example the open command) from sandboxed Bash.",
+      }),
+    ),
     onUnavailable: Type.Optional(
       Type.Union([Type.Literal("block"), Type.Literal("warn")]),
     ),

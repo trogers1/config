@@ -383,6 +383,10 @@
                       "type": "boolean",
                       "description": "Permits local Unix-domain and loopback socket listeners while network access remains denied."
                     },
+                    "allowAppleEvents": {
+                      "type": "boolean",
+                      "description": "Permits macOS Apple Events and LaunchServices handoffs (for example the open command) from sandboxed Bash."
+                    },
                     "onUnavailable": {
                       "anyOf": [
                         { "type": "string", "const": "block" },

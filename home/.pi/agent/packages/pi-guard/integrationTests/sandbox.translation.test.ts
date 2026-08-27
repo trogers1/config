@@ -81,6 +81,7 @@ describe("sandbox policy translation", () => {
           network: "deny",
           enableWeakerNetworkIsolation: true,
           allowLocalBinding: true,
+          allowAppleEvents: true,
         },
       },
       "sandboxed",
@@ -91,9 +92,10 @@ describe("sandbox policy translation", () => {
     if (result.kind !== "active") return;
     expect(result.spec.enableWeakerNetworkIsolation).toBe(true);
     expect(result.spec.allowLocalBinding).toBe(true);
+    expect(result.spec.allowAppleEvents).toBe(true);
   });
 
-  it("defaults local binding to denied", () => {
+  it("defaults local binding and Apple Events to denied", () => {
     const result = translatePolicy(
       {
         ...policyConfig.profiles["builtin:default"],
@@ -107,6 +109,7 @@ describe("sandbox policy translation", () => {
     expect(result.kind).toBe("active");
     if (result.kind !== "active") return;
     expect(result.spec.allowLocalBinding).toBe(false);
+    expect(result.spec.allowAppleEvents).toBe(false);
   });
 
   it("enables local binding for the built-in default profile", () => {

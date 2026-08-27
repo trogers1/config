@@ -321,11 +321,16 @@
       "extends": ["builtin:default", "customruleset:infra-mutation-deny"],
       "sandbox": {
         "network": "allow",
+        "allowAppleEvents": true,
         "extraWritePaths": [
           "/var/folders/*/*/T/**",
           "~/.local/share/lightcast-mcp/tokens/**",
         ],
-        "kernelUnenforcedProtectedPaths": ["**/.env*", "**/.git", "**/.git/**"],
+        "kernelUnenforcedProtectedPaths": [
+          "**/.env*",
+          "**/.git",
+          "**/.git/**",
+        ],
       },
       "tools": {
         "bash": [
