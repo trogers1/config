@@ -5,10 +5,27 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOME_DIR="$REPO_DIR/home"
 XDG_DIR="$REPO_DIR/xdg"
 
+case "${1:-}" in
+  "")
+    mode="link"
+    ;;
+  --undo)
+    mode="undo"
+    ;;
+  *)
+    printf 'Usage: %s [--undo]\n' "${BASH_SOURCE[0]}" >&2
+    exit 2
+    ;;
+esac
+
 symlinked=0
 failed=0
 
-printf '\nSetting up your config symlinks...\n'
+if [ "$mode" = "undo" ]; then
+  printf '\nRemoving managed config symlinks and restoring backups...\n'
+else
+  printf '\nSetting up your config symlinks...\n'
+fi
 
 warn_red() {
   printf '\033[31m%s\033[0m\n' "$1" >&2
@@ -47,6 +64,42 @@ prompt_backup_or_skip() {
   done
 }
 
+undo_link() {
+  local source_path="$1"
+  local target_path="$2"
+  local label="$3"
+  local backup_path="${target_path}.bak"
+  local source_real
+  local target_real
+
+  source_real="$(resolve_path "$source_path")"
+
+  if [ -L "$target_path" ]; then
+    target_real="$(resolve_path "$target_path")"
+    if [ "$source_real" != "$target_real" ]; then
+      warn_red "Refusing to remove unmanaged $label symlink at $target_path"
+      failed=1
+      return 1
+    fi
+    rm "$target_path"
+    printf 'Removed %s symlink %s\n' "$label" "$target_path"
+  elif [ -e "$target_path" ]; then
+    warn_red "Refusing to replace existing non-symlink $label at $target_path"
+    failed=1
+    return 1
+  fi
+
+  if [ -e "$backup_path" ] || [ -L "$backup_path" ]; then
+    if [ -e "$target_path" ] || [ -L "$target_path" ]; then
+      warn_red "Cannot restore $label backup: target already exists at $target_path"
+      failed=1
+      return 1
+    fi
+    mv "$backup_path" "$target_path"
+    printf 'Restored %s backup %s -> %s\n' "$label" "$backup_path" "$target_path"
+  fi
+}
+
 safe_link() {
   local source_path="$1"
   local target_path="$2"
@@ -54,6 +107,11 @@ safe_link() {
   local backup_path
   local source_real
   local target_real
+
+  if [ "$mode" = "undo" ]; then
+    undo_link "$source_path" "$target_path" "$label"
+    return
+  fi
 
   source_real="$(resolve_path "$source_path")"
 
@@ -117,7 +175,9 @@ link_entries() {
     return
   fi
 
-  mkdir -p "$target_dir"
+  if [ "$mode" = "link" ]; then
+    mkdir -p "$target_dir"
+  fi
 
   shopt -s dotglob nullglob
   for source_path in "$source_dir"/*; do
@@ -149,71 +209,65 @@ link_entries() {
   shopt -u dotglob nullglob
 }
 
-link_entries "$HOME_DIR" "$HOME" "home"
-link_entries "$XDG_DIR" "$HOME/.config" "xdg"
+# Directory entries are expanded dynamically, so new dotfiles, XDG config
+# directories, and packages are automatically included in setup and undo.
+managed_entry_directories=(
+  "$HOME_DIR|$HOME|home"
+  "$XDG_DIR|$HOME/.config|xdg"
+  "$HOME_DIR/.pi/agent/packages|$HOME/.pi/agent/packages|pi package"
+)
 
-cursor_cli_config="$HOME_DIR/.cursor/cli-config.json"
-if [ -f "$cursor_cli_config" ]; then
-  mkdir -p "$HOME/.cursor"
-  if ! safe_link "$cursor_cli_config" "$HOME/.cursor/cli-config.json" "cursor cli"; then
-    failed=1
-  fi
-fi
+manage_declared_entry_directories() {
+  local entry
+  local source_dir
+  local target_dir
+  local label
 
-pi_settings="$HOME_DIR/.pi/agent/settings.json"
-if [ -f "$pi_settings" ]; then
-  mkdir -p "$HOME/.pi/agent"
-  if ! safe_link "$pi_settings" "$HOME/.pi/agent/settings.json" "pi settings"; then
-    failed=1
-  fi
-fi
+  for entry in "${managed_entry_directories[@]}"; do
+    IFS='|' read -r source_dir target_dir label <<< "$entry"
+    link_entries "$source_dir" "$target_dir" "$label"
+  done
+}
 
-pi_models="$HOME_DIR/.pi/agent/models.json"
-if [ -f "$pi_models" ]; then
-  mkdir -p "$HOME/.pi/agent"
-  if ! safe_link "$pi_models" "$HOME/.pi/agent/models.json" "pi models"; then
-    failed=1
-  fi
-fi
+# One-to-one managed links. Each entry is source-relative path, target-relative
+# path, and a display label, separated by |. Add a location here rather than
+# duplicating setup/undo control flow.
+managed_links=(
+  ".cursor/cli-config.json|.cursor/cli-config.json|cursor cli"
+  ".pi/agent/settings.json|.pi/agent/settings.json|pi settings"
+  ".pi/agent/models.json|.pi/agent/models.json|pi models"
+  ".pi/agent/skills|.pi/agent/skills|pi skills"
+  ".pi/agent/usage|.pi/agent/usage|pi usage config"
+  ".pi/agent/pi-guard|.pi/agent/pi-guard|pi guard config"
+)
 
-pi_packages_dir="$HOME_DIR/.pi/agent/packages"
-if [ -d "$pi_packages_dir" ]; then
-  mkdir -p "$HOME/.pi/agent/packages"
-  shopt -s dotglob nullglob
-  for package_path in "$pi_packages_dir"/*; do
-    package_name="$(basename "$package_path")"
-    if ! safe_link "$package_path" "$HOME/.pi/agent/packages/$package_name" "pi package"; then
+manage_declared_links() {
+  local entry
+  local source_relative
+  local target_relative
+  local label
+  local source_path
+  local target_path
+
+  for entry in "${managed_links[@]}"; do
+    IFS='|' read -r source_relative target_relative label <<< "$entry"
+    source_path="$HOME_DIR/$source_relative"
+    target_path="$HOME/$target_relative"
+    [ -e "$source_path" ] || continue
+
+    if [ "$mode" = "link" ]; then
+      mkdir -p "$(dirname "$target_path")"
+    fi
+    if ! safe_link "$source_path" "$target_path" "$label"; then
       failed=1
     fi
   done
-  shopt -u dotglob nullglob
-fi
+}
 
-pi_skills="$HOME_DIR/.pi/agent/skills"
-if [ -d "$pi_skills" ]; then
-  mkdir -p "$HOME/.pi/agent"
-  if ! safe_link "$pi_skills" "$HOME/.pi/agent/skills" "pi skills"; then
-    failed=1
-  fi
-fi
+manage_declared_entry_directories
+manage_declared_links
 
-pi_usage="$HOME_DIR/.pi/agent/usage"
-if [ -d "$pi_usage" ]; then
-  mkdir -p "$HOME/.pi/agent"
-  if ! safe_link "$pi_usage" "$HOME/.pi/agent/usage" "pi usage config"; then
-    failed=1
-  fi
-fi
-
-pi_permissions="$HOME_DIR/.pi/agent/permissions"
-if [ -d "$pi_permissions" ]; then
-  mkdir -p "$HOME/.pi/agent"
-  if ! safe_link "$pi_permissions" "$HOME/.pi/agent/permissions" "pi permissions config"; then
-    failed=1
-  fi
-fi
-
-if [ "$symlinked" -eq 0 ]; then
+if [ "$symlinked" -eq 0 ] && [ "$mode" = "link" ]; then
   echo "No config files found to symlink."
 fi
 
