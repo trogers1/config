@@ -12,6 +12,14 @@
       "shouldAlwaysDisplay": true
     },
     {
+      "name": "Claude",
+      "provider": "anthropic",
+      "meter": "cost",
+      "period": "day",
+      "maximum": 10,
+      "shouldAlwaysDisplay": true
+    },
+    {
       "name": "Codex Cost",
       "provider": "openai-codex",
       "meter": "cost",
