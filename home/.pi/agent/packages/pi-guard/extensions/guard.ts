@@ -30,8 +30,14 @@ import {
   type ExtensionAPI,
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { Key } from "@earendil-works/pi-tui";
 import {
+  Input,
+  Key,
+  matchesKey,
+  truncateToWidth,
+} from "@earendil-works/pi-tui";
+import {
+  formatProfileName,
   ProfilePicker,
   type ProfilePickerItem,
 } from "../modules/profilePicker.lib";
@@ -50,6 +56,7 @@ import {
   type PolicyConfig,
   type ProfilePolicy,
   type ProfilePolicyOverride,
+  type ProfileTransformName,
   type ReadPathContext,
   type Rule,
   type ToolPolicy,
@@ -65,6 +72,7 @@ import {
   type Specificity,
 } from "../modules/ruleSpecificity";
 import {
+  createCustomProfile,
   loadProfileConfig,
   loadRawProfileConfig,
   ProfileConfigLoadError,
@@ -75,6 +83,7 @@ import {
   policyConfig as genericPolicyConfig,
 } from "../modules/policy";
 import { formatProfileColor } from "../modules/profileColors";
+import { ruleSetRegistry } from "../modules/ruleSets.lib";
 import { parseSubagentPermissibleRules } from "../modules/subagentScopes";
 import {
   clearSandboxCaches,
@@ -192,25 +201,25 @@ export default function (pi: ExtensionAPI) {
   const profileConfigPath =
     process.env.PI_GUARD_PROFILE_CONFIG?.trim() || undefined;
 
-  const profileConfigLoad: {
-    config: PolicyConfig;
-    error?: ProfileConfigLoadError;
-  } = (() => {
+  let rawProfileConfig: RawProfileConfig | undefined;
+  let policyConfig: PolicyConfig = genericPolicyConfig;
+  let profileConfigErrorReason: string | undefined;
+
+  /** Refresh the in-memory policy only after a complete, valid config load. */
+  function reloadPolicyConfig(): void {
     try {
-      return {
-        config: loadProfileConfig(genericPolicyConfig, profileConfigPath),
-      };
+      policyConfig = loadProfileConfig(genericPolicyConfig, profileConfigPath);
+      rawProfileConfig = loadRawProfileConfig(profileConfigPath);
+      profileConfigErrorReason = undefined;
     } catch (error) {
-      if (error instanceof ProfileConfigLoadError) {
-        return { config: genericPolicyConfig, error };
-      }
-      throw error;
+      if (!(error instanceof ProfileConfigLoadError)) throw error;
+      policyConfig = genericPolicyConfig;
+      rawProfileConfig = undefined;
+      profileConfigErrorReason = error.message;
     }
-  })();
+  }
+  reloadPolicyConfig();
 
-  const rawProfileConfig = loadRawProfileConfig(profileConfigPath);
-
-  const policyConfig = profileConfigLoad.config;
   type ProfileName = string;
 
   const profileNames = () => typedKeys(policyConfig.profiles);
@@ -330,7 +339,6 @@ export default function (pi: ExtensionAPI) {
   const subagentPermissibleRules = parseSubagentPermissibleRules(
     process.env.PI_SUBAGENT_PERMISSIBLE_GLOBS,
   );
-  const profileConfigErrorReason = profileConfigLoad.error?.message;
   let subagentProfileErrorReason: string | undefined;
   let activeProfile: ProfileName = policyConfig.defaultProfile;
   let sandboxOverride: SandboxOverride = "inherit";
@@ -570,6 +578,347 @@ The permissions gate remains loaded and will fail closed until the profile is co
     await clearSandboxCaches();
   });
 
+  const profileTransformOptions = [
+    "none",
+    "transform:deny-asks",
+    "transform:allow-asks",
+    "transform:ask-all",
+    "transform:deny-all",
+  ] as const;
+
+  /**
+   * Collect a composition list interactively. Rulesets are intentionally shown
+   * alongside profiles: both are valid `extends` fragments, but a ruleset
+   * cannot itself become active.
+   */
+  const shippedRuleSetDescriptions: Record<string, string> = {
+    "ruleset:shell": "Standard shell command policy.",
+    "ruleset:git": "Git inspection and mutation policy.",
+    "ruleset:packageManagers": "Package manager command policy.",
+    "ruleset:deps-mutations-guard": "Deny dependency mutations.",
+    "ruleset:deps-mutations-allow": "Allow dependency mutations.",
+    "ruleset:shell-guards": "Guard destructive shell operations.",
+    "ruleset:path-guards": "Default read, write, and protected-path policy.",
+    "ruleset:read-only-shell": "Read-only shell commands.",
+    "ruleset:read-only-path": "Read-only filesystem paths.",
+    "ruleset:git-commit": "Permit Git commits.",
+    "ruleset:git-refs": "Permit Git reference changes.",
+    "ruleset:test-run": "Permit test and build commands.",
+    "ruleset:docs-write": "Permit documentation writes.",
+    "ruleset:test-write-protection": "Protect test files from writes.",
+  };
+
+  async function chooseComposition(
+    ctx: ExtensionContext,
+  ): Promise<string[] | undefined> {
+    const items: ProfilePickerItem[] = [
+      ...profileNames().map((name) => {
+        const profile = activePolicy(name);
+        return {
+          name,
+          description: profile.description ?? "Permissions profile.",
+          emoji: profile.emoji,
+          color: profile.color,
+        };
+      }),
+      ...Object.keys(ruleSetRegistry).map((name) => ({
+        name,
+        description: shippedRuleSetDescriptions[name] ?? "Shipped rule set.",
+        emoji: "🧩",
+        color: "cyan" as const,
+      })),
+      ...Object.keys(rawProfileConfig?.rulesets ?? {}).map((name) => ({
+        name: `customruleset:${name}`,
+        description: `Custom rule set: ${name}`,
+        emoji: "🧩",
+        color: "cyan" as const,
+      })),
+    ];
+    const remaining = new Map(items.map((item) => [item.name, item]));
+    const selected: string[] = [];
+    while (remaining.size > 0) {
+      const choices: ProfilePickerItem[] = [
+        ...remaining.values(),
+        {
+          name: "Done",
+          description: "Finish composing this profile.",
+          emoji: "✅",
+        },
+      ];
+      // Later selections win tied rules, so show each new selection at the
+      // top of the composition stack—the same order rules are effectively
+      // layered by the resolver.
+      const selectedItems = selected
+        .map((name) => items.find((item) => item.name === name))
+        .filter((item): item is ProfilePickerItem => item !== undefined)
+        .reverse();
+      const choice = await ctx.ui.custom<string | null>(
+        (tui, theme, _keys, done) => {
+          const picker = new ProfilePicker(choices, theme, done, () =>
+            done(null),
+          );
+          return {
+            get focused() {
+              return picker.focused;
+            },
+            set focused(value: boolean) {
+              picker.focused = value;
+            },
+            render: (width) =>
+              [
+                theme.fg(
+                  "accent",
+                  theme.bold("Profile composition (final selection wins ties)"),
+                ),
+                ...(selectedItems.length === 0
+                  ? [theme.fg("dim", "  No profiles or rulesets selected yet.")]
+                  : selectedItems.map(
+                      (item, index) =>
+                        `${theme.fg("dim", `${index + 1}.`)} ${formatProfileName(item)} ${theme.fg("muted", `— ${item.description}`)}`,
+                    )),
+                theme.fg(
+                  "dim",
+                  "Type to search names and descriptions; final selections win equal-specificity ties. Select ✅ Done when finished.",
+                ),
+                ...picker.render(width),
+              ].map((line) => truncateToWidth(line, width)),
+            invalidate: () => picker.invalidate(),
+            handleInput: (data) => {
+              picker.handleInput(data);
+              tui.requestRender();
+            },
+          };
+        },
+      );
+      if (choice === null || choice === undefined) return undefined;
+      if (choice === "Done") return selected.length ? selected : undefined;
+      selected.push(choice);
+      remaining.delete(choice);
+    }
+    return selected;
+  }
+
+  async function runProfileAdd(ctx: ExtensionContext): Promise<void> {
+    if (!ctx.hasUI) {
+      ctx.ui.notify("/profile-add requires an interactive UI", "error");
+      return;
+    }
+    const extendsTargets = await chooseComposition(ctx);
+    if (!extendsTargets) {
+      ctx.ui.notify(
+        "Profile creation cancelled: choose at least one base.",
+        "warning",
+      );
+      return;
+    }
+    const transformDescriptions: Record<
+      (typeof profileTransformOptions)[number],
+      string
+    > = {
+      none: "Keep the composed decisions unchanged.",
+      "transform:deny-asks": "Turn every ask decision into deny.",
+      "transform:allow-asks": "Turn every ask decision into allow.",
+      "transform:ask-all": "Turn every allow decision into ask.",
+      "transform:deny-all": "Turn every allow and ask decision into deny.",
+    };
+    const transform = await ctx.ui.custom<string | null>(
+      (tui, theme, _keys, done) => {
+        const picker = new ProfilePicker(
+          profileTransformOptions.map((name) => ({
+            name,
+            description: transformDescriptions[name],
+            emoji: name === "none" ? "➖" : "🔀",
+          })),
+          theme,
+          done,
+          () => done(null),
+        );
+        return {
+          get focused() {
+            return picker.focused;
+          },
+          set focused(value: boolean) {
+            picker.focused = value;
+          },
+          render: (width) =>
+            [
+              theme.fg("accent", theme.bold("Optional policy transform")),
+              theme.fg(
+                "dim",
+                "Applied after composition; type to search transforms and descriptions.",
+              ),
+              ...picker.render(width),
+            ].map((line) => truncateToWidth(line, width)),
+          invalidate: () => picker.invalidate(),
+          handleInput: (data: string) => {
+            picker.handleInput(data);
+            tui.requestRender();
+          },
+        };
+      },
+    );
+    if (transform == null) return;
+    const protectedPathTexts: string[] = [];
+    const promptProtectedPath = () =>
+      ctx.ui.custom<string | null>((tui, theme, _keys, done) => {
+        const input = new Input();
+        let decision: "allow" | "deny" = "deny";
+        input.onSubmit = () => {
+          const pattern = input.getValue().trim();
+          done(
+            pattern ? `${decision === "deny" ? "⛔️" : "✅"} ${pattern}` : "",
+          );
+        };
+        input.onEscape = () => done(null);
+        return {
+          get focused() {
+            return input.focused;
+          },
+          set focused(value: boolean) {
+            input.focused = value;
+          },
+          render: (width: number) =>
+            [
+              theme.fg("accent", theme.bold("Add a protected-path rule")),
+              theme.fg(
+                "dim",
+                "Use Tab to swap between deny (⛔️) and allow (✅). Enter adds this rule; Esc skips.",
+              ),
+              theme.fg(
+                "dim",
+                "Examples: ⛔️ .env  •  ⛔️ **/credentials/**  •  ✅ .env.example",
+              ),
+              theme.fg(
+                "dim",
+                "Rules merge; later rules win equal-specificity ties.",
+              ),
+              ...(protectedPathTexts.length === 0
+                ? []
+                : [
+                    theme.fg("muted", "Rules added so far:"),
+                    // Later rules win equal-specificity ties, so show the
+                    // effective top-most rule first.
+                    ...[...protectedPathTexts]
+                      .reverse()
+                      .map((rule, index) =>
+                        theme.fg("dim", `  ${index + 1}. ${rule}`),
+                      ),
+                  ]),
+              `${decision === "deny" ? "⛔️" : "✅"} ${input.render(Math.max(0, width - 3))[0] ?? ""}`,
+            ].map((line) => truncateToWidth(line, width)),
+          invalidate: () => input.invalidate(),
+          handleInput: (data: string) => {
+            if (matchesKey(data, Key.tab))
+              decision = decision === "deny" ? "allow" : "deny";
+            else input.handleInput(data);
+            tui.requestRender();
+          },
+        };
+      });
+    while (true) {
+      const protectedPathText = await promptProtectedPath();
+      if (protectedPathText == null) return;
+      if (protectedPathText) protectedPathTexts.push(protectedPathText);
+      const next = await ctx.ui.select("Protected paths:", [
+        "Add another protected path",
+        "Continue",
+      ]);
+      if (next === undefined) return;
+      if (next === "Continue") break;
+    }
+    const sandboxed = await ctx.ui.confirm(
+      "Sandbox Bash?",
+      "Enable a no-network kernel sandbox for Bash commands?",
+    );
+    async function requiredInput(
+      title: string,
+      placeholder: string,
+      error: string,
+    ): Promise<string | undefined> {
+      while (true) {
+        const value = (await ctx.ui.input(title, placeholder))?.trim();
+        if (value) return value;
+        if (value === undefined) return undefined;
+        // Reopen the same wizard field rather than abandoning all prior
+        // composition choices. Pi's stock input dialog has no inline-error
+        // surface, so the error is shown immediately before retrying it.
+        ctx.ui.notify(error, "error");
+      }
+    }
+    const name = await requiredInput(
+      "Profile name:",
+      "custom-profile",
+      "A profile name is required.",
+    );
+    if (!name) return;
+    const description = await requiredInput(
+      "Profile description:",
+      "",
+      "A profile description is required.",
+    );
+    if (!description) return;
+    const emoji =
+      (
+        await ctx.ui.input("Profile emoji (optional; Default: 💅):", "💅")
+      )?.trim() || "💅";
+    try {
+      const protectedPaths = protectedPathTexts
+        .flatMap((value) => value.split("\n"))
+        .map((value) => value.trim())
+        .filter(Boolean)
+        .map((line): { pattern: string; decision: "allow" | "deny" } => {
+          const match = /^(⛔️|✅|allow|deny)\s+(.+)$/i.exec(line);
+          if (!match) {
+            throw new Error(
+              `Invalid protected path rule '${line}'. Use '⛔️ <glob>' or '✅ <glob>'.`,
+            );
+          }
+          return {
+            pattern: match[2].trim(),
+            decision:
+              match[1] === "✅" || match[1].toLocaleLowerCase() === "allow"
+                ? "allow"
+                : "deny",
+          };
+        });
+      createCustomProfile({
+        fallback: genericPolicyConfig,
+        configPath: profileConfigPath,
+        name,
+        description,
+        emoji,
+        // Preserve selection order: later selections win equal-specificity
+        // ties, matching the resolver's normal composition semantics.
+        extends: extendsTargets,
+        transforms:
+          transform === "none"
+            ? undefined
+            : [transform as ProfileTransformName],
+        protectedPaths,
+        sandboxed,
+      });
+      reloadPolicyConfig();
+      if (!isProfileName(name)) {
+        throw new Error(`Profile '${name}' was saved but could not be loaded.`);
+      }
+      await activateProfile(
+        name,
+        ctx,
+        `Created and activated profile: ${name}`,
+      );
+    } catch (error) {
+      ctx.ui.notify(
+        error instanceof Error ? error.message : String(error),
+        "error",
+      );
+    }
+  }
+
+  pi.registerCommand("profile-add", {
+    description: "Create and activate a custom permissions profile",
+    handler: async (_args, ctx) => await runProfileAdd(ctx),
+  });
+
   pi.registerCommand("profile", {
     description: "Show or switch the active permissions profile",
     getArgumentCompletions: (prefix) => {
@@ -601,7 +950,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
       await activateProfile(
         requested,
         ctx,
-        `Switched to profile: ${activeProfile}`,
+        `Switched to profile: ${requested}`,
       );
     },
   });
@@ -841,7 +1190,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
       await activateProfile(
         policyConfig.defaultProfile,
         ctx,
-        `Socrates profile disabled; active profile: ${activeProfile}`,
+        `Socrates profile disabled; active profile: ${policyConfig.defaultProfile}`,
       );
     },
   });

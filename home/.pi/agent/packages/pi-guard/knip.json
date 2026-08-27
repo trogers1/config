@@ -3,6 +3,7 @@
   "entry": [
     "extensions/guard.ts",
     "modules/policy.ts",
+    "modules/profileConfig.ts",
     "integrationTests/*.test.ts"
   ],
   "project": [

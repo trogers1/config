@@ -147,6 +147,7 @@ obvious (`deps-mutator`, `git-full`). Profiles may define optional `color`,
 - `/profile` opens a fuzzy-searchable profile picker. Type to search profile names and descriptions; use ↑/↓ and Return to select.
 - `Ctrl+Shift+G` opens the same picker without leaving a draft prompt. (`Ctrl+G` remains Pi's external-editor shortcut.)
 - `/profile <name>` switches to a profile.
+- `/profile-add` walks through creating a custom profile: compose searchable profiles and rulesets with their emojis and descriptions (final selections win equal-specificity ties), optionally apply a transform, then add a protected-path rule. That editor starts as `⛔️ <glob>`; press Tab to switch it to `✅ <glob>`. Examples include `⛔️ .env`, `⛔️ **/credentials/**`, and `✅ .env.example`; later rules win equal-specificity ties. Choose Bash sandboxing, then name and describe it. Emoji selection is optional and defaults to `💅`; custom profiles use purple text by default. The saved profile is activated immediately.
 - `/read-only` switches to the `builtin:read-only` permissions profile.
 - `/sandbox` reports the active sandbox state, backend, network posture,
   writable roots, subagent scope, Bash-tool ownership, and translation coverage.

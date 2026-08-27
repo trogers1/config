@@ -1,7 +1,14 @@
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
-import { parse, printParseErrorCode, type ParseError } from "jsonc-parser";
+import {
+  applyEdits,
+  modify,
+  parse,
+  printParseErrorCode,
+  type ParseError,
+} from "jsonc-parser";
 import { Value } from "typebox/value";
 import {
   applyPolicyTransforms,
@@ -15,11 +22,15 @@ import {
   reservedProfilePrefix,
   warnOnPolicyRuleConflicts,
   type CustomRuleSetPolicy,
+  type Decision,
+  type PathContext,
   type PolicyConfig,
   type ProfileConfigFile,
   type ProfileConfigProfile,
   type ProfilePolicy,
   type ProfileTransformName,
+  type ProtectedPathRule,
+  type SandboxConfig,
 } from "./policyHelpers";
 import { ruleSetRegistry } from "./ruleSets.lib/index";
 
@@ -54,6 +65,11 @@ const defaultProfileConfigPath = path.join(
   "profiles.jsonc",
 );
 
+/** Resolve the user-owned profile file used by the profile loader and mutators. */
+export function resolveProfileConfigPath(configPath?: string): string {
+  return configPath ?? defaultProfileConfigPath;
+}
+
 function isProfileConfigFile(value: unknown): value is ProfileConfigFile {
   return Value.Check(profileConfigFileSchema, value);
 }
@@ -70,7 +86,7 @@ function isShippedRuleSetName(
  * callers can fall back to other behavior.
  */
 export function loadRawProfileConfig(
-  configPath = defaultProfileConfigPath,
+  configPath = resolveProfileConfigPath(),
 ): RawProfileConfig | undefined {
   if (!fs.existsSync(configPath)) return undefined;
 
@@ -98,7 +114,7 @@ export function loadRawProfileConfig(
  */
 export function loadProfileConfig(
   fallback: PolicyConfig,
-  configPath = defaultProfileConfigPath,
+  configPath = resolveProfileConfigPath(),
 ): PolicyConfig {
   if (!fs.existsSync(configPath)) return fallback;
 
@@ -300,4 +316,169 @@ export function loadProfileConfig(
       `failed to read profile config: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
+}
+
+/** Arguments for adding a user-owned profile. */
+export type CreateCustomProfileOptions = {
+  fallback: PolicyConfig;
+  name: string;
+  description: string;
+  emoji?: string;
+  extends?: readonly string[];
+  transforms?: readonly ProfileTransformName[];
+  protectedPaths?: readonly ProtectedPathRule[];
+  sandboxed?: SandboxConfig | boolean;
+  configPath?: string;
+};
+
+export type AppendProfileRuleOptions = {
+  fallback: PolicyConfig;
+  profile: string;
+  kind: "bash" | "read" | "write";
+  pattern: string;
+  decision: Decision;
+  guidance?: string;
+  contexts?: readonly PathContext[];
+  configPath?: string;
+};
+
+const jsoncFormatting = { insertSpaces: true, tabSize: 2, eol: "\n" };
+
+function readMutationSource(configPath: string): string {
+  if (!fs.existsSync(configPath)) return '{\n  "profiles": {}\n}\n';
+  const source = fs.readFileSync(configPath, "utf8");
+  const errors: ParseError[] = [];
+  const parsed: unknown = parse(source, errors, { allowTrailingComma: true });
+  if (errors.length > 0 || typeof parsed !== "object" || parsed === null) {
+    const detail =
+      errors.length > 0
+        ? `JSONC parse error: ${errors.map((error) => printParseErrorCode(error.error)).join(", ")}`
+        : "configuration root must be an object";
+    throw new ProfileConfigLoadError(configPath, detail);
+  }
+  const profiles: unknown = Reflect.get(parsed, "profiles");
+  if (
+    !Object.hasOwn(parsed, "profiles") ||
+    typeof profiles !== "object" ||
+    profiles === null
+  ) {
+    throw new ProfileConfigLoadError(
+      configPath,
+      "configuration must contain a profiles object",
+    );
+  }
+  return source;
+}
+
+function atomicallyWriteValidatedProfileConfig(
+  configPath: string,
+  source: string,
+  fallback: PolicyConfig,
+): void {
+  const directory = path.dirname(configPath);
+  fs.mkdirSync(directory, { recursive: true });
+  const temporaryPath = path.join(
+    directory,
+    `.${path.basename(configPath)}.${randomUUID()}.tmp`,
+  );
+  try {
+    fs.writeFileSync(temporaryPath, source, { encoding: "utf8", flag: "wx" });
+    loadProfileConfig(fallback, temporaryPath);
+    if (fs.existsSync(configPath))
+      fs.chmodSync(temporaryPath, fs.statSync(configPath).mode & 0o7777);
+    fs.renameSync(temporaryPath, configPath);
+  } finally {
+    try {
+      fs.unlinkSync(temporaryPath);
+    } catch {
+      /* already renamed */
+    }
+  }
+}
+
+/** Create a custom profile while retaining all JSONC comments and formatting. */
+export function createCustomProfile(options: CreateCustomProfileOptions): void {
+  const configPath = resolveProfileConfigPath(options.configPath);
+  const source = readMutationSource(configPath);
+  const parsed = parse(source, [], { allowTrailingComma: true }) as {
+    profiles: Record<string, unknown>;
+  };
+  if (Object.hasOwn(parsed.profiles, options.name)) {
+    throw new ProfileConfigLoadError(
+      configPath,
+      `profile '${options.name}' already exists`,
+    );
+  }
+  const profile: Record<string, unknown> = {
+    description: options.description,
+    // Custom profiles are visually distinct from shipped blue defaults.
+    color: "magenta",
+  };
+  if (options.emoji !== undefined) profile.emoji = options.emoji;
+  if (options.extends !== undefined) profile.extends = [...options.extends];
+  if (options.transforms !== undefined)
+    profile.transforms = [...options.transforms];
+  if (options.protectedPaths !== undefined)
+    profile.protectedPathRules = [...options.protectedPaths];
+  if (options.sandboxed !== undefined) {
+    profile.sandbox =
+      typeof options.sandboxed === "boolean"
+        ? options.sandboxed
+          ? { network: "deny" }
+          : false
+        : options.sandboxed;
+  }
+  const updated = applyEdits(
+    source,
+    modify(source, ["profiles", options.name], profile, {
+      formattingOptions: jsoncFormatting,
+    }),
+  );
+  atomicallyWriteValidatedProfileConfig(configPath, updated, options.fallback);
+}
+
+/** Append a bash or path rule without coupling callers to a UI or JSONC AST. */
+export function appendProfileRule(options: AppendProfileRuleOptions): void {
+  const configPath = resolveProfileConfigPath(options.configPath);
+  const source = readMutationSource(configPath);
+  const parsed = parse(source, [], { allowTrailingComma: true }) as {
+    profiles: Record<string, Record<string, unknown>>;
+  };
+  const profile = parsed.profiles[options.profile];
+  if (!profile) {
+    throw new ProfileConfigLoadError(
+      configPath,
+      `profile '${options.profile}' does not exist`,
+    );
+  }
+  const rule: Record<string, unknown> = {
+    pattern: options.pattern,
+    decision: options.decision,
+  };
+  if (options.guidance !== undefined) rule.guidance = options.guidance;
+  if (options.kind !== "bash" && options.contexts !== undefined)
+    rule.contexts = [...options.contexts];
+  const location =
+    options.kind === "bash"
+      ? ["profiles", options.profile, "tools", "bash"]
+      : [
+          "profiles",
+          options.profile,
+          options.kind === "read" ? "readPaths" : "writePaths",
+        ];
+  const existing = location.reduce<unknown>(
+    (value, key) =>
+      typeof value === "object" && value !== null
+        ? Reflect.get(value, key)
+        : undefined,
+    parsed,
+  );
+  const rules = Array.isArray(existing)
+    ? [...(existing as unknown[]), rule]
+    : [rule];
+  const updated = applyEdits(
+    source,
+    modify(source, location, rules, { formattingOptions: jsoncFormatting }),
+  );
+  atomicallyWriteValidatedProfileConfig(configPath, updated, options.fallback);
 }

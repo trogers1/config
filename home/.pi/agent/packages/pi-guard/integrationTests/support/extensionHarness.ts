@@ -18,6 +18,7 @@ import {
   type UserBashEventResult,
 } from "@earendil-works/pi-coding-agent";
 import { vi, type Mock } from "vitest";
+import type { Component } from "@earendil-works/pi-tui";
 import permissionsExtension from "../../extensions/guard";
 
 type CommandRegistration = Omit<RegisteredCommand, "name" | "sourceInfo">;
@@ -72,6 +73,9 @@ export function createExtensionHarness(
     hasUI?: boolean;
     confirm?: boolean;
     editorResult?: string;
+    inputResults?: Array<string | undefined>;
+    selectResults?: Array<string | undefined>;
+    customResults?: Array<string | null | undefined>;
     entries?: SessionEntryInput[];
     registeredTools?: string[];
     activeTools?: string[];
@@ -110,11 +114,37 @@ export function createExtensionHarness(
   let started = false;
   let nextEntryId = entries.length + 1;
 
+  const inputResults = [...(options.inputResults ?? [])];
+  const selectResults = [...(options.selectResults ?? [])];
+  const customResults = [...(options.customResults ?? [])];
+  const customComponents: Component[] = [];
+  // Custom UI tests only need deterministic plain text styling; Pi's runtime
+  // supplies the real Theme and TUI instances.
+  const testTheme = {
+    fg: (_color: string, text: string) => text,
+    bg: (_color: string, text: string) => text,
+    bold: (text: string) => text,
+  };
+  const testTui = { requestRender: vi.fn() };
   const ui = {
     confirm: vi.fn().mockResolvedValue(options.confirm ?? false),
     editor: vi.fn().mockResolvedValue(options.editorResult),
-    input: vi.fn().mockResolvedValue(undefined),
-    custom: vi.fn().mockResolvedValue(null),
+    input: vi.fn().mockImplementation(() => inputResults.shift()),
+    select: vi.fn().mockImplementation(() => selectResults.shift()),
+    custom: vi.fn().mockImplementation((factory: unknown) => {
+      if (typeof factory === "function") {
+        const component = (
+          factory as (
+            tui: typeof testTui,
+            theme: typeof testTheme,
+            keybindings: unknown,
+            done: (value: unknown) => void,
+          ) => Component
+        )(testTui, testTheme, undefined, () => undefined);
+        customComponents.push(component);
+      }
+      return customResults.shift() ?? null;
+    }),
     notify: vi.fn(),
     setStatus: vi.fn(),
     setWorkingVisible: vi.fn(),
@@ -123,6 +153,7 @@ export function createExtensionHarness(
     | "confirm"
     | "editor"
     | "input"
+    | "select"
     | "custom"
     | "notify"
     | "setStatus"
@@ -353,6 +384,7 @@ export function createExtensionHarness(
     entries,
     errors,
     ui,
+    customComponents,
     setActiveToolsMock,
     getActiveTools: () => [...activeToolNames],
     getAllTools: () => pi.getAllTools(),

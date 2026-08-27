@@ -771,6 +771,7 @@ describe("extension harness profile configuration failures", () => {
 
       const uiHarness = createHarness({ hasUI: true });
       expect(uiHarness.commands).toEqual([
+        "profile-add",
         "profile",
         "read-only",
         "sandbox-on",
