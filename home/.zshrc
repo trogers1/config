@@ -75,6 +75,7 @@ if [[ -z "${DOCKER_HOST:-}" && -S "$HOME/.rd/docker.sock" ]]; then
   export DOCKER_HOST="unix://$HOME/.rd/docker.sock"
   export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock
   export TESTCONTAINERS_HOST_OVERRIDE=$(rdctl info --field ip-address)
+  export TESTCONTAINERS_RYUK_DISABLED=true
 fi
 
 # go
