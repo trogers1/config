@@ -1,3 +1,4 @@
+import { dependencyCacheKernelWaiver } from "./dependencyCaches";
 import type { ProtectedPathRule } from "./policyHelpers";
 
 /** Default secret and repository-metadata paths configured by standard profiles. */
@@ -68,6 +69,12 @@ export const defaultProtectedPathRules: ProtectedPathRule[] = [
     guidance:
       "This path is protected from disclosure and mutation by the active profile.",
   },
+  ...dependencyCacheKernelWaiver.map((pattern) => ({
+    pattern,
+    decision: "deny" as const,
+    guidance:
+      "Package-manager cache paths are protected from direct disclosure and mutation by the active profile.",
+  })),
   {
     pattern: "**/.npmrc",
     decision: "deny",

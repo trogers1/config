@@ -2,6 +2,10 @@ import type { ProfilePolicy } from "../policyHelpers";
 import { extendProfile } from "../policyHelpers";
 import { ruleSetRegistry } from "../ruleSets.lib/index";
 import {
+  dependencyCacheKernelWaiver,
+  dependencyCacheSandboxWritePaths,
+} from "../dependencyCaches";
+import {
   baseCompositionChain,
   baseProfile,
   bashRules,
@@ -62,7 +66,11 @@ export const depsMutatorProfile: ProfilePolicy = {
   color: "yellow",
   sandbox: {
     network: "allow",
-    kernelUnenforcedProtectedPaths: gitMetadataKernelWaiver,
+    extraWritePaths: [...dependencyCacheSandboxWritePaths],
+    kernelUnenforcedProtectedPaths: [
+      ...gitMetadataKernelWaiver,
+      ...dependencyCacheKernelWaiver,
+    ],
   },
   emoji: "📦",
   // Same composition as builtin:default with the dependency-mutation guard
