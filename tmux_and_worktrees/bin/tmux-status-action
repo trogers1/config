@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+# Actions for the clickable tmux status-bar window controls.
+set -euo pipefail
+
+HIDDEN_SESSION="__tmux_hidden_windows__"
+
+die() {
+  tmux display-message "$*"
+  exit 1
+}
+
+new_window() {
+  local session="$1"
+  local directory="$2"
+  local name
+
+  name="$(basename "${directory%/}")"
+  [ -n "$name" ] || name="/"
+  tmux new-window -t "$session" -c "$directory" -n "$name"
+}
+
+restore_latest_window() {
+  local destination_session="$1"
+  local window
+
+  tmux has-session -t "$HIDDEN_SESSION" 2>/dev/null \
+    || die "No hidden tmux windows to restore"
+  window="$(tmux list-windows -t "$HIDDEN_SESSION" -F '#{window_id}' | tail -n 1)"
+  restore_window "$destination_session" "$window"
+}
+
+restore_window() {
+  local destination_session="$1"
+  local source_window="$2"
+  local window
+
+  tmux has-session -t "$HIDDEN_SESSION" 2>/dev/null \
+    || die "No hidden tmux windows to restore"
+  window="$(tmux display-message -p -t "$source_window" '#{window_id}')"
+  tmux list-windows -t "$HIDDEN_SESSION" -F '#{window_id}' | grep -Fxq "$window" \
+    || die "That window is not hidden"
+
+  tmux link-window -s "$window" -t "$destination_session:"
+  tmux unlink-window -k -t "$HIDDEN_SESSION:$window"
+  tmux select-window -t "$destination_session:$window"
+  tmux display-message "Restored hidden window"
+}
+
+hide_window() {
+  local session="$1"
+  local window="$2"
+  local sentinel
+
+  [ "$session" != "$HIDDEN_SESSION" ] || die "The hidden-windows session cannot be hidden"
+  tmux list-windows -t "$session" -F '#{window_id}' | grep -Fxq "$window" \
+    || die "That tmux window no longer exists"
+
+  # A tmux window may be linked to multiple sessions.  Link it to the private
+  # holding session before unlinking it from the visible session, so its panes
+  # (and the processes running in them) continue unchanged.
+  if ! tmux has-session -t "$HIDDEN_SESSION" 2>/dev/null; then
+    tmux new-session -d -s "$HIDDEN_SESSION" -n __hidden__
+    sentinel="$(tmux display-message -p -t "$HIDDEN_SESSION:" '#{window_id}')"
+    tmux link-window -s "$window" -t "$HIDDEN_SESSION:"
+    tmux kill-window -t "$sentinel"
+  else
+    tmux link-window -s "$window" -t "$HIDDEN_SESSION:"
+  fi
+
+  # -k permits hiding the final visible window; that session is then removed,
+  # while the linked window and its processes remain in the holding session.
+  tmux unlink-window -k -t "$session:$window"
+  tmux display-message "Hidden window; use the ◌ control (or prefix + s) to reconnect"
+}
+
+case "${1:-}" in
+  click)
+    [ "$#" -ge 3 ] || die "Invalid tmux status action"
+    session="$2"
+    range="$3"
+    directory="${4:-}"
+    # tmux versions expose a user range either as its payload (hide:@1) or
+    # with the range kind included (user|hide:@1). Accept both forms.
+    range="${range#user|}"
+    case "$range" in
+      tab:*)
+        tmux select-window -t "${range#tab:}"
+        ;;
+      hide:*)
+        hide_window "$session" "${range#hide:}"
+        ;;
+      new)
+        new_window "$session" "$directory"
+        ;;
+      restore)
+        restore_latest_window "$session"
+        ;;
+      *)
+        # The status bar may also contain non-interactive ranges.
+        exit 0
+        ;;
+    esac
+    ;;
+  new)
+    [ "$#" -eq 3 ] || die "Invalid tmux new-window action"
+    new_window "$2" "$3"
+    ;;
+  hide)
+    [ "$#" -eq 3 ] || die "Invalid tmux hide-window action"
+    hide_window "$2" "$3"
+    ;;
+  restore)
+    [ "$#" -eq 3 ] || die "Invalid tmux restore action"
+    restore_window "$2" "$3"
+    ;;
+  restore-latest)
+    [ "$#" -eq 2 ] || die "Invalid tmux restore action"
+    restore_latest_window "$2"
+    ;;
+  *)
+    printf 'Usage: %s {click <session> <range> <directory>|new <session> <directory>|hide <session> <window>|restore <session> <hidden-window>}\n' "$0" >&2
+    exit 2
+    ;;
+esac

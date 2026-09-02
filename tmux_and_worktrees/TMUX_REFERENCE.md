@@ -14,14 +14,24 @@ Tip: when this guide says `prefix + x`, press `M-Space`, release, then press `x`
 
 ## Windows (tabs)
 
-- New window: `prefix + c`
+- New window: `prefix + c` (opens in the current directory and names the tab for it)
 - Next window: `prefix + Right`
 - Previous window: `prefix + p`
 - Last window: `prefix + l`
 - Go to window number: `prefix + 0` ... `prefix + 9`
 - Rename current window: `prefix + ,`
-- Kill current window: `prefix + &`
+- Hide current window: `prefix + &` (keeps all pane processes running in `__tmux_hidden_windows__`)
 - Choose from all windows: `prefix + w`
+- Reconnect/switch sessions: `prefix + s` (chooser labels sessions as attached or detached)
+- Show tab/control key help: `prefix + ?`
+
+### Clickable status controls
+
+Each tab has a clickable `×`: it hides the window rather than terminating it.
+Click `+` after the window list to create a window, or `◌` (or the session
+name) to open the session chooser.
+Terminal mouse protocols have no portable hover events, so conventional tooltips
+are unavailable; tab numbers and `prefix + ?` provide the keyboard hints.
 
 ## Panes (splits)
 

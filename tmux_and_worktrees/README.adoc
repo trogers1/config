@@ -74,6 +74,29 @@ Prefix is `M-Space` (Meta+Space), then:
 * `t` -> new worktree session (`dtree`)
 * `W` -> new worktree session (`dtree`)
 * `M` -> run `dmerge` in-pane (interactive target prompt)
+* `c` -> create a shell window in the current directory; its tab is named for that directory
+* `&` -> hide the current window without stopping its pane processes
+* `s` -> open the tmux session chooser; it labels sessions as `attached` or `detached`
+* `?` -> show tab/control keyboard help in the tmux message area
+
+== Clickable tmux tabs
+
+The status bar has a clickable `×` on every window tab, followed by `+` and
+`◌` controls. Clicking a tab selects it; clicking its `×` *hides* it rather
+than killing it. Hidden windows are linked into the private
+`__tmux_hidden_windows__` session, so their shells, editors, and other pane
+processes remain alive. Use `◌`, click the session name in the status bar, or
+press `prefix + s` to open tmux's interactive session chooser and switch to
+that session when you want to reconnect. The chooser displays `attached` for
+sessions with a connected client and `detached` otherwise.
+
+`+` (or `prefix + c`) opens a new idle shell window rooted at the current
+pane's directory and names its tab after that directory.
+
+Terminal mouse protocols do not provide a portable hover event, so tmux cannot
+show conventional hover tooltips. The visible tab number is its keyboard
+shortcut (`prefix + 1` through `prefix + 9`), and `prefix + ?` displays the
+complete keyboard equivalents for tabs and controls.
 
 == Recommended repo layout
 
