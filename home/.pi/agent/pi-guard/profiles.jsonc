@@ -195,6 +195,10 @@
           "pattern": "/Users/*/.nvm/versions/**/lib/node_modules/@earendil-works/pi-coding-agent/**",
           "decision": "allow",
         },
+        {
+          "pattern": "/var/folders/pc/*/T/*", // mac temp dir
+          "decision": "allow",
+        },
       ],
       "writePaths": [
         {
@@ -203,6 +207,10 @@
         },
         {
           "pattern": "/Users/*/code/config/**",
+          "decision": "allow",
+        },
+        {
+          "pattern": "/var/folders/pc/*/T/*", // mac temp dir
           "decision": "allow",
         },
       ],
@@ -326,11 +334,7 @@
           "/var/folders/*/*/T/**",
           "~/.local/share/lightcast-mcp/tokens/**",
         ],
-        "kernelUnenforcedProtectedPaths": [
-          "**/.env*",
-          "**/.git",
-          "**/.git/**",
-        ],
+        "kernelUnenforcedProtectedPaths": ["**/.env*", "**/.git", "**/.git/**"],
       },
       "tools": {
         "bash": [

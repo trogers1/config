@@ -31,6 +31,13 @@ export const defaultWithNetCompositionChain = [
 // written. Command rules still determine which Git operations are permitted.
 export const gitMetadataKernelWaiver = ["**/.git", "**/.git/**"];
 
+// Linked worktrees keep their mutable rebase and index state in the main
+// worktree's .git directory, which may be anywhere outside Pi's startup
+// directory. Git mutation profiles must therefore open Git metadata globally,
+// rather than assuming a particular checkout layout. Direct .git access
+// remains blocked by the permission gate.
+export const gitMetadataSandboxWritePaths = ["/**/.git", "/**/.git/**"];
+
 /**
  * The standard posture every permissive profile derives from. Composed
  * entirely from rule sets: read-mostly shell/git/package-manager rules,

@@ -71,6 +71,40 @@ function fixture() {
   return root;
 }
 
+function runGit(cwd: string, args: string[]): string {
+  const result = spawnSync("git", args, { cwd, encoding: "utf8" });
+  if (result.status !== 0) {
+    throw new Error(
+      `git ${args.join(" ")} failed: ${result.stderr || result.stdout}`,
+    );
+  }
+  return result.stdout.trim();
+}
+
+function linkedWorktreeFixture(): { main: string; worktree: string } {
+  const root = fs.mkdtempSync(
+    path.join(os.tmpdir(), `pi-sandbox-git-${crypto.randomUUID()}`),
+  );
+  tempDirectories.push(root);
+  const main = path.join(root, "main");
+  const worktree = path.join(root, "worktree");
+  fs.mkdirSync(main);
+  runGit(main, ["init", "--initial-branch=main"]);
+  runGit(main, ["config", "user.name", "Pi Guard Test"]);
+  runGit(main, ["config", "user.email", "pi-guard@example.test"]);
+  fs.writeFileSync(path.join(main, "base.txt"), "base\n");
+  runGit(main, ["add", "base.txt"]);
+  runGit(main, ["commit", "-m", "base"]);
+  runGit(main, ["worktree", "add", "-b", "topic", worktree]);
+  fs.writeFileSync(path.join(worktree, "topic.txt"), "topic\n");
+  runGit(worktree, ["add", "topic.txt"]);
+  runGit(worktree, ["commit", "-m", "topic"]);
+  fs.writeFileSync(path.join(main, "main.txt"), "main\n");
+  runGit(main, ["add", "main.txt"]);
+  runGit(main, ["commit", "-m", "main"]);
+  return { main, worktree };
+}
+
 function writeProfileConfig({
   sandboxOverrides = {},
   sandboxEnabled = true,
@@ -190,6 +224,7 @@ async function runThroughPi({
   sandboxEnabled = true,
   timeout = 10,
   signal,
+  profile,
 }: {
   root: string;
   command: string;
@@ -197,8 +232,10 @@ async function runThroughPi({
   sandboxEnabled?: boolean;
   timeout?: number;
   signal?: AbortSignal;
+  profile?: string;
 }): Promise<number> {
   writeProfileConfig({ sandboxOverrides, sandboxEnabled });
+  if (profile) process.env.PI_SUBAGENT_PROFILE = profile;
   const harness = createExtensionHarness({ contextCwd: root, hasUI: false });
   await harness.start();
   try {
@@ -675,6 +712,20 @@ describe("sandbox full-harness OS acceptance", () => {
       expect(fs.existsSync(path.join(root, "outside", filename))).toBe(false);
     },
   );
+
+  it("allows a committer rebase from a linked worktree whose shared metadata is elsewhere", async () => {
+    const { main, worktree } = linkedWorktreeFixture();
+    const mainHead = runGit(main, ["rev-parse", "HEAD"]);
+
+    expect(
+      await runThroughPi({
+        root: worktree,
+        command: "git rebase main",
+        profile: "builtin:committer",
+      }),
+    ).toBe(0);
+    expect(runGit(worktree, ["rev-parse", "HEAD^"])).toBe(mainHead);
+  });
 
   it("keeps .git kernel-denied by default and permits an exact explicit waiver", async () => {
     const root = fixture();

@@ -4,6 +4,7 @@ import {
   baseCompositionChain,
   baseProfile,
   gitMetadataKernelWaiver,
+  gitMetadataSandboxWritePaths,
 } from "./base";
 
 export const committerCompositionChain = [
@@ -24,6 +25,12 @@ export const committerProfile = extendProfile(baseProfile, {
   description:
     "Git committer profile: stage, commit, and rewrite local history.",
   color: "red",
+  sandbox: {
+    network: "deny",
+    allowLocalBinding: true,
+    extraWritePaths: gitMetadataSandboxWritePaths,
+    kernelUnenforcedProtectedPaths: gitMetadataKernelWaiver,
+  },
   emoji: "⚠️",
 });
 
@@ -34,6 +41,8 @@ export const gitFullProfile = extendProfile(committerProfile, {
   color: "red",
   sandbox: {
     network: "allow",
+    allowLocalBinding: true,
+    extraWritePaths: gitMetadataSandboxWritePaths,
     kernelUnenforcedProtectedPaths: gitMetadataKernelWaiver,
   },
   emoji: "🔥",
