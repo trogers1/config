@@ -24,6 +24,16 @@ function tempConfig(): string {
   return file;
 }
 
+function readRawProfiles(
+  configPath: string,
+): Record<string, Record<string, unknown>> {
+  return (
+    JSON.parse(fs.readFileSync(configPath, "utf8")) as {
+      profiles: Record<string, Record<string, unknown>>;
+    }
+  ).profiles;
+}
+
 describe("profile config mutations", () => {
   it("creates and extends a profile without discarding JSONC comments", () => {
     const configPath = tempConfig();
@@ -58,6 +68,57 @@ describe("profile config mutations", () => {
         decision: "allow",
       }),
     );
+  });
+
+  it("writes nonempty bash rules directly and omits empty tools", () => {
+    const emptyConfigPath = tempConfig();
+    fs.writeFileSync(emptyConfigPath, '{\n  "profiles": {}\n}\n');
+    createCustomProfile({
+      fallback: policyConfig,
+      configPath: emptyConfigPath,
+      name: "empty-rules",
+      description: "No direct rules",
+      extends: ["builtin:default"],
+      bashRules: [],
+    });
+    expect(readRawProfiles(emptyConfigPath)["empty-rules"]).not.toHaveProperty(
+      "tools",
+    );
+
+    const configPath = tempConfig();
+    fs.writeFileSync(configPath, '{\n  "profiles": {}\n}\n');
+    createCustomProfile({
+      fallback: policyConfig,
+      configPath,
+      name: "direct-rules",
+      description: "Direct rules",
+      extends: ["builtin:default"],
+      bashRules: [
+        {
+          pattern: "git status",
+          decision: "allow",
+          guidance: "Inspect the working tree without changing files.",
+        },
+      ],
+    });
+
+    expect(
+      loadProfileConfig(policyConfig, configPath).profiles["direct-rules"].tools
+        .bash,
+    ).toContainEqual({
+      pattern: "git status",
+      decision: "allow",
+      guidance: "Inspect the working tree without changing files.",
+    });
+    expect(readRawProfiles(configPath)["direct-rules"].tools).toEqual({
+      bash: [
+        {
+          pattern: "git status",
+          decision: "allow",
+          guidance: "Inspect the working tree without changing files.",
+        },
+      ],
+    });
   });
 
   it("does not overwrite an invalid source file", () => {

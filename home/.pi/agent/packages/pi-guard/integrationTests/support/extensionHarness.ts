@@ -20,6 +20,12 @@ import {
 import { vi, type Mock } from "vitest";
 import type { Component } from "@earendil-works/pi-tui";
 import permissionsExtension from "../../extensions/guard";
+import {
+  askPermissionChoices,
+  profileUpdateTargets,
+  type AskPermissionChoice,
+  type ProfileUpdateTarget,
+} from "../../modules/profileUpdate";
 
 type CommandRegistration = Omit<RegisteredCommand, "name" | "sourceInfo">;
 type ShortcutRegistration = Parameters<ExtensionAPI["registerShortcut"]>[1];
@@ -30,6 +36,19 @@ type SessionEntryInput =
       type: "custom";
       customType: string;
     });
+
+type InteractiveSelection = {
+  title: string;
+  options: string[];
+  resolve: (value: string | undefined) => void;
+  resolved: boolean;
+};
+
+type InteractiveCustom = {
+  component: Component;
+  resolve: (value: unknown) => void;
+  resolved: boolean;
+};
 
 type HarnessError =
   | { event: "session_start"; error: unknown }
@@ -75,10 +94,15 @@ export function createExtensionHarness(
     editorResult?: string;
     inputResults?: Array<string | undefined>;
     selectResults?: Array<string | undefined>;
-    customResults?: Array<string | null | undefined>;
+    customResults?: Array<unknown>;
     entries?: SessionEntryInput[];
     registeredTools?: string[];
     activeTools?: string[];
+    /**
+     * When true, UI prompts wait for the typed drivers on `harness.ui`.
+     * The default fixture mode remains deterministic and queue-driven.
+     */
+    interactiveUi?: boolean;
   } = {},
 ) {
   const contextCwd = options.contextCwd ?? process.cwd();
@@ -118,6 +142,62 @@ export function createExtensionHarness(
   const selectResults = [...(options.selectResults ?? [])];
   const customResults = [...(options.customResults ?? [])];
   const customComponents: Component[] = [];
+  const pendingSelections: InteractiveSelection[] = [];
+  const pendingCustom: InteractiveCustom[] = [];
+  const selectionWaiters: Array<(selection: InteractiveSelection) => void> = [];
+  const customWaiters: Array<(custom: InteractiveCustom) => void> = [];
+
+  function publishSelection(selection: InteractiveSelection): void {
+    pendingSelections.push(selection);
+    for (let index = selectionWaiters.length - 1; index >= 0; index--) {
+      const waiter = selectionWaiters[index];
+      if (waiter) {
+        selectionWaiters.splice(index, 1);
+        waiter(selection);
+      }
+    }
+  }
+
+  function publishCustom(custom: InteractiveCustom): void {
+    pendingCustom.push(custom);
+    customWaiters.splice(0).forEach((waiter) => waiter(custom));
+  }
+
+  function nextSelection(
+    predicate: (selection: InteractiveSelection) => boolean,
+  ): Promise<InteractiveSelection> {
+    const existing = pendingSelections.find(
+      (selection) => !selection.resolved && predicate(selection),
+    );
+    if (existing) return Promise.resolve(existing);
+    return new Promise((resolve) => {
+      const waiter = (selection: InteractiveSelection) => {
+        if (predicate(selection)) resolve(selection);
+        else selectionWaiters.push(waiter);
+      };
+      selectionWaiters.push(waiter);
+    });
+  }
+
+  function nextCustom(): Promise<InteractiveCustom> {
+    const existing = pendingCustom.find((custom) => !custom.resolved);
+    if (existing) return Promise.resolve(existing);
+    return new Promise((resolve) => customWaiters.push(resolve));
+  }
+
+  function pressKey(component: Component, key: string): void {
+    const keys: Record<string, string> = {
+      Tab: "\t",
+      Enter: "\n",
+      Escape: "\x1b",
+      ArrowUp: "\x1b[A",
+      ArrowDown: "\x1b[B",
+      ArrowLeft: "\x1b[D",
+      ArrowRight: "\x1b[C",
+      CtrlShiftR: "\x1b[114;6u",
+    };
+    component.handleInput?.(keys[key] ?? key);
+  }
   // Custom UI tests only need deterministic plain text styling; Pi's runtime
   // supplies the real Theme and TUI instances.
   const testTheme = {
@@ -130,9 +210,44 @@ export function createExtensionHarness(
     confirm: vi.fn().mockResolvedValue(options.confirm ?? false),
     editor: vi.fn().mockResolvedValue(options.editorResult),
     input: vi.fn().mockImplementation(() => inputResults.shift()),
-    select: vi.fn().mockImplementation(() => selectResults.shift()),
+    select: vi
+      .fn()
+      .mockImplementation(
+        (
+          title: string,
+          selectOptions: string[],
+          permissionMessage?: string,
+        ) => {
+          if (options.interactiveUi) {
+            return new Promise<string | undefined>((resolve) =>
+              publishSelection({
+                title,
+                options: selectOptions,
+                resolve,
+                resolved: false,
+              }),
+            );
+          }
+          // ASK prompts now use a three-way select. Existing behavioral tests
+          // express their intended response with `confirm`; map that legacy test
+          // fixture to Yes/No while retaining the original assertion surface.
+          if (selectResults.length > 0) return selectResults.shift();
+          if (permissionMessage !== undefined) {
+            ui.confirm(title.split("\n\n", 1)[0] ?? title, permissionMessage);
+            return (options.confirm ?? false) ? "Yes" : "No (default)";
+          }
+          return undefined;
+        },
+      ),
     custom: vi.fn().mockImplementation((factory: unknown) => {
       if (typeof factory === "function") {
+        let resolveInteractive: (value: unknown) => void = () => undefined;
+        let interactiveCustom: InteractiveCustom | undefined;
+        const interactiveResult = options.interactiveUi
+          ? new Promise<unknown>((resolve) => {
+              resolveInteractive = resolve;
+            })
+          : undefined;
         const component = (
           factory as (
             tui: typeof testTui,
@@ -140,8 +255,25 @@ export function createExtensionHarness(
             keybindings: unknown,
             done: (value: unknown) => void,
           ) => Component
-        )(testTui, testTheme, undefined, () => undefined);
+        )(testTui, testTheme, undefined, (value: unknown) => {
+          if (options.interactiveUi) {
+            interactiveCustom!.resolved = true;
+            resolveInteractive(value);
+          }
+        });
         customComponents.push(component);
+        if (options.interactiveUi) {
+          // Pi focuses an opened custom modal. Mirror that lifecycle before
+          // driving its public keyboard input surface.
+          (component as Component & { focused?: boolean }).focused = true;
+          interactiveCustom = {
+            component,
+            resolve: resolveInteractive,
+            resolved: false,
+          };
+          publishCustom(interactiveCustom);
+          return interactiveResult;
+        }
       }
       return customResults.shift() ?? null;
     }),
@@ -377,13 +509,102 @@ export function createExtensionHarness(
     );
   }
 
+  /** Observe the permission modal created by an in-flight callTool. */
+  async function waitForPermissionChoice(): Promise<{
+    choose: (choice: AskPermissionChoice) => void;
+  }> {
+    const selection = await nextSelection((item) =>
+      item.options.includes(askPermissionChoices[2]),
+    );
+    return {
+      choose(choice) {
+        if (!selection.options.includes(choice))
+          throw new Error(`Unknown permission choice: ${choice}`);
+        selection.resolved = true;
+        selection.resolve(choice);
+      },
+    };
+  }
+
+  /** Observe the profile-rule destination modal created by an in-flight callTool. */
+  async function waitForProfileUpdateTarget(): Promise<{
+    choose: (target: ProfileUpdateTarget) => void;
+  }> {
+    const selection = await nextSelection((item) =>
+      item.options.includes(profileUpdateTargets[2]),
+    );
+    return {
+      choose(target) {
+        if (!selection.options.includes(target))
+          throw new Error(`Unknown profile update target: ${target}`);
+        selection.resolved = true;
+        selection.resolve(target);
+      },
+    };
+  }
+
+  /** Observe a visible rule form and drive it with user-like key and text input. */
+  /** Observe any custom modal and drive it through its public UI surface. */
+  async function waitForCustomModal(): Promise<{
+    render: (width?: number) => string[];
+    press: (key: string) => void;
+    type: (text: string) => void;
+  }> {
+    const custom = await nextCustom();
+    return {
+      render(width = 80) {
+        return custom.component.render(width);
+      },
+      press(key) {
+        pressKey(custom.component, key);
+      },
+      type(text) {
+        for (const character of text) pressKey(custom.component, character);
+      },
+    };
+  }
+
+  async function waitForRuleForm(): Promise<{
+    render: (width?: number) => string[];
+    press: (key: string) => void;
+    type: (text: string) => void;
+  }> {
+    return waitForCustomModal();
+  }
+
+  /** Observe a select prompt, including its title and available choices. */
+  async function waitForSelection(): Promise<{
+    title: string;
+    options: string[];
+    choose: (choice: string) => void;
+  }> {
+    const selection = await nextSelection(() => true);
+    return {
+      title: selection.title,
+      options: selection.options,
+      choose(choice) {
+        if (!selection.options.includes(choice))
+          throw new Error(`Unknown selection: ${choice}`);
+        selection.resolved = true;
+        selection.resolve(choice);
+      },
+    };
+  }
+
   return {
     commands,
     shortcuts,
     context,
     entries,
     errors,
-    ui,
+    ui: {
+      ...ui,
+      waitForPermissionChoice,
+      waitForProfileUpdateTarget,
+      waitForCustomModal,
+      waitForRuleForm,
+      waitForSelection,
+    },
     customComponents,
     setActiveToolsMock,
     getActiveTools: () => [...activeToolNames],

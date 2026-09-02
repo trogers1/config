@@ -24,6 +24,7 @@ import {
   injectRipgrepProtectedPathGlobs,
 } from "../modules/shell/searchPolicy";
 import { validateReadCommands } from "../modules/shell/readCommands";
+import { askPermissionChoices } from "../modules/profileUpdate";
 import {
   createBashTool,
   isToolCallEventType,
@@ -57,6 +58,7 @@ import {
   type ProfilePolicy,
   type ProfilePolicyOverride,
   type ProfileTransformName,
+  type ProtectedPathRule,
   type ReadPathContext,
   type Rule,
   type ToolPolicy,
@@ -72,6 +74,7 @@ import {
   type Specificity,
 } from "../modules/ruleSpecificity";
 import {
+  appendProfileRule,
   createCustomProfile,
   loadProfileConfig,
   loadRawProfileConfig,
@@ -118,7 +121,11 @@ export type {
 type Approval = {
   approved: boolean;
   guidance?: string;
+  /** A profile-update deny already supplied its own inline steering. */
+  handledRejection?: boolean;
 };
+
+type RememberDecision = (patterns?: readonly string[]) => Promise<Approval>;
 
 type PolicyDecision = {
   decision: Decision;
@@ -698,6 +705,176 @@ The permissions gate remains loaded and will fail closed until the profile is co
     return selected;
   }
 
+  type BashEditorRow = {
+    decision: "skip" | "allow" | "deny";
+    pattern: string;
+    guidance?: string;
+  };
+
+  /** Shared Bash rule editor used by profile creation and ASK updates. */
+  async function editBashRules(
+    ctx: ExtensionContext,
+    initialPatterns: readonly string[],
+    options: { creation?: boolean } = {},
+  ): Promise<
+    | Array<{ pattern: string; decision: "allow" | "deny"; guidance?: string }>
+    | undefined
+  > {
+    const creation = options.creation === true;
+    const patterns = initialPatterns.length ? [...initialPatterns] : [""];
+    const inputs = patterns.map((pattern) => {
+      const input = new Input();
+      input.setValue(pattern);
+      return input;
+    });
+    const steeringInputs = inputs.map(() => new Input());
+    const originalPatterns = [...patterns];
+    const choice = await ctx.ui.custom<BashEditorRow[] | null>(
+      (tui, theme, _keys, done) => {
+        const decisions: BashEditorRow["decision"][] = inputs.map(() =>
+          creation ? "deny" : "skip",
+        );
+        let selected = 0;
+        let steeringFocused = false;
+        const submit = () =>
+          done(
+            inputs.map((input, index) => ({
+              decision: decisions[index],
+              pattern: input.getValue().trim(),
+              guidance: steeringInputs[index]?.getValue().trim() || undefined,
+            })),
+          );
+        const addRow = () => {
+          inputs.push(new Input());
+          steeringInputs.push(new Input());
+          decisions.push(creation ? "deny" : "skip");
+          selected = inputs.length - 1;
+          steeringFocused = false;
+          inputs[selected].onSubmit = submit;
+          inputs[selected].onEscape = () => done(null);
+          steeringInputs[selected].onSubmit = submit;
+          steeringInputs[selected].onEscape = () => done(null);
+        };
+        for (const input of [...inputs, ...steeringInputs]) {
+          input.onSubmit = submit;
+          input.onEscape = () => done(null);
+        }
+        return {
+          get focused() {
+            return (
+              (steeringFocused ? steeringInputs[selected] : inputs[selected])
+                ?.focused ?? false
+            );
+          },
+          set focused(value: boolean) {
+            inputs.forEach((input, index) => {
+              input.focused = value && index === selected && !steeringFocused;
+            });
+            steeringInputs.forEach((input, index) => {
+              input.focused = value && index === selected && steeringFocused;
+            });
+          },
+          render: (width: number) =>
+            [
+              theme.fg(
+                "accent",
+                theme.bold(
+                  creation
+                    ? "⚙️ Bash rules for new profile"
+                    : "⚙️ Bash pattern rules for ASK requests",
+                ),
+              ),
+              theme.fg(
+                "dim",
+                creation
+                  ? "↑/↓ navigates rows; ArrowDown enters inline steering for denies and adds a row from the last allow. Tab swaps ⛔️ deny and ✅ allow. Enter saves; Esc cancels."
+                  : "↑/↓ navigates rows. Tab cycles ⏭️ skip, ⛔️ deny, and ✅ allow. Enter saves all; Ctrl+Shift+R resets.",
+              ),
+              ...inputs.flatMap((input, index) => {
+                const decision = decisions[index];
+                const mark =
+                  decision === "skip"
+                    ? "⏭️"
+                    : decision === "deny"
+                      ? "⛔️"
+                      : "✅";
+                const prefix = index === selected ? ">" : " ";
+                const original = creation
+                  ? "new"
+                  : formatDecision(
+                      decideBash(
+                        originalPatterns[index] ?? "",
+                        activePolicy(activeProfile),
+                      ),
+                    );
+                const command = `${prefix} [${original}] ${mark} ${input.render(Math.max(0, width - 15))[0] ?? ""}`;
+                if (decision !== "deny") return [command];
+                const steering = steeringInputs[index];
+                const steeringPrefix =
+                  index === selected && steeringFocused ? ">" : " ";
+                return [
+                  command,
+                  `${steeringPrefix}   ↳ ${steering.getValue() ? steering.render(Math.max(0, width - 8))[0] : theme.fg("dim", "Add steering…")}`,
+                ];
+              }),
+            ].map((line) => truncateToWidth(line, width)),
+          invalidate: () => {
+            inputs.forEach((input) => input.invalidate());
+            steeringInputs.forEach((input) => input.invalidate());
+          },
+          handleInput: (data: string) => {
+            if (!creation && matchesKey(data, Key.ctrlShift("r"))) {
+              decisions.fill("skip");
+              inputs.forEach((input, index) =>
+                input.setValue(originalPatterns[index] ?? ""),
+              );
+              steeringInputs.forEach((input) => input.setValue(""));
+              selected = 0;
+              steeringFocused = false;
+            } else if (matchesKey(data, Key.up)) {
+              if (steeringFocused) steeringFocused = false;
+              else if (selected > 0) selected--;
+            } else if (matchesKey(data, Key.down)) {
+              if (steeringFocused) {
+                if (creation) addRow();
+                else steeringFocused = false;
+              } else if (selected < inputs.length - 1) {
+                selected++;
+                steeringFocused = false;
+              } else if (decisions[selected] === "deny") steeringFocused = true;
+              else if (creation) addRow();
+            } else if (matchesKey(data, Key.tab)) {
+              decisions[selected] = creation
+                ? decisions[selected] === "deny"
+                  ? "allow"
+                  : "deny"
+                : decisions[selected] === "skip"
+                  ? "deny"
+                  : decisions[selected] === "deny"
+                    ? "allow"
+                    : "skip";
+              if (decisions[selected] !== "deny") steeringFocused = false;
+            } else {
+              (steeringFocused
+                ? steeringInputs[selected]
+                : inputs[selected]
+              )?.handleInput(data);
+            }
+            tui.requestRender();
+          },
+        };
+      },
+    );
+    if (choice === null) return undefined;
+    return choice
+      .filter((item) => item.pattern && item.decision !== "skip")
+      .map(({ pattern, decision, guidance }) => ({
+        pattern,
+        decision: decision as "allow" | "deny",
+        guidance,
+      }));
+  }
+
   async function runProfileAdd(ctx: ExtensionContext): Promise<void> {
     if (!ctx.hasUI) {
       ctx.ui.notify("/profile-add requires an interactive UI", "error");
@@ -758,74 +935,11 @@ The permissions gate remains loaded and will fail closed until the profile is co
       },
     );
     if (transform == null) return;
-    const protectedPathTexts: string[] = [];
-    const promptProtectedPath = () =>
-      ctx.ui.custom<string | null>((tui, theme, _keys, done) => {
-        const input = new Input();
-        let decision: "allow" | "deny" = "deny";
-        input.onSubmit = () => {
-          const pattern = input.getValue().trim();
-          done(
-            pattern ? `${decision === "deny" ? "⛔️" : "✅"} ${pattern}` : "",
-          );
-        };
-        input.onEscape = () => done(null);
-        return {
-          get focused() {
-            return input.focused;
-          },
-          set focused(value: boolean) {
-            input.focused = value;
-          },
-          render: (width: number) =>
-            [
-              theme.fg("accent", theme.bold("Add a protected-path rule")),
-              theme.fg(
-                "dim",
-                "Use Tab to swap between deny (⛔️) and allow (✅). Enter adds this rule; Esc skips.",
-              ),
-              theme.fg(
-                "dim",
-                "Examples: ⛔️ .env  •  ⛔️ **/credentials/**  •  ✅ .env.example",
-              ),
-              theme.fg(
-                "dim",
-                "Rules merge; later rules win equal-specificity ties.",
-              ),
-              ...(protectedPathTexts.length === 0
-                ? []
-                : [
-                    theme.fg("muted", "Rules added so far:"),
-                    // Later rules win equal-specificity ties, so show the
-                    // effective top-most rule first.
-                    ...[...protectedPathTexts]
-                      .reverse()
-                      .map((rule, index) =>
-                        theme.fg("dim", `  ${index + 1}. ${rule}`),
-                      ),
-                  ]),
-              `${decision === "deny" ? "⛔️" : "✅"} ${input.render(Math.max(0, width - 3))[0] ?? ""}`,
-            ].map((line) => truncateToWidth(line, width)),
-          invalidate: () => input.invalidate(),
-          handleInput: (data: string) => {
-            if (matchesKey(data, Key.tab))
-              decision = decision === "deny" ? "allow" : "deny";
-            else input.handleInput(data);
-            tui.requestRender();
-          },
-        };
-      });
-    while (true) {
-      const protectedPathText = await promptProtectedPath();
-      if (protectedPathText == null) return;
-      if (protectedPathText) protectedPathTexts.push(protectedPathText);
-      const next = await ctx.ui.select("Protected paths:", [
-        "Add another protected path",
-        "Continue",
-      ]);
-      if (next === undefined) return;
-      if (next === "Continue") break;
-    }
+    const bashRules = await editBashRules(ctx, [], { creation: true });
+    if (!bashRules) return;
+
+    const protectedPaths = await collectProtectedPaths(ctx);
+    if (!protectedPaths) return;
     const sandboxed = await ctx.ui.confirm(
       "Sandbox Bash?",
       "Enable a no-network kernel sandbox for Bash commands?",
@@ -862,25 +976,6 @@ The permissions gate remains loaded and will fail closed until the profile is co
         await ctx.ui.input("Profile emoji (optional; Default: 💅):", "💅")
       )?.trim() || "💅";
     try {
-      const protectedPaths = protectedPathTexts
-        .flatMap((value) => value.split("\n"))
-        .map((value) => value.trim())
-        .filter(Boolean)
-        .map((line): { pattern: string; decision: "allow" | "deny" } => {
-          const match = /^(⛔️|✅|allow|deny)\s+(.+)$/i.exec(line);
-          if (!match) {
-            throw new Error(
-              `Invalid protected path rule '${line}'. Use '⛔️ <glob>' or '✅ <glob>'.`,
-            );
-          }
-          return {
-            pattern: match[2].trim(),
-            decision:
-              match[1] === "✅" || match[1].toLocaleLowerCase() === "allow"
-                ? "allow"
-                : "deny",
-          };
-        });
       createCustomProfile({
         fallback: genericPolicyConfig,
         configPath: profileConfigPath,
@@ -895,6 +990,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
             ? undefined
             : [transform as ProfileTransformName],
         protectedPaths,
+        bashRules,
         sandboxed,
       });
       reloadPolicyConfig();
@@ -912,6 +1008,364 @@ The permissions gate remains loaded and will fail closed until the profile is co
         "error",
       );
     }
+  }
+
+  type RememberedRule =
+    { kind: "bash"; pattern: string } | { kind: "protected"; pattern: string };
+
+  async function chooseProtectedPathRule(
+    ctx: ExtensionContext,
+    initialPattern: string,
+    initialDecision: "allow" | "deny",
+    existingRules: readonly ProtectedPathRule[] = [],
+  ): Promise<ProtectedPathRule | undefined> {
+    const selected = await ctx.ui.custom<ProtectedPathRule | null>(
+      (tui, theme, _keys, done) => {
+        const input = new Input();
+        input.setValue(initialPattern);
+        let decision = initialDecision;
+        input.onSubmit = () => {
+          const pattern = input.getValue().trim();
+          done(pattern ? { pattern, decision } : null);
+        };
+        input.onEscape = () => done(null);
+        return {
+          get focused() {
+            return input.focused;
+          },
+          set focused(value: boolean) {
+            input.focused = value;
+          },
+          render: (width: number) =>
+            [
+              theme.fg("warning", theme.bold("🛡️ Protected path glob rule")),
+              theme.fg(
+                "dim",
+                "Use Tab to swap between deny (⛔️) and allow (✅). Enter saves this rule; Esc cancels.",
+              ),
+              theme.fg(
+                "dim",
+                "This is prefilled with the path from the permission request; edit it to use a glob.",
+              ),
+              ...(existingRules.length === 0
+                ? []
+                : [
+                    theme.fg("muted", "Rules added so far:"),
+                    ...[...existingRules]
+                      .reverse()
+                      .map((rule, index) =>
+                        theme.fg(
+                          "dim",
+                          `  ${index + 1}. ${rule.decision === "deny" ? "⛔️" : "✅"} ${rule.pattern}`,
+                        ),
+                      ),
+                  ]),
+              `${decision === "deny" ? "⛔️" : "✅"} ${input.render(Math.max(0, width - 3))[0] ?? ""}`,
+            ].map((line) => truncateToWidth(line, width)),
+          invalidate: () => input.invalidate(),
+          handleInput: (data: string) => {
+            if (matchesKey(data, Key.tab))
+              decision = decision === "deny" ? "allow" : "deny";
+            else input.handleInput(data);
+            tui.requestRender();
+          },
+        };
+      },
+    );
+    return selected ?? undefined;
+  }
+
+  /** Add zero or more protected paths, sharing the ASK path editor. */
+  async function collectProtectedPaths(
+    ctx: ExtensionContext,
+  ): Promise<ProtectedPathRule[] | undefined> {
+    const rules: ProtectedPathRule[] = [];
+    while (true) {
+      const rule = await chooseProtectedPathRule(ctx, "", "deny", rules);
+      if (!rule) return undefined;
+      rules.push(rule);
+      const next = await ctx.ui.select("Protected paths:", [
+        "Add another protected path",
+        "Continue",
+      ]);
+      if (next === undefined) return undefined;
+      if (next === "Continue") return rules;
+    }
+  }
+
+  async function rememberDecision(
+    draft: RememberedRule,
+    decision: "allow" | "deny",
+    guidance: string | undefined,
+    ctx: ExtensionContext,
+  ): Promise<void> {
+    const rule = draft;
+    let profile = activeProfile;
+    try {
+      // Only definitions in the user-owned source are safely mutable. Shipped
+      // profiles (and an active profile supplied by another composition) get a
+      // small custom child that preserves their complete policy.
+      if (!Object.hasOwn(rawProfileConfig?.profiles ?? {}, profile)) {
+        const suggestedName = `${profile.replace(/^builtin:/, "").replace(/[^a-zA-Z0-9]+/g, "-")}-custom`;
+        const name = (
+          await ctx.ui.input("New custom profile name:", suggestedName)
+        )?.trim();
+        if (!name) return;
+        createCustomProfile({
+          fallback: genericPolicyConfig,
+          configPath: profileConfigPath,
+          name,
+          description: `Custom extension of ${profile}.`,
+          emoji: "💅",
+          extends: [profile],
+        });
+        profile = name;
+      }
+
+      appendProfileRule({
+        fallback: genericPolicyConfig,
+        configPath: profileConfigPath,
+        profile,
+        kind: rule.kind,
+        pattern: rule.pattern,
+        decision,
+        guidance,
+      });
+      reloadPolicyConfig();
+      if (!isProfileName(profile)) {
+        throw new Error(
+          `Profile '${profile}' was saved but could not be loaded.`,
+        );
+      }
+      await activateProfile(
+        profile,
+        ctx,
+        `Saved ${decision} rule to profile: ${profile}`,
+      );
+    } catch (error) {
+      ctx.ui.notify(
+        error instanceof Error ? error.message : String(error),
+        "error",
+      );
+    }
+  }
+
+  function rememberRule(
+    draft: RememberedRule,
+    ctx: ExtensionContext,
+  ): RememberDecision {
+    return async (patterns) => {
+      let includePathRule = false;
+      let pathPattern: string | undefined;
+      if (draft.kind === "bash" && patterns?.length) {
+        const pathAnalysis = analyzeBashPathReferences(
+          [...patterns],
+          startupCwd,
+          ctx.cwd ?? startupCwd,
+          activePolicy(activeProfile),
+          activePolicy(activeProfile).protectedPathRules ?? [],
+          false,
+        );
+        pathPattern = pathAnalysis.trace?.matchPath;
+        const hasPathAsk =
+          pathAnalysis.decision?.decision === "ask" ||
+          pathAnalysis.trace?.pathMatches.some(
+            ({ item }) => item.decision === "ask",
+          ) === true;
+        const hasBashAsk = patterns.some(
+          (pattern) =>
+            decideBash(pattern, activePolicy(activeProfile)) === "ask",
+        );
+        if (hasPathAsk && !hasBashAsk && pathPattern) {
+          const rule = await chooseProtectedPathRule(ctx, pathPattern, "allow");
+          if (!rule) return { approved: false };
+          await rememberDecision(
+            { kind: "protected", pattern: rule.pattern },
+            rule.decision,
+            undefined,
+            ctx,
+          );
+          return { approved: rule.decision === "allow" };
+        }
+        includePathRule = hasPathAsk && Boolean(pathPattern);
+      }
+      if (draft.kind === "protected" && !patterns?.length) {
+        const rule = await chooseProtectedPathRule(ctx, draft.pattern, "allow");
+        if (!rule) return { approved: false };
+        await rememberDecision(
+          { kind: "protected", pattern: rule.pattern },
+          rule.decision,
+          undefined,
+          ctx,
+        );
+        return { approved: rule.decision === "allow" };
+      }
+      const requestPatterns = patterns?.length ? patterns : [draft.pattern];
+      const initialDecisions = requestPatterns.map((pattern) =>
+        draft.kind === "bash"
+          ? decideBash(pattern, activePolicy(activeProfile))
+          : "ask",
+      );
+      const inputs = requestPatterns.map((pattern) => {
+        const input = new Input();
+        input.setValue(pattern);
+        return input;
+      });
+      const steeringInputs = requestPatterns.map(() => new Input());
+      const originalPatterns = [...requestPatterns];
+      const choice = await ctx.ui.custom<Array<{
+        decision: "skip" | "allow" | "deny";
+        pattern: string;
+        guidance?: string;
+      }> | null>((tui, theme, _keys, done) => {
+        const decisions: Array<"skip" | "allow" | "deny"> = inputs.map(
+          () => "skip",
+        );
+        let selected = 0;
+        let steeringFocused = false;
+        const submit = () =>
+          done(
+            inputs.map((input, index) => ({
+              decision: decisions[index],
+              pattern: input.getValue().trim(),
+              guidance: steeringInputs[index]?.getValue().trim() || undefined,
+            })),
+          );
+        for (const input of [...inputs, ...steeringInputs]) {
+          input.onSubmit = submit;
+          input.onEscape = () => done(null);
+        }
+        return {
+          get focused() {
+            return (
+              (steeringFocused ? steeringInputs[selected] : inputs[selected])
+                ?.focused ?? false
+            );
+          },
+          set focused(value: boolean) {
+            for (const [index, input] of inputs.entries()) {
+              input.focused = value && index === selected && !steeringFocused;
+              steeringInputs[index].focused =
+                value && index === selected && steeringFocused;
+            }
+          },
+          render: (width: number) =>
+            [
+              theme.fg(
+                "accent",
+                theme.bold("⚙️ Bash pattern rules for ASK requests"),
+              ),
+              theme.fg(
+                "dim",
+                "↑/↓ navigates rows. Tab cycles ⏭️ skip, ⛔️ deny, and ✅ allow. Enter saves all; Ctrl+Shift+R resets.",
+              ),
+              ...inputs.flatMap((input, index) => {
+                const decision = decisions[index];
+                const mark =
+                  decision === "skip"
+                    ? "⏭️"
+                    : decision === "deny"
+                      ? "⛔️"
+                      : "✅";
+                const prefix = index === selected ? ">" : " ";
+                const original = formatDecision(
+                  initialDecisions[index] ?? "ask",
+                );
+                const command = `${prefix} [${original}] ${mark} ${input.render(Math.max(0, width - 15))[0] ?? ""}`;
+                if (decision !== "deny") return [command];
+                const steering = steeringInputs[index];
+                const steeringPrefix =
+                  index === selected && steeringFocused ? ">" : " ";
+                return [
+                  command,
+                  `${steeringPrefix}   ↳ ${steering.getValue() ? steering.render(Math.max(0, width - 8))[0] : theme.fg("dim", "Add steering…")}`,
+                ];
+              }),
+            ].map((line) => truncateToWidth(line, width)),
+          invalidate: () => {
+            inputs.forEach((input) => input.invalidate());
+            steeringInputs.forEach((input) => input.invalidate());
+          },
+          handleInput: (data: string) => {
+            if (matchesKey(data, Key.ctrlShift("r"))) {
+              decisions.fill("skip");
+              inputs.forEach((input, index) =>
+                input.setValue(originalPatterns[index] ?? ""),
+              );
+              steeringInputs.forEach((input) => input.setValue(""));
+              selected = 0;
+              steeringFocused = false;
+            } else if (matchesKey(data, Key.up)) {
+              if (steeringFocused) steeringFocused = false;
+              else if (selected > 0) {
+                selected--;
+                steeringFocused = decisions[selected] === "deny";
+              }
+            } else if (matchesKey(data, Key.down)) {
+              if (!steeringFocused && decisions[selected] === "deny")
+                steeringFocused = true;
+              else if (selected < inputs.length - 1) {
+                selected++;
+                steeringFocused = false;
+              }
+            } else if (matchesKey(data, Key.tab)) {
+              decisions[selected] =
+                decisions[selected] === "skip"
+                  ? "deny"
+                  : decisions[selected] === "deny"
+                    ? "allow"
+                    : "skip";
+              if (decisions[selected] !== "deny") steeringFocused = false;
+            } else {
+              (steeringFocused
+                ? steeringInputs[selected]
+                : inputs[selected]
+              )?.handleInput(data);
+            }
+            tui.requestRender();
+          },
+        };
+      });
+      const selectedChoices = choice?.filter(
+        (item) => item.decision !== "skip" && Boolean(item.pattern),
+      );
+      if (!selectedChoices?.length) return { approved: false };
+      for (const item of selectedChoices) {
+        await rememberDecision(
+          { ...draft, pattern: item.pattern },
+          item.decision as "allow" | "deny",
+          item.decision === "deny" ? item.guidance : undefined,
+          ctx,
+        );
+      }
+      let approved = selectedChoices.every((item) => item.decision === "allow");
+      if (includePathRule && pathPattern) {
+        const pathRule = await chooseProtectedPathRule(
+          ctx,
+          pathPattern,
+          "allow",
+        );
+        if (!pathRule) return { approved: false };
+        await rememberDecision(
+          { kind: "protected", pattern: pathRule.pattern },
+          pathRule.decision,
+          undefined,
+          ctx,
+        );
+        approved &&= pathRule.decision === "allow";
+      }
+      const denialGuidance = selectedChoices
+        .filter((item) => item.decision === "deny" && item.guidance)
+        .map((item) => item.guidance)
+        .join("\n\n");
+      return {
+        approved,
+        guidance: denialGuidance || undefined,
+        handledRejection: selectedChoices.some(
+          (item) => item.decision === "deny",
+        ),
+      };
+    };
   }
 
   pi.registerCommand("profile-add", {
@@ -1297,6 +1751,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
             effectiveCwd,
             ctx,
             policy,
+            rememberRule({ kind: "bash", pattern: event.input.command }, ctx),
           );
           if (gateResult) return gateResult;
 
@@ -1405,6 +1860,13 @@ The permissions gate remains loaded and will fail closed until the profile is co
             ctx,
             `Allow ${event.toolName}?`,
             `${event.toolName} wants to access:\n${absolutePath}\n\nMatched policy path:\n${matchPath}`,
+            rememberRule(
+              {
+                kind: "protected",
+                pattern: displayPath(absolutePath, startupCwd),
+              },
+              ctx,
+            ),
           );
           if (!approval.approved)
             return {
@@ -1682,6 +2144,7 @@ export async function gateBash(
   startupCwd: string,
   ctx: ExtensionContext,
   activePolicy = defaultPolicy,
+  remember?: RememberDecision,
 ) {
   if (isOpaqueInterpreterCommand(command) && hasShellControlSyntax(command)) {
     return {
@@ -1702,6 +2165,7 @@ export async function gateBash(
     protectedPathDecision,
     readValidationError,
     pathDecision,
+    commands,
     commandDecisions: decisions,
   } = evaluation;
   if (protectedPathDecision) {
@@ -1722,6 +2186,7 @@ export async function gateBash(
       ctx,
       "Allow Bash command with parse errors?",
       `The command could not be classified completely.\n\n${details}\n\nRaw command:\n${command}`,
+      remember ? () => remember(commands) : undefined,
     );
     if (!approval.approved) {
       return {
@@ -1755,6 +2220,7 @@ export async function gateBash(
       ctx,
       "Bash command references a gated path?",
       `Raw command:\n${command}\n\nParsed command segments:\n${formatParsedCommands(command, activePolicy)}\n\nPath:\n${pathDecision.path}\n\nMatched policy path:\n${pathDecision.matchPath}`,
+      remember ? () => remember(commands) : undefined,
     );
     if (!approval.approved)
       return {
@@ -1783,6 +2249,14 @@ export async function gateBash(
       ctx,
       "Allow bash command?",
       `Raw command:\n${command}\n\nParsed command segments:\n${formatParsedCommands(command, activePolicy)}`,
+      remember
+        ? () =>
+            remember(
+              commands.filter(
+                (_item, index) => decisions[index]?.decision === "ask",
+              ),
+            )
+        : undefined,
     );
     if (!approval.approved)
       return {
@@ -2502,7 +2976,8 @@ function toolPath(toolName: string, input: unknown): string | undefined {
 async function confirmOrBlock(
   ctx: ExtensionContext,
   title: string,
-  message: string,
+  _message: string,
+  remember?: RememberDecision,
 ): Promise<Approval> {
   if (!ctx.hasUI) return { approved: false };
 
@@ -2513,8 +2988,89 @@ async function confirmOrBlock(
   const setWorkingVisible = ctx.ui.setWorkingVisible?.bind(ctx.ui);
   setWorkingVisible?.(false);
   try {
-    const approved = await ctx.ui.confirm(title, message);
-    if (approved) return { approved: true };
+    // Standalone callers and older RPC adapters may not expose select().
+    // Preserve the previous binary confirmation contract for them.
+    if (typeof ctx.ui.select !== "function") {
+      const approved = await ctx.ui.confirm(title, _message);
+      if (approved) return { approved: true };
+      const guidance = await collectDenialGuidance(ctx);
+      return guidance ? { approved: false, guidance } : { approved: false };
+    }
+    const [noChoice, yesChoice, updateProfileChoice] = askPermissionChoices;
+    const askChoices: ProfilePickerItem[] = [
+      {
+        name: noChoice,
+        description: "Reject this request.",
+        emoji: "⛔️",
+        color: "red",
+      },
+      {
+        name: yesChoice,
+        description: "Allow this request once without changing the profile.",
+        emoji: "✅",
+        color: "green",
+      },
+      {
+        name: updateProfileChoice,
+        description: "Review and save command or protected-path rules.",
+        emoji: "📝",
+        color: "magenta",
+      },
+    ];
+    // Unlike a binary confirm, select() has no separate message parameter.
+    // Keep the complete request report in the modal title so users can see
+    // the raw command plus its parsed allow/deny/ask breakdown before acting.
+    const modalTitle = `${title}\n\n${_message}`;
+    const isBashRequest = /bash/i.test(title);
+    const choice =
+      (ctx as { mode?: string }).mode === "tui"
+        ? await ctx.ui.custom<string | null>((tui, theme, _keys, done) => {
+            const picker = new ProfilePicker(askChoices, theme, done, () =>
+              done(null),
+            );
+            return {
+              get focused() {
+                return picker.focused;
+              },
+              set focused(value: boolean) {
+                picker.focused = value;
+              },
+              render: (width) =>
+                [
+                  theme.fg(
+                    isBashRequest ? "accent" : "warning",
+                    theme.bold(
+                      `${isBashRequest ? "⚙️ Bash pattern" : "🛡️ Protected path"} permission request`,
+                    ),
+                  ),
+                  ...modalTitle
+                    .split("\n")
+                    .map((line) => theme.fg("dim", line)),
+                  ...picker.render(width),
+                ].map((line) => truncateToWidth(line, width)),
+              invalidate: () => picker.invalidate(),
+              handleInput: (data) => {
+                picker.handleInput(data);
+                tui.requestRender();
+              },
+            };
+          })
+        : // The third argument is ignored by Pi's UI implementation, but lets
+          // our deterministic harness retain the original title/message assertions.
+          await (
+            ctx.ui.select as unknown as (
+              title: string,
+              options: string[],
+              permissionMessage?: string,
+            ) => Promise<string | undefined>
+          )(modalTitle, [...askPermissionChoices], _message);
+    if (choice === yesChoice) return { approved: true };
+    if (choice === updateProfileChoice && remember) {
+      const result = await remember();
+      if (result.approved || result.handledRejection) return result;
+      const guidance = await collectDenialGuidance(ctx);
+      return { ...result, guidance };
+    }
 
     const guidance = await collectDenialGuidance(ctx);
     return guidance ? { approved: false, guidance } : { approved: false };
@@ -2526,8 +3082,16 @@ async function confirmOrBlock(
 async function collectDenialGuidance(
   ctx: ExtensionContext,
 ): Promise<string | undefined> {
-  const prompt =
-    "Denied permission request — optional steering for the agent. Leave blank or press Esc to skip.";
+  return await collectGuidance(
+    ctx,
+    "Denied permission request — optional steering for the agent. Leave blank or press Esc to skip.",
+  );
+}
+
+async function collectGuidance(
+  ctx: ExtensionContext,
+  prompt: string,
+): Promise<string | undefined> {
   const input =
     typeof ctx.ui.editor === "function"
       ? await ctx.ui.editor(prompt, "")

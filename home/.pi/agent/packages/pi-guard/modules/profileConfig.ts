@@ -319,6 +319,12 @@ export function loadProfileConfig(
 }
 
 /** Arguments for adding a user-owned profile. */
+export type BashRule = {
+  pattern: string;
+  decision: "allow" | "deny";
+  guidance?: string;
+};
+
 export type CreateCustomProfileOptions = {
   fallback: PolicyConfig;
   name: string;
@@ -327,6 +333,7 @@ export type CreateCustomProfileOptions = {
   extends?: readonly string[];
   transforms?: readonly ProfileTransformName[];
   protectedPaths?: readonly ProtectedPathRule[];
+  bashRules?: readonly BashRule[];
   sandboxed?: SandboxConfig | boolean;
   configPath?: string;
 };
@@ -334,7 +341,7 @@ export type CreateCustomProfileOptions = {
 export type AppendProfileRuleOptions = {
   fallback: PolicyConfig;
   profile: string;
-  kind: "bash" | "read" | "write";
+  kind: "bash" | "read" | "write" | "protected";
   pattern: string;
   decision: Decision;
   guidance?: string;
@@ -420,6 +427,8 @@ export function createCustomProfile(options: CreateCustomProfileOptions): void {
     profile.transforms = [...options.transforms];
   if (options.protectedPaths !== undefined)
     profile.protectedPathRules = [...options.protectedPaths];
+  if (options.bashRules !== undefined && options.bashRules.length > 0)
+    profile.tools = { bash: [...options.bashRules] };
   if (options.sandboxed !== undefined) {
     profile.sandbox =
       typeof options.sandboxed === "boolean"
@@ -461,11 +470,13 @@ export function appendProfileRule(options: AppendProfileRuleOptions): void {
   const location =
     options.kind === "bash"
       ? ["profiles", options.profile, "tools", "bash"]
-      : [
-          "profiles",
-          options.profile,
-          options.kind === "read" ? "readPaths" : "writePaths",
-        ];
+      : options.kind === "protected"
+        ? ["profiles", options.profile, "protectedPathRules"]
+        : [
+            "profiles",
+            options.profile,
+            options.kind === "read" ? "readPaths" : "writePaths",
+          ];
   const existing = location.reduce<unknown>(
     (value, key) =>
       typeof value === "object" && value !== null
@@ -473,8 +484,15 @@ export function appendProfileRule(options: AppendProfileRuleOptions): void {
         : undefined,
     parsed,
   );
+  // Updating an ASK rule must supersede its exact prior pattern rather than
+  // create an equal-specificity conflict that continues to evaluate as ASK.
   const rules = Array.isArray(existing)
-    ? [...(existing as unknown[]), rule]
+    ? [
+        ...(existing as Array<Record<string, unknown>>).filter(
+          (existingRule) => existingRule.pattern !== options.pattern,
+        ),
+        rule,
+      ]
     : [rule];
   const updated = applyEdits(
     source,
