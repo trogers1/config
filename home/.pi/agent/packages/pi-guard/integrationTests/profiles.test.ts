@@ -148,7 +148,7 @@ describe("permissions extension", () => {
         input: { command: "git status --short" },
       }),
     ).resolves.toBeUndefined();
-    expect(nonInteractive.ui.confirm).not.toHaveBeenCalled();
+    expect(nonInteractive.ui.custom).not.toHaveBeenCalled();
   });
 
   it("applies protected Bash rules before matching command rules", async () => {
@@ -192,14 +192,14 @@ describe("permissions extension", () => {
     expect(explanation).toContain("Protected-layer override: deny (**/.env*)");
     expect(explanation).not.toContain("Winner: [deny] rm -rf *");
 
-    harness.ui.confirm.mockClear();
+    harness.ui.custom.mockClear();
     const afterDynamicOperand = await harness.callTool({
       toolName: "bash",
       input: { command: 'cp "$SRC" .env' },
     });
     expect(afterDynamicOperand).toMatchObject({ block: true });
     expect(afterDynamicOperand?.reason).toContain("protected-path policy");
-    expect(harness.ui.confirm).not.toHaveBeenCalled();
+    expect(harness.ui.custom).not.toHaveBeenCalled();
 
     await harness.runCommand({
       name: "permissions",
@@ -217,7 +217,7 @@ describe("permissions extension", () => {
       'cd "$DIR"; cat /tmp/.env',
       'cd "$DIR" | cat /tmp/.env',
     ]) {
-      harness.ui.confirm.mockClear();
+      harness.ui.custom.mockClear();
       const compoundResult = await harness.callTool({
         toolName: "bash",
         input: { command },
@@ -226,7 +226,7 @@ describe("permissions extension", () => {
       expect(compoundResult?.reason, command).toContain(
         "protected-path policy",
       );
-      expect(harness.ui.confirm, command).not.toHaveBeenCalled();
+      expect(harness.ui.custom, command).not.toHaveBeenCalled();
     }
 
     await harness.runCommand({
@@ -282,10 +282,10 @@ describe("permissions extension", () => {
 
       expect(result).toMatchObject({ block: true });
       expect(result?.reason).toContain(expression);
-      expect(harness.ui.confirm).toHaveBeenCalledWith(
-        "Bash command references a gated path?",
-        expect.stringContaining(expression),
-      );
+      expect(harness.ui.custom).toHaveBeenCalledOnce();
+      expect(
+        harness.customComponents.at(-1)?.render?.(160).join("\n"),
+      ).toContain(expression);
     },
   );
 
@@ -332,7 +332,7 @@ describe("permissions extension", () => {
     expect(result).toMatchObject({ block: true });
     expect(result?.reason).toContain("Bash path reference denied by policy");
     expect(result?.reason).toContain("deny.txt");
-    expect(harness.ui.confirm).not.toHaveBeenCalled();
+    expect(harness.ui.custom).not.toHaveBeenCalled();
   });
 
   it("denies a relative protected path after a dynamic pipeline CWD without prompting", async () => {
@@ -367,7 +367,7 @@ describe("permissions extension", () => {
     expect(result).toMatchObject({ block: true });
     expect(result?.reason).toContain("protected-path policy");
     expect(result?.reason).toContain(".env");
-    expect(harness.ui.confirm).not.toHaveBeenCalled();
+    expect(harness.ui.custom).not.toHaveBeenCalled();
   });
 
   it("checks protected paths inside assignment-prefix command substitutions", async () => {
@@ -402,7 +402,7 @@ describe("permissions extension", () => {
     expect(result).toMatchObject({ block: true });
     expect(result?.reason).toContain("protected-path policy");
     expect(result?.reason).toContain(".env");
-    expect(harness.ui.confirm).not.toHaveBeenCalled();
+    expect(harness.ui.custom).not.toHaveBeenCalled();
   });
 
   it("applies ordinary Bash path rules before matching command rules", async () => {
@@ -711,12 +711,12 @@ describe("permissions extension", () => {
       input: { path: "private/.env.template" },
     });
     expect(exceptionResult).toMatchObject({ block: true });
-    expect(harness.ui.confirm).toHaveBeenCalledWith(
-      "Allow read?",
-      expect.stringContaining("private/.env.template"),
+    expect(harness.ui.custom).toHaveBeenCalledOnce();
+    expect(harness.customComponents.at(-1)?.render?.(160).join("\n")).toContain(
+      "private/.env.template",
     );
 
-    harness.ui.confirm.mockClear();
+    harness.ui.custom.mockClear();
     const protectedResult = await harness.callTool({
       toolName: "read",
       input: { path: "private/.env.secret" },
@@ -728,7 +728,7 @@ describe("permissions extension", () => {
     expect(protectedResult?.reason).toContain(
       "Ask the user for a redacted or safe-to-share value",
     );
-    expect(harness.ui.confirm).not.toHaveBeenCalled();
+    expect(harness.ui.custom).not.toHaveBeenCalled();
   });
 
   it("keeps each extension instance isolated from later profile loads", async () => {
@@ -1234,7 +1234,7 @@ describe("permissions extension", () => {
       "error",
     );
 
-    const blocked = await harness.callToolWithoutPrompt({
+    const blocked = await harness.callToolDecisivelyWithoutPrompt({
       toolName: "bash",
       input: { command: "git status --short" },
     });
@@ -1517,7 +1517,7 @@ describe("permissions extension", () => {
       input: { command: "cat < ../outside.txt" },
     });
     expect(outside).toMatchObject({ block: true });
-    expect(harness.ui.confirm).toHaveBeenCalledOnce();
+    expect(harness.ui.custom).toHaveBeenCalledOnce();
   });
 
   it("denies write-capable find forms in the default profile", async () => {
@@ -1581,7 +1581,7 @@ describe("permissions extension", () => {
       }
     }
 
-    expect(harness.ui.confirm).not.toHaveBeenCalled();
+    expect(harness.ui.custom).not.toHaveBeenCalled();
   });
 
   it("validates shell reader inputs before broad command allow rules", async () => {
@@ -1611,10 +1611,10 @@ describe("permissions extension", () => {
         input: { command },
       });
       expect(denied, command).toMatchObject({ block: true });
-      expect(harness.ui.confirm).not.toHaveBeenCalled();
+      expect(harness.ui.custom).not.toHaveBeenCalled();
     }
 
-    harness.ui.confirm.mockClear();
+    harness.ui.custom.mockClear();
     for (const command of [
       'f=.env; cat "$f"',
       "name=.env; sed -n '1,20p' \"$name\"",
@@ -1625,8 +1625,8 @@ describe("permissions extension", () => {
         input: { command },
       });
       expect(denied).toMatchObject({ block: true });
-      expect(harness.ui.confirm).toHaveBeenCalled();
-      harness.ui.confirm.mockClear();
+      expect(harness.ui.custom).toHaveBeenCalled();
+      harness.ui.custom.mockClear();
     }
 
     for (const profile of ["builtin:read-only", "socrates"] as const) {
@@ -1990,7 +1990,7 @@ describe("permissions extension", () => {
         input: { command: "python scripts/build.py" },
       }),
     ).resolves.toBeUndefined();
-    expect(interactive.ui.confirm).toHaveBeenCalledOnce();
+    expect(interactive.ui.custom).toHaveBeenCalledOnce();
 
     const nonInteractive = createExtensionHarness({ hasUI: false });
     await nonInteractive.start();
@@ -1999,7 +1999,7 @@ describe("permissions extension", () => {
       input: { command: "python scripts/build.py" },
     });
     expect(blocked).toMatchObject({ block: true });
-    expect(nonInteractive.ui.confirm).not.toHaveBeenCalled();
+    expect(nonInteractive.ui.custom).not.toHaveBeenCalled();
   });
 
   it("gates outside paths and denies protected paths through path tools", async () => {
@@ -2011,16 +2011,16 @@ describe("permissions extension", () => {
       input: { path: path.resolve(process.cwd(), "../outside.txt") },
     });
     expect(outside).toMatchObject({ block: true });
-    expect(harness.ui.confirm).toHaveBeenCalledOnce();
+    expect(harness.ui.custom).toHaveBeenCalledOnce();
 
-    harness.ui.confirm.mockClear();
+    harness.ui.custom.mockClear();
     const protectedPath = await harness.callTool({
       toolName: "read",
       input: { path: ".env" },
     });
     expect(protectedPath).toMatchObject({ block: true });
     expect(protectedPath?.reason).toContain("denied by policy");
-    expect(harness.ui.confirm).not.toHaveBeenCalled();
+    expect(harness.ui.custom).not.toHaveBeenCalled();
   });
 
   it("returns configured steering from custom deny rules", async () => {

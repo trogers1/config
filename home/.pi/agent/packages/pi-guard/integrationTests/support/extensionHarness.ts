@@ -18,14 +18,42 @@ import {
   type UserBashEventResult,
 } from "@earendil-works/pi-coding-agent";
 import { vi, type Mock } from "vitest";
-import type { Component } from "@earendil-works/pi-tui";
-import permissionsExtension from "../../extensions/guard";
 import {
-  askPermissionChoices,
-  profileUpdateTargets,
-  type AskPermissionChoice,
-  type ProfileUpdateTarget,
-} from "../../modules/profileUpdate";
+  TuiMainScreen,
+  isFocusable,
+  type Component,
+  type Terminal,
+} from "@earendil-works/pi-tui";
+import permissionsExtension from "../../extensions/guard";
+import { askPermissionChoices } from "../../modules/profileUpdate";
+
+const harnessViewport = { columns: 160, rows: 50 } as const;
+type AskPermissionChoice = (typeof askPermissionChoices)[number];
+
+class HarnessTerminal implements Terminal {
+  readonly columns = harnessViewport.columns;
+  readonly rows = harnessViewport.rows;
+  readonly kittyProtocolActive = false;
+  private onInput: (data: string) => void = () => undefined;
+
+  start(onInput: (data: string) => void): void {
+    this.onInput = onInput;
+  }
+  feed(data: string): void {
+    this.onInput(data);
+  }
+  stop(): void {}
+  async drainInput(): Promise<void> {}
+  write(): void {}
+  moveBy(): void {}
+  hideCursor(): void {}
+  showCursor(): void {}
+  clearLine(): void {}
+  clearFromCursor(): void {}
+  clearScreen(): void {}
+  setTitle(): void {}
+  setProgress(): void {}
+}
 
 type CommandRegistration = Omit<RegisteredCommand, "name" | "sourceInfo">;
 type ShortcutRegistration = Parameters<ExtensionAPI["registerShortcut"]>[1];
@@ -103,6 +131,8 @@ export function createExtensionHarness(
      * The default fixture mode remains deterministic and queue-driven.
      */
     interactiveUi?: boolean;
+    /** Mount custom components in pi-tui's real regular-screen TUI. */
+    tuiMode?: boolean;
   } = {},
 ) {
   const contextCwd = options.contextCwd ?? process.cwd();
@@ -185,6 +215,7 @@ export function createExtensionHarness(
     return new Promise((resolve) => customWaiters.push(resolve));
   }
 
+  const inputDrivers = new WeakMap<Component, (data: string) => void>();
   function pressKey(component: Component, key: string): void {
     const keys: Record<string, string> = {
       Tab: "\t",
@@ -195,8 +226,17 @@ export function createExtensionHarness(
       ArrowLeft: "\x1b[D",
       ArrowRight: "\x1b[C",
       CtrlShiftR: "\x1b[114;6u",
+      CtrlN: "\x0e",
+      CtrlD: "\x04",
+      CtrlK: "\x0b",
+      CtrlX: "\x18",
+      CtrlU: "\x15",
+      Backspace: "\x7f",
     };
-    component.handleInput?.(keys[key] ?? key);
+    const data = keys[key] ?? key;
+    const driver = inputDrivers.get(component);
+    if (driver) driver(data);
+    else component.handleInput?.(data);
   }
   // Custom UI tests only need deterministic plain text styling; Pi's runtime
   // supplies the real Theme and TUI instances.
@@ -228,52 +268,98 @@ export function createExtensionHarness(
               }),
             );
           }
-          // ASK prompts now use a three-way select. Existing behavioral tests
-          // express their intended response with `confirm`; map that legacy test
-          // fixture to Yes/No while retaining the original assertion surface.
           if (selectResults.length > 0) return selectResults.shift();
           if (permissionMessage !== undefined) {
             ui.confirm(title.split("\n\n", 1)[0] ?? title, permissionMessage);
-            return (options.confirm ?? false) ? "Yes" : "No (default)";
+            return (options.confirm ?? false)
+              ? askPermissionChoices[1]
+              : askPermissionChoices[0];
           }
           return undefined;
         },
       ),
     custom: vi.fn().mockImplementation((factory: unknown) => {
-      if (typeof factory === "function") {
-        let resolveInteractive: (value: unknown) => void = () => undefined;
-        let interactiveCustom: InteractiveCustom | undefined;
-        const interactiveResult = options.interactiveUi
-          ? new Promise<unknown>((resolve) => {
-              resolveInteractive = resolve;
-            })
-          : undefined;
-        const component = (
+      if (typeof factory !== "function") return customResults.shift() ?? null;
+      let completed: unknown;
+      let resolveInteractive: (value: unknown) => void = () => undefined;
+      let interactiveCustom: InteractiveCustom | undefined;
+      const interactiveResult = options.interactiveUi
+        ? new Promise<unknown>((resolve) => {
+            resolveInteractive = resolve;
+          })
+        : undefined;
+      const component = (
+        factory as (
+          tui: typeof testTui,
+          theme: typeof testTheme,
+          keybindings: unknown,
+          done: (value: unknown) => void,
+        ) => Component
+      )(testTui, testTheme, undefined, (value: unknown) => {
+        completed = value;
+        if (options.interactiveUi) {
+          interactiveCustom!.resolved = true;
+          resolveInteractive(value);
+        }
+      });
+      customComponents.push(component);
+      if (options.tuiMode) {
+        const terminal = new HarnessTerminal();
+        const tui = new TuiMainScreen(terminal);
+        // Recreate the component with the real pi-tui instance so focus and
+        // keyboard dispatch follow the same path as an interactive session.
+        const mountedComponent = (
           factory as (
-            tui: typeof testTui,
+            runtimeTui: TuiMainScreen,
             theme: typeof testTheme,
             keybindings: unknown,
             done: (value: unknown) => void,
           ) => Component
-        )(testTui, testTheme, undefined, (value: unknown) => {
+        )(tui, testTheme, undefined, (value: unknown) => {
+          completed = value;
           if (options.interactiveUi) {
             interactiveCustom!.resolved = true;
             resolveInteractive(value);
           }
         });
-        customComponents.push(component);
+        customComponents[customComponents.length - 1] = mountedComponent;
+        tui.addChild(mountedComponent);
+        tui.start();
+        tui.setFocus(mountedComponent);
+        inputDrivers.set(mountedComponent, (data) => terminal.feed(data));
         if (options.interactiveUi) {
-          // Pi focuses an opened custom modal. Mirror that lifecycle before
-          // driving its public keyboard input surface.
-          (component as Component & { focused?: boolean }).focused = true;
           interactiveCustom = {
-            component,
+            component: mountedComponent,
             resolve: resolveInteractive,
             resolved: false,
           };
           publishCustom(interactiveCustom);
           return interactiveResult;
         }
+      }
+      if (options.interactiveUi) {
+        // Pi focuses an opened custom modal. Mirror that lifecycle before
+        // driving its public keyboard input surface.
+        if (isFocusable(component)) component.focused = true;
+        interactiveCustom = {
+          component,
+          resolve: resolveInteractive,
+          resolved: false,
+        };
+        publishCustom(interactiveCustom);
+        return interactiveResult;
+      }
+      const rendered =
+        component.render?.(harnessViewport.columns).join("\n") ?? "";
+      if (rendered.includes("permission request")) {
+        const choice =
+          selectResults.shift() ??
+          ((options.confirm ?? false)
+            ? askPermissionChoices[1]
+            : askPermissionChoices[0]);
+        for (const character of choice) pressKey(component, character);
+        pressKey(component, "Enter");
+        return completed ?? null;
       }
       return customResults.shift() ?? null;
     }),
@@ -512,34 +598,21 @@ export function createExtensionHarness(
   /** Observe the permission modal created by an in-flight callTool. */
   async function waitForPermissionChoice(): Promise<{
     choose: (choice: AskPermissionChoice) => void;
+    render: () => string[];
   }> {
-    const selection = await nextSelection((item) =>
-      item.options.includes(askPermissionChoices[2]),
-    );
+    const modal = await nextCustom();
+    const rendered =
+      modal.component.render?.(harnessViewport.columns).join("\n") ?? "";
+    if (!rendered.includes("permission request"))
+      throw new Error(`Expected permission picker, received:\n${rendered}`);
     return {
       choose(choice) {
-        if (!selection.options.includes(choice))
+        if (!askPermissionChoices.some((option) => option === choice))
           throw new Error(`Unknown permission choice: ${choice}`);
-        selection.resolved = true;
-        selection.resolve(choice);
+        for (const character of choice) pressKey(modal.component, character);
+        pressKey(modal.component, "Enter");
       },
-    };
-  }
-
-  /** Observe the profile-rule destination modal created by an in-flight callTool. */
-  async function waitForProfileUpdateTarget(): Promise<{
-    choose: (target: ProfileUpdateTarget) => void;
-  }> {
-    const selection = await nextSelection((item) =>
-      item.options.includes(profileUpdateTargets[2]),
-    );
-    return {
-      choose(target) {
-        if (!selection.options.includes(target))
-          throw new Error(`Unknown profile update target: ${target}`);
-        selection.resolved = true;
-        selection.resolve(target);
-      },
+      render: () => modal.component.render?.(harnessViewport.columns) ?? [],
     };
   }
 
@@ -577,6 +650,7 @@ export function createExtensionHarness(
     title: string;
     options: string[];
     choose: (choice: string) => void;
+    cancel: () => void;
   }> {
     const selection = await nextSelection(() => true);
     return {
@@ -587,6 +661,10 @@ export function createExtensionHarness(
           throw new Error(`Unknown selection: ${choice}`);
         selection.resolved = true;
         selection.resolve(choice);
+      },
+      cancel() {
+        selection.resolved = true;
+        selection.resolve(undefined);
       },
     };
   }
@@ -600,7 +678,6 @@ export function createExtensionHarness(
     ui: {
       ...ui,
       waitForPermissionChoice,
-      waitForProfileUpdateTarget,
       waitForCustomModal,
       waitForRuleForm,
       waitForSelection,
@@ -653,16 +730,42 @@ export function createExtensionHarness(
       ensureStarted("callUserBash");
       return await dispatchUserBash({ ...event, type: "user_bash" });
     },
+    async callToolDecisivelyWithoutPrompt(
+      event: Omit<ToolCallEvent, "type" | "toolCallId">,
+    ) {
+      const confirmCalls = ui.confirm.mock.calls.length;
+      const selectCalls = ui.select.mock.calls.length;
+      const customCalls = customComponents.length;
+      const result = await callTool(event);
+      if (
+        ui.confirm.mock.calls.length !== confirmCalls ||
+        ui.select.mock.calls.length !== selectCalls ||
+        customComponents.length !== customCalls
+      )
+        throw new Error(
+          `Expected ${event.toolName} to resolve without a permission prompt`,
+        );
+      return result;
+    },
     async callToolWithoutPrompt(
       event: Omit<ToolCallEvent, "type" | "toolCallId">,
     ) {
       const confirmCalls = ui.confirm.mock.calls.length;
+      const selectCalls = ui.select.mock.calls.length;
+      const customCalls = customComponents.length;
       const result = await callTool(event);
-      if (ui.confirm.mock.calls.length !== confirmCalls) {
+      if (
+        ui.confirm.mock.calls.length !== confirmCalls ||
+        ui.select.mock.calls.length !== selectCalls ||
+        customComponents.length !== customCalls
+      )
         throw new Error(
-          `Expected ${event.toolName} to be allowed without prompting, but ui.confirm was invoked`,
+          `Expected ${event.toolName} to be allowed without a permission prompt`,
         );
-      }
+      if (result?.block)
+        throw new Error(
+          `Expected ${event.toolName} to be allowed, but it was blocked: ${result.reason}`,
+        );
       return result;
     },
     async beforeAgent({

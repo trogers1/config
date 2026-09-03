@@ -22,8 +22,8 @@ import {
   reservedProfilePrefix,
   warnOnPolicyRuleConflicts,
   type CustomRuleSetPolicy,
-  type Decision,
   type PathContext,
+  type PathRule,
   type PolicyConfig,
   type ProfileConfigFile,
   type ProfileConfigProfile,
@@ -325,6 +325,9 @@ export type BashRule = {
   guidance?: string;
 };
 
+export type OrdinaryPathRuleKind = "read" | "write";
+export type RuleKind = OrdinaryPathRuleKind | "bash" | "protected";
+
 export type CreateCustomProfileOptions = {
   fallback: PolicyConfig;
   name: string;
@@ -334,20 +337,78 @@ export type CreateCustomProfileOptions = {
   transforms?: readonly ProfileTransformName[];
   protectedPaths?: readonly ProtectedPathRule[];
   bashRules?: readonly BashRule[];
+  readPathRules?: readonly PathRule[];
+  writePathRules?: readonly PathRule[];
   sandboxed?: SandboxConfig | boolean;
   configPath?: string;
 };
 
-export type AppendProfileRuleOptions = {
-  fallback: PolicyConfig;
-  profile: string;
-  kind: "bash" | "read" | "write" | "protected";
+/** A single validated change to one profile policy collection. */
+type BaseProfileRuleChange = {
   pattern: string;
-  decision: Decision;
+  decision: "allow" | "deny";
   guidance?: string;
-  contexts?: readonly PathContext[];
-  configPath?: string;
+  /** Existing request-derived identity to remove when the editor changes its pattern. */
+  replacePattern?: string;
 };
+export type ProfileRuleChange =
+  | (BaseProfileRuleChange & { kind: "bash" | "protected"; contexts?: never })
+  | (BaseProfileRuleChange & {
+      kind: OrdinaryPathRuleKind;
+      contexts?: readonly PathContext[];
+    });
+export type ProfileMutationTarget =
+  | { mode: "update"; profile: string }
+  | {
+      mode: "create-child";
+      profile: string;
+      extends: readonly [string];
+      description: string;
+      emoji: string;
+    };
+
+/** Reject duplicate/overlapping editor rows before either CREATE or ASK writes. */
+export function assertUnambiguousProfileRuleChanges(
+  changes: readonly ProfileRuleChange[],
+  configPath = resolveProfileConfigPath(),
+): void {
+  const prior = new Map<string, Array<Set<string> | undefined>>();
+  for (const change of changes) {
+    const suppliedContexts = (change as { contexts?: unknown }).contexts;
+    if (
+      (change.kind === "bash" || change.kind === "protected") &&
+      suppliedContexts !== undefined
+    )
+      throw new ProfileConfigLoadError(
+        configPath,
+        `contexts are not valid for ${change.kind} rule '${change.pattern}'`,
+      );
+    if (change.contexts !== undefined && change.contexts.length === 0)
+      throw new ProfileConfigLoadError(
+        configPath,
+        `contexts for '${change.pattern}' must not be empty`,
+      );
+    const normalized =
+      change.contexts === undefined
+        ? undefined
+        : new Set(change.contexts.map(String));
+    const key = `${change.kind}\0${change.pattern}`;
+    const existing = prior.get(key) ?? [];
+    const overlaps = existing.some(
+      (contexts) =>
+        contexts === undefined ||
+        normalized === undefined ||
+        [...contexts].some((context) => normalized.has(context)),
+    );
+    if (overlaps)
+      throw new ProfileConfigLoadError(
+        configPath,
+        `overlapping rule changes '${change.pattern}'`,
+      );
+    existing.push(normalized);
+    prior.set(key, existing);
+  }
+}
 
 const jsoncFormatting = { insertSpaces: true, tabSize: 2, eol: "\n" };
 
@@ -425,10 +486,14 @@ export function createCustomProfile(options: CreateCustomProfileOptions): void {
   if (options.extends !== undefined) profile.extends = [...options.extends];
   if (options.transforms !== undefined)
     profile.transforms = [...options.transforms];
-  if (options.protectedPaths !== undefined)
+  if (options.protectedPaths !== undefined && options.protectedPaths.length > 0)
     profile.protectedPathRules = [...options.protectedPaths];
   if (options.bashRules !== undefined && options.bashRules.length > 0)
     profile.tools = { bash: [...options.bashRules] };
+  if (options.readPathRules !== undefined && options.readPathRules.length > 0)
+    profile.readPaths = [...options.readPathRules];
+  if (options.writePathRules !== undefined && options.writePathRules.length > 0)
+    profile.writePaths = [...options.writePathRules];
   if (options.sandboxed !== undefined) {
     profile.sandbox =
       typeof options.sandboxed === "boolean"
@@ -446,57 +511,236 @@ export function createCustomProfile(options: CreateCustomProfileOptions): void {
   atomicallyWriteValidatedProfileConfig(configPath, updated, options.fallback);
 }
 
-/** Append a bash or path rule without coupling callers to a UI or JSONC AST. */
-export function appendProfileRule(options: AppendProfileRuleOptions): void {
+/** Options for one validated, atomic profile-rule mutation. */
+export type ApplyProfileRuleChangesOptions = {
+  fallback: PolicyConfig;
+  configPath?: string;
+  target: ProfileMutationTarget;
+  changes: readonly ProfileRuleChange[];
+};
+
+function removeRuleIdentity(
+  rules: Array<Record<string, unknown>>,
+  pattern: string,
+  contexts: readonly PathContext[] | undefined,
+  unscopedKind: boolean,
+): Array<Record<string, unknown>> {
+  if (unscopedKind || contexts === undefined)
+    return rules.filter(
+      (rule) => rule.pattern !== pattern || Array.isArray(rule.contexts),
+    );
+  const removedContexts = new Set(contexts.map(String));
+  const retained: Array<Record<string, unknown>> = [];
+  for (const existing of rules) {
+    if (existing.pattern !== pattern) {
+      retained.push(existing);
+      continue;
+    }
+    const old = Array.isArray(existing.contexts)
+      ? existing.contexts.map(String)
+      : [];
+    if (old.length === 0) {
+      retained.push(existing);
+      continue;
+    }
+    const remaining = old.filter((context) => !removedContexts.has(context));
+    if (remaining.length > 0)
+      retained.push({ ...existing, contexts: remaining });
+  }
+  return retained;
+}
+
+/**
+ * Apply only the changed array elements. Replacing the whole array with
+ * jsonc-parser would discard comments attached to otherwise unchanged rules.
+ */
+function applyRuleArrayEdit(
+  source: string,
+  location: readonly (string | number)[],
+  before: readonly Record<string, unknown>[],
+  after: readonly Record<string, unknown>[],
+): string {
+  const remainingAfter = after.map((rule) => ({
+    rule,
+    serialized: JSON.stringify(rule),
+  }));
+  const retainedBefore = new Set<number>();
+  for (const [index, rule] of before.entries()) {
+    const match = remainingAfter.findIndex(
+      (candidate) => candidate.serialized === JSON.stringify(rule),
+    );
+    if (match === -1) continue;
+    retainedBefore.add(index);
+    remainingAfter.splice(match, 1);
+  }
+
+  // Rewrite changed nodes in place before adding/removing nodes. Unchanged
+  // nodes are never rewritten or shifted into another node, so their JSONC
+  // comments and hand formatting remain attached to the same rule.
+  let updated = source;
+  const changedBefore = before
+    .map((_rule, index) => index)
+    .filter((index) => !retainedBefore.has(index));
+  const paired = Math.min(changedBefore.length, remainingAfter.length);
+  for (let index = 0; index < paired; index++) {
+    updated = applyEdits(
+      updated,
+      modify(
+        updated,
+        [...location, changedBefore[index]],
+        remainingAfter[index].rule,
+        { formattingOptions: jsoncFormatting },
+      ),
+    );
+  }
+  for (let index = changedBefore.length - 1; index >= paired; index--) {
+    updated = applyEdits(
+      updated,
+      modify(updated, [...location, changedBefore[index]], undefined, {
+        formattingOptions: jsoncFormatting,
+      }),
+    );
+  }
+
+  for (const { rule } of remainingAfter.slice(paired)) {
+    const current: unknown = parse(updated, [], { allowTrailingComma: true });
+    const currentRules = location.reduce<unknown>(
+      (value, key) =>
+        typeof value === "object" && value !== null
+          ? Reflect.get(value, key)
+          : undefined,
+      current,
+    );
+    const index = Array.isArray(currentRules) ? currentRules.length : 0;
+    updated = applyEdits(
+      updated,
+      modify(updated, [...location, index], rule, {
+        formattingOptions: jsoncFormatting,
+      }),
+    );
+  }
+  return updated;
+}
+
+/** Apply a set of rule changes in one validated, atomic mutation. */
+export function applyProfileRuleChanges(
+  options: ApplyProfileRuleChangesOptions,
+): void {
   const configPath = resolveProfileConfigPath(options.configPath);
+  if (options.changes.length === 0)
+    throw new ProfileConfigLoadError(
+      configPath,
+      "at least one rule change is required",
+    );
+  assertUnambiguousProfileRuleChanges(options.changes, configPath);
+  for (const change of options.changes)
+    if (change.decision !== "allow" && change.decision !== "deny")
+      throw new ProfileConfigLoadError(
+        configPath,
+        `invalid durable decision '${String(change.decision)}' for '${change.pattern}'`,
+      );
   const source = readMutationSource(configPath);
   const parsed = parse(source, [], { allowTrailingComma: true }) as {
     profiles: Record<string, Record<string, unknown>>;
   };
-  const profile = parsed.profiles[options.profile];
-  if (!profile) {
+  const targetProfile = parsed.profiles[options.target.profile];
+  if (options.target.mode === "update" && !targetProfile)
     throw new ProfileConfigLoadError(
       configPath,
-      `profile '${options.profile}' does not exist`,
+      `profile '${options.target.profile}' does not exist`,
+    );
+  if (options.target.mode === "create-child" && targetProfile)
+    throw new ProfileConfigLoadError(
+      configPath,
+      `profile '${options.target.profile}' already exists`,
+    );
+
+  const profilePath = ["profiles", options.target.profile];
+  let updated = source;
+  if (options.target.mode === "create-child") {
+    const child: Record<string, unknown> = {
+      description: options.target.description,
+      color: "magenta",
+      emoji: options.target.emoji,
+      extends: [...options.target.extends],
+    };
+    updated = applyEdits(
+      updated,
+      modify(updated, profilePath, child, {
+        formattingOptions: jsoncFormatting,
+      }),
     );
   }
-  const rule: Record<string, unknown> = {
-    pattern: options.pattern,
-    decision: options.decision,
+  const document = parse(updated, [], { allowTrailingComma: true }) as {
+    profiles: Record<string, Record<string, unknown>>;
   };
-  if (options.guidance !== undefined) rule.guidance = options.guidance;
-  if (options.kind !== "bash" && options.contexts !== undefined)
-    rule.contexts = [...options.contexts];
-  const location =
-    options.kind === "bash"
-      ? ["profiles", options.profile, "tools", "bash"]
-      : options.kind === "protected"
-        ? ["profiles", options.profile, "protectedPathRules"]
-        : [
-            "profiles",
-            options.profile,
-            options.kind === "read" ? "readPaths" : "writePaths",
-          ];
-  const existing = location.reduce<unknown>(
-    (value, key) =>
-      typeof value === "object" && value !== null
-        ? Reflect.get(value, key)
-        : undefined,
-    parsed,
-  );
-  // Updating an ASK rule must supersede its exact prior pattern rather than
-  // create an equal-specificity conflict that continues to evaluate as ASK.
-  const rules = Array.isArray(existing)
-    ? [
-        ...(existing as Array<Record<string, unknown>>).filter(
-          (existingRule) => existingRule.pattern !== options.pattern,
-        ),
-        rule,
-      ]
-    : [rule];
-  const updated = applyEdits(
-    source,
-    modify(source, location, rules, { formattingOptions: jsoncFormatting }),
-  );
+  const locationFor = (kind: RuleKind): Array<string | number> =>
+    kind === "bash"
+      ? [...profilePath, "tools", "bash"]
+      : kind === "protected"
+        ? [...profilePath, "protectedPathRules"]
+        : [...profilePath, kind === "read" ? "readPaths" : "writePaths"];
+  const collections = new Map<
+    string,
+    {
+      location: Array<string | number>;
+      before: Array<Record<string, unknown>>;
+      after: Array<Record<string, unknown>>;
+    }
+  >();
+  const collectionFor = (kind: RuleKind) => {
+    const location = locationFor(kind);
+    const key = JSON.stringify(location);
+    const known = collections.get(key);
+    if (known) return known;
+    const current = location.reduce<unknown>(
+      (value, segment) =>
+        typeof value === "object" && value !== null
+          ? Reflect.get(value, segment)
+          : undefined,
+      document,
+    );
+    const before = Array.isArray(current)
+      ? [...(current as Array<Record<string, unknown>>)]
+      : [];
+    const collection = { location, before, after: [...before] };
+    collections.set(key, collection);
+    return collection;
+  };
+
+  // Build every collection's final state in memory before touching JSONC.
+  // This keeps pattern swaps independent of submitted row order and lets each
+  // array be edited exactly once, preserving unchanged syntax nodes.
+  for (const change of options.changes) {
+    if (!change.replacePattern || change.replacePattern === change.pattern)
+      continue;
+    const collection = collectionFor(change.kind);
+    collection.after = removeRuleIdentity(
+      collection.after,
+      change.replacePattern,
+      change.contexts,
+      change.kind === "bash" || change.kind === "protected",
+    );
+  }
+  for (const change of options.changes) {
+    const collection = collectionFor(change.kind);
+    const unscopedKind = change.kind === "bash" || change.kind === "protected";
+    collection.after = removeRuleIdentity(
+      collection.after,
+      change.pattern,
+      change.contexts,
+      unscopedKind,
+    );
+    const rule: Record<string, unknown> = {
+      pattern: change.pattern,
+      decision: change.decision,
+    };
+    if (change.guidance !== undefined) rule.guidance = change.guidance;
+    if (!unscopedKind && change.contexts !== undefined)
+      rule.contexts = [...new Set(change.contexts)];
+    collection.after.push(rule);
+  }
+  for (const { location, before, after } of collections.values())
+    updated = applyRuleArrayEdit(updated, location, before, after);
   atomicallyWriteValidatedProfileConfig(configPath, updated, options.fallback);
 }

@@ -5,16 +5,6 @@
  */
 export const askPermissionChoices = [
   "No (default)",
-  "Yes",
-  "Update profile with choice",
+  "Allow once",
+  "Save rule(s) to profile…",
 ] as const;
-
-export type AskPermissionChoice = (typeof askPermissionChoices)[number];
-
-export const profileUpdateTargets = [
-  "⚙️ Bash patterns",
-  "🛡️ Protected path globs",
-  "⚙️ + 🛡️ Both",
-] as const;
-
-export type ProfileUpdateTarget = (typeof profileUpdateTargets)[number];

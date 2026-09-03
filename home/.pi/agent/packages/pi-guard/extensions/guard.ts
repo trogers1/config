@@ -31,12 +31,7 @@ import {
   type ExtensionAPI,
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import {
-  Input,
-  Key,
-  matchesKey,
-  truncateToWidth,
-} from "@earendil-works/pi-tui";
+import { Key, truncateToWidth } from "@earendil-works/pi-tui";
 import {
   formatProfileName,
   ProfilePicker,
@@ -57,7 +52,6 @@ import {
   type PolicyConfig,
   type ProfilePolicy,
   type ProfilePolicyOverride,
-  type ProfileTransformName,
   type ProtectedPathRule,
   type ReadPathContext,
   type Rule,
@@ -74,18 +68,28 @@ import {
   type Specificity,
 } from "../modules/ruleSpecificity";
 import {
-  appendProfileRule,
+  applyProfileRuleChanges,
+  assertUnambiguousProfileRuleChanges,
   createCustomProfile,
   loadProfileConfig,
   loadRawProfileConfig,
   ProfileConfigLoadError,
   type RawProfileConfig,
+  type BashRule,
+  type ProfileMutationTarget,
+  type ProfileRuleChange,
 } from "../modules/profileConfig";
 import {
   builtinCompositionChains,
   policyConfig as genericPolicyConfig,
 } from "../modules/policy";
 import { formatProfileColor } from "../modules/profileColors";
+import {
+  editProfileRuleRows,
+  type AskRuleCandidate,
+  type EditableRuleRow,
+  ruleLayerLabel,
+} from "../modules/profileRuleEditor";
 import { ruleSetRegistry } from "../modules/ruleSets.lib";
 import { parseSubagentPermissibleRules } from "../modules/subagentScopes";
 import {
@@ -121,11 +125,18 @@ export type {
 type Approval = {
   approved: boolean;
   guidance?: string;
+  /** Return from the change editor to the permission choice without discarding. */
+  back?: boolean;
   /** A profile-update deny already supplied its own inline steering. */
   handledRejection?: boolean;
+  /** Profile rules were persisted; the caller must re-evaluate the request. */
+  profileUpdated?: boolean;
 };
 
-type RememberDecision = (patterns?: readonly string[]) => Promise<Approval>;
+type RememberDecision = (
+  patterns?: readonly string[],
+  pathTraces?: readonly BashPathReferenceTrace[],
+) => Promise<Approval>;
 
 type PolicyDecision = {
   decision: Decision;
@@ -705,176 +716,6 @@ The permissions gate remains loaded and will fail closed until the profile is co
     return selected;
   }
 
-  type BashEditorRow = {
-    decision: "skip" | "allow" | "deny";
-    pattern: string;
-    guidance?: string;
-  };
-
-  /** Shared Bash rule editor used by profile creation and ASK updates. */
-  async function editBashRules(
-    ctx: ExtensionContext,
-    initialPatterns: readonly string[],
-    options: { creation?: boolean } = {},
-  ): Promise<
-    | Array<{ pattern: string; decision: "allow" | "deny"; guidance?: string }>
-    | undefined
-  > {
-    const creation = options.creation === true;
-    const patterns = initialPatterns.length ? [...initialPatterns] : [""];
-    const inputs = patterns.map((pattern) => {
-      const input = new Input();
-      input.setValue(pattern);
-      return input;
-    });
-    const steeringInputs = inputs.map(() => new Input());
-    const originalPatterns = [...patterns];
-    const choice = await ctx.ui.custom<BashEditorRow[] | null>(
-      (tui, theme, _keys, done) => {
-        const decisions: BashEditorRow["decision"][] = inputs.map(() =>
-          creation ? "deny" : "skip",
-        );
-        let selected = 0;
-        let steeringFocused = false;
-        const submit = () =>
-          done(
-            inputs.map((input, index) => ({
-              decision: decisions[index],
-              pattern: input.getValue().trim(),
-              guidance: steeringInputs[index]?.getValue().trim() || undefined,
-            })),
-          );
-        const addRow = () => {
-          inputs.push(new Input());
-          steeringInputs.push(new Input());
-          decisions.push(creation ? "deny" : "skip");
-          selected = inputs.length - 1;
-          steeringFocused = false;
-          inputs[selected].onSubmit = submit;
-          inputs[selected].onEscape = () => done(null);
-          steeringInputs[selected].onSubmit = submit;
-          steeringInputs[selected].onEscape = () => done(null);
-        };
-        for (const input of [...inputs, ...steeringInputs]) {
-          input.onSubmit = submit;
-          input.onEscape = () => done(null);
-        }
-        return {
-          get focused() {
-            return (
-              (steeringFocused ? steeringInputs[selected] : inputs[selected])
-                ?.focused ?? false
-            );
-          },
-          set focused(value: boolean) {
-            inputs.forEach((input, index) => {
-              input.focused = value && index === selected && !steeringFocused;
-            });
-            steeringInputs.forEach((input, index) => {
-              input.focused = value && index === selected && steeringFocused;
-            });
-          },
-          render: (width: number) =>
-            [
-              theme.fg(
-                "accent",
-                theme.bold(
-                  creation
-                    ? "⚙️ Bash rules for new profile"
-                    : "⚙️ Bash pattern rules for ASK requests",
-                ),
-              ),
-              theme.fg(
-                "dim",
-                creation
-                  ? "↑/↓ navigates rows; ArrowDown enters inline steering for denies and adds a row from the last allow. Tab swaps ⛔️ deny and ✅ allow. Enter saves; Esc cancels."
-                  : "↑/↓ navigates rows. Tab cycles ⏭️ skip, ⛔️ deny, and ✅ allow. Enter saves all; Ctrl+Shift+R resets.",
-              ),
-              ...inputs.flatMap((input, index) => {
-                const decision = decisions[index];
-                const mark =
-                  decision === "skip"
-                    ? "⏭️"
-                    : decision === "deny"
-                      ? "⛔️"
-                      : "✅";
-                const prefix = index === selected ? ">" : " ";
-                const original = creation
-                  ? "new"
-                  : formatDecision(
-                      decideBash(
-                        originalPatterns[index] ?? "",
-                        activePolicy(activeProfile),
-                      ),
-                    );
-                const command = `${prefix} [${original}] ${mark} ${input.render(Math.max(0, width - 15))[0] ?? ""}`;
-                if (decision !== "deny") return [command];
-                const steering = steeringInputs[index];
-                const steeringPrefix =
-                  index === selected && steeringFocused ? ">" : " ";
-                return [
-                  command,
-                  `${steeringPrefix}   ↳ ${steering.getValue() ? steering.render(Math.max(0, width - 8))[0] : theme.fg("dim", "Add steering…")}`,
-                ];
-              }),
-            ].map((line) => truncateToWidth(line, width)),
-          invalidate: () => {
-            inputs.forEach((input) => input.invalidate());
-            steeringInputs.forEach((input) => input.invalidate());
-          },
-          handleInput: (data: string) => {
-            if (!creation && matchesKey(data, Key.ctrlShift("r"))) {
-              decisions.fill("skip");
-              inputs.forEach((input, index) =>
-                input.setValue(originalPatterns[index] ?? ""),
-              );
-              steeringInputs.forEach((input) => input.setValue(""));
-              selected = 0;
-              steeringFocused = false;
-            } else if (matchesKey(data, Key.up)) {
-              if (steeringFocused) steeringFocused = false;
-              else if (selected > 0) selected--;
-            } else if (matchesKey(data, Key.down)) {
-              if (steeringFocused) {
-                if (creation) addRow();
-                else steeringFocused = false;
-              } else if (selected < inputs.length - 1) {
-                selected++;
-                steeringFocused = false;
-              } else if (decisions[selected] === "deny") steeringFocused = true;
-              else if (creation) addRow();
-            } else if (matchesKey(data, Key.tab)) {
-              decisions[selected] = creation
-                ? decisions[selected] === "deny"
-                  ? "allow"
-                  : "deny"
-                : decisions[selected] === "skip"
-                  ? "deny"
-                  : decisions[selected] === "deny"
-                    ? "allow"
-                    : "skip";
-              if (decisions[selected] !== "deny") steeringFocused = false;
-            } else {
-              (steeringFocused
-                ? steeringInputs[selected]
-                : inputs[selected]
-              )?.handleInput(data);
-            }
-            tui.requestRender();
-          },
-        };
-      },
-    );
-    if (choice === null) return undefined;
-    return choice
-      .filter((item) => item.pattern && item.decision !== "skip")
-      .map(({ pattern, decision, guidance }) => ({
-        pattern,
-        decision: decision as "allow" | "deny",
-        guidance,
-      }));
-  }
-
   async function runProfileAdd(ctx: ExtensionContext): Promise<void> {
     if (!ctx.hasUI) {
       ctx.ui.notify("/profile-add requires an interactive UI", "error");
@@ -898,48 +739,13 @@ The permissions gate remains loaded and will fail closed until the profile is co
       "transform:ask-all": "Turn every allow decision into ask.",
       "transform:deny-all": "Turn every allow and ask decision into deny.",
     };
-    const transform = await ctx.ui.custom<string | null>(
-      (tui, theme, _keys, done) => {
-        const picker = new ProfilePicker(
-          profileTransformOptions.map((name) => ({
-            name,
-            description: transformDescriptions[name],
-            emoji: name === "none" ? "➖" : "🔀",
-          })),
-          theme,
-          done,
-          () => done(null),
-        );
-        return {
-          get focused() {
-            return picker.focused;
-          },
-          set focused(value: boolean) {
-            picker.focused = value;
-          },
-          render: (width) =>
-            [
-              theme.fg("accent", theme.bold("Optional policy transform")),
-              theme.fg(
-                "dim",
-                "Applied after composition; type to search transforms and descriptions.",
-              ),
-              ...picker.render(width),
-            ].map((line) => truncateToWidth(line, width)),
-          invalidate: () => picker.invalidate(),
-          handleInput: (data: string) => {
-            picker.handleInput(data);
-            tui.requestRender();
-          },
-        };
-      },
-    );
-    if (transform == null) return;
-    const bashRules = await editBashRules(ctx, [], { creation: true });
-    if (!bashRules) return;
-
-    const protectedPaths = await collectProtectedPaths(ctx);
-    if (!protectedPaths) return;
+    let transform: (typeof profileTransformOptions)[number] = "none";
+    // Rule collections are edited from one overview. Every section is
+    // optional and drafts remain available while navigating back.
+    let bashRules: BashRule[] = [];
+    let readPathRules: PathRule[] = [];
+    let writePathRules: PathRule[] = [];
+    let protectedPaths: ProtectedPathRule[] = [];
     const sandboxed = await ctx.ui.confirm(
       "Sandbox Bash?",
       "Enable a no-network kernel sandbox for Bash commands?",
@@ -975,161 +781,340 @@ The permissions gate remains loaded and will fail closed until the profile is co
       (
         await ctx.ui.input("Profile emoji (optional; Default: 💅):", "💅")
       )?.trim() || "💅";
-    try {
-      createCustomProfile({
-        fallback: genericPolicyConfig,
-        configPath: profileConfigPath,
-        name,
-        description,
-        emoji,
-        // Preserve selection order: later selections win equal-specificity
-        // ties, matching the resolver's normal composition semantics.
-        extends: extendsTargets,
-        transforms:
-          transform === "none"
-            ? undefined
-            : [transform as ProfileTransformName],
-        protectedPaths,
-        bashRules,
-        sandboxed,
-      });
-      reloadPolicyConfig();
-      if (!isProfileName(name)) {
-        throw new Error(`Profile '${name}' was saved but could not be loaded.`);
+    const durableDecision = (decision: Decision): "allow" | "deny" =>
+      decision === "allow" ? "allow" : "deny";
+    const createAndActivate = async (): Promise<boolean> => {
+      try {
+        const ruleChanges: ProfileRuleChange[] = [
+          ...bashRules.map((rule) => ({ kind: "bash" as const, ...rule })),
+          ...readPathRules.map((rule) => ({
+            kind: "read" as const,
+            pattern: rule.pattern,
+            decision: durableDecision(rule.decision),
+            guidance: rule.guidance,
+            contexts: rule.contexts,
+          })),
+          ...writePathRules.map((rule) => ({
+            kind: "write" as const,
+            pattern: rule.pattern,
+            decision: durableDecision(rule.decision),
+            guidance: rule.guidance,
+            contexts: rule.contexts,
+          })),
+          ...protectedPaths.map((rule) => ({
+            kind: "protected" as const,
+            ...rule,
+          })),
+        ];
+        assertUnambiguousProfileRuleChanges(ruleChanges, profileConfigPath);
+        createCustomProfile({
+          fallback: genericPolicyConfig,
+          configPath: profileConfigPath,
+          name,
+          description,
+          emoji,
+          // Later composition entries win equal-specificity ties.
+          extends: extendsTargets,
+          transforms: transform === "none" ? undefined : [transform],
+          protectedPaths,
+          bashRules,
+          readPathRules,
+          writePathRules,
+          sandboxed,
+        });
+        reloadPolicyConfig();
+        if (!isProfileName(name))
+          throw new Error(
+            `Profile '${name}' was saved but could not be loaded.`,
+          );
+        await activateProfile(
+          name,
+          ctx,
+          `Created and activated profile: ${name}`,
+        );
+        return true;
+      } catch (error) {
+        ctx.ui.notify(
+          error instanceof Error ? error.message : String(error),
+          "error",
+        );
+        return false;
       }
-      await activateProfile(
-        name,
-        ctx,
-        `Created and activated profile: ${name}`,
-      );
-    } catch (error) {
-      ctx.ui.notify(
-        error instanceof Error ? error.message : String(error),
-        "error",
-      );
-    }
-  }
-
-  type RememberedRule =
-    { kind: "bash"; pattern: string } | { kind: "protected"; pattern: string };
-
-  async function chooseProtectedPathRule(
-    ctx: ExtensionContext,
-    initialPattern: string,
-    initialDecision: "allow" | "deny",
-    existingRules: readonly ProtectedPathRule[] = [],
-  ): Promise<ProtectedPathRule | undefined> {
-    const selected = await ctx.ui.custom<ProtectedPathRule | null>(
-      (tui, theme, _keys, done) => {
-        const input = new Input();
-        input.setValue(initialPattern);
-        let decision = initialDecision;
-        input.onSubmit = () => {
-          const pattern = input.getValue().trim();
-          done(pattern ? { pattern, decision } : null);
-        };
-        input.onEscape = () => done(null);
-        return {
-          get focused() {
-            return input.focused;
-          },
-          set focused(value: boolean) {
-            input.focused = value;
-          },
-          render: (width: number) =>
-            [
-              theme.fg("warning", theme.bold("🛡️ Protected path glob rule")),
-              theme.fg(
-                "dim",
-                "Use Tab to swap between deny (⛔️) and allow (✅). Enter saves this rule; Esc cancels.",
-              ),
-              theme.fg(
-                "dim",
-                "This is prefilled with the path from the permission request; edit it to use a glob.",
-              ),
-              ...(existingRules.length === 0
-                ? []
-                : [
-                    theme.fg("muted", "Rules added so far:"),
-                    ...[...existingRules]
-                      .reverse()
-                      .map((rule, index) =>
-                        theme.fg(
-                          "dim",
-                          `  ${index + 1}. ${rule.decision === "deny" ? "⛔️" : "✅"} ${rule.pattern}`,
-                        ),
-                      ),
-                  ]),
-              `${decision === "deny" ? "⛔️" : "✅"} ${input.render(Math.max(0, width - 3))[0] ?? ""}`,
-            ].map((line) => truncateToWidth(line, width)),
-          invalidate: () => input.invalidate(),
-          handleInput: (data: string) => {
-            if (matchesKey(data, Key.tab))
-              decision = decision === "deny" ? "allow" : "deny";
-            else input.handleInput(data);
-            tui.requestRender();
-          },
-        };
-      },
-    );
-    return selected ?? undefined;
-  }
-
-  /** Add zero or more protected paths, sharing the ASK path editor. */
-  async function collectProtectedPaths(
-    ctx: ExtensionContext,
-  ): Promise<ProtectedPathRule[] | undefined> {
-    const rules: ProtectedPathRule[] = [];
+    };
     while (true) {
-      const rule = await chooseProtectedPathRule(ctx, "", "deny", rules);
-      if (!rule) return undefined;
-      rules.push(rule);
-      const next = await ctx.ui.select("Protected paths:", [
-        "Add another protected path",
-        "Continue",
-      ]);
-      if (next === undefined) return undefined;
-      if (next === "Continue") return rules;
+      const sandboxSummary = sandboxed ? "on · network denied" : "off";
+      const preview = (rules: readonly { pattern: string }[]): string =>
+        rules.length === 0
+          ? "none"
+          : rules
+              .slice(0, 3)
+              .map((rule) => rule.pattern)
+              .join(", ");
+      const overview = [
+        `Create profile: ${name}`,
+        `Description: ${description}`,
+        `Extends (later wins ties): ${extendsTargets.join(", ")}`,
+        `Transform: ${transform}`,
+        `Sandbox Bash: ${sandboxSummary}`,
+        "",
+        `⚙️ Bash preview: ${preview(bashRules)}`,
+        `📖 Read-path preview: ${preview(readPathRules)}`,
+        `✏️ Write-path preview: ${preview(writePathRules)}`,
+        `🛡️ Protected preview: ${preview(protectedPaths)}`,
+      ].join("\n");
+      const section = await ctx.ui.select(
+        `Create profile · Rules overview\n\n${overview}`,
+        [
+          "Create and activate profile",
+          `⚙️ Bash rules (${bashRules.length}) · Edit`,
+          `📖 Read-path rules (${readPathRules.length}) · Edit`,
+          `✏️ Write-path rules (${writePathRules.length}) · Edit`,
+          `🛡️ Protected safeguards (${protectedPaths.length}) · Edit`,
+          `Transform (${transform}) · Edit`,
+        ],
+      );
+      if (!section) {
+        const discard = await ctx.ui.confirm(
+          "Discard profile draft?",
+          "No profile has been written. Discard the complete draft?",
+        );
+        if (discard) return;
+        continue;
+      }
+      if (section === "Create and activate profile") {
+        if (await createAndActivate()) return;
+        // Keep metadata and every section draft open after a failed write.
+        continue;
+      }
+      if (section.startsWith("Transform")) {
+        const selectedTransform = await ctx.ui.custom<string | null>(
+          (tui, theme, _keys, done) => {
+            const picker = new ProfilePicker(
+              profileTransformOptions.map((name) => ({
+                name,
+                description: transformDescriptions[name],
+                emoji: name === "none" ? "➖" : "🔀",
+              })),
+              theme,
+              done,
+              () => done(null),
+            );
+            return {
+              get focused() {
+                return picker.focused;
+              },
+              set focused(value: boolean) {
+                picker.focused = value;
+              },
+              render: (width: number) =>
+                [
+                  theme.fg("accent", theme.bold("Optional policy transform")),
+                  theme.fg(
+                    "dim",
+                    "Applied after composition; none leaves composed decisions unchanged.",
+                  ),
+                  ...picker.render(width),
+                ].map((line) => truncateToWidth(line, width)),
+              invalidate: () => picker.invalidate(),
+              handleInput: (data: string) => {
+                picker.handleInput(data);
+                tui.requestRender();
+              },
+            };
+          },
+        );
+        switch (selectedTransform) {
+          case "none":
+          case "transform:deny-asks":
+          case "transform:allow-asks":
+          case "transform:ask-all":
+          case "transform:deny-all":
+            transform = selectedTransform;
+        }
+        continue;
+      }
+      const sectionKind = section.startsWith("⚙️")
+        ? "bash"
+        : section.startsWith("📖")
+          ? "read"
+          : section.startsWith("✏️")
+            ? "write"
+            : "protected";
+      const currentPatterns =
+        sectionKind === "bash"
+          ? bashRules
+          : sectionKind === "read"
+            ? readPathRules
+            : sectionKind === "write"
+              ? writePathRules
+              : protectedPaths;
+      const edited = await editProfileRuleRows(ctx, {
+        mode: "create",
+        kind: sectionKind,
+        title: `${ruleLayerLabel[sectionKind]} rules for new profile`,
+        rows: currentPatterns.map((rule, index) => ({
+          id: `${sectionKind}-${index}`,
+          kind: sectionKind,
+          pattern: rule.pattern,
+          decision: rule.decision === "ask" ? "deny" : rule.decision,
+          guidance: rule.guidance,
+          contexts:
+            "contexts" in rule
+              ? (rule.contexts as readonly PathContext[])
+              : undefined,
+          origin: "create" as const,
+        })),
+      });
+      // Back retains this section's in-memory draft; only the overview's
+      // explicit discard can abandon the complete profile draft.
+      if (edited.action === "clear") {
+        if (sectionKind === "bash") bashRules = [];
+        else if (sectionKind === "read") readPathRules = [];
+        else if (sectionKind === "write") writePathRules = [];
+        else protectedPaths = [];
+        continue;
+      }
+      const rules: Array<{
+        pattern: string;
+        decision: "allow" | "deny";
+        guidance?: string;
+        contexts?: PathContext[];
+      }> = edited.rows
+        .filter(
+          (rule) => rule.pattern.trim().length > 0 && rule.decision !== "skip",
+        )
+        .map((rule) => ({
+          pattern: rule.pattern,
+          decision: rule.decision === "deny" ? "deny" : "allow",
+          guidance: rule.guidance,
+          contexts: rule.contexts ? [...rule.contexts] : undefined,
+        }));
+      if (sectionKind === "bash")
+        bashRules = rules.map(({ pattern, decision, guidance }) => ({
+          pattern,
+          decision,
+          guidance,
+        }));
+      else if (sectionKind === "read")
+        readPathRules = rules.map((rule) => ({
+          ...rule,
+          contexts: rule.contexts?.filter(
+            (context): context is ReadPathContext =>
+              context === "read" ||
+              context === "grep" ||
+              context === "find" ||
+              context === "ls",
+          ),
+        }));
+      else if (sectionKind === "write")
+        writePathRules = rules.map((rule) => ({
+          ...rule,
+          contexts: rule.contexts?.filter(
+            (context): context is WritePathContext =>
+              context === "edit" || context === "write" || context === "bash",
+          ),
+        }));
+      else
+        protectedPaths = rules.map((rule) => ({
+          pattern: rule.pattern,
+          decision: rule.decision,
+          guidance: rule.guidance,
+        }));
     }
   }
 
-  async function rememberDecision(
-    draft: RememberedRule,
-    decision: "allow" | "deny",
-    guidance: string | undefined,
+  type PendingRuleChangeDraft =
+    | {
+        kind: "bash";
+        pattern: string;
+        replacePattern?: string;
+        requestedValue?: string;
+        matchedRule?: string;
+        matchedPattern?: string;
+      }
+    | {
+        kind: "read" | "write";
+        pattern: string;
+        contexts?: readonly PathContext[];
+        replacePattern?: string;
+        requestedValue?: string;
+        source?: string;
+        matchedRule?: string;
+        matchedPattern?: string;
+      };
+
+  function suggestedChildProfileName(profile: string): string {
+    const base = `${profile.replace(/^builtin:/, "").replace(/[^a-zA-Z0-9]+/g, "-")}-custom`;
+    const names = new Set(Object.keys(rawProfileConfig?.profiles ?? {}));
+    let name = base;
+    let suffix = 2;
+    while (names.has(name)) name = `${base}-${suffix++}`;
+    return name;
+  }
+
+  async function rememberDecisions(
+    drafts: ReadonlyArray<{
+      draft: PendingRuleChangeDraft;
+      decision: "allow" | "deny";
+      guidance?: string;
+    }>,
     ctx: ExtensionContext,
-  ): Promise<void> {
-    const rule = draft;
+    suggestedProfile?: string,
+  ): Promise<boolean> {
     let profile = activeProfile;
     try {
       // Only definitions in the user-owned source are safely mutable. Shipped
       // profiles (and an active profile supplied by another composition) get a
       // small custom child that preserves their complete policy.
-      if (!Object.hasOwn(rawProfileConfig?.profiles ?? {}, profile)) {
-        const suggestedName = `${profile.replace(/^builtin:/, "").replace(/[^a-zA-Z0-9]+/g, "-")}-custom`;
+      const userOwned = Object.hasOwn(
+        rawProfileConfig?.profiles ?? {},
+        profile,
+      );
+      let target: ProfileMutationTarget;
+      if (userOwned) {
+        target = { mode: "update", profile };
+      } else {
+        // The collision-free suggestion is the inline editor's default target;
+        // accepting the save screen must not open a separate naming dialog.
+        // (Callers may still provide a preselected suggested profile.)
         const name = (
-          await ctx.ui.input("New custom profile name:", suggestedName)
-        )?.trim();
-        if (!name) return;
-        createCustomProfile({
-          fallback: genericPolicyConfig,
-          configPath: profileConfigPath,
-          name,
-          description: `Custom extension of ${profile}.`,
-          emoji: "💅",
-          extends: [profile],
-        });
+          suggestedProfile ?? suggestedChildProfileName(profile)
+        ).trim();
+        if (!name) return false;
         profile = name;
+        target = {
+          mode: "create-child",
+          profile,
+          description: `Custom extension of ${activeProfile}.`,
+          emoji: "💅",
+          extends: [activeProfile],
+        };
       }
 
-      appendProfileRule({
+      // The profile target and rule are one mutation. In particular, never
+      // leave an empty child profile behind when the rule write fails.
+      applyProfileRuleChanges({
         fallback: genericPolicyConfig,
         configPath: profileConfigPath,
-        profile,
-        kind: rule.kind,
-        pattern: rule.pattern,
-        decision,
-        guidance,
+        target,
+        changes: drafts.map(({ draft, decision, guidance }) =>
+          draft.kind === "bash"
+            ? {
+                kind: draft.kind,
+                pattern: draft.pattern,
+                replacePattern: draft.replacePattern,
+                decision,
+                guidance,
+              }
+            : {
+                kind: draft.kind,
+                pattern: draft.pattern,
+                replacePattern: draft.replacePattern,
+                decision,
+                guidance,
+                contexts: draft.contexts,
+              },
+        ),
       });
       reloadPolicyConfig();
       if (!isProfileName(profile)) {
@@ -1137,234 +1122,212 @@ The permissions gate remains loaded and will fail closed until the profile is co
           `Profile '${profile}' was saved but could not be loaded.`,
         );
       }
-      await activateProfile(
-        profile,
-        ctx,
-        `Saved ${decision} rule to profile: ${profile}`,
-      );
+      const effectCounts = new Map<string, number>();
+      for (const { draft, decision } of drafts) {
+        const layer =
+          draft.kind === "bash"
+            ? "Bash"
+            : draft.kind === "read"
+              ? "read-path"
+              : "write-path";
+        const effect = `${layer} ${decision}`;
+        effectCounts.set(effect, (effectCounts.get(effect) ?? 0) + 1);
+      }
+      const effects = [...effectCounts]
+        .map(([effect, count]) => `${count} ${effect}`)
+        .join(", ");
+      await activateProfile(profile, ctx, `Saved ${effects} to ${profile}.`);
+      return true;
     } catch (error) {
       ctx.ui.notify(
         error instanceof Error ? error.message : String(error),
         "error",
       );
+      return false;
     }
   }
 
   function rememberRule(
-    draft: RememberedRule,
+    draft: PendingRuleChangeDraft,
     ctx: ExtensionContext,
+    pathTraces: readonly BashPathReferenceTrace[] = [],
   ): RememberDecision {
-    return async (patterns) => {
-      let includePathRule = false;
-      let pathPattern: string | undefined;
-      if (draft.kind === "bash" && patterns?.length) {
-        const pathAnalysis = analyzeBashPathReferences(
-          [...patterns],
-          startupCwd,
-          ctx.cwd ?? startupCwd,
-          activePolicy(activeProfile),
-          activePolicy(activeProfile).protectedPathRules ?? [],
-          false,
-        );
-        pathPattern = pathAnalysis.trace?.matchPath;
-        const hasPathAsk =
-          pathAnalysis.decision?.decision === "ask" ||
-          pathAnalysis.trace?.pathMatches.some(
-            ({ item }) => item.decision === "ask",
-          ) === true;
-        const hasBashAsk = patterns.some(
-          (pattern) =>
-            decideBash(pattern, activePolicy(activeProfile)) === "ask",
-        );
-        if (hasPathAsk && !hasBashAsk && pathPattern) {
-          const rule = await chooseProtectedPathRule(ctx, pathPattern, "allow");
-          if (!rule) return { approved: false };
-          await rememberDecision(
-            { kind: "protected", pattern: rule.pattern },
-            rule.decision,
-            undefined,
-            ctx,
-          );
-          return { approved: rule.decision === "allow" };
-        }
-        includePathRule = hasPathAsk && Boolean(pathPattern);
+    let retainedRows: EditableRuleRow[] | undefined;
+    let pruneRetainedOnNextInvocation = false;
+    let retainedTargetProfile: string | undefined;
+    return async (patterns, suppliedPathTraces) => {
+      const traces = suppliedPathTraces ?? pathTraces;
+      const candidates: AskRuleCandidate[] = [];
+      const seen = new Set<string>();
+      // Enforcement evaluates ordinary path policy before command policy, so
+      // retain that same stable ordering in the combined change set.
+      for (const trace of traces) {
+        if (trace.decision !== "ask") continue;
+        const identity = `${trace.kind}\0${trace.context}\0${trace.path}`;
+        if (seen.has(identity)) continue;
+        seen.add(identity);
+        candidates.push({
+          kind: trace.kind,
+          context: trace.context,
+          requestedValue: trace.path,
+          initialPattern: displayPath(trace.path, startupCwd),
+          currentDecision: "ask",
+          matchedRule: trace.pathMatches[0]
+            ? `${trace.pathMatches[0].item.pattern} → ${trace.pathMatches[0].item.decision}`
+            : undefined,
+          matchedPattern: trace.pathMatches[0]?.item.pattern,
+          source: { tool: "bash", role: `${trace.context} path reference` },
+        });
       }
-      if (draft.kind === "protected" && !patterns?.length) {
-        const rule = await chooseProtectedPathRule(ctx, draft.pattern, "allow");
-        if (!rule) return { approved: false };
-        await rememberDecision(
-          { kind: "protected", pattern: rule.pattern },
-          rule.decision,
-          undefined,
-          ctx,
-        );
-        return { approved: rule.decision === "allow" };
+      for (const pattern of patterns ??
+        (draft.kind === "bash" ? [draft.pattern] : [])) {
+        const identity = `bash\0${pattern}`;
+        if (seen.has(identity)) continue;
+        seen.add(identity);
+        candidates.push({
+          kind: "bash",
+          requestedValue: pattern,
+          initialPattern: pattern,
+          currentDecision: "ask",
+        });
       }
-      const requestPatterns = patterns?.length ? patterns : [draft.pattern];
-      const initialDecisions = requestPatterns.map((pattern) =>
-        draft.kind === "bash"
-          ? decideBash(pattern, activePolicy(activeProfile))
-          : "ask",
+      if (candidates.length === 0) {
+        const kind = draft.kind;
+        candidates.push(
+          kind === "bash"
+            ? {
+                kind,
+                requestedValue: draft.requestedValue ?? draft.pattern,
+                initialPattern: draft.pattern,
+                currentDecision: "ask",
+                matchedRule: draft.matchedRule,
+                matchedPattern: draft.matchedPattern,
+              }
+            : {
+                kind,
+                context:
+                  draft.contexts?.[0] ?? (kind === "read" ? "read" : "write"),
+                requestedValue: draft.requestedValue ?? draft.pattern,
+                initialPattern: draft.pattern,
+                currentDecision: "ask",
+                matchedRule: draft.matchedRule,
+                matchedPattern: draft.matchedPattern,
+                source: { tool: draft.source ?? kind },
+              },
+        );
+      }
+      const userOwned = Object.hasOwn(
+        rawProfileConfig?.profiles ?? {},
+        activeProfile,
       );
-      const inputs = requestPatterns.map((pattern) => {
-        const input = new Input();
-        input.setValue(pattern);
-        return input;
-      });
-      const steeringInputs = requestPatterns.map(() => new Input());
-      const originalPatterns = [...requestPatterns];
-      const choice = await ctx.ui.custom<Array<{
-        decision: "skip" | "allow" | "deny";
-        pattern: string;
-        guidance?: string;
-      }> | null>((tui, theme, _keys, done) => {
-        const decisions: Array<"skip" | "allow" | "deny"> = inputs.map(
-          () => "skip",
-        );
-        let selected = 0;
-        let steeringFocused = false;
-        const submit = () =>
-          done(
-            inputs.map((input, index) => ({
-              decision: decisions[index],
-              pattern: input.getValue().trim(),
-              guidance: steeringInputs[index]?.getValue().trim() || undefined,
-            })),
+      const target: ProfileMutationTarget = userOwned
+        ? { mode: "update", profile: activeProfile }
+        : {
+            mode: "create-child",
+            profile: suggestedChildProfileName(activeProfile),
+            extends: [activeProfile],
+            description: `Custom extension of ${activeProfile}.`,
+            emoji: "💅",
+          };
+      const candidateIdentity = (candidate: AskRuleCandidate): string =>
+        `${candidate.kind}\0${candidate.kind === "bash" ? "" : candidate.context}\0${candidate.requestedValue}`;
+      const rows: EditableRuleRow[] = candidates.map((candidate, index) => ({
+        id: `ask-rule-${index}`,
+        kind: candidate.kind,
+        pattern: candidate.initialPattern,
+        decision: "allow",
+        contexts: candidate.kind === "bash" ? undefined : [candidate.context],
+        request: candidate,
+        origin: "request",
+      }));
+      if (retainedRows && pruneRetainedOnNextInvocation) {
+        retainedRows = rows.map((row) => {
+          const retained = retainedRows?.find(
+            (prior) =>
+              prior.request &&
+              row.request &&
+              candidateIdentity(prior.request) ===
+                candidateIdentity(row.request),
           );
-        for (const input of [...inputs, ...steeringInputs]) {
-          input.onSubmit = submit;
-          input.onEscape = () => done(null);
-        }
+          return retained ? { ...retained, request: row.request } : row;
+        });
+        pruneRetainedOnNextInvocation = false;
+      }
+      while (true) {
+        const currentTarget: ProfileMutationTarget =
+          target.mode === "create-child"
+            ? {
+                ...target,
+                profile: retainedTargetProfile ?? target.profile,
+              }
+            : target;
+        const edited = await editProfileRuleRows(ctx, {
+          mode: "ask",
+          title: `Resolve ASK · ${rows.length} profile change${rows.length === 1 ? "" : "s"}`,
+          rows: retainedRows ?? rows,
+          target: currentTarget,
+          allowAddRemove: true,
+          defaultKind: rows[0]?.kind,
+          defaultDecision: "deny",
+        });
+        retainedRows = edited.rows;
+        retainedTargetProfile =
+          edited.targetProfile?.trim() || currentTarget.profile;
+        if (edited.action === "back") return { approved: false, back: true };
+        const selected = edited.rows.filter(
+          (row) =>
+            row.kind !== "protected" &&
+            row.decision !== "skip" &&
+            row.pattern.trim().length > 0,
+        );
+        if (selected.length === 0) return { approved: false, back: true };
+        const targetProfile =
+          currentTarget.mode === "create-child"
+            ? edited.targetProfile?.trim() || currentTarget.profile
+            : undefined;
+        const saved = await rememberDecisions(
+          selected.map((row) => ({
+            draft:
+              row.kind === "bash"
+                ? ({
+                    kind: "bash",
+                    pattern: row.pattern,
+                    replacePattern:
+                      row.origin === "request"
+                        ? (row.request?.matchedPattern ??
+                          row.request?.initialPattern)
+                        : undefined,
+                  } as const)
+                : ({
+                    kind: row.kind === "read" ? "read" : "write",
+                    pattern: row.pattern,
+                    contexts: row.contexts,
+                    replacePattern:
+                      row.origin === "request"
+                        ? (row.request?.matchedPattern ??
+                          row.request?.initialPattern)
+                        : undefined,
+                  } as const),
+            decision: row.decision === "deny" ? "deny" : "allow",
+            guidance: row.decision === "deny" ? row.guidance : undefined,
+          })),
+          ctx,
+          targetProfile,
+        );
+        if (!saved) continue;
+        // A post-save re-check must rebuild from enforcement's remaining ASK
+        // candidates. Preserve edits only for request rows explicitly skipped;
+        // resolved and additional rows must not leak into the next prompt.
+        retainedRows = edited.rows.filter(
+          (row) => row.request && row.decision === "skip",
+        );
+        pruneRetainedOnNextInvocation = true;
         return {
-          get focused() {
-            return (
-              (steeringFocused ? steeringInputs[selected] : inputs[selected])
-                ?.focused ?? false
-            );
-          },
-          set focused(value: boolean) {
-            for (const [index, input] of inputs.entries()) {
-              input.focused = value && index === selected && !steeringFocused;
-              steeringInputs[index].focused =
-                value && index === selected && steeringFocused;
-            }
-          },
-          render: (width: number) =>
-            [
-              theme.fg(
-                "accent",
-                theme.bold("⚙️ Bash pattern rules for ASK requests"),
-              ),
-              theme.fg(
-                "dim",
-                "↑/↓ navigates rows. Tab cycles ⏭️ skip, ⛔️ deny, and ✅ allow. Enter saves all; Ctrl+Shift+R resets.",
-              ),
-              ...inputs.flatMap((input, index) => {
-                const decision = decisions[index];
-                const mark =
-                  decision === "skip"
-                    ? "⏭️"
-                    : decision === "deny"
-                      ? "⛔️"
-                      : "✅";
-                const prefix = index === selected ? ">" : " ";
-                const original = formatDecision(
-                  initialDecisions[index] ?? "ask",
-                );
-                const command = `${prefix} [${original}] ${mark} ${input.render(Math.max(0, width - 15))[0] ?? ""}`;
-                if (decision !== "deny") return [command];
-                const steering = steeringInputs[index];
-                const steeringPrefix =
-                  index === selected && steeringFocused ? ">" : " ";
-                return [
-                  command,
-                  `${steeringPrefix}   ↳ ${steering.getValue() ? steering.render(Math.max(0, width - 8))[0] : theme.fg("dim", "Add steering…")}`,
-                ];
-              }),
-            ].map((line) => truncateToWidth(line, width)),
-          invalidate: () => {
-            inputs.forEach((input) => input.invalidate());
-            steeringInputs.forEach((input) => input.invalidate());
-          },
-          handleInput: (data: string) => {
-            if (matchesKey(data, Key.ctrlShift("r"))) {
-              decisions.fill("skip");
-              inputs.forEach((input, index) =>
-                input.setValue(originalPatterns[index] ?? ""),
-              );
-              steeringInputs.forEach((input) => input.setValue(""));
-              selected = 0;
-              steeringFocused = false;
-            } else if (matchesKey(data, Key.up)) {
-              if (steeringFocused) steeringFocused = false;
-              else if (selected > 0) {
-                selected--;
-                steeringFocused = decisions[selected] === "deny";
-              }
-            } else if (matchesKey(data, Key.down)) {
-              if (!steeringFocused && decisions[selected] === "deny")
-                steeringFocused = true;
-              else if (selected < inputs.length - 1) {
-                selected++;
-                steeringFocused = false;
-              }
-            } else if (matchesKey(data, Key.tab)) {
-              decisions[selected] =
-                decisions[selected] === "skip"
-                  ? "deny"
-                  : decisions[selected] === "deny"
-                    ? "allow"
-                    : "skip";
-              if (decisions[selected] !== "deny") steeringFocused = false;
-            } else {
-              (steeringFocused
-                ? steeringInputs[selected]
-                : inputs[selected]
-              )?.handleInput(data);
-            }
-            tui.requestRender();
-          },
+          approved: selected.every((row) => row.decision === "allow"),
+          profileUpdated: true,
+          handledRejection: selected.some((row) => row.decision === "deny"),
         };
-      });
-      const selectedChoices = choice?.filter(
-        (item) => item.decision !== "skip" && Boolean(item.pattern),
-      );
-      if (!selectedChoices?.length) return { approved: false };
-      for (const item of selectedChoices) {
-        await rememberDecision(
-          { ...draft, pattern: item.pattern },
-          item.decision as "allow" | "deny",
-          item.decision === "deny" ? item.guidance : undefined,
-          ctx,
-        );
       }
-      let approved = selectedChoices.every((item) => item.decision === "allow");
-      if (includePathRule && pathPattern) {
-        const pathRule = await chooseProtectedPathRule(
-          ctx,
-          pathPattern,
-          "allow",
-        );
-        if (!pathRule) return { approved: false };
-        await rememberDecision(
-          { kind: "protected", pattern: pathRule.pattern },
-          pathRule.decision,
-          undefined,
-          ctx,
-        );
-        approved &&= pathRule.decision === "allow";
-      }
-      const denialGuidance = selectedChoices
-        .filter((item) => item.decision === "deny" && item.guidance)
-        .map((item) => item.guidance)
-        .join("\n\n");
-      return {
-        approved,
-        guidance: denialGuidance || undefined,
-        handledRejection: selectedChoices.some(
-          (item) => item.decision === "deny",
-        ),
-      };
     };
   }
 
@@ -1752,6 +1715,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
             ctx,
             policy,
             rememberRule({ kind: "bash", pattern: event.input.command }, ctx),
+            () => activePolicy(activeProfile),
           );
           if (gateResult) return gateResult;
 
@@ -1856,18 +1820,71 @@ The permissions gate remains loaded and will fail closed until the profile is co
         }
 
         if (policyDecision.decision === "ask") {
+          // Keep one editor callback for the complete pending request so Back,
+          // failed writes, and partial-save rechecks share the same draft state.
+          const rememberPathRule = rememberRule(
+            {
+              kind: isReadToolName(event.toolName) ? "read" : "write",
+              pattern: displayPath(absolutePath, startupCwd),
+              contexts: [event.toolName],
+              requestedValue: absolutePath,
+              source: `${event.toolName} tool`,
+              matchedRule: policyDecision.trace?.pathMatches[0]
+                ? `${policyDecision.trace.pathMatches[0].item.pattern} → ${policyDecision.trace.pathMatches[0].item.decision}`
+                : undefined,
+              matchedPattern:
+                policyDecision.trace?.pathMatches[0]?.item.pattern,
+            },
+            ctx,
+          );
           const approval = await confirmOrBlock(
             ctx,
-            `Allow ${event.toolName}?`,
+            `${isReadToolName(event.toolName) ? "Read" : "Write"} path permission request`,
             `${event.toolName} wants to access:\n${absolutePath}\n\nMatched policy path:\n${matchPath}`,
-            rememberRule(
-              {
-                kind: "protected",
-                pattern: displayPath(absolutePath, startupCwd),
-              },
-              ctx,
-            ),
+            rememberPathRule,
           );
+          if (approval.profileUpdated) {
+            // Re-evaluate after every save. An edited pattern may deliberately
+            // remain ineffective, in which case the operation must not slip
+            // through merely because the editor was submitted.
+            while (true) {
+              const freshPolicy = activePolicy(activeProfile);
+              const rechecked = evaluatePathByPattern(
+                absolutePath,
+                startupCwd,
+                isReadToolName(event.toolName)
+                  ? freshPolicy.readPaths
+                  : freshPolicy.writePaths,
+                "allow",
+                event.toolName,
+                freshPolicy.protectedPathRules ?? [],
+              );
+              if (rechecked.decision === "allow") return undefined;
+              if (rechecked.decision === "deny")
+                return {
+                  block: true,
+                  reason: appendPolicySteering(
+                    `${event.toolName} denied by the saved profile for path: ${displayPath(absolutePath, startupCwd)}`,
+                    [rechecked.rule],
+                  ),
+                };
+              const retry = await confirmOrBlock(
+                ctx,
+                `${isReadToolName(event.toolName) ? "Read" : "Write"} path permission request`,
+                `${event.toolName} still requires permission for:\n${absolutePath}\n\nMatched policy path:\n${rechecked.matchPath}`,
+                rememberPathRule,
+              );
+              if (retry.profileUpdated) continue;
+              if (retry.approved) return undefined;
+              return {
+                block: true,
+                reason: appendUserGuidance(
+                  `${event.toolName} was not approved: ${absolutePath}`,
+                  retry.guidance,
+                ),
+              };
+            }
+          }
           if (!approval.approved)
             return {
               block: true,
@@ -2066,6 +2083,8 @@ type BashGateEvaluation = {
   readValidationError: string | undefined;
   pathDecision: ReturnType<typeof decideBashPathReferences>;
   pathTrace?: BashPathReferenceTrace;
+  pathTraces: readonly BashPathReferenceTrace[];
+  nonAuthorableAsks: readonly string[];
   commandDecisions: PolicyDecision[];
 };
 
@@ -2127,6 +2146,25 @@ function evaluateBashGate(
     commands.length > 0
       ? commands.map((item) => evaluateBash(item, activePolicy))
       : [evaluateBash("", activePolicy)];
+  // Keep the decision's short-circuit semantics, but collect the complete
+  // concrete trace separately for the request-level ASK editor. This avoids
+  // re-analyzing (and potentially resolving relative paths differently) in
+  // the UI callback.
+  const allPathAnalysis = analyzeBashPathReferences(
+    pathSegments,
+    startupCwd,
+    cwd,
+    activePolicy,
+    activePolicy.protectedPathRules ?? [],
+    false,
+  );
+  const pathTraces = allPathAnalysis.traces;
+  const nonAuthorableAsks = [
+    ...new Set([
+      ...pathAnalysis.nonAuthorableAsks,
+      ...allPathAnalysis.nonAuthorableAsks,
+    ]),
+  ];
 
   return {
     parseErrors,
@@ -2135,6 +2173,8 @@ function evaluateBashGate(
     readValidationError,
     pathDecision,
     pathTrace,
+    pathTraces,
+    nonAuthorableAsks,
     commandDecisions,
   };
 }
@@ -2145,6 +2185,7 @@ export async function gateBash(
   ctx: ExtensionContext,
   activePolicy = defaultPolicy,
   remember?: RememberDecision,
+  reloadForRecheck?: () => ProfilePolicy,
 ) {
   if (isOpaqueInterpreterCommand(command) && hasShellControlSyntax(command)) {
     return {
@@ -2178,27 +2219,6 @@ export async function gateBash(
     };
   }
 
-  if (parseErrors.length > 0) {
-    const details = parseErrors
-      .map((error) => `- offset ${error.pos}: ${error.message}`)
-      .join("\n");
-    const approval = await confirmOrBlock(
-      ctx,
-      "Allow Bash command with parse errors?",
-      `The command could not be classified completely.\n\n${details}\n\nRaw command:\n${command}`,
-      remember ? () => remember(commands) : undefined,
-    );
-    if (!approval.approved) {
-      return {
-        block: true,
-        reason: appendUserGuidance(
-          `Bash command was not approved because it could not be classified completely.\n\n${details}`,
-          approval.guidance,
-        ),
-      };
-    }
-  }
-
   if (readValidationError) {
     return {
       block: true,
@@ -2215,21 +2235,104 @@ export async function gateBash(
       ),
     };
   }
-  if (pathDecision?.decision === "ask") {
+  // Complete command denies before presenting any path ASK. A save flow must
+  // never suggest that an unrelated path rule can override this deny.
+  if (decisions.some(({ decision }) => decision === "deny")) {
+    return {
+      block: true,
+      reason: appendPolicySteering(
+        `Command denied by explicit rule.\n\nRaw command:\n${command}\n\nParsed command segments:\n${formatParsedCommands(command, activePolicy)}`,
+        decisions
+          .filter(({ decision }) => decision === "deny")
+          .map(({ rule }) => rule),
+      ),
+    };
+  }
+
+  // Deterministic protected/ordinary/command denies above still win. Once
+  // parse uncertainty remains, however, resolve the request exactly once as
+  // non-authorable allow-once/deny instead of opening a second ASK prompt.
+  if (parseErrors.length > 0) {
+    const details = parseErrors
+      .map((error) => `- offset ${error.pos}: ${error.message}`)
+      .join("\n");
     const approval = await confirmOrBlock(
       ctx,
-      "Bash command references a gated path?",
-      `Raw command:\n${command}\n\nParsed command segments:\n${formatParsedCommands(command, activePolicy)}\n\nPath:\n${pathDecision.path}\n\nMatched policy path:\n${pathDecision.matchPath}`,
-      remember ? () => remember(commands) : undefined,
+      "Allow Bash command with parse errors?",
+      `The command could not be classified completely.\n\n${details}\n\nRaw command:\n${command}`,
+      undefined,
     );
+    if (approval.approved) return undefined;
+    return {
+      block: true,
+      reason: appendUserGuidance(
+        `Bash command was not approved because it could not be classified completely,\n\n${details}`,
+        approval.guidance,
+      ),
+    };
+  }
+
+  if (
+    pathDecision?.decision === "ask" ||
+    decisions.some(({ decision }) => decision === "ask")
+  ) {
+    const askPaths = evaluation.pathTraces.filter(
+      (trace) => trace.decision === "ask",
+    );
+    const hasNonAuthorableAsk = evaluation.nonAuthorableAsks.length > 0;
+    const approval = await confirmOrBlock(
+      ctx,
+      "Bash permission request",
+      `Raw command:\n${command}\n\nParsed command segments:\n${formatParsedCommands(command, activePolicy)}${
+        askPaths.length > 0
+          ? `\n\nGated paths:\n${askPaths
+              .map(
+                (trace) =>
+                  `- ${trace.kind} path · context ${trace.context}: ${trace.path}\n  Matched: ${trace.matchPath}`,
+              )
+              .join("\n")}`
+          : ""
+      }${
+        hasNonAuthorableAsk
+          ? `\n\nNon-authorable path uncertainty:\n${evaluation.nonAuthorableAsks.join("\n")}`
+          : ""
+      }`,
+      parseErrors.length === 0 &&
+        remember &&
+        // Any unresolved opaque/dynamic path is required for this request but
+        // cannot be represented truthfully as a durable rule.
+        !hasNonAuthorableAsk &&
+        (decisions.some(({ decision }) => decision === "ask") ||
+          askPaths.length > 0)
+        ? () =>
+            remember(
+              commands.filter(
+                (_item, index) => decisions[index]?.decision === "ask",
+              ),
+              askPaths,
+            )
+        : undefined,
+    );
+    if (approval.profileUpdated)
+      return await gateBash(
+        command,
+        startupCwd,
+        ctx,
+        reloadForRecheck?.() ?? activePolicy,
+        remember,
+        reloadForRecheck,
+      );
     if (!approval.approved)
       return {
         block: true,
         reason: appendUserGuidance(
-          `Bash path reference was not approved: ${pathDecision.path}`,
+          pathDecision?.decision === "ask"
+            ? `Bash path reference was not approved: ${pathDecision.path}`
+            : `Command was not approved: ${command}`,
           approval.guidance,
         ),
       };
+    return undefined;
   }
 
   if (decisions.some(({ decision }) => decision === "deny")) {
@@ -2249,15 +2352,25 @@ export async function gateBash(
       ctx,
       "Allow bash command?",
       `Raw command:\n${command}\n\nParsed command segments:\n${formatParsedCommands(command, activePolicy)}`,
-      remember
+      parseErrors.length === 0 && remember
         ? () =>
             remember(
               commands.filter(
                 (_item, index) => decisions[index]?.decision === "ask",
               ),
+              evaluation.pathTraces,
             )
         : undefined,
     );
+    if (approval.profileUpdated)
+      return await gateBash(
+        command,
+        startupCwd,
+        ctx,
+        reloadForRecheck?.() ?? activePolicy,
+        remember,
+        reloadForRecheck,
+      );
     if (!approval.approved)
       return {
         block: true,
@@ -2988,15 +3101,9 @@ async function confirmOrBlock(
   const setWorkingVisible = ctx.ui.setWorkingVisible?.bind(ctx.ui);
   setWorkingVisible?.(false);
   try {
-    // Standalone callers and older RPC adapters may not expose select().
-    // Preserve the previous binary confirmation contract for them.
-    if (typeof ctx.ui.select !== "function") {
-      const approved = await ctx.ui.confirm(title, _message);
-      if (approved) return { approved: true };
-      const guidance = await collectDenialGuidance(ctx);
-      return guidance ? { approved: false, guidance } : { approved: false };
-    }
     const [noChoice, yesChoice, updateProfileChoice] = askPermissionChoices;
+    const isBashRequest = /bash/i.test(title);
+    const isReadRequest = /read|grep|find|ls/i.test(title);
     const askChoices: ProfilePickerItem[] = [
       {
         name: noChoice,
@@ -3010,64 +3117,69 @@ async function confirmOrBlock(
         emoji: "✅",
         color: "green",
       },
-      {
-        name: updateProfileChoice,
-        description: "Review and save command or protected-path rules.",
-        emoji: "📝",
-        color: "magenta",
-      },
+      ...(remember
+        ? [
+            {
+              name: updateProfileChoice,
+              description: isBashRequest
+                ? "Save the required Bash and ordinary path rule(s) for this request."
+                : isReadRequest
+                  ? "Save a read-path rule for this request."
+                  : "Save a write-path rule for this request.",
+              emoji: "📝",
+              color: "magenta",
+            } satisfies ProfilePickerItem,
+          ]
+        : []),
     ];
     // Unlike a binary confirm, select() has no separate message parameter.
     // Keep the complete request report in the modal title so users can see
     // the raw command plus its parsed allow/deny/ask breakdown before acting.
     const modalTitle = `${title}\n\n${_message}`;
-    const isBashRequest = /bash/i.test(title);
-    const choice =
-      (ctx as { mode?: string }).mode === "tui"
-        ? await ctx.ui.custom<string | null>((tui, theme, _keys, done) => {
-            const picker = new ProfilePicker(askChoices, theme, done, () =>
-              done(null),
-            );
-            return {
-              get focused() {
-                return picker.focused;
-              },
-              set focused(value: boolean) {
-                picker.focused = value;
-              },
-              render: (width) =>
-                [
-                  theme.fg(
-                    isBashRequest ? "accent" : "warning",
-                    theme.bold(
-                      `${isBashRequest ? "⚙️ Bash pattern" : "🛡️ Protected path"} permission request`,
-                    ),
-                  ),
-                  ...modalTitle
-                    .split("\n")
-                    .map((line) => theme.fg("dim", line)),
-                  ...picker.render(width),
-                ].map((line) => truncateToWidth(line, width)),
-              invalidate: () => picker.invalidate(),
-              handleInput: (data) => {
-                picker.handleInput(data);
-                tui.requestRender();
-              },
-            };
-          })
-        : // The third argument is ignored by Pi's UI implementation, but lets
-          // our deterministic harness retain the original title/message assertions.
-          await (
-            ctx.ui.select as unknown as (
-              title: string,
-              options: string[],
-              permissionMessage?: string,
-            ) => Promise<string | undefined>
-          )(modalTitle, [...askPermissionChoices], _message);
+    const choice = await ctx.ui.custom<string | null>(
+      (tui, theme, _keys, done) => {
+        const picker = new ProfilePicker(askChoices, theme, done, () =>
+          done(null),
+        );
+        return {
+          get focused() {
+            return picker.focused;
+          },
+          set focused(value: boolean) {
+            picker.focused = value;
+          },
+          render: (width) =>
+            [
+              theme.fg(
+                isBashRequest ? "accent" : "warning",
+                theme.bold(
+                  `${
+                    isBashRequest
+                      ? "⚙️ Bash command"
+                      : isReadRequest
+                        ? "📖 Read path"
+                        : "✏️ Write path"
+                  } permission request`,
+                ),
+              ),
+              ...modalTitle.split("\n").map((line) => theme.fg("dim", line)),
+              ...picker.render(width),
+            ].map((line) => truncateToWidth(line, width)),
+          invalidate: () => picker.invalidate(),
+          handleInput: (data) => {
+            picker.handleInput(data);
+            tui.requestRender();
+          },
+        };
+      },
+    );
     if (choice === yesChoice) return { approved: true };
     if (choice === updateProfileChoice && remember) {
       const result = await remember();
-      if (result.approved || result.handledRejection) return result;
+      if (result.back)
+        return await confirmOrBlock(ctx, title, _message, remember);
+      if (result.approved || result.handledRejection || result.profileUpdated)
+        return result;
       const guidance = await collectDenialGuidance(ctx);
       return { ...result, guidance };
     }

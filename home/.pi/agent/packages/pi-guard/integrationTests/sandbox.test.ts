@@ -33,6 +33,7 @@ beforeAll(() => {
 
 afterEach(() => {
   delete process.env.PI_GUARD_PROFILE_CONFIG;
+  delete process.env.PI_SUBAGENT_PROFILE;
   delete process.env.PI_SUBAGENT_PERMISSIBLE_GLOBS;
   for (const fixture of tempDirectories.splice(0)) {
     fs.rmSync(fixture, { recursive: true, force: true });
@@ -243,7 +244,7 @@ async function runThroughPi({
       toolName: "bash",
       input: { command, timeout },
     });
-    expect(gate?.block).not.toBe(true);
+    expect(gate?.block, gate?.reason).not.toBe(true);
     return exitCodeFrom({
       result: await harness.executeTool({
         name: "bash",

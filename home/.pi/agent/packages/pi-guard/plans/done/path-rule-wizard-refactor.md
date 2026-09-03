@@ -52,10 +52,10 @@ The refactor starts from several important implementation facts:
 
 Use these user-facing meanings consistently:
 
-| Layer | Configuration | Meaning |
-| --- | --- | --- |
-| Read permission | `readPaths` | Governs concrete read operations in contexts such as `read`, `grep`, `find`, and `ls`. |
-| Write permission | `writePaths` | Governs concrete mutation-capable operations in contexts such as `edit`, `write`, and conservative Bash filesystem access. |
+| Layer               | Configuration        | Meaning                                                                                                                                                      |
+| ------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Read permission     | `readPaths`          | Governs concrete read operations in contexts such as `read`, `grep`, `find`, and `ls`.                                                                       |
+| Write permission    | `writePaths`         | Governs concrete mutation-capable operations in contexts such as `edit`, `write`, and conservative Bash filesystem access.                                   |
 | Protected safeguard | `protectedPathRules` | Runs before ordinary policy. A deny blocks both reads and writes. An allow is only an exception to another protected deny; it grants no ordinary permission. |
 
 Protected safeguards are authored only from an explicitly labelled safeguards
@@ -99,8 +99,8 @@ type AskRuleCandidate =
   | {
       kind: OrdinaryPathRuleKind;
       context: PathContext;
-      requestedValue: string;       // immutable concrete path shown to user
-      initialPattern: string;       // editable, display-relative when possible
+      requestedValue: string; // immutable concrete path shown to user
+      initialPattern: string; // editable, display-relative when possible
       currentDecision: "ask";
       matchedRule?: RuleSource;
       source: { tool: string; role?: string };
@@ -134,13 +134,13 @@ For multiple authorable path references:
 
 This gives these scopes without a target picker:
 
-| Outstanding authorable decisions | Save screen |
-| --- | --- |
-| Bash only | Bash rows |
-| read path only | Read-path row(s) |
-| write path only | Write-path row(s) |
-| Bash + path | One screen containing both sections |
-| several paths/commands | One ordered, atomic change set |
+| Outstanding authorable decisions | Save screen                         |
+| -------------------------------- | ----------------------------------- |
+| Bash only                        | Bash rows                           |
+| read path only                   | Read-path row(s)                    |
+| write path only                  | Write-path row(s)                   |
+| Bash + path                      | One screen containing both sections |
+| several paths/commands           | One ordered, atomic change set      |
 
 ## ASK UX
 
@@ -239,11 +239,11 @@ immediate warning such as:
 Do not claim that a simple lexical glob check proves the complete affected set.
 Use these four labels consistently and map each one to its real destination:
 
-| UI label | Configuration destination |
-| --- | --- |
-| `⚙️ BASH COMMAND` | `tools.bash` |
-| `📖 READ PATH` | `readPaths` |
-| `✏️ WRITE PATH` | `writePaths` |
+| UI label                 | Configuration destination                                    |
+| ------------------------ | ------------------------------------------------------------ |
+| `⚙️ BASH COMMAND`        | `tools.bash`                                                 |
+| `📖 READ PATH`           | `readPaths`                                                  |
+| `✏️ WRITE PATH`          | `writePaths`                                                 |
 | `🛡️ PROTECTED SAFEGUARD` | `protectedPathRules` (the current “protected paths” feature) |
 
 `PROTECTED SAFEGUARD` appears only in CREATE/profile management; it is not a
@@ -338,15 +338,15 @@ type RuleEditorOptions = {
 
 Mode differences are explicit rather than implemented in separate components:
 
-| Behavior | ASK | CREATE |
-| --- | --- | --- |
-| Initial rows | Evaluation-derived, prefilled | Empty until user adds one |
-| Initial decision | allow for request rows; deny for additional rows | deny (safe manual-authoring default) |
-| Add/remove rows | Request rows retain provenance; clearly labelled additional rows may be added/removed | Yes |
-| Context | Fixed on request rows; additional rows default from the selected row and may choose a valid context | Selected from valid contexts or omitted for all contexts |
-| Reset | Restore request-derived rows and remove additional rows | Clear unsaved rows in the section |
-| Enter | Atomically save non-skipped rows, reload, and re-evaluate the pending request | Return section draft to profile overview |
-| Protected kind | Never generated for ordinary ASK | Available only as safeguards section |
+| Behavior         | ASK                                                                                                 | CREATE                                                   |
+| ---------------- | --------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| Initial rows     | Evaluation-derived, prefilled                                                                       | Empty until user adds one                                |
+| Initial decision | allow for request rows; deny for additional rows                                                    | deny (safe manual-authoring default)                     |
+| Add/remove rows  | Request rows retain provenance; clearly labelled additional rows may be added/removed               | Yes                                                      |
+| Context          | Fixed on request rows; additional rows default from the selected row and may choose a valid context | Selected from valid contexts or omitted for all contexts |
+| Reset            | Restore request-derived rows and remove additional rows                                             | Clear unsaved rows in the section                        |
+| Enter            | Atomically save non-skipped rows, reload, and re-evaluate the pending request                       | Return section draft to profile overview                 |
+| Protected kind   | Never generated for ordinary ASK                                                                    | Available only as safeguards section                     |
 
 Deny guidance is available for Bash, read, and write deny rows where supported
 by schema. Protected safeguards should not imply request steering.

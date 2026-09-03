@@ -67,7 +67,7 @@ describe("decision table", () => {
         (row) => expectedForProfile(row, profile) !== undefined,
       ),
     )("$command", async ({ command, expected }) => {
-      harness.ui.confirm.mockClear();
+      harness.ui.custom.mockClear();
       const decision = expectedForProfile({ command, expected }, profile);
       if (!decision)
         throw new Error(`Missing decision-table expectation for ${profile}`);
@@ -80,18 +80,18 @@ describe("decision table", () => {
       switch (decision) {
         case "allow":
           expect(result).toBeUndefined();
-          expect(harness.ui.confirm).not.toHaveBeenCalled();
+          expect(harness.ui.custom).not.toHaveBeenCalled();
           break;
         case "ask":
           expect(result).toMatchObject({ block: true });
-          expect(harness.ui.confirm).toHaveBeenCalledWith(
-            "Allow bash command?",
-            expect.stringContaining(command),
-          );
+          expect(harness.ui.custom).toHaveBeenCalledOnce();
+          expect(
+            harness.customComponents.at(-1)?.render?.(160).join("\n"),
+          ).toContain(command);
           break;
         case "deny":
           expect(result).toMatchObject({ block: true });
-          expect(harness.ui.confirm).not.toHaveBeenCalled();
+          expect(harness.ui.custom).not.toHaveBeenCalled();
           break;
       }
     });

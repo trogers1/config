@@ -45,12 +45,20 @@ export type PathPolicyDecision = PolicyDecision & {
 export type BashPathReferenceTrace = PathPolicyTrace & {
   path: string;
   matchPath: string;
+  /** The ordinary collection used by enforcement for this reference. */
+  kind: "read" | "write";
   context: PathContext;
+  /** Effective ordinary decision after specificity and context filtering. */
+  decision: Decision;
 };
 
 export type BashPathReferenceAnalysis = {
   decision?: DecisionWithPath;
   trace?: BashPathReferenceTrace;
+  /** Every concrete reference encountered, in shell encounter order. */
+  traces: readonly BashPathReferenceTrace[];
+  /** ASK reasons that cannot be represented by a concrete path rule. */
+  nonAuthorableAsks: readonly string[];
 };
 
 type CwdState = {
@@ -72,6 +80,8 @@ type PathToken = {
 type BashPathTraceSink = {
   first?: BashPathReferenceTrace;
   blocking?: BashPathReferenceTrace;
+  traces: BashPathReferenceTrace[];
+  nonAuthorableAsks: string[];
 };
 
 function recordBashPathTrace(
@@ -80,6 +90,7 @@ function recordBashPathTrace(
   decision: Decision,
 ): void {
   if (!sink) return;
+  sink.traces.push(trace);
   if (!sink.first) sink.first = trace;
   if (decision !== "allow" && !sink.blocking) sink.blocking = trace;
 }
@@ -89,11 +100,14 @@ function pathTraceFromDecision(
   path: string,
   matchPath: string,
   context: PathContext,
+  kind: "read" | "write" = context === "ls" ? "read" : "write",
 ): BashPathReferenceTrace {
   return {
     path,
     matchPath,
+    kind,
     context,
+    decision: decision.decision,
     protectedMatches: decision.trace?.protectedMatches ?? [],
     pathMatches: decision.trace?.pathMatches ?? [],
   };
@@ -108,7 +122,7 @@ export function analyzeBashPathReferences(
   stopOnAsk = true,
 ): BashPathReferenceAnalysis {
   let state: CwdState = { cwd, known: true };
-  const traceSink: BashPathTraceSink = {};
+  const traceSink: BashPathTraceSink = { traces: [], nonAuthorableAsks: [] };
 
   for (const segment of commandSegments) {
     const script = parse(segment);
@@ -126,11 +140,17 @@ export function analyzeBashPathReferences(
       return {
         decision: result.decision,
         trace: result.trace ?? traceSink.blocking ?? traceSink.first,
+        traces: traceSink.traces,
+        nonAuthorableAsks: traceSink.nonAuthorableAsks,
       };
     }
   }
 
-  return { trace: traceSink.blocking ?? traceSink.first };
+  return {
+    trace: traceSink.blocking ?? traceSink.first,
+    traces: traceSink.traces,
+    nonAuthorableAsks: traceSink.nonAuthorableAsks,
+  };
 }
 
 export function decideBashPathReferences(
@@ -390,7 +410,8 @@ function analyzeNode(
     }
     case "Pipeline":
       if (node.commands.length > 1 && containsCwdMutation(node)) {
-        if (stopOnAsk) return uncertainCwdDecision(state, "pipeline CWD");
+        if (stopOnAsk)
+          return uncertainCwdDecision(state, "pipeline CWD", traceSink);
         const unknownState = { ...state, known: false };
         return analyzeNestedNodes(
           node.commands,
@@ -436,7 +457,8 @@ function analyzeNode(
         operators.some((operator) => operator === "||") &&
         containsCwdMutation(node)
       ) {
-        if (stopOnAsk) return uncertainCwdDecision(state, "conditional CWD");
+        if (stopOnAsk)
+          return uncertainCwdDecision(state, "conditional CWD", traceSink);
         const unknownState = { ...state, known: false };
         return analyzeNestedNodes(
           node.commands,
@@ -500,7 +522,11 @@ function analyzeNode(
       );
     case "ArithmeticFor":
       return stopOnAsk
-        ? opaqueExpressionDecision(state, "Bash arithmetic for expression")
+        ? opaqueExpressionDecision(
+            state,
+            "Bash arithmetic for expression",
+            traceSink,
+          )
         : analyzeUnsupportedNode(
             node,
             state,
@@ -511,21 +537,36 @@ function analyzeNode(
             traceSink,
           );
     case "TestCommand":
-      return opaqueExpressionDecision(state, "Bash [[ ... ]] expression");
+      return opaqueExpressionDecision(
+        state,
+        "Bash [[ ... ]] expression",
+        traceSink,
+      );
     case "ArithmeticCommand":
       return opaqueExpressionDecision(
         state,
         "Bash (( ... )) arithmetic expression",
+        traceSink,
       );
     default:
       return { state };
   }
 }
 
+function recordNonAuthorableAsk(
+  sink: BashPathTraceSink | undefined,
+  description: string,
+): void {
+  if (sink && !sink.nonAuthorableAsks.includes(description))
+    sink.nonAuthorableAsks.push(description);
+}
+
 function opaqueExpressionDecision(
   state: CwdState,
   description: string,
+  traceSink?: BashPathTraceSink,
 ): { state: CwdState; decision: DecisionWithPath } {
+  recordNonAuthorableAsk(traceSink, description);
   return {
     state,
     decision: {
@@ -539,7 +580,9 @@ function opaqueExpressionDecision(
 function uncertainCwdDecision(
   state: CwdState,
   description: string,
+  traceSink?: BashPathTraceSink,
 ): { state: CwdState; decision: DecisionWithPath } {
+  recordNonAuthorableAsk(traceSink, description);
   return {
     state: { ...state, known: false },
     decision: {
@@ -702,7 +745,7 @@ function analyzeUnsupportedNode(
 } {
   const hasCwdMutation = containsCwdMutation(node);
   if (hasCwdMutation && stopOnAsk) {
-    return uncertainCwdDecision(state, "conditional CWD");
+    return uncertainCwdDecision(state, "conditional CWD", traceSink);
   }
   const nestedNodes = collectNestedNodes(node);
   const analysisState = hasCwdMutation ? { ...state, known: false } : state;
@@ -823,7 +866,7 @@ function analyzeCommand(
   const opaqueExpression = opaqueCommandExpression(commandName);
   return opaqueExpression
     ? {
-        ...opaqueExpressionDecision(state, opaqueExpression),
+        ...opaqueExpressionDecision(state, opaqueExpression, traceSink),
         trace: traceSink?.first,
       }
     : { state, trace: traceSink?.first };
@@ -881,6 +924,7 @@ function evaluateToken(
 
   if (token.kind === "dynamic") {
     if (token.dynamicRole === "argument") return undefined;
+    recordNonAuthorableAsk(traceSink, token.value);
     return {
       decision: "ask",
       path: token.value,
@@ -891,6 +935,7 @@ function evaluateToken(
   // An unrecognized attached option may contain a path-valued operand. The
   // command adapter must extract it before we can resolve it safely.
   if (token.kind === "ambiguous" && token.value.startsWith("-")) {
+    recordNonAuthorableAsk(traceSink, token.value);
     return {
       decision: "ask",
       path: token.value,
@@ -919,6 +964,7 @@ function evaluateTokenAsPath(
   traceSink?: BashPathTraceSink,
 ): DecisionWithPath | undefined {
   if (token.kind === "dynamic") {
+    recordNonAuthorableAsk(traceSink, token.value);
     return { decision: "ask", path: token.value, matchPath: token.value };
   }
 
@@ -943,6 +989,7 @@ function evaluateTokenAsPath(
         );
       return protectedDecision;
     }
+    recordNonAuthorableAsk(traceSink, token.value);
     return { decision: "ask", path: token.value, matchPath: token.value };
   }
 
@@ -989,6 +1036,7 @@ function evaluateCdTarget(
   traceSink?: BashPathTraceSink,
 ): DecisionWithPath | undefined {
   if (token.kind === "dynamic") {
+    recordNonAuthorableAsk(traceSink, token.value);
     return { decision: "ask", path: token.value, matchPath: token.value };
   }
 
@@ -1013,6 +1061,7 @@ function evaluateCdTarget(
         );
       return protectedDecision;
     }
+    recordNonAuthorableAsk(traceSink, token.value);
     return { decision: "ask", path: token.value, matchPath: token.value };
   }
 

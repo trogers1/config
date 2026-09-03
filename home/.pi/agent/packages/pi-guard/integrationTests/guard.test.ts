@@ -3,6 +3,7 @@ import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { isFocusable, type Component } from "@earendil-works/pi-tui";
 import permissionsExtension, {
   decideBash,
   decideCustomTool,
@@ -12,6 +13,7 @@ import permissionsExtension, {
   splitShellCommands,
 } from "../extensions/guard";
 import { policyConfig } from "../modules/policy";
+import { askPermissionChoices } from "../modules/profileUpdate";
 import type { CustomToolRule, ProfilePolicy } from "../modules/policyHelpers";
 import { defaultProtectedPathRules } from "../modules/protectedPaths";
 
@@ -46,12 +48,43 @@ const parserPolicy = {
   ],
 } satisfies ProfilePolicy;
 
+function customPermissionPicker(confirm: boolean) {
+  return vi.fn().mockImplementation((factory: unknown) => {
+    let result: unknown = null;
+    const theme = {
+      fg: (_color: string, text: string) => text,
+      bg: (_color: string, text: string) => text,
+      bold: (text: string) => text,
+    };
+    const component = (
+      factory as (
+        tui: { requestRender: () => void },
+        componentTheme: typeof theme,
+        keybindings: undefined,
+        done: (value: unknown) => void,
+      ) => Component
+    )(
+      { requestRender: () => undefined },
+      theme,
+      undefined,
+      (value) => (result = value),
+    );
+    if (isFocusable(component)) component.focused = true;
+    for (const character of confirm
+      ? askPermissionChoices[1]
+      : askPermissionChoices[0])
+      component.handleInput?.(character);
+    component.handleInput?.("\n");
+    return Promise.resolve(result);
+  });
+}
+
 function context(cwd: string, confirm = true) {
   return {
     cwd,
     hasUI: true,
     ui: {
-      confirm: vi.fn().mockResolvedValue(confirm),
+      custom: customPermissionPicker(confirm),
       editor: vi.fn().mockResolvedValue(undefined),
       notify: vi.fn(),
       setStatus: vi.fn(),
@@ -71,6 +104,7 @@ function nonInteractiveContext(cwd: string) {
       setStatus: vi.fn(),
       notify: vi.fn(),
       confirm: vi.fn(),
+      custom: vi.fn(),
     },
     sessionManager: {
       getEntries: () => [],
@@ -176,10 +210,20 @@ describe("shell policy parser", () => {
 
     expect(result).toMatchObject({ block: true });
     expect(result?.reason).toContain("could not be classified completely");
-    expect(vi.mocked(ctx.ui.confirm)).toHaveBeenCalledWith(
-      "Allow Bash command with parse errors?",
-      expect.stringContaining("unterminated"),
+    expect(vi.mocked(ctx.ui.custom)).toHaveBeenCalledOnce();
+  });
+
+  it("allows a parse-error ASK with exactly one non-authorable prompt", async () => {
+    const ctx = context(process.cwd(), true);
+    const result = await gateBash(
+      "python scripts/build.py 'unterminated",
+      process.cwd(),
+      ctx,
+      parserPolicy,
     );
+
+    expect(result).toBeUndefined();
+    expect(vi.mocked(ctx.ui.custom)).toHaveBeenCalledTimes(1);
   });
 
   it("denies a definite protected path before prompting for parse errors", async () => {
@@ -198,7 +242,7 @@ describe("shell policy parser", () => {
 
     expect(result).toMatchObject({ block: true });
     expect(result?.reason).toContain("protected-path policy");
-    expect(vi.mocked(ctx.ui.confirm)).not.toHaveBeenCalled();
+    expect(vi.mocked(ctx.ui.custom)).not.toHaveBeenCalled();
   });
 
   it("blocks unbash parse errors without attempting a non-interactive prompt", async () => {
@@ -212,7 +256,7 @@ describe("shell policy parser", () => {
 
     expect(result).toMatchObject({ block: true });
     expect(result?.reason).toContain("could not be classified completely");
-    expect(vi.mocked(ctx.ui.confirm)).not.toHaveBeenCalled();
+    expect(vi.mocked(ctx.ui.custom)).not.toHaveBeenCalled();
   });
 
   it("denies a compound command when any parsed segment is denied", async () => {
@@ -312,7 +356,7 @@ describe("shell policy parser", () => {
         parserPolicy,
       ),
     ).resolves.toBeUndefined();
-    expect(vi.mocked(ctx.ui.confirm).mock.calls).toHaveLength(1);
+    expect(vi.mocked(ctx.ui.custom).mock.calls).toHaveLength(1);
   });
 
   it("supports root, nested, and outside glob paths", () => {
@@ -428,7 +472,7 @@ describe("default profile bash policy", () => {
         policyConfig.profiles["builtin:default"],
       ),
     ).resolves.toBeUndefined();
-    expect(vi.mocked(ctx.ui.confirm)).not.toHaveBeenCalled();
+    expect(vi.mocked(ctx.ui.custom)).not.toHaveBeenCalled();
   });
 
   it("treats Git's bare -- separator as syntax rather than a path", async () => {
@@ -443,7 +487,7 @@ describe("default profile bash policy", () => {
         policyConfig.profiles["builtin:default"],
       ),
     ).resolves.toBeUndefined();
-    expect(vi.mocked(ctx.ui.confirm)).not.toHaveBeenCalled();
+    expect(vi.mocked(ctx.ui.custom)).not.toHaveBeenCalled();
   });
 
   it("does not treat clustered short flags as gated paths", async () => {
@@ -457,7 +501,7 @@ describe("default profile bash policy", () => {
         policyConfig.profiles["builtin:default"],
       ),
     ).resolves.toBeUndefined();
-    expect(vi.mocked(ctx.ui.confirm)).not.toHaveBeenCalled();
+    expect(vi.mocked(ctx.ui.custom)).not.toHaveBeenCalled();
   });
 
   it("still gates path-shaped attached option values", async () => {
@@ -471,7 +515,7 @@ describe("default profile bash policy", () => {
     );
     expect(result).toMatchObject({ block: true });
     expect(result?.reason).toContain("--output=.env");
-    expect(vi.mocked(ctx.ui.confirm)).toHaveBeenCalled();
+    expect(vi.mocked(ctx.ui.custom)).toHaveBeenCalled();
   });
 
   it.each(["builtin:default", "builtin:read-only"] as const)(
@@ -502,7 +546,7 @@ describe("default profile bash policy", () => {
           ),
           document,
         ).resolves.toBeUndefined();
-        expect(vi.mocked(ctx.ui.confirm), document).not.toHaveBeenCalled();
+        expect(vi.mocked(ctx.ui.custom), document).not.toHaveBeenCalled();
       }
     },
   );
@@ -526,7 +570,7 @@ describe("default profile bash policy", () => {
           policyConfig.profiles[profile],
         ),
       ).resolves.toBeUndefined();
-      expect(vi.mocked(ctx.ui.confirm)).not.toHaveBeenCalled();
+      expect(vi.mocked(ctx.ui.custom)).not.toHaveBeenCalled();
     },
   );
 
@@ -643,7 +687,7 @@ describe("default profile bash policy", () => {
       );
 
       expect(result).toMatchObject({ block: true });
-      expect(vi.mocked(ctx.ui.confirm)).not.toHaveBeenCalled();
+      expect(vi.mocked(ctx.ui.custom)).not.toHaveBeenCalled();
     },
   );
 
@@ -662,7 +706,7 @@ describe("default profile bash policy", () => {
     );
 
     expect(result).toMatchObject({ block: true });
-    expect(vi.mocked(ctx.ui.confirm)).not.toHaveBeenCalled();
+    expect(vi.mocked(ctx.ui.custom)).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -684,10 +728,7 @@ describe("default profile bash policy", () => {
       await expect(
         gateBash(command, process.cwd(), ctx, restrictivePolicy),
       ).resolves.toBeUndefined();
-      expect(vi.mocked(ctx.ui.confirm)).toHaveBeenCalledWith(
-        "Bash command references a gated path?",
-        expect.stringContaining(command),
-      );
+      expect(vi.mocked(ctx.ui.custom)).toHaveBeenCalledOnce();
     },
   );
 
@@ -921,7 +962,7 @@ describe("default profile bash policy", () => {
         command,
       ).resolves.toBeUndefined();
     }
-    expect(vi.mocked(ctx.ui.confirm)).not.toHaveBeenCalled();
+    expect(vi.mocked(ctx.ui.custom)).not.toHaveBeenCalled();
   });
 
   it("gates package manager directory options as paths", async () => {
@@ -984,7 +1025,7 @@ describe("default profile bash policy", () => {
       await expect(
         gateBash("cd project", process.cwd(), ctx, policy),
       ).resolves.toBeUndefined();
-      expect(vi.mocked(ctx.ui.confirm)).not.toHaveBeenCalled();
+      expect(vi.mocked(ctx.ui.custom)).not.toHaveBeenCalled();
     });
 
     it("denies cd into a read-denied directory, because cd repositions readers", async () => {
@@ -1041,7 +1082,7 @@ describe("default profile bash policy", () => {
       expect(result).toMatchObject({ block: true });
       expect(result?.reason).toContain("Bash path reference denied by policy");
       expect(result?.reason).toContain("docs/blocked");
-      expect(vi.mocked(ctx.ui.confirm)).not.toHaveBeenCalled();
+      expect(vi.mocked(ctx.ui.custom)).not.toHaveBeenCalled();
     });
 
     it("still gates operands against the directory tracked through cd", async () => {
@@ -1093,7 +1134,7 @@ describe("default profile bash policy", () => {
         policyConfig.profiles["builtin:default"],
       ),
     ).resolves.toMatchObject({ block: true });
-    expect(vi.mocked(ctx.ui.confirm)).toHaveBeenCalled();
+    expect(vi.mocked(ctx.ui.custom)).toHaveBeenCalled();
   });
 
   it.each([
@@ -1303,7 +1344,7 @@ describe("extension harness custom tool inheritance", () => {
       expect(
         String((interactiveResult as { reason?: string }).reason),
       ).toContain("deploy denied by custom tool policy");
-      expect(vi.mocked(interactiveCtx.ui.confirm)).not.toHaveBeenCalled();
+      expect(vi.mocked(interactiveCtx.ui.custom)).not.toHaveBeenCalled();
 
       const { api, handlers } = createExtensionHarness();
       permissionsExtension(api);
@@ -1337,7 +1378,7 @@ describe("extension harness custom tool inheritance", () => {
       expect(String((result as { reason?: string }).reason)).toContain(
         "deploy denied by custom tool policy",
       );
-      expect(vi.mocked(ctx.ui.confirm)).not.toHaveBeenCalled();
+      expect(vi.mocked(ctx.ui.custom)).not.toHaveBeenCalled();
     } finally {
       if (previousConfigPath === undefined) {
         delete process.env.PI_GUARD_PROFILE_CONFIG;
@@ -1418,7 +1459,7 @@ describe("extension harness custom tool inheritance", () => {
           ctx,
         ),
       ).resolves.toBeUndefined();
-      expect(vi.mocked(ctx.ui.confirm)).not.toHaveBeenCalled();
+      expect(vi.mocked(ctx.ui.custom)).not.toHaveBeenCalled();
     } finally {
       if (previousConfigPath === undefined) {
         delete process.env.PI_GUARD_PROFILE_CONFIG;
