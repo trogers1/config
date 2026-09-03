@@ -1,7 +1,8 @@
 ---
 name: reviewer
-description: Code review specialist for quality and security analysis (no model pinned — inherits the default model)
+description: Code review specialist for quality and security analysis
 tools: read, grep, find, ls, bash
+model: openai/gpt-5.6-sol
 profile: builtin:read-only
 ---
 
