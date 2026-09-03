@@ -3,6 +3,7 @@
 This repo manages selected global pi agent config:
 
 * `home/.pi/agent/settings.json` → `~/.pi/agent/settings.json`
+* Entries in `home/.pi/agent/extensions` → matching entries in `~/.pi/agent/extensions` (preserving other local extensions)
 * `home/.pi/agent/packages/pi-guard` → `~/.pi/agent/packages/pi-guard`
 * `home/.pi/agent/packages/pi-guard-subagents` → `~/.pi/agent/packages/pi-guard-subagents`
 * `home/.pi/agent/packages/pi-webfetch` → `~/.pi/agent/packages/pi-webfetch`

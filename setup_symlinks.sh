@@ -215,6 +215,7 @@ managed_entry_directories=(
   "$HOME_DIR|$HOME|home"
   "$XDG_DIR|$HOME/.config|xdg"
   "$HOME_DIR/.pi/agent/packages|$HOME/.pi/agent/packages|pi package"
+  "$HOME_DIR/.pi/agent/extensions|$HOME/.pi/agent/extensions|pi extension"
 )
 
 manage_declared_entry_directories() {
