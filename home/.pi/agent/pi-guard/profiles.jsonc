@@ -214,6 +214,20 @@
           "decision": "allow",
         },
       ],
+      "tools": {
+        "bash": [
+          {
+            "pattern": "npx prettier --check *",
+            "decision": "deny",
+            "guidance": "Use `npm run prettier:fix` instead of checking."
+          },
+          {
+            "pattern": "npx vitest run *",
+            "decision": "deny",
+            "guidance": "Use `npm test` and `npm test -- <file>` instead"
+          }
+        ]
+      },
     },
     "config-maintenance-tests-hidden": {
       "description": "Configuration maintenance with tests hidden from the agent.",
