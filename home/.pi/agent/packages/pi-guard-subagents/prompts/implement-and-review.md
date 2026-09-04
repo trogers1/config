@@ -6,6 +6,8 @@ Execute this workflow with SEPARATE subagent tool calls (not a chain). It has tw
 
 1. Call subagent with agent "worker" to implement: $@
    Note the worker's `session: <id>` line and summary from the result.
+   If the worker returns before reporting that the plan is fully implemented, start a new worker. Do this iteratively until the worker completes the implementation above.
+   If the task can be split up into non-overlapping parts, feel free to call subagent with parallel "worker" agents.
 2. **Reviewer gate 1:** Call subagent with agent "reviewer" to review the worker's recent uncommitted changes for the work described as "$@", including the worker's summary. Note this reviewer's `session: <id>` and verdict.
 3. If gate 1 returns `REQUEST_CHANGES` before its fifth iteration:
    a. Resume the original worker session. Include the reviewer feedback verbatim, have it apply the fixes, and capture its new summary.
