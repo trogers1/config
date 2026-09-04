@@ -199,6 +199,42 @@
           "pattern": "/var/folders/pc/*/T/*", // mac temp dir
           "decision": "allow",
         },
+        {
+          "pattern": "/Users/taylor.rogers/.pi",
+          "decision": "deny",
+          "guidance": "There's no reason to read from ~. The local files at ./home/.pi/ are symlinked to there",
+          "contexts": [
+            "ls"
+          ]
+        },
+        {
+          "pattern": "/Users/taylor.rogers/Code/open_source/*",
+          "decision": "allow",
+          "contexts": [
+            "ls"
+          ]
+        },
+        {
+          "pattern": "/Users/taylor.rogers/Code/open_source/**",
+          "decision": "allow",
+          "contexts": [
+            "read"
+          ]
+        },
+        {
+          "pattern": "/Users/taylor.rogers/.nvm/versions/node/v24.15.0/lib/node_modules/@earendil-works/*",
+          "decision": "allow",
+          "contexts": [
+            "ls"
+          ]
+        },
+        {
+          "pattern": "/Users/taylor.rogers/.nvm/versions/node/v24.15.0/lib/node_modules/@earendil-works",
+          "decision": "allow",
+          "contexts": [
+            "ls"
+          ]
+        },
       ],
       "writePaths": [
         {
@@ -213,6 +249,13 @@
           "pattern": "/var/folders/pc/*/T/*", // mac temp dir
           "decision": "allow",
         },
+        {
+          "pattern": "/Users/taylor.rogers/.nvm/versions/node/v24.15.0/lib/node_modules/@earendil-works/**",
+          "decision": "allow",
+          "contexts": [
+            "bash"
+          ]
+        },
       ],
       "tools": {
         "bash": [
@@ -225,6 +268,14 @@
             "pattern": "npx vitest run *",
             "decision": "deny",
             "guidance": "Use `npm test` and `npm test -- <file>` instead"
+          },
+          {
+            "pattern": "npx tsc --noEmit",
+            "decision": "allow"
+          },
+          {
+            "pattern": "npm root -g",
+            "decision": "allow"
           }
         ]
       },
@@ -397,6 +448,11 @@
             "decision": "deny",
             "guidance": "Do not invoke Vitest through npx. Inspect package.json and use the repository's configured test script instead.",
             "alternatives": ["npm test -- <requested test filters>"],
+          },
+          {
+            "pattern": "env",
+            "decision": "deny",
+            "guidance": "You don't need to check that. Ask if you need anything specific."
           },
         ],
       },
