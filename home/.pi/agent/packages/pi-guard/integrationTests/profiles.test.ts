@@ -1348,7 +1348,7 @@ describe("permissions extension", () => {
 
     await harness.runCommand({ name: "profile" });
     expect(harness.ui.custom).toHaveBeenCalledOnce();
-    expect(harness.shortcuts.get("ctrl+shift+g")?.description).toBe(
+    expect(harness.shortcuts.get("alt+g")?.description).toBe(
       "Search and switch permissions profiles",
     );
 

@@ -145,7 +145,7 @@ obvious (`deps-mutator`, `git-full`). Profiles may define optional `color`,
 ## Commands
 
 - `/profile` opens a fuzzy-searchable profile picker. Type to search profile names and descriptions; use ↑/↓ and Return to select.
-- `Ctrl+Shift+G` opens the same picker without leaving a draft prompt. (`Ctrl+G` remains Pi's external-editor shortcut.)
+- `Alt+G` opens the same picker without leaving a draft prompt. (`Ctrl+G` remains Pi's external-editor shortcut, and `Ctrl+Shift+G` navigates to the previous fullscreen transcript search result.)
 - `/profile <name>` switches to a profile.
 - `/profile-add` creates a custom profile from composed bases and optional rules. Each Bash, read-path, write-path, and protected-safeguard section is independently editable; empty sections are valid. Protected safeguards are cross-cutting: denies block reads and writes, while allows only carve exceptions to protected denies and never grant ordinary permission. The final overview validates and activates all selected fields atomically.
 - For an ASK request, choose `No (default)`, `Allow once`, or `Save rule(s) to profile…` when the request is concrete and authorable. The shared editor identifies the read/write/Bash destination and context, keeps the requested value immutable, permits pattern edits and deny steering, and saves all non-skipped rows atomically before re-checking the same request. Tab cycles allow/deny/skip; Reset restores exact ASK patterns and allow decisions; Esc goes back with the draft retained. Protected safeguards are never offered as the resolution to an ordinary ASK.

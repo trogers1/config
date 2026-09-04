@@ -10,7 +10,7 @@
     "./packages/pi-guard-subagents",
     "./packages/pi-skill-toggle"
   ],
-  "lastChangelogVersion": "0.84.1",
+  "lastChangelogVersion": "0.85.0",
   "theme": "dark",
   "enabledModels": [
     "openai-codex/gpt-5.6-terra",

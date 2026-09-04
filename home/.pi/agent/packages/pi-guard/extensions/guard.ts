@@ -1372,8 +1372,9 @@ The permissions gate remains loaded and will fail closed until the profile is co
     },
   });
 
-  // Ctrl+G is Pi's external-editor binding, so use the unclaimed Ctrl+Shift+G.
-  pi.registerShortcut(Key.ctrlShift("g"), {
+  // Ctrl+G opens Pi's external editor and Ctrl+Shift+G navigates fullscreen
+  // transcript search results, so retain the mnemonic on the unclaimed Alt+G.
+  pi.registerShortcut(Key.alt("g"), {
     description: "Search and switch permissions profiles",
     handler: async (ctx) => {
       if (preserveConfigurationErrorStatus(ctx)) return;
