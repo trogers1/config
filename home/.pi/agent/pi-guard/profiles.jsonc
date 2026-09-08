@@ -235,6 +235,21 @@
             "ls"
           ]
         },
+        {
+          "pattern": "/var/folders/pc/*/T/**",
+          "decision": "allow"
+        },
+        {
+          "pattern": "/dev/null",
+          "decision": "allow"
+        },
+        {
+          "pattern": "/Users/taylor.rogers/Code/open_source/pi-interactive-subagents/**",
+          "decision": "allow",
+          "contexts": [
+            "grep"
+          ]
+        },
       ],
       "writePaths": [
         {
@@ -251,6 +266,20 @@
         },
         {
           "pattern": "/Users/taylor.rogers/.nvm/versions/node/v24.15.0/lib/node_modules/@earendil-works/**",
+          "decision": "allow",
+          "contexts": [
+            "bash"
+          ]
+        },
+        {
+          "pattern": "/var/folders/pc/*/T/**",
+          "decision": "allow",
+          "contexts": [
+            "bash"
+          ]
+        },
+        {
+          "pattern": "/dev/null",
           "decision": "allow",
           "contexts": [
             "bash"
@@ -276,6 +305,11 @@
           {
             "pattern": "npm root -g",
             "decision": "allow"
+          },
+          {
+            "pattern": "npx prettier --write *",
+            "decision": "deny",
+            "guidance": "Just use `npm run fix:prettier`"
           }
         ]
       },
@@ -456,6 +490,15 @@
           },
         ],
       },
+      "readPaths": [
+        {
+          "pattern": "/var/folders/pc/*/T/**",
+          "decision": "allow",
+          "contexts": [
+            "grep"
+          ]
+        }
+      ],
     },
     "performance-review": {
       "description": "Performance review profile with GitHub and GitLab access.",

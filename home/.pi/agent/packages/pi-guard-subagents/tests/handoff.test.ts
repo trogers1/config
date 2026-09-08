@@ -1,83 +1,62 @@
-import type { Message } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Message, ToolCall } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { checkScopeViolations, extractFilesChanged, slugify } from "../extensions/handoff.ts";
 
-/**
- * These tests cover genuinely isolated, branching logic in the handoff helpers.
- * The integration behavior of handoff files and run directories is exercised
- * through the public subagent tool in subagent.test.ts.
- */
+const usage = {
+	input: 0,
+	output: 0,
+	cacheRead: 0,
+	cacheWrite: 0,
+	totalTokens: 0,
+	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+} satisfies AssistantMessage["usage"];
+
+function toolCall(id: string, name: string, args: Record<string, unknown>): ToolCall {
+	return { type: "toolCall", id, name, arguments: args };
+}
+
+function assistant(content: AssistantMessage["content"]): Message {
+	return {
+		role: "assistant",
+		content,
+		api: "openai-completions",
+		provider: "openai",
+		model: "test",
+		usage,
+		stopReason: "toolUse",
+		timestamp: 0,
+	} satisfies AssistantMessage;
+}
+
 describe("handoff helpers", () => {
-	describe("extractFilesChanged", () => {
-		it("collects paths from write and edit tool calls", () => {
-			const messages = [
-				{
-					role: "assistant",
-					content: [
-						{
-							type: "toolCall",
-							name: "write",
-							arguments: { path: "src/a.ts" },
-						},
-						{ type: "toolCall", name: "edit", arguments: { path: "src/b.ts" } },
-						{
-							type: "toolCall",
-							name: "bash",
-							arguments: { command: "sed -i 's/x/y/' src/c.ts" },
-						},
-					],
-				},
-			] as unknown as Message[];
-
-			expect(extractFilesChanged(messages)).toEqual(["src/a.ts", "src/b.ts"]);
-		});
-
-		it("deduplicates repeated paths", () => {
-			const messages = [
-				{
-					role: "assistant",
-					content: [
-						{
-							type: "toolCall",
-							name: "write",
-							arguments: { path: "src/a.ts" },
-						},
-						{ type: "toolCall", name: "edit", arguments: { path: "src/a.ts" } },
-					],
-				},
-			] as unknown as Message[];
-
-			expect(extractFilesChanged(messages)).toEqual(["src/a.ts"]);
-		});
+	it("collects only write and edit tool paths", () => {
+		const messages = [
+			assistant([
+				toolCall("write-1", "write", { path: "src/a.ts" }),
+				toolCall("edit-1", "edit", { path: "src/b.ts" }),
+				toolCall("bash-1", "bash", { command: "sed -i 's/x/y/' src/c.ts" }),
+			]),
+		] satisfies Message[];
+		expect(extractFilesChanged(messages)).toEqual(["src/a.ts", "src/b.ts"]);
 	});
 
-	describe("checkScopeViolations", () => {
-		it("flags files outside declared prefix scopes", () => {
-			const violations = checkScopeViolations(
-				["src/auth/a.ts", "src/billing/b.ts", "README.md"],
-				["src/auth", "src/billing"],
-			);
-			expect(violations).toEqual(["README.md"]);
-		});
-
-		it("supports trailing glob stars for prefix matching", () => {
-			const violations = checkScopeViolations(["src/auth/a.ts", "src/auth/nested/b.ts"], ["src/auth/*"]);
-			expect(violations).toEqual([]);
-		});
-
-		it("does not false-positive on shared prefixes", () => {
-			const violations = checkScopeViolations(["src/authentication.ts"], ["src/auth/*"]);
-			expect(violations).toEqual(["src/authentication.ts"]);
-		});
+	it("deduplicates repeated paths", () => {
+		const messages = [
+			assistant([toolCall("write-1", "write", { path: "src/a.ts" }), toolCall("edit-1", "edit", { path: "src/a.ts" })]),
+		] satisfies Message[];
+		expect(extractFilesChanged(messages)).toEqual(["src/a.ts"]);
 	});
 
-	describe("slugify", () => {
-		it("produces kebab-case slugs", () => {
-			expect(slugify("Add Redis caching to the session store!")).toBe("add-redis-caching-to-the-session-store");
-		});
+	it("reports scope violations without shared-prefix false positives", () => {
+		expect(
+			checkScopeViolations(["src/auth/a.ts", "src/billing/b.ts", "README.md"], ["src/auth", "src/billing"]),
+		).toEqual(["README.md"]);
+		expect(checkScopeViolations(["src/auth/a.ts", "src/auth/nested/b.ts"], ["src/auth/*"])).toEqual([]);
+		expect(checkScopeViolations(["src/authentication.ts"], ["src/auth/*"])).toEqual(["src/authentication.ts"]);
+	});
 
-		it("falls back to 'task' for empty input", () => {
-			expect(slugify("!!!")).toBe("task");
-		});
+	it("creates stable slugs", () => {
+		expect(slugify("Add Redis caching to the session store!")).toBe("add-redis-caching-to-the-session-store");
+		expect(slugify("!!!")).toBe("task");
 	});
 });

@@ -357,8 +357,17 @@ export default function (pi: ExtensionAPI) {
   const subagentPermissibleRules = parseSubagentPermissibleRules(
     process.env.PI_SUBAGENT_PERMISSIBLE_GLOBS,
   );
-  let subagentProfileErrorReason: string | undefined;
-  let activeProfile: ProfileName = policyConfig.defaultProfile;
+  // Establish the immutable subagent profile before lifecycle callbacks run.
+  // This keeps startup fail-closed even if Pi can begin processing an initial
+  // prompt before the asynchronous session_start listener has completed.
+  let subagentProfileErrorReason =
+    subagentProfile && !isProfileName(subagentProfile)
+      ? formatInvalidSubagentProfileReason(subagentProfile)
+      : undefined;
+  let activeProfile: ProfileName =
+    subagentProfile && isProfileName(subagentProfile)
+      ? subagentProfile
+      : policyConfig.defaultProfile;
   let sandboxOverride: SandboxOverride = "inherit";
   let profileActivationQueue: Promise<void> = Promise.resolve();
   const configurationErrorReason = () =>

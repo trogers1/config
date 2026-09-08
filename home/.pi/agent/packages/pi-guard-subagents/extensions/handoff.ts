@@ -3,7 +3,7 @@
  *
  * The extension (not the worker) writes these files after each worker exits,
  * capturing what the worker did: task, files changed, session id, usage, and
- * final output. They are an audit artifact for humans and crash recovery —
+ * final output. They are an audit artifact for humans and live-parent delivery —
  * the orchestrator receives results directly via the tool result.
  */
 
@@ -64,7 +64,8 @@ export function slugify(text: string, max = 40): string {
 
 /**
  * Files a worker changed via the write/edit tools. Changes made through bash
- * (e.g. `sed -i`, codegen scripts) are not visible here.
+ * are intentionally not attributed here: Git snapshots are not a reliable
+ * audit boundary for concurrent interactive children.
  */
 export function extractFilesChanged(messages: Message[]): string[] {
 	const changed = new Set<string>();
@@ -87,7 +88,9 @@ function normalizePath(p: string): string {
 }
 
 /**
- * Advisory scope check. Each `writes` entry is a path prefix relative to the
+ * Format-only audit helper. Enforcement is performed by pi-guard; this
+ * function reports tool-observed paths that would not match the declaration.
+ * Each `writes` entry is a path prefix relative to the
  * worker's cwd; a trailing `*` makes it a raw prefix match (glob-lite).
  * Returns the changed files that fall outside every declared prefix.
  */
@@ -157,11 +160,9 @@ export function writeHandoffFile(runDir: string, rec: HandoffRecord): string {
 	);
 	if (rec.writes?.length) lines.push(`- **Declared write scope**: ${rec.writes.map((w) => `\`${w}\``).join(", ")}`);
 	if (rec.filesChanged.length) {
-		lines.push(
-			`- **Files changed** (write/edit + git status snapshot): ${rec.filesChanged.map((f) => `\`${f}\``).join(", ")}`,
-		);
+		lines.push(`- **Tool-observed paths** (write/edit): ${rec.filesChanged.map((f) => `\`${f}\``).join(", ")}`);
 	} else {
-		lines.push(`- **Files changed**: none observed via write/edit or git status snapshot`);
+		lines.push(`- **Tool-observed paths**: none observed via write/edit`);
 	}
 	if (rec.scopeViolations.length) {
 		lines.push(`- **⚠ Out-of-scope edits**: ${rec.scopeViolations.map((f) => `\`${f}\``).join(", ")}`);

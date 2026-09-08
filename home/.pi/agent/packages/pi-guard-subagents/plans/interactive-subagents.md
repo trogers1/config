@@ -2,7 +2,7 @@
 
 ## Status
 
-**Proposed.** This document describes the agreed redesign only. It does not authorize implementation beyond the plan itself.
+**Implemented (live-parent scope).** Restart/reload recovery is explicitly out of scope; this plan covers the guarded interactive lifecycle while the parent process remains alive.
 
 ## Goal
 
@@ -48,12 +48,12 @@ From `pi-interactive-subagents`:
 - tmux pane creation, message delivery, close/rebalance behavior, and shell-readiness handling;
 - asynchronous child lifecycle/watchers;
 - child activity protocol and parent status widget;
-- persistent name registry;
+- persistent name registry for the live parent process;
 - `subagent_message` to steer a running child or resume a completed one;
 - child completion signaling and result steering;
 - question parking and reply flow;
 - sandbox/loadout snapshot and faithful resume concept;
-- status/recovery state machine and child tools widget.
+- status state machine and child tools widget.
 
 ## Architecture
 
@@ -83,14 +83,14 @@ extensions/
     status.ts                      # Parent status model/widget formatting
     registry.ts                    # Persistent child names and orchestration-run state
     child-runtime.ts               # Child-only UI, auto-exit, ask_question, completion signals
-    recovery.ts                    # Parent restart/reload reconciliation and watcher reattachment
+    recovery.ts                    # Live-parent completion/question watching (not restart recovery)
     types.ts                       # Versioned persisted loadout/run schemas
 agents/
 prompts/
 tests/
 ```
 
-The exact file boundaries may differ, but the tmux/process boundary, child runtime, persistence/recovery, and guard/loadout construction must remain independently testable.
+The exact file boundaries may differ, but the tmux/process boundary, child runtime, live-parent persistence, and guard/loadout construction must remain independently testable.
 
 ### Current Pi compatibility
 
@@ -98,22 +98,22 @@ The source interactive package uses the older `@mariozechner/*` namespace and ta
 
 ### Upstream reference map
 
-Upstream repository: [amosblomqvist/pi-interactive-subagents](https://github.com/amosblomqvist/pi-interactive-subagents). A local checkout may be used for recon, but the portable references in this plan intentionally link to upstream source files.
+Porting checkout: [amosblomqvist/pi-interactive-subagents](file:///Users/taylor.rogers/Code/open_source/pi-interactive-subagents). All adoption references in this plan point to that local checkout.
 
-At implementation start, record the exact upstream commit SHA used as the porting reference in this plan and in the package changelog/README. The references below identify source behavior to **adapt and port**, not code to copy wholesale: every adapted part must use current Pi APIs and satisfy the guarded architecture in this plan.
+Porting reference recorded at implementation start: `amosblomqvist/pi-interactive-subagents` commit `c3e8b53c0754ae5ccc19fdab5a7481ec039bc2f7`. Record the same reference in the package README so future selective merges remain traceable. The references below identify source behavior to **adapt and port**, not code to copy wholesale: every adapted part must use current Pi APIs and satisfy the guarded architecture in this plan.
 
-| Planned area | Upstream implementation reference |
-| --- | --- |
-| tmux pane creation, input, polling, cleanup, and layout | [`pi-extension/subagents/tmux.ts`](https://github.com/amosblomqvist/pi-interactive-subagents/blob/main/pi-extension/subagents/tmux.ts) |
-| async spawn/watch/message orchestration and tool surface | [`pi-extension/subagents/index.ts`](https://github.com/amosblomqvist/pi-interactive-subagents/blob/main/pi-extension/subagents/index.ts) |
-| session sidecars, persistent names, and session-result extraction | [`pi-extension/subagents/session.ts`](https://github.com/amosblomqvist/pi-interactive-subagents/blob/main/pi-extension/subagents/session.ts) |
-| child UI, auto-exit, completion signals, and `ask_question` | [`pi-extension/subagents/subagent-done.ts`](https://github.com/amosblomqvist/pi-interactive-subagents/blob/main/pi-extension/subagents/subagent-done.ts) |
-| child activity-file protocol | [`pi-extension/subagents/activity.ts`](https://github.com/amosblomqvist/pi-interactive-subagents/blob/main/pi-extension/subagents/activity.ts) |
-| parent status state machine and widget configuration | [`pi-extension/subagents/status.ts`](https://github.com/amosblomqvist/pi-interactive-subagents/blob/main/pi-extension/subagents/status.ts) |
-| end-to-end lifecycle behavior | [`test/integration/subagent-lifecycle.test.ts`](https://github.com/amosblomqvist/pi-interactive-subagents/blob/main/test/integration/subagent-lifecycle.test.ts) |
-| tmux pane behavior | [`test/integration/tmux-surface.test.ts`](https://github.com/amosblomqvist/pi-interactive-subagents/blob/main/test/integration/tmux-surface.test.ts) |
+| Planned area                                                      | Upstream implementation reference                                                                                                                                  |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| tmux pane creation, input, polling, cleanup, and layout           | [`pi-extension/subagents/tmux.ts`](file:///Users/taylor.rogers/Code/open_source/pi-interactive-subagents/pi-extension/subagents/tmux.ts)                           |
+| async spawn/watch/message orchestration and tool surface          | [`pi-extension/subagents/index.ts`](file:///Users/taylor.rogers/Code/open_source/pi-interactive-subagents/pi-extension/subagents/index.ts)                         |
+| session sidecars, persistent names, and session-result extraction | [`pi-extension/subagents/session.ts`](file:///Users/taylor.rogers/Code/open_source/pi-interactive-subagents/pi-extension/subagents/session.ts)                     |
+| child UI, auto-exit, completion signals, and `ask_question`       | [`pi-extension/subagents/subagent-done.ts`](file:///Users/taylor.rogers/Code/open_source/pi-interactive-subagents/pi-extension/subagents/subagent-done.ts)         |
+| child activity-file protocol                                      | [`pi-extension/subagents/activity.ts`](file:///Users/taylor.rogers/Code/open_source/pi-interactive-subagents/pi-extension/subagents/activity.ts)                   |
+| parent status state machine and widget configuration              | [`pi-extension/subagents/status.ts`](file:///Users/taylor.rogers/Code/open_source/pi-interactive-subagents/pi-extension/subagents/status.ts)                       |
+| end-to-end lifecycle behavior                                     | [`test/integration/subagent-lifecycle.test.ts`](file:///Users/taylor.rogers/Code/open_source/pi-interactive-subagents/test/integration/subagent-lifecycle.test.ts) |
+| tmux pane behavior                                                | [`test/integration/tmux-surface.test.ts`](file:///Users/taylor.rogers/Code/open_source/pi-interactive-subagents/test/integration/tmux-surface.test.ts)             |
 
-Pi-guard-specific policy, profile propagation, hard scopes, handoffs, chain recovery, and the required production-like test harness are owned by this package and have no upstream equivalent to adopt unchanged.
+Pi-guard-specific policy, profile propagation, hard scopes, handoffs, chain scheduling, and the required production-like test harness are owned by this package and have no upstream equivalent to adopt unchanged.
 
 ## Public behavior
 
@@ -135,7 +135,7 @@ For chains:
 4. on failure, stop the chain and steer the failure/result to the parent;
 5. after the last step, steer the final chain result to the parent.
 
-The scheduler must survive parent `/reload` and process restart.
+The scheduler is scoped to the live parent process; restart/reload recovery is intentionally unsupported.
 
 ### tmux requirement
 
@@ -154,7 +154,7 @@ Provide a parent-facing message tool addressed by persistent child name:
 - a running child receives the message in its pane at its next turn boundary;
 - a completed child is resumed using its persisted guarded loadout;
 - replies to a pending child `ask_question` use this same mechanism;
-- name lookup and resume remain available after parent restart.
+- name lookup and resume remain available while the parent process remains alive.
 
 ### Child `ask_question`
 
@@ -231,7 +231,7 @@ No child can obtain broader tools by omitting an agent name, resuming a session,
 
 Continue setting/recognizing `PI_SUBAGENT_DEPTH` and reject child calls to `subagent`. The parent can launch parallel panes; children cannot fan out additional workers.
 
-## Persisted state and recovery
+## Persisted live-parent state
 
 ### Versioned child loadout
 
@@ -239,21 +239,23 @@ Write a versioned sidecar/loadout before launching each child. It must contain a
 
 ```ts
 interface GuardedInteractiveLoadout {
-  version: 1;
-  agent: string;
-  profile: string | null;
-  writes: string[] | null;
-  toolAllowlist: string[];
-  guardExtensionPath: string;
-  childRuntimePath: string;
-  backingExtensionPaths: string[];
-  model: string | null;
-  thinking: string | null;
-  systemPromptMode: "append" | "replace" | null;
-  identity: string | null;
-  cwd: string;
-  agentDir: string | null;
-  autoExit: boolean;
+	version: 1;
+	agent: string;
+	profile: string | null;
+	writes: string[] | null;
+	toolAllowlist: string[];
+	guardExtensionPath: string;
+	childRuntimePath: string;
+	backingExtensionPaths: string[];
+	backingExtensionDigests: Array<{ path: string; sha256: string }>;
+	model: string | null;
+	thinking: string | null;
+	systemPromptMode: "append" | "replace" | null;
+	identity: string | null;
+	cwd: string;
+	agentDir: string | null;
+	codingAgentDir: string | null;
+	autoExit: boolean;
 }
 ```
 
@@ -273,19 +275,9 @@ Persist parent run state in a versioned session-scoped registry/artifact. It mus
 
 Use atomic writes and validate reads. The registry is the durable source of truth; in-memory maps are only caches.
 
-### Restart and reload recovery
+### Parent-process scope
 
-On parent session start/reload:
-
-1. load and validate the durable registry;
-2. inspect/reconcile referenced tmux panes and child session/activity artifacts;
-3. recreate completion watchers for live children;
-4. surface unanswered questions and already-finished-but-undelivered completions exactly once;
-5. restart eligible pending chain progression;
-6. clean up stale state only after recording a clear terminal outcome;
-7. restore the parent status widget.
-
-Design completion delivery to be idempotent, so a watcher race, `/reload`, or restart cannot steer the same completion twice or launch the next chain step twice.
+Restart and reload recovery are intentionally out of scope. The registry, watchers, questions, messages, chains, and completion delivery are guaranteed only while the launching parent process remains alive. Parent shutdown stops live watchers and does not promise cross-process delivery or chain continuation.
 
 ## Completion, handoffs, and audit output
 
@@ -339,7 +331,7 @@ Tests must follow the repository’s behavioral, production-like approach:
 
 `npm test` must require and run tmux-backed integration tests. A missing or unusable tmux environment is a test failure, not a skip and not a fallback to headless testing.
 
-Tests must launch the real installed Pi CLI, but use a deterministic local provider and fixture extension. They must not make network calls or invoke paid/remote models.
+The mandatory lifecycle matrix must execute the generated production child command with the installed Pi CLI in real tmux panes. It must load the real pi-guard and child-runtime extensions, use a deterministic local provider/runtime with no network or paid-model calls, and exercise the registered public tools against those live child processes. The extension harness and lower-level sidecar tests may supplement this matrix, but must not replace it or claim production coverage.
 
 The fixture provider/runtime should deterministically emulate the minimal sequences needed to cause a child to:
 
@@ -351,7 +343,7 @@ The fixture provider/runtime should deterministically emulate the minimal sequen
 - resume with a follow-up;
 - complete multiple chain steps.
 
-### Required public-behavior integration coverage
+### Required real-process integration coverage
 
 1. **Interactive launch** — invoking the registered `subagent` tool creates a non-focused tmux pane, returns promptly, persists the registry/loadout, and displays live state.
 2. **Tmux requirement** — invocation outside tmux fails with actionable setup guidance and never starts a headless worker.
@@ -368,9 +360,8 @@ The fixture provider/runtime should deterministically emulate the minimal sequen
 13. **No Git-diff dependency** — the completion path does not invoke Git status/diff and handoff wording does not claim complete filesystem attribution.
 14. **Parallel behavior** — independent tasks create separate panes, use unique persistent names, retain separate scopes/loadouts, and report independently.
 15. **Chain behavior** — a successful step launches the next only once, replaces `{previous}` correctly, and a failed step stops the chain.
-16. **Reload/restart recovery** — after `/reload` and after recreating the parent process/session, live panes are rediscovered, watchers reattach, unanswered questions persist, completed results are delivered once, and chains continue exactly once.
-17. **Cleanup/failure handling** — pane termination, child runtime failure, and parent shutdown/reload do not leave duplicate timers, duplicate delivery, untracked panes, or silently unrestricted resume paths.
-18. **Nested-delegation denial** — child sessions cannot invoke `subagent`.
+16. **Live-parent cleanup/failure handling** — pane termination and child runtime failure produce a terminal outcome, live watchers do not duplicate delivery, and parent shutdown stops timers without silently unrestricted resume paths.
+17. **Nested-delegation denial** — child sessions cannot invoke `subagent`.
 
 ### Focused lower-level tests
 
@@ -383,21 +374,20 @@ Keep targeted tests only for logic that benefits materially from isolation:
 - exact mapping between tool allowlists and extension paths;
 - handoff formatting for observed paths and permission blocks.
 
-These tests supplement the real public-boundary integration suite; they do not replace it.
+These tests supplement the mandatory installed-Pi/real-tmux integration suite; they do not replace real-process evidence.
 
 ## Implementation sequence
 
-1. Record the pinned upstream commit SHA and establish a real-Pi, local-deterministic-provider, tmux-required integration harness based on the behavioral intent of [`subagent-lifecycle.test.ts`](https://github.com/amosblomqvist/pi-interactive-subagents/blob/main/test/integration/subagent-lifecycle.test.ts) and [`tmux-surface.test.ts`](https://github.com/amosblomqvist/pi-interactive-subagents/blob/main/test/integration/tmux-surface.test.ts); make it part of `npm test`.
+1. Record the pinned upstream commit SHA and establish deterministic local provider/runtime fixtures; make the public lifecycle matrix execute unchanged generated child commands with the installed Pi CLI in real tmux panes, including production extension loading and guard enforcement. Make this real-process suite part of `npm test`; retain the extension harness only for focused supplemental state-machine tests.
 2. Add versioned schemas/types for guarded child loadouts and parent orchestration registry; add failure-first validation tests.
-3. Port current-Pi-compatible tmux, activity, and status primitives behind isolated interfaces, adapting [`tmux.ts`](https://github.com/amosblomqvist/pi-interactive-subagents/blob/main/pi-extension/subagents/tmux.ts), [`activity.ts`](https://github.com/amosblomqvist/pi-interactive-subagents/blob/main/pi-extension/subagents/activity.ts), and [`status.ts`](https://github.com/amosblomqvist/pi-interactive-subagents/blob/main/pi-extension/subagents/status.ts).
-4. Implement the child runtime—identity/tools widget, activity recorder, `ask_question`, auto-exit, and terminal signaling—adapting [`subagent-done.ts`](https://github.com/amosblomqvist/pi-interactive-subagents/blob/main/pi-extension/subagents/subagent-done.ts).
-5. Implement guarded interactive launch by adapting the lifecycle concepts in [`index.ts`](https://github.com/amosblomqvist/pi-interactive-subagents/blob/main/pi-extension/subagents/index.ts) and [`session.ts`](https://github.com/amosblomqvist/pi-interactive-subagents/blob/main/pi-extension/subagents/session.ts): profile resolution, scope export, explicit pi-guard inclusion, strict tool/extension allowlisting, and initial registry persistence.
+3. Port current-Pi-compatible tmux, activity, and status primitives behind isolated interfaces, adapting [`tmux.ts`](file:///Users/taylor.rogers/Code/open_source/pi-interactive-subagents/pi-extension/subagents/tmux.ts), [`activity.ts`](file:///Users/taylor.rogers/Code/open_source/pi-interactive-subagents/pi-extension/subagents/activity.ts), and [`status.ts`](file:///Users/taylor.rogers/Code/open_source/pi-interactive-subagents/pi-extension/subagents/status.ts).
+4. Implement the child runtime—identity/tools widget, activity recorder, `ask_question`, auto-exit, and terminal signaling—adapting [`subagent-done.ts`](file:///Users/taylor.rogers/Code/open_source/pi-interactive-subagents/pi-extension/subagents/subagent-done.ts).
+5. Implement guarded interactive launch by adapting the lifecycle concepts in [`index.ts`](file:///Users/taylor.rogers/Code/open_source/pi-interactive-subagents/pi-extension/subagents/index.ts) and [`session.ts`](file:///Users/taylor.rogers/Code/open_source/pi-interactive-subagents/pi-extension/subagents/session.ts): profile resolution, scope export, explicit pi-guard inclusion, strict tool/extension allowlisting, and initial registry persistence.
 6. Implement parent child watching, completion extraction, handoff generation without Git diffing, and exactly-once parent steering.
 7. Add `subagent_message` for live steering and safe completed-session resume from snapshotted loadout.
 8. Implement parallel state and automatic chain scheduler/persistence.
-9. Implement restart/reload reconciliation, watcher reattachment, question recovery, and idempotent pending-completion/chain processing.
-10. Migrate bundled agent definitions to autonomous interactive auto-exit behavior; update README, prompts, and orchestration skill guidance.
-11. Run the complete mandatory tmux integration suite and the package static checks after each coherent increment.
+9. Migrate bundled agent definitions to autonomous interactive auto-exit behavior; update README, prompts, and orchestration skill guidance.
+10. Run the complete mandatory tmux integration suite and the package static checks after each coherent increment.
 
 ## Acceptance criteria
 
@@ -406,8 +396,8 @@ The migration is complete only when:
 - `pi-guard-subagents` is the sole active subagent extension;
 - every delegation mode launches tmux-based interactive children and no headless fallback exists;
 - pi-guard, the resolved profile, and hard write scope are present for every launch and resume;
-- child questions, messages, auto-close, handoffs, parallel tasks, chains, and restart/reload recovery work through the public interface;
-- no completion is lost or duplicated across restart/reload;
+- child questions, messages, auto-close, handoffs, parallel tasks, and chains work through the public interface while the parent remains alive;
+- restart/reload recovery and cross-process completion delivery are explicitly not supported;
 - no Git diff/status-based audit logic remains;
 - nested delegation remains denied; and
-- `npm test` runs and passes real Pi + real tmux integration coverage using only deterministic local test infrastructure.
+- `npm test` runs and passes the complete deterministic public lifecycle matrix using unchanged generated child commands, the installed Pi CLI, real tmux panes, production pi-guard/child-runtime loading, and only local inference infrastructure; supplemental mocks or sidecar tests do not substitute for this evidence.

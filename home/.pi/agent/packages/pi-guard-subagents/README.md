@@ -24,10 +24,9 @@ settings. Pin releases for reproducible setups, for example
 `pi install npm:@trogers1/pi-guard@0.1.0` and
 `pi install npm:@trogers1/pi-guard-subagents@0.1.0`. Restart Pi after installation.
 
-Without pi-guard, delegation still works, but a worker's `profile:` is only a
-fallback and declared `writes` scopes are audited rather than hard-enforced.
-With both packages installed, keep pi-guard before pi-guard-subagents in
-`packages` so the guard extension exports the worker environment first.
+pi-guard is mandatory for delegation. Every child is launched with an explicit
+pi-guard extension and a snapshotted profile/loadout; launches fail closed if
+the guard runtime cannot be resolved.
 
 ## Release (maintainers)
 
@@ -49,10 +48,18 @@ release without changing settings via
 `pi -e npm:@trogers1/pi-guard-subagents@<version>`; use `-e` for pi-guard too when
 checking their integration.
 
-Forked from pi's `examples/extensions/subagent` with additions:
+The interactive lifecycle is a selective current-Pi port of local
+`amosblomqvist/pi-interactive-subagents` commit
+`c3e8b53c0754ae5ccc19fdab5a7481ec039bc2f7` (tmux/activity/status/session
+patterns), adapted to retain pi-guard's explicit loadouts and permission model.
+The package remains the sole active subagent extension; it does not load a
+second interactive-subagents package.
 
 Forked from pi's `examples/extensions/subagent` with additions:
 
+- **Interactive tmux lifecycle.** Child processes run in their own tmux pane,
+  with a persistent registry/loadout and no headless fallback. Pi must be
+  started inside tmux (`tmux new -A -s pi 'pi'`).
 - **Persistent worker sessions.** Every worker runs under `--session-id <uuid>
 --name subagent:<agent>:<label>`. The result tells you the id; inspect it live
   afterwards with `pi --session <id>` from the same project directory, or
@@ -71,16 +78,10 @@ Forked from pi's `examples/extensions/subagent` with additions:
 - **Nested-delegation guard.** Worker processes run with `PI_SUBAGENT_DEPTH=1`;
   the tool refuses to delegate from inside a worker, so costs can't fan out
   recursively.
-- **Worker auto-compaction (parent-driven).** Workers run headless, so
-  nobody watches context growth. When a worker's context crosses 40% of its
-  model's context window (capped at 150k tokens, falling back to 100k when
-  the model can't be resolved) at a turn boundary, the parent SIGTERMs the
-  worker, compacts its session out-of-band via a one-shot `pi --mode rpc`
-  compact command, and respawns the worker against the compacted session
-  with a continue prompt (up to 4 cycles). In-worker `ctx.compact()` can't be used: pi's print mode disposes
-  the runtime before a triggered compaction finishes. If a compaction cycle
-  fails, the worker resumes uncompacted and pi's built-in overflow recovery
-  (compact+retry at context-full) remains as the backstop.
+- **Guarded interactive lifecycle.** Children run in dedicated tmux panes,
+  report activity and terminal state through atomic sidecars, can park on one
+  `ask_question`, and auto-close after normal completion. Parent watchers remain
+  active for the lifetime of the launching parent; restart/reload recovery is not supported.
 - **Premature-exit detection.** A worker that exits 0 but whose last message
   ended mid-turn (`toolUse`) or truncated (`length`) is reported as failed,
   not completed, so the orchestrator resumes the session instead of trusting
@@ -182,11 +183,10 @@ under its policy. The packages integrate through two environment variables:
    descendants; glob entries are matched as written. If `writes` is omitted,
    the selected profile's normal write policy applies.
 
-The extension also audits observed changes. Single and chain workers use both
-tool-call extraction and pre/post `git status --short` snapshots, so Bash-based
-changes appear in the handoff. Parallel workers sharing a cwd cannot reliably
-attribute a git snapshot, but still report `write`/`edit` calls and run under
-the hard permission scope.
+The extension records only paths directly observed in `write`/`edit` tool
+calls. Git status and diff snapshots are deliberately not used for attribution:
+concurrent panes make repository state ambiguous, and scope enforcement belongs
+at the pi-guard tool boundary. Handoffs label these entries as tool-observed.
 
 Write scopes are defense in depth, not a complete process sandbox: commands can
 have implicit filesystem effects that contain no path token for the Bash gate
@@ -320,26 +320,20 @@ unless the session was interrupted.
 
 ## Security notes
 
-- Workers are spawned as `pi` subprocesses that **inherit your full extension
-  set** and auth. Agent frontmatter changes model/tools/system prompt and may
-  select a named `pi-guard` profile; it cannot define arbitrary policy.
+- Workers are spawned with `--no-extensions` and an explicit allowlist
+  containing only pi-guard, the child runtime, and permitted backing
+  extensions. Agent frontmatter cannot broaden that loadout.
 - Project-local agents (`.pi/agents/`) are repo-controlled prompts; they're only
   loaded with `agentScope: "project"`/`"all"` and prompt for confirmation by
   default.
 - Nested delegation is hard-disabled via `PI_SUBAGENT_DEPTH`, so a compromised
   or confused worker can't fan out more workers.
 
-## Limitations
+## Runtime requirements
 
-- For single and chain workers, bash-based file changes are detected via a
-  pre/post `git status --short` snapshot. For parallel workers sharing a cwd,
-  git snapshots are disabled because concurrent workers' changes interleave and
-  can't be reliably attributed to individual workers; parallel workers still
-  report `write`/`edit` changes and are subject to `writes` scope enforcement.
-- `--session <id>` resume works from the worker's project directory (sessions
-  are per-cwd).
-- Parallel output returned to the model is capped at 50 KB per task; full output
-  lives in the handoff file and worker session.
-- Live watching of a worker mid-flight is via the streaming TUI view only; you
-  can't attach to a running worker's session, but Ctrl+C propagates to kill the
-  worker subprocess.
+- `tmux` is required; there is no headless fallback. Start Pi inside tmux,
+  for example `tmux new -A -s pi 'pi'`.
+- Resumes use the original persisted loadout and cannot widen profile, tool,
+  extension, or write-scope permissions.
+- Handoffs describe runtime-observed events and do not use Git status or diff
+  snapshots for attribution.
