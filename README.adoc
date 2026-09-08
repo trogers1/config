@@ -21,6 +21,62 @@ It will:
 
 If you only want the home + XDG symlinks, run `./setup_symlinks.sh` directly. For shell changes, open a new shell or run `source ~/.zshrc`.
 
+== Team dev + Pi setup (macOS)
+
+`setup.sh` remains the personal, full-dotfiles setup. Teammates who only need
+Pi and the non-writing tmux/worktree commands must run:
+
+[source,bash]
+----
+./setup-dev-pi.sh
+----
+
+This macOS-only installer has an explicit, limited surface: it installs the
+current global Pi configuration (packages, extensions, skills, settings, usage,
+and guard profile), `dnew`, `dopen`, `dtree`, `dclose`, `dkill`, `dmerge`, and
+the tmux status helper. It does not install or link Cursor, Git, Ghostty,
+Neovim, OpenCode, or shell dotfiles. `wopen`, `wnew`, and `wclose` are excluded.
+
+Before changing files it requires existing `pi`, `tmux`, `git`, `python3`,
+`node`/`npm` (Node 22.19+), `nvim`, and `lazygit`. Missing tools cause a
+nonzero exit before modification, with current installation links or commands.
+Pi itself is intentionally not installed by the script.
+
+The local Pi packages have dependencies that are not committed. A fresh clone
+will fail the dependency preflight without making changes. After reviewing the
+packages, bootstrap those dependencies explicitly:
+
+[source,bash]
+----
+./setup-dev-pi.sh --bootstrap-pi-deps
+----
+
+That command runs `npm ci` in each bundled Pi package and downloads Playwright
+Chromium for `pi-webfetch`; it is never implicit. Use `--dry-run` to print the
+planned changes, `--status` to inspect current managed links/wrappers, and
+`--uninstall` to remove unchanged installer-owned artifacts.
+
+When a selected target already exists, normal setup prompts before moving it to
+an adjacent `<target>.bak` backup. `--non-interactive` fails on every such
+conflict rather than silently skipping or replacing a file. Existing `.bak`
+files are never overwritten. Uninstall restores an adjacent backup only after
+it verifies that the replacement is still installer-owned and unchanged;
+otherwise it preserves the user file and reports the conflict. The installer
+never overwrites `~/bin/pi` and never follows a symlinked `~/.zshrc` or
+`~/.tmux.conf` to edit its target.
+
+The installer adds only uniquely marked blocks to a regular `~/.zshrc` (PATH
+and `dhome`) and regular `~/.tmux.conf` (workflow include). It does not reload
+an existing tmux server; reload deliberately after reviewing the changes:
+`tmux source-file ~/.tmux.conf`.
+
+Pi resources installed here are global and therefore trusted by Pi for all
+projects. The included profile, skills, browser tool, and usage tooling reflect
+the current repository configuration; review changes under `home/.pi/` as
+privileged executable configuration. `dtree` also retains its existing fallback
+initializer, which may link `.env`/Terraform files and run `npm ci` when it
+creates a worktree.
+
 == XDG configs
 
 Application configs that normally live under `~/.config/` live in `./xdg/` in this repo.

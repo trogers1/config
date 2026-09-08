@@ -6,6 +6,26 @@ This repo manages selected global pi agent config:
 * Entries in `home/.pi/agent/extensions` → matching entries in `~/.pi/agent/extensions` (preserving other local extensions)
 * `home/.pi/agent/packages/pi-guard` → `~/.pi/agent/packages/pi-guard`
 * `home/.pi/agent/packages/pi-guard-subagents` → `~/.pi/agent/packages/pi-guard-subagents`
+* `home/.pi/agent/packages/pi-skill-toggle` → `~/.pi/agent/packages/pi-skill-toggle`
+* `home/.pi/agent/packages/pi-usage` → `~/.pi/agent/packages/pi-usage`
 * `home/.pi/agent/packages/pi-webfetch` → `~/.pi/agent/packages/pi-webfetch`
+* `home/.pi/agent/models.json` → `~/.pi/agent/models.json`
+* `home/.pi/agent/skills` → `~/.pi/agent/skills`
+* `home/.pi/agent/usage` → `~/.pi/agent/usage`
+* `home/.pi/agent/pi-guard` → `~/.pi/agent/pi-guard`
 
 Pi-managed local state such as `auth.json`, sessions, downloaded packages, and helper binaries stays outside the repo.
+
+== Team installer
+
+For the macOS team Pi + tmux/worktree setup, use `./setup-dev-pi.sh` from the
+repository root rather than the personal full-config `./setup.sh`. Its Pi
+surface is explicit and includes all current package entries, extension entries,
+settings, models, skills, usage configuration, and guard configuration listed
+above. It creates symlinks only after dependency preflight succeeds; it does
+not install Pi itself.
+
+Run `./setup-dev-pi.sh --bootstrap-pi-deps` only when you explicitly want to
+run locked npm installs for the local Pi packages and download the Playwright
+Chromium used by `pi-webfetch`. See the root README for prerequisite,
+conflict-backup, status, and uninstall behavior.
