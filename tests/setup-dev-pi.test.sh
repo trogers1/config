@@ -44,6 +44,7 @@ printf 'user-owned Pi wrapper\n' >"$HOME_DIR/bin/pi"
 run_setup
 assert_equals "$(readlink "$HOME_DIR/.pi/agent/settings.json")" "$REPO_DIR/home/.pi/agent/settings.json"
 assert_equals "$(cat "$HOME_DIR/bin/pi")" 'user-owned Pi wrapper'
+assert_exists "$HOME_DIR/bin/dev"
 assert_exists "$HOME_DIR/bin/dnew"
 assert_absent "$HOME_DIR/bin/wnew"
 grep -Fq '# >>> dev-pi installer zsh >>>' "$HOME_DIR/.zshrc" || fail 'missing zsh block'
@@ -56,12 +57,14 @@ assert_absent "$HOME_DIR/bin/dnew.bak"
 # Uninstall removes owned artifacts created without prior conflicts.
 run_setup --uninstall
 assert_absent "$HOME_DIR/.pi/agent/settings.json"
+assert_absent "$HOME_DIR/bin/dev"
 assert_absent "$HOME_DIR/bin/dnew"
 grep -Fq '# >>> dev-pi installer zsh >>>' "$HOME_DIR/.zshrc" && fail 'zsh block was not removed'
 
 # Dry-run reports actions but does not create a target.
 rm -f "$HOME_DIR/bin/pi"
 run_setup --dry-run >/dev/null
+assert_absent "$HOME_DIR/bin/dev"
 assert_absent "$HOME_DIR/bin/dnew"
 
 # A noninteractive conflict must fail without replacing the user's file.

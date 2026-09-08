@@ -35,7 +35,7 @@ PI_EXTENSION_LINKS=(
   "ask-user-question.ts"
   "prompt-snippets"
 )
-COMMANDS=(dnew dopen dtree dclose dkill dmerge tmux-status-action)
+COMMANDS=(dev dnew dopen dtree dclose dkill dmerge tmux-status-action)
 APPROVED_CONFLICTS=()
 ZSH_BEGIN="# >>> dev-pi installer zsh >>>"
 ZSH_END="# <<< dev-pi installer zsh <<<"
@@ -48,8 +48,8 @@ Usage: ./setup-dev-pi.sh [--dry-run] [--non-interactive] [--bootstrap-pi-deps]
        ./setup-dev-pi.sh --status
        ./setup-dev-pi.sh --uninstall [--dry-run]
 
-Installs only the shared Pi configuration and non-writing d* tmux/worktree
-workflow. It does not install system tools. Conflicting user files are backed
+Installs only the shared Pi configuration and non-writing `dev` tmux/worktree
+workflow (including backward-compatible d* command wrappers). It does not install system tools. Conflicting user files are backed
 up next to the target as <target>.bak after an interactive confirmation.
 EOF
 }
@@ -383,7 +383,7 @@ if [ "$MODE" = "install" ]; then
   for item in "${PI_EXTENSION_LINKS[@]}"; do link_owned "$REPO_DIR/home/.pi/agent/extensions/$item" "$PI_DIR/extensions/$item" "Pi extension $item"; done
   for item in "${COMMANDS[@]}"; do install_wrapper "$item"; done
   link_owned "$REPO_DIR/tmux_and_worktrees/tmux-worktree.conf" "$TMUX_WORKTREE_CONF" "tmux workflow config"
-  append_block "$ZSHRC" "$ZSH_BEGIN" "$ZSH_END" $'export PATH="$HOME/bin:$PATH"\n\ndhome() {\n  local env_line target\n  [ -n "${TMUX:-}" ] || { echo "dhome is only available in a tmux dev session"; return 1; }\n  env_line="$(tmux show-environment DTREE_WORKTREE_PATH 2>/dev/null || true)"\n  target="${env_line#DTREE_WORKTREE_PATH=}"\n  [ "$target" != "$env_line" ] && [ -n "$target" ] || { echo "dhome is only available in a tmux dev session"; return 1; }\n  cd "$target"\n}' "zsh"
+  append_block "$ZSHRC" "$ZSH_BEGIN" "$ZSH_END" $'export PATH="$HOME/bin:$PATH"\n\ndev() {\n  if [ "${1:-}" != "home" ]; then\n    command dev "$@"\n    return\n  fi\n\n  local env_line target\n  [ -n "${TMUX:-}" ] || { echo "dev home is only available in a tmux dev session"; return 1; }\n  env_line="$(tmux show-environment DTREE_WORKTREE_PATH 2>/dev/null || true)"\n  target="${env_line#DTREE_WORKTREE_PATH=}"\n  [ "$target" != "$env_line" ] && [ -n "$target" ] || { echo "dev home is only available in a tmux dev session"; return 1; }\n  cd "$target"\n}\n\n# Backward-compatible spelling for `dev home`.\ndhome() { dev home "$@"; }' "zsh"
   append_block "$TMUX_CONF" "$TMUX_BEGIN" "$TMUX_END" 'source-file ~/.tmux.worktree.conf' "tmux"
   say "Setup complete. Start a new shell, then reload tmux with: tmux source-file ~/.tmux.conf"
 elif [ "$MODE" = "uninstall" ]; then

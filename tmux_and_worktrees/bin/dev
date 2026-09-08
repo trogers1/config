@@ -1,0 +1,71 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+usage() {
+    cat <<'EOF'
+Usage: dev <command> [arguments]
+
+Manage tmux development sessions and git worktrees. Run this from a project
+checkout; commands that create or manage worktrees require a Git repository.
+
+Commands:
+  new [path]                 Open or create a dev tmux session for a path.
+  open [path]                Alias for `dev new`.
+  tree <branch> [base]       Create or open a worktree and its dev session.
+                              A new branch starts from [base], or the current
+                              branch when omitted.
+  tree init [branch]         Re-run a linked worktree's startup script.
+  close [branch]             Close a dev tmux session, retaining its checkout.
+  kill [branch] [--force]    Remove a worktree, its session, and local branch.
+  merge [branch] [target] [--keep]
+                              Merge a worktree branch and clean it up.
+  home                       Change this shell to the active session's root.
+                              Requires the installed zsh shell integration.
+  help                       Show this help.
+
+Compatibility commands dnew, dopen, dtree, dclose, dkill, dmerge, and dhome
+remain available and delegate to their corresponding `dev` subcommands.
+EOF
+}
+
+command_name="${1:-}"
+case "$command_name" in
+    new)
+        shift
+        exec "$SCRIPT_DIR/lib/commands/dnew" "$@"
+        ;;
+    open)
+        shift
+        exec "$SCRIPT_DIR/lib/commands/dnew" "$@"
+        ;;
+    tree)
+        shift
+        exec "$SCRIPT_DIR/lib/commands/dtree" "$@"
+        ;;
+    close)
+        shift
+        exec "$SCRIPT_DIR/lib/commands/dclose" "$@"
+        ;;
+    kill)
+        shift
+        exec "$SCRIPT_DIR/lib/commands/dkill" "$@"
+        ;;
+    merge)
+        shift
+        exec "$SCRIPT_DIR/lib/commands/dmerge" "$@"
+        ;;
+    home)
+        echo "dev home must be run from a shell with the dev shell integration loaded" >&2
+        exit 1
+        ;;
+    help|-h|--help|"")
+        usage
+        ;;
+    *)
+        echo "Unknown dev command: $command_name" >&2
+        usage >&2
+        exit 1
+        ;;
+esac

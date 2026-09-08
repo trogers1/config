@@ -1,0 +1,60 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/../tmux_worktree.sh"
+
+log() {
+    printf "[dclose] %s\n" "$*"
+}
+
+usage() {
+    echo "Usage: dclose [branch]"
+}
+
+if [ "$#" -gt 1 ]; then
+    usage
+    exit 1
+fi
+
+tmux_worktree_require_tmux
+
+branch="${1:-}"
+target_path=""
+preferred_session_name=""
+current_session="$(tmux_worktree_current_session_name)"
+
+if [ -n "$branch" ]; then
+    tmux_worktree_require_git
+    tmux_worktree_require_git_repo
+
+    repo_root="$(tmux_worktree_main_repo_root)"
+    repo_name="$(basename "$repo_root")"
+
+    wt_path="$(tmux_worktree_path_for_branch "$repo_root" "$branch")"
+
+    if [ -z "$wt_path" ]; then
+        echo "No worktree found for branch '$branch'."
+        exit 1
+    fi
+
+    target_path="$wt_path"
+    preferred_session_name="$(tmux_worktree_preferred_worktree_session_name "$repo_name" "$branch")"
+else
+    if [ -n "$current_session" ]; then
+        target_path="$(tmux_worktree_get_session_worktree_path "$current_session" || true)"
+    fi
+
+    if [ -z "$target_path" ]; then
+        project_path="$(tmux_worktree_resolve_project_path "$(pwd)")"
+        target_path="$project_path"
+        preferred_session_name="$(tmux_worktree_preferred_local_session_name "$project_path")"
+    fi
+fi
+
+if ! tmux_worktree_kill_sessions_for_worktree_path "$target_path" "$preferred_session_name" "$current_session"; then
+    echo "No tmux session found for $target_path"
+    exit 1
+fi
+
+log "Closed session(s) for $target_path"

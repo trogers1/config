@@ -33,8 +33,8 @@ Pi and the non-writing tmux/worktree commands must run:
 
 This macOS-only installer has an explicit, limited surface: it installs the
 current global Pi configuration (packages, extensions, skills, settings, usage,
-and guard profile), `dnew`, `dopen`, `dtree`, `dclose`, `dkill`, `dmerge`, and
-the tmux status helper. It does not install or link Cursor, Git, Ghostty,
+and guard profile), the `dev` CLI (with `dnew`, `dopen`, `dtree`, `dclose`,
+`dkill`, and `dmerge` compatibility wrappers), and the tmux status helper. It does not install or link Cursor, Git, Ghostty,
 Neovim, OpenCode, or shell dotfiles. `wopen`, `wnew`, and `wclose` are excluded.
 
 Before changing files it requires existing `pi`, `tmux`, `git`, `python3`,
@@ -65,8 +65,8 @@ otherwise it preserves the user file and reports the conflict. The installer
 never overwrites `~/bin/pi` and never follows a symlinked `~/.zshrc` or
 `~/.tmux.conf` to edit its target.
 
-The installer adds only uniquely marked blocks to a regular `~/.zshrc` (PATH
-and `dhome`) and regular `~/.tmux.conf` (workflow include). It does not reload
+The installer adds only uniquely marked blocks to a regular `~/.zshrc` (PATH,
+`dev home`, and its `dhome` compatibility wrapper) and regular `~/.tmux.conf` (workflow include). It does not reload
 an existing tmux server; reload deliberately after reviewing the changes:
 `tmux source-file ~/.tmux.conf`.
 

@@ -8,7 +8,7 @@ ZSHRC="$HOME/.zshrc"
 TMUX_CONF="$HOME/.tmux.conf"
 TMUX_WORKTREE_LINK="$HOME/.tmux.worktree.conf"
 BIN_COMMANDS=()
-ZSHRC_MARKER="# >>> dev worktree dhome >>>"
+ZSHRC_MARKER="# >>> dev worktree shell integration >>>"
 TMUX_CONF_MARKER="# >>> dev worktree config >>>"
 
 printf '\nSetting up your tmux-worktree flow...\n'
@@ -61,7 +61,8 @@ prepare_edit_target() {
     return 0
   fi
 
-  if grep -Fq "$marker" "$target_path"; then
+  if grep -Fq "$marker" "$target_path" \
+    || { [ "$marker" = "$ZSHRC_MARKER" ] && grep -Fq '# >>> dev worktree dhome >>>' "$target_path"; }; then
     return 0
   fi
 
@@ -136,6 +137,8 @@ BEGIN { skip = 0 }
 /^# <<< dev worktree aliases <<</ { skip = 0; next }
 /^# >>> dev worktree dhome >>>$/ { skip = 1; next }
 /^# <<< dev worktree dhome <<</ { skip = 0; next }
+/^# >>> dev worktree shell integration >>>$/ { skip = 1; next }
+/^# <<< dev worktree shell integration <<</ { skip = 0; next }
 skip == 0 { print }
 ' "$ZSHRC_TARGET" > "$tmp_file"
   mv "$tmp_file" "$ZSHRC_TARGET"
@@ -149,31 +152,39 @@ EOF
   fi
 
   cat >> "$ZSHRC_TARGET" <<'EOF'
-# >>> dev worktree dhome >>>
-dhome() {
+# >>> dev worktree shell integration >>>
+dev() {
+    if [ "${1:-}" != "home" ]; then
+        command dev "$@"
+        return
+    fi
+
     local env_line=""
     local target=""
 
     if [ -z "${TMUX:-}" ]; then
-        echo "dhome is only available in a tmux dev session"
+        echo "dev home is only available in a tmux dev session"
         return 1
     fi
 
     env_line="$(tmux show-environment DTREE_WORKTREE_PATH 2>/dev/null || true)"
     case "$env_line" in
-      DTREE_WORKTREE_PATH=*)
-            target="${env_line#DTREE_WORKTREE_PATH=}"
-            ;;
-        esac
+        DTREE_WORKTREE_PATH=*) target="${env_line#DTREE_WORKTREE_PATH=}" ;;
+    esac
 
     if [ -z "$target" ]; then
-        echo "dhome is only available in a tmux dev session"
+        echo "dev home is only available in a tmux dev session"
         return 1
     fi
 
     cd "$target"
 }
-# <<< dev worktree dhome <<<
+
+# Backward-compatible spelling for `dev home`.
+dhome() {
+    dev home "$@"
+}
+# <<< dev worktree shell integration <<<
 EOF
 else
   echo "Skipped updates to $ZSHRC"
@@ -198,7 +209,7 @@ for command_name in "${BIN_COMMANDS[@]}"; do
 done
 echo "  $TMUX_WORKTREE_LINK -> $SCRIPT_DIR/tmux-worktree.conf"
 echo "Legacy alias block removed from $ZSHRC (if present)."
-echo "dhome shell function refreshed in $ZSHRC."
+echo "dev shell integration (including legacy dhome) refreshed in $ZSHRC."
 echo "PATH update added to $ZSHRC (if missing)."
 echo "Tmux source line added to $TMUX_CONF (if missing)."
 echo "Open a new shell or run: source ~/.zshrc"

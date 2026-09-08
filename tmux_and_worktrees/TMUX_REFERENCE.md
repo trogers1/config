@@ -58,11 +58,11 @@ are unavailable; tab numbers and `prefix + ?` provide the keyboard hints.
 
 With `prefix` set to `M-Space`:
 
-- `prefix + n` -> local dev session (`dnew`)
-- `prefix + N` -> local dev session (`dnew`)
-- `prefix + t` -> new worktree session (`dtree`)
-- `prefix + W` -> new worktree session (`dtree`)
-- `prefix + M` -> merge current branch back (`dmerge`)
+- `prefix + n` -> local dev session (`dev new`)
+- `prefix + N` -> local dev session (`dev new`)
+- `prefix + t` -> new worktree session (`dev tree`)
+- `prefix + W` -> new worktree session (`dev tree`)
+- `prefix + M` -> merge current branch back (`dev merge`)
 
 ## If Option/Meta does not work
 

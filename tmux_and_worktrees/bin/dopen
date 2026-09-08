@@ -3,4 +3,4 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-exec "$SCRIPT_DIR/dnew" "$@"
+exec "$SCRIPT_DIR/dev" open "$@"

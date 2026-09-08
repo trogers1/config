@@ -4,21 +4,29 @@ This directory contains a portable tmux/worktree workflow you can copy into its 
 
 == What it sets up
 
-* `dnew` -> normal dev tmux session in current repo/path
-* `dopen` -> alias for `dnew`
-* `wopen` -> `dnew`, but launch `nvim` with `NVIM_COLORSCHEME=shine`
+The `dev` CLI is the primary interface:
+
+* `dev new [path]` -> normal dev tmux session in the current repo/path
+* `dev open [path]` -> alias for `dev new`
+* `dev tree <branch> [base]` -> create/switch to a git worktree + tmux session (defaults base to current branch)
+* `dev tree init [branch]` -> rerun the worktree startup script (defaults to the current branch's worktree)
+* `dev close [branch]` -> kill the tmux session only, leaving the checkout/worktree intact
+* `dev kill [branch] [--force]` -> kill the worktree tmux session and delete that worktree + local branch
+* `dev merge [branch] [target] [--keep]` -> interactively choose merge target and clean up
+* `dev home` -> jump the current shell back to the root path for the active tmux dev session
+* `dev help` (or `dev --help`) -> display usage and command descriptions
+
+`dev home` is only available inside a tmux dev session created by `dev new`,
+`dev open`, or `dev tree`; it needs the installed zsh shell integration because
+changing directories must happen in the current shell. The legacy `dnew`,
+`dopen`, `dtree`, `dclose`, `dkill`, `dmerge`, and `dhome` commands remain as
+compatibility wrappers around the corresponding `dev` commands.
+
+* `wopen` -> `dev new`, but launch `nvim` with `NVIM_COLORSCHEME=shine`
 * `wnew` -> open a new Ghostty window with writing overrides, then run `wopen`
 
 Writing-mode `nvim` overrides are passed explicitly by `wopen`/`wnew`, so plain
-`dnew` does not depend on inherited shell environment for editor mode.
-* `dtree <branch> [base]` -> create/switch to a git worktree + tmux session (defaults base to current branch)
-* `dtree init [branch]` -> rerun the worktree startup script (defaults to the current branch's worktree)
-* `dclose [branch]` -> kill the tmux session only, leaving the checkout/worktree intact
-* `dkill [branch] [--force]` -> kill the worktree tmux session and delete that worktree + local branch
-* `dmerge [branch] [target] [--keep]` -> interactively choose merge target and clean up
-* `dhome` -> jump the current shell back to the root path for the active tmux dev session
-
-`dhome` is only available inside a tmux dev session created by `dnew`, `dopen`, or `dtree`.
+`dev new` does not depend on inherited shell environment for editor mode.
 
 Each dev session opens tmux windows from `devConfig.jsonc`.
 By default, this subsystem uses `tmux_and_worktrees/devConfig.jsonc`:
@@ -41,8 +49,8 @@ those windows for that project. `windows` is an array of objects with:
 * `name` -> tmux window/tab name
 * `command` -> command to run in that window; use an empty string for an idle shell
 
-Session reuse and cleanup are path-based first: `dnew`, `dtree`, `dclose`,
-`dkill`, and `dmerge` all resolve the owning tmux session by
+Session reuse and cleanup are path-based first: `dev new`, `dev tree`,
+`dev close`, `dev kill`, and `dev merge` all resolve the owning tmux session by
 `DTREE_WORKTREE_PATH` before falling back to the preferred human-readable
 session name.
 
@@ -62,18 +70,18 @@ tmux source-file ~/.tmux.conf
 * install thin command wrappers into `~/bin`
 * ensure `~/bin` is on `PATH` in `~/.zshrc`
 * remove any legacy alias block for these commands from `~/.zshrc`
-* install a `dhome` shell function in `~/.zshrc`
+* install shell integration for `dev home` (plus the legacy `dhome` wrapper) in `~/.zshrc`
 * source tmux bindings from `~/.tmux.worktree.conf`
 
 == tmux keybinds
 
 Prefix is `M-Space` (Meta+Space), then:
 
-* `n` -> local dev session (`dnew`)
-* `N` -> local dev session (`dnew`)
-* `t` -> new worktree session (`dtree`)
-* `W` -> new worktree session (`dtree`)
-* `M` -> run `dmerge` in-pane (interactive target prompt)
+* `n` -> local dev session (`dev new`)
+* `N` -> local dev session (`dev new`)
+* `t` -> new worktree session (`dev tree`)
+* `W` -> new worktree session (`dev tree`)
+* `M` -> run `dev merge` in-pane (interactive target prompt)
 * `c` -> create a shell window in the current directory; its tab is named for that directory
 * `&` -> hide the current window without stopping its pane processes
 * `s` -> open the tmux session chooser; it labels sessions as `attached` or `detached`
@@ -106,48 +114,48 @@ complete keyboard equivalents for tabs and controls.
 /path/to/project-name-worktrees   # worktrees
 ----
 
-`dtree` creates worktrees under `<repo-name>-worktrees/<branch>`. If the
-requested branch is currently checked out in the primary checkout, `dtree` warns
+`dev tree` creates worktrees under `<repo-name>-worktrees/<branch>`. If the
+requested branch is currently checked out in the primary checkout, `dev tree` warns
 and offers to move it into that directory. Confirming requires a clean primary
-checkout; `dtree` checks out the repository's `origin/HEAD` (or `main`/
+checkout; `dev tree` checks out the repository's `origin/HEAD` (or `main`/
 `master`) there before creating the worktree. The optional base argument keeps
 its usual meaning: the base for a newly created branch.
 
-When creating a new branch, `dtree` bases it on your current branch by default.
+When creating a new branch, `dev tree` bases it on your current branch by default.
 If your current HEAD is detached, it falls back to `main`. If no matching local
 branch exists and the repository has an `origin` remote, `dtree` asks before
 fetching `origin`. When `origin/<branch>` exists after that fetch, it creates a
 local branch that tracks it; otherwise it creates the new branch from the base.
-`dtree` now reuses tmux sessions by matching the resolved worktree path, so `dtree B`
+`dev tree` now reuses tmux sessions by matching the resolved worktree path, so `dev tree B`
 from worktree `A` reconnects only to the session already bound to the same worktree path.
 If a session named for branch `B` already exists but points at some other checkout,
 `dtree` creates a new suffixed session instead of attaching you to the wrong worktree.
 
-`dnew` follows the same rule for non-worktree sessions: it reuses the session for the
+`dev new` follows the same rule for non-worktree sessions: it reuses the session for the
 resolved project path, and if the preferred `<repo>-dev` name is already attached to
 some other checkout, it creates a suffixed session instead of reusing the wrong one.
 
 == Killing a worktree
 
-Use `dkill` from inside a worktree session when you want to discard that worktree
+Use `dev kill` from inside a worktree session when you want to discard that worktree
 without merging it anywhere.
 
-* `dkill` -> close the current branch's worktree, kill its tmux session, and delete the local branch
-* `dkill my-branch` -> close a specific branch worktree
-* `dkill --force` -> allow closing a dirty worktree and force-delete the local branch
+* `dev kill` -> close the current branch's worktree, kill its tmux session, and delete the local branch
+* `dev kill my-branch` -> close a specific branch worktree
+* `dev kill --force` -> allow closing a dirty worktree and force-delete the local branch
 
-`dkill` refuses to remove the main checkout, and it protects `main`, `master`,
+`dev kill` refuses to remove the main checkout, and it protects `main`, `master`,
 `develop`, and `staging` unless you pass `--force`.
 
 == Closing a session only
 
-Use `dclose` when you want to shut down the tmux session but keep the repo or
+Use `dev close` when you want to shut down the tmux session but keep the repo or
 worktree exactly as-is.
 
-* `dclose` -> close the current repo/worktree dev session
-* `dclose my-branch` -> close the tmux session for a specific worktree branch
+* `dev close` -> close the current repo/worktree dev session
+* `dev close my-branch` -> close the tmux session for a specific worktree branch
 
-`dclose` uses the same session-resolution rules as `dnew` and `dtree`, so it closes
+`dev close` uses the same session-resolution rules as `dev new` and `dev tree`, so it closes
 the session attached to the resolved path even when a suffixed fallback session name
 was used.
 
@@ -157,8 +165,8 @@ current one.
 
 == Worktree startup
 
-Before opening a newly created worktree session, `dtree` runs one startup script. Run
-`dtree init [branch]` to rerun that script later without creating a session; it defaults
+Before opening a newly created worktree session, `dev tree` runs one startup script. Run
+`dev tree init [branch]` to rerun that script later without creating a session; it defaults
 to the current branch's linked worktree and rejects the primary checkout.
 It uses the first non-empty project-specific script it finds in the main checkout:
 
