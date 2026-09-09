@@ -304,10 +304,13 @@ describe("/profile-add", () => {
     ).toBeDefined();
   });
 
-  it("saves an allowed ASK command in the prefilled custom child without a naming dialog", async () => {
+  it("uses the current directory in the prefilled inline child profile name", async () => {
     const configPath = temporaryConfig();
     process.env.PI_GUARD_PROFILE_CONFIG = configPath;
-    const harness = createExtensionHarness({ interactiveUi: true });
+    const harness = createExtensionHarness({
+      interactiveUi: true,
+      contextCwd: "/workspace/remembered-project",
+    });
     await harness.start();
 
     const pending = harness.callTool({
@@ -318,11 +321,12 @@ describe("/profile-add", () => {
       "Save rule(s) to profile…",
     );
     const editor = await harness.ui.waitForRuleForm();
+    expect(editor.render().join("\n")).toContain("default-remembered-project");
     editor.press("Enter");
     await pending;
 
     expect(
-      loadRawProfileConfig(configPath)?.profiles["default-custom"],
+      loadRawProfileConfig(configPath)?.profiles["default-remembered-project"],
     ).toMatchObject({
       extends: ["builtin:default"],
       tools: {
@@ -331,7 +335,7 @@ describe("/profile-add", () => {
     });
     expect(harness.entries.at(-1)).toMatchObject({
       customType: "pi-guard-profile",
-      data: { profile: "default-custom" },
+      data: { profile: "default-remembered-project" },
     });
     await harness.callToolWithoutPrompt({
       toolName: "bash",
@@ -474,7 +478,10 @@ describe("/profile-add", () => {
   it("saves a Bash-only ASK without inventing a protected safeguard", async () => {
     const configPath = temporaryConfig();
     process.env.PI_GUARD_PROFILE_CONFIG = configPath;
-    const harness = createExtensionHarness({ interactiveUi: true });
+    const harness = createExtensionHarness({
+      interactiveUi: true,
+      contextCwd: "/workspace/bash-only-project",
+    });
     await harness.start();
 
     const pending = harness.callTool({
@@ -490,7 +497,7 @@ describe("/profile-add", () => {
 
     expect(result).toBeUndefined();
     expect(
-      loadRawProfileConfig(configPath)?.profiles["default-custom"],
+      loadRawProfileConfig(configPath)?.profiles["default-bash-only-project"],
     ).toMatchObject({
       tools: {
         bash: [{ pattern: "echo hello > package.json", decision: "allow" }],
@@ -501,7 +508,10 @@ describe("/profile-add", () => {
   it("persists only non-skipped edited command choices from a multi-command ASK", async () => {
     const configPath = temporaryConfig();
     process.env.PI_GUARD_PROFILE_CONFIG = configPath;
-    const harness = createExtensionHarness({ interactiveUi: true });
+    const harness = createExtensionHarness({
+      interactiveUi: true,
+      contextCwd: "/workspace/multi-command-project",
+    });
     await harness.start();
 
     const pending = harness.callTool({
@@ -521,7 +531,9 @@ describe("/profile-add", () => {
 
     expect(result).toMatchObject({ block: true });
     expect(
-      loadRawProfileConfig(configPath)?.profiles["default-custom"],
+      loadRawProfileConfig(configPath)?.profiles[
+        "default-multi-command-project"
+      ],
     ).toMatchObject({
       tools: {
         bash: [{ pattern: "echo second", decision: "deny" }],

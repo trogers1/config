@@ -1022,6 +1022,9 @@ describe("profile updates through the public extension surface", () => {
       "Save rule(s) to profile…",
     );
     const form = await harness.ui.waitForRuleForm();
+    expect(form.render().join("\n")).toContain(
+      "PATH GLOB/PATTERN — interpreted as a glob, not a literal path",
+    );
     for (let index = 0; index < 40; index++) form.press("ArrowRight");
     for (let index = 0; index < 40; index++) form.press("Backspace");
     form.type("generated/**");

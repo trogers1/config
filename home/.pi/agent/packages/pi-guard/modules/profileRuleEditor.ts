@@ -298,6 +298,10 @@ export async function editProfileRuleRows(
                   "    Additional profile rule (not required by this ASK)",
                 );
               }
+              if (row.kind === "read" || row.kind === "write")
+                lines.push(
+                  "    PATH GLOB/PATTERN — interpreted as a glob, not a literal path (e.g. src/**/*.ts).",
+                );
               if (!request && (row.kind === "read" || row.kind === "write"))
                 lines.push(
                   `    Context          ${row.contexts?.join(", ") ?? "all contexts"}`,

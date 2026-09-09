@@ -1052,8 +1052,18 @@ The permissions gate remains loaded and will fail closed until the profile is co
         matchedPattern?: string;
       };
 
-  function suggestedChildProfileName(profile: string): string {
-    const base = `${profile.replace(/^builtin:/, "").replace(/[^a-zA-Z0-9]+/g, "-")}-custom`;
+  function suggestedChildProfileName(profile: string, cwd: string): string {
+    const profileStem =
+      profile
+        .replace(/^builtin:/, "")
+        .replace(/[^a-zA-Z0-9]+/g, "-")
+        .replace(/^-|-$/g, "") || "profile";
+    const directoryStem =
+      path
+        .basename(path.resolve(cwd))
+        .replace(/[^a-zA-Z0-9]+/g, "-")
+        .replace(/^-|-$/g, "") || "directory";
+    const base = `${profileStem}-${directoryStem}`;
     const names = new Set(Object.keys(rawProfileConfig?.profiles ?? {}));
     let name = base;
     let suffix = 2;
@@ -1087,7 +1097,8 @@ The permissions gate remains loaded and will fail closed until the profile is co
         // accepting the save screen must not open a separate naming dialog.
         // (Callers may still provide a preselected suggested profile.)
         const name = (
-          suggestedProfile ?? suggestedChildProfileName(profile)
+          suggestedProfile ??
+          suggestedChildProfileName(profile, ctx.cwd ?? startupCwd)
         ).trim();
         if (!name) return false;
         profile = name;
@@ -1233,7 +1244,10 @@ The permissions gate remains loaded and will fail closed until the profile is co
         ? { mode: "update", profile: activeProfile }
         : {
             mode: "create-child",
-            profile: suggestedChildProfileName(activeProfile),
+            profile: suggestedChildProfileName(
+              activeProfile,
+              ctx.cwd ?? startupCwd,
+            ),
             extends: [activeProfile],
             description: `Custom extension of ${activeProfile}.`,
             emoji: "💅",
