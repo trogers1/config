@@ -76,9 +76,9 @@
 		}
 	},
 	"devDependencies": {
-		"@earendil-works/pi-ai": "^0.81.0",
-		"@earendil-works/pi-coding-agent": "^0.81.0",
-		"@earendil-works/pi-tui": "^0.81.0",
+		"@earendil-works/pi-ai": "^0.85.1",
+		"@earendil-works/pi-coding-agent": "^0.85.1",
+		"@earendil-works/pi-tui": "^0.85.1",
 		"@types/node": "^26.1.1",
 		"dependency-cruiser": "^18.1.0",
 		"eslint": "^10.7.0",
