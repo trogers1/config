@@ -77,6 +77,28 @@ privileged executable configuration. `dtree` also retains its existing fallback
 initializer, which may link `.env`/Terraform files and run `npm ci` when it
 creates a worktree.
 
+== Team dev + Pi setup (Windows)
+
+For native Windows, run the PowerShell installer from a PowerShell prompt:
+
+[source,powershell]
+----
+.\setup-dev-pi.ps1
+----
+
+It installs the same explicitly listed global Pi resources (settings, models,
+skills, usage, guard configuration, packages, and extensions), with the same
+conflict backup, `-DryRun`, `-NonInteractive`, `-Status`, `-Uninstall`, and
+explicit `-BootstrapPiDeps` behavior. It requires Git, Pi, Node/npm 22.19+,
+and permission to create symbolic links. Enable Windows Developer Mode or run
+PowerShell elevated if its symbolic-link preflight fails.
+
+The Windows installer deliberately does *not* install `dev`, the legacy `d*`
+wrappers, tmux configuration, or zsh integration: those are Bash/tmux-specific
+and remain supported only by the macOS installer. If your execution policy
+blocks local scripts, run it explicitly with:
+`powershell -ExecutionPolicy Bypass -File .\setup-dev-pi.ps1`.
+
 == XDG configs
 
 Application configs that normally live under `~/.config/` live in `./xdg/` in this repo.

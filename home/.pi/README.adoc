@@ -29,3 +29,7 @@ Run `./setup-dev-pi.sh --bootstrap-pi-deps` only when you explicitly want to
 run locked npm installs for the local Pi packages and download the Playwright
 Chromium used by `pi-webfetch`. See the root README for prerequisite,
 conflict-backup, status, and uninstall behavior.
+
+For a native Windows Pi-only setup, run `.\setup-dev-pi.ps1` in PowerShell from
+the repository root. It has the same explicit Pi resource surface but excludes
+the Bash/tmux workflow and requires permission to create Windows symbolic links.
