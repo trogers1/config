@@ -56,10 +56,13 @@ Chromium for `pi-webfetch`; it is never implicit. Use `--dry-run` to print the
 planned changes, `--status` to inspect current managed links/wrappers, and
 `--uninstall` to remove unchanged installer-owned artifacts.
 
-When a selected target already exists, normal setup prompts before moving it to
-an adjacent `<target>.bak` backup. `--non-interactive` fails on every such
-conflict rather than silently skipping or replacing a file. Existing `.bak`
-files are never overwritten. Uninstall restores an adjacent backup only after
+When a selected link or wrapper target already exists, normal setup prompts
+before moving it to an adjacent `<target>.bak` backup. For an existing regular
+`~/.zshrc` or `~/.tmux.conf`, it instead prompts before preserving the file in
+place, copying it to `<target>.bak`, and appending only its marked managed
+block. `--non-interactive` fails on every such conflict rather than silently
+skipping or replacing a file. Existing `.bak` files are never overwritten.
+Uninstall restores an adjacent backup only after
 it verifies that the replacement is still installer-owned and unchanged;
 otherwise it preserves the user file and reports the conflict. The installer
 never overwrites `~/bin/pi` and never follows a symlinked `~/.zshrc` or

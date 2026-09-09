@@ -177,10 +177,35 @@ preflight_wrapper_conflict() {
   if [ -e "$target" ] || [ -L "$target" ]; then confirm_conflict "$target"; fi
 }
 
+confirm_block_update() {
+  local target="$1" label="$2" backup="$1.bak"
+  conflict_is_approved "$target" && return 0
+  [ ! -e "$backup" ] && [ ! -L "$backup" ] || die "Refusing to overwrite existing backup: $backup"
+  if [ "$DRY_RUN" -eq 1 ]; then
+    say "PLAN: existing $label file $target would be preserved, backed up to $backup, and updated with a managed block after confirmation"
+    APPROVED_CONFLICTS+=("$target")
+    return 0
+  fi
+  if [ "$NON_INTERACTIVE" -eq 1 ]; then
+    die "Existing $label file at $target requires confirmation; --non-interactive never modifies it."
+  fi
+  [ -r /dev/tty ] || die "Existing $label file at $target but no interactive terminal is available."
+  local reply
+  while true; do
+    printf 'Update existing %s file %s by appending a managed block? The current file will remain in place and be copied to %s. [y/N] ' "$label" "$target" "$backup" >/dev/tty
+    read -r reply </dev/tty
+    case "$reply" in
+      y|Y) APPROVED_CONFLICTS+=("$target"); return 0 ;;
+      ''|n|N) die "Skipped existing $label file: $target" ;;
+      *) printf 'Please enter y or n.\n' >/dev/tty ;;
+    esac
+  done
+}
+
 preflight_block_conflict() {
   local target="$1" begin="$2" label="$3"
   [ ! -L "$target" ] || die "Refusing to edit symlinked $label: $target"
-  if [ -e "$target" ] && ! has_block "$begin" "$target"; then confirm_conflict "$target"; fi
+  if [ -e "$target" ] && ! has_block "$begin" "$target"; then confirm_block_update "$target" "$label"; fi
 }
 
 preflight_conflicts() {
@@ -254,7 +279,7 @@ append_block() {
     return
   fi
   if [ -e "$target" ]; then
-    confirm_conflict "$target"
+    confirm_block_update "$target" "$label"
     run cp -p "$target" "$target.bak"
     say "Backed up: $target -> $target.bak"
   fi
