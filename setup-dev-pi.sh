@@ -98,7 +98,7 @@ preflight() {
   require_command git "Install Xcode Command Line Tools: xcode-select --install"
   require_command python3 "Install Python 3: https://www.python.org/downloads/macos/"
   require_command tmux "Install tmux: brew install tmux"
-  require_command pi "Install Pi: https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent"
+  require_command pi "Install Pi: https://pi.dev/"
   require_command node "Install Node.js 22.19 or newer: https://nodejs.org/"
   require_command npm "Install Node.js 22.19 or newer: https://nodejs.org/"
   if [ "$BOOTSTRAP" -eq 1 ]; then require_command npx "Install Node.js 22.19 or newer: https://nodejs.org/"; fi

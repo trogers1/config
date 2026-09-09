@@ -110,7 +110,7 @@ function Test-PackageDependencies([string]$Package) {
 function Preflight {
   if ($env:OS -ne 'Windows_NT') { Fail 'This installer supports native Windows only. Use setup-dev-pi.sh for macOS.' }
   Require-Command git 'Install Git for Windows: https://git-scm.com/download/win'
-  Require-Command pi 'Install Pi: https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent'
+  Require-Command pi 'Install Pi: https://pi.dev/'
   Require-Command node 'Install Node.js 22.19 or newer: https://nodejs.org/'
   Require-Command npm 'Install Node.js 22.19 or newer: https://nodejs.org/'
   if ($BootstrapPiDeps) { Require-Command npx 'Install Node.js 22.19 or newer: https://nodejs.org/' }
