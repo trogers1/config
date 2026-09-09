@@ -39,11 +39,14 @@ run_setup() {
   HOME="$HOME_DIR" PATH="$FAKE_BIN:$PATH" PLAYWRIGHT_BIN="$FAKE_BIN/playwright" "$REPO_DIR/setup-dev-pi.sh" "$@"
 }
 
-mkdir -p "$HOME_DIR/bin"
+mkdir -p "$HOME_DIR/bin" "$HOME_DIR/.pi/agent/pi-guard"
 printf 'user-owned Pi wrapper\n' >"$HOME_DIR/bin/pi"
+printf 'user-owned profiles\n' >"$HOME_DIR/.pi/agent/pi-guard/profiles.jsonc"
 run_setup
 assert_equals "$(readlink "$HOME_DIR/.pi/agent/settings.json")" "$REPO_DIR/home/.pi/agent/settings.json"
 assert_equals "$(cat "$HOME_DIR/bin/pi")" 'user-owned Pi wrapper'
+assert_equals "$(cat "$HOME_DIR/.pi/agent/pi-guard/profiles.jsonc")" 'user-owned profiles'
+assert_equals "$(readlink "$HOME_DIR/.pi/agent/pi-guard/prompts")" "$REPO_DIR/home/.pi/agent/pi-guard/prompts"
 assert_exists "$HOME_DIR/bin/dev"
 assert_exists "$HOME_DIR/bin/dnew"
 assert_absent "$HOME_DIR/bin/wnew"
@@ -57,6 +60,8 @@ assert_absent "$HOME_DIR/bin/dnew.bak"
 # Uninstall removes owned artifacts created without prior conflicts.
 run_setup --uninstall
 assert_absent "$HOME_DIR/.pi/agent/settings.json"
+assert_absent "$HOME_DIR/.pi/agent/pi-guard/prompts"
+assert_equals "$(cat "$HOME_DIR/.pi/agent/pi-guard/profiles.jsonc")" 'user-owned profiles'
 assert_absent "$HOME_DIR/bin/dev"
 assert_absent "$HOME_DIR/bin/dnew"
 grep -Fq '# >>> dev-pi installer zsh >>>' "$HOME_DIR/.zshrc" && fail 'zsh block was not removed'

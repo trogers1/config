@@ -32,8 +32,8 @@ Pi and the non-writing tmux/worktree commands must run:
 ----
 
 This macOS-only installer has an explicit, limited surface: it installs the
-current global Pi configuration (packages, extensions, skills, settings, usage,
-and guard profile), the `dev` CLI (with `dnew`, `dopen`, `dtree`, `dclose`,
+shared Pi configuration (packages, extensions, skills, settings, usage, and
+guard prompts), the `dev` CLI (with `dnew`, `dopen`, `dtree`, `dclose`,
 `dkill`, and `dmerge` compatibility wrappers), and the tmux status helper. It does not install or link Cursor, Git, Ghostty,
 Neovim, OpenCode, or shell dotfiles. `wopen`, `wnew`, and `wclose` are excluded.
 
@@ -74,7 +74,7 @@ an existing tmux server; reload deliberately after reviewing the changes:
 `tmux source-file ~/.tmux.conf`.
 
 Pi resources installed here are global and therefore trusted by Pi for all
-projects. The included profile, skills, browser tool, and usage tooling reflect
+projects. The included skills, browser tool, and usage tooling reflect
 the current repository configuration; review changes under `home/.pi/` as
 privileged executable configuration. `dtree` also retains its existing fallback
 initializer, which may link `.env`/Terraform files and run `npm ci` when it
@@ -89,12 +89,14 @@ For native Windows, run the PowerShell installer from a PowerShell prompt:
 .\setup-dev-pi.ps1
 ----
 
-It installs the same explicitly listed global Pi resources (settings, models,
-skills, usage, guard configuration, packages, and extensions), with the same
+It installs the same explicitly listed shared Pi resources (settings, models,
+skills, usage, guard prompts, packages, and extensions), with the same
 conflict backup, `-DryRun`, `-NonInteractive`, `-Status`, `-Uninstall`, and
 explicit `-BootstrapPiDeps` behavior. It requires Git, Pi, Node/npm 22.19+,
 and permission to create symbolic links. Enable Windows Developer Mode or run
-PowerShell elevated if its symbolic-link preflight fails.
+PowerShell elevated if its symbolic-link preflight fails. Both team installers
+leave `~/.pi/agent/pi-guard/profiles.jsonc` user-owned; Pi falls back to its
+portable built-in profiles when that file is absent.
 
 The Windows installer deliberately does *not* install `dev`, the legacy `d*`
 wrappers, tmux configuration, or zsh integration: those are Bash/tmux-specific

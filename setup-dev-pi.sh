@@ -22,7 +22,11 @@ PI_LINKS=(
   "models.json"
   "skills"
   "usage"
-  "pi-guard"
+)
+# Personal profiles.jsonc is deliberately excluded. Team installs link only the
+# shared guard prompts, leaving ~/.pi/agent/pi-guard/profiles.jsonc user-owned.
+PI_GUARD_LINKS=(
+  "prompts"
 )
 PI_PACKAGE_LINKS=(
   "pi-guard"
@@ -37,6 +41,7 @@ PI_EXTENSION_LINKS=(
 )
 COMMANDS=(dev dnew dopen dtree dclose dkill dmerge tmux-status-action)
 APPROVED_CONFLICTS=()
+LEGACY_GUARD_LINK=0
 ZSH_BEGIN="# >>> dev-pi installer zsh >>>"
 ZSH_END="# <<< dev-pi installer zsh <<<"
 TMUX_BEGIN="# >>> dev-pi installer tmux >>>"
@@ -208,9 +213,28 @@ preflight_block_conflict() {
   if [ -e "$target" ] && ! has_block "$begin" "$target"; then confirm_block_update "$target" "$label"; fi
 }
 
+legacy_guard_link_present() {
+  [ -L "$PI_DIR/pi-guard" ] && [ "$(readlink "$PI_DIR/pi-guard")" = "$REPO_DIR/home/.pi/agent/pi-guard" ]
+}
+
+migrate_legacy_guard_link() {
+  legacy_guard_link_present || return 0
+  LEGACY_GUARD_LINK=1
+  if [ "$DRY_RUN" -eq 1 ]; then
+    say "PLAN: replace legacy owned $PI_DIR/pi-guard link with a directory so profiles.jsonc remains user-owned"
+    return
+  fi
+  rm "$PI_DIR/pi-guard"
+  mkdir -p "$PI_DIR/pi-guard"
+  say "Migrated: legacy Pi guard link; profiles.jsonc is now user-owned"
+}
+
 preflight_conflicts() {
   local item
   for item in "${PI_LINKS[@]}"; do preflight_link_conflict "$REPO_DIR/home/.pi/agent/$item" "$PI_DIR/$item"; done
+  if [ "$LEGACY_GUARD_LINK" -eq 0 ]; then
+    for item in "${PI_GUARD_LINKS[@]}"; do preflight_link_conflict "$REPO_DIR/home/.pi/agent/pi-guard/$item" "$PI_DIR/pi-guard/$item"; done
+  fi
   for item in "${PI_PACKAGE_LINKS[@]}"; do preflight_link_conflict "$REPO_DIR/home/.pi/agent/packages/$item" "$PI_DIR/packages/$item"; done
   for item in "${PI_EXTENSION_LINKS[@]}"; do preflight_link_conflict "$REPO_DIR/home/.pi/agent/extensions/$item" "$PI_DIR/extensions/$item"; done
   for item in "${COMMANDS[@]}"; do preflight_wrapper_conflict "$item"; done
@@ -222,6 +246,10 @@ preflight_conflicts() {
 link_owned() {
   local source="$1" target="$2" label="$3"
   [ -e "$source" ] || [ -L "$source" ] || die "Missing source for $label: $source"
+  if [ "$DRY_RUN" -eq 1 ] && [ "$LEGACY_GUARD_LINK" -eq 1 ] && [[ "$target" == "$PI_DIR/pi-guard/"* ]]; then
+    say "PLAN: link $target -> $source after migrating the legacy Pi guard link"
+    return
+  fi
   if [ -L "$target" ] && [ "$(readlink "$target")" = "$source" ]; then
     say "Unchanged: $label ($target)"
     return
@@ -401,9 +429,12 @@ status_block() {
 
 if [ "$MODE" = "install" ]; then
   preflight
+  legacy_guard_link_present && LEGACY_GUARD_LINK=1 || true
   preflight_conflicts
+  migrate_legacy_guard_link
   if [ "$BOOTSTRAP" -eq 1 ]; then bootstrap_dependencies; fi
   for item in "${PI_LINKS[@]}"; do link_owned "$REPO_DIR/home/.pi/agent/$item" "$PI_DIR/$item" "Pi $item"; done
+  for item in "${PI_GUARD_LINKS[@]}"; do link_owned "$REPO_DIR/home/.pi/agent/pi-guard/$item" "$PI_DIR/pi-guard/$item" "Pi guard $item"; done
   for item in "${PI_PACKAGE_LINKS[@]}"; do link_owned "$REPO_DIR/home/.pi/agent/packages/$item" "$PI_DIR/packages/$item" "Pi package $item"; done
   for item in "${PI_EXTENSION_LINKS[@]}"; do link_owned "$REPO_DIR/home/.pi/agent/extensions/$item" "$PI_DIR/extensions/$item" "Pi extension $item"; done
   for item in "${COMMANDS[@]}"; do install_wrapper "$item"; done
@@ -413,6 +444,7 @@ if [ "$MODE" = "install" ]; then
   say "Setup complete. Start a new shell, then reload tmux with: tmux source-file ~/.tmux.conf"
 elif [ "$MODE" = "uninstall" ]; then
   for item in "${PI_LINKS[@]}"; do uninstall_link "$REPO_DIR/home/.pi/agent/$item" "$PI_DIR/$item" "Pi $item"; done
+  for item in "${PI_GUARD_LINKS[@]}"; do uninstall_link "$REPO_DIR/home/.pi/agent/pi-guard/$item" "$PI_DIR/pi-guard/$item" "Pi guard $item"; done
   for item in "${PI_PACKAGE_LINKS[@]}"; do uninstall_link "$REPO_DIR/home/.pi/agent/packages/$item" "$PI_DIR/packages/$item" "Pi package $item"; done
   for item in "${PI_EXTENSION_LINKS[@]}"; do uninstall_link "$REPO_DIR/home/.pi/agent/extensions/$item" "$PI_DIR/extensions/$item" "Pi extension $item"; done
   for item in "${COMMANDS[@]}"; do uninstall_wrapper "$item"; done
@@ -421,6 +453,7 @@ elif [ "$MODE" = "uninstall" ]; then
   remove_block "$TMUX_CONF" "$TMUX_BEGIN" "$TMUX_END" "tmux"
 elif [ "$MODE" = "status" ]; then
   for item in "${PI_LINKS[@]}"; do status_item "$REPO_DIR/home/.pi/agent/$item" "$PI_DIR/$item" "Pi $item"; done
+  for item in "${PI_GUARD_LINKS[@]}"; do status_item "$REPO_DIR/home/.pi/agent/pi-guard/$item" "$PI_DIR/pi-guard/$item" "Pi guard $item"; done
   for item in "${PI_PACKAGE_LINKS[@]}"; do status_item "$REPO_DIR/home/.pi/agent/packages/$item" "$PI_DIR/packages/$item" "Pi package $item"; done
   for item in "${PI_EXTENSION_LINKS[@]}"; do status_item "$REPO_DIR/home/.pi/agent/extensions/$item" "$PI_DIR/extensions/$item" "Pi extension $item"; done
   for item in "${COMMANDS[@]}"; do status_wrapper "$item"; done

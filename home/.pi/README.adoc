@@ -21,9 +21,10 @@ Pi-managed local state such as `auth.json`, sessions, downloaded packages, and h
 For the macOS team Pi + tmux/worktree setup, use `./setup-dev-pi.sh` from the
 repository root rather than the personal full-config `./setup.sh`. Its Pi
 surface is explicit and includes all current package entries, extension entries,
-settings, models, skills, usage configuration, and guard configuration listed
-above. It creates symlinks only after dependency preflight succeeds; it does
-not install Pi itself.
+settings, models, skills, usage configuration, and guard prompts listed above.
+It deliberately does not link `pi-guard/profiles.jsonc`: that is a user-owned
+personal profile configuration. It creates symlinks only after dependency
+preflight succeeds; it does not install Pi itself.
 
 Run `./setup-dev-pi.sh --bootstrap-pi-deps` only when you explicitly want to
 run locked npm installs for the local Pi packages and download the Playwright

@@ -28,10 +28,14 @@ $PackagesDir = Join-Path $PiDir 'packages'
 $ExtensionsDir = Join-Path $PiDir 'extensions'
 $Mode = if ($Status) { 'status' } elseif ($Uninstall) { 'uninstall' } else { 'install' }
 
-$PiLinks = @('settings.json', 'models.json', 'skills', 'usage', 'pi-guard')
+$PiLinks = @('settings.json', 'models.json', 'skills', 'usage')
+# Personal profiles.jsonc is deliberately excluded. Team installs link only
+# shared guard prompts, leaving ~/.pi/agent/pi-guard/profiles.jsonc user-owned.
+$PiGuardLinks = @('prompts')
 $PackageLinks = @('pi-guard', 'pi-webfetch', 'pi-usage', 'pi-guard-subagents', 'pi-skill-toggle')
 $ExtensionLinks = @('ask-user-question.ts', 'prompt-snippets')
 $ApprovedConflicts = @{}
+$LegacyGuardLink = $false
 
 function Say([string]$Message) { Write-Host $Message }
 function Warn([string]$Message) { Write-Warning $Message }
@@ -136,7 +140,20 @@ function Preflight {
   }
   Test-SymlinkSupport
 }
+function Test-LegacyGuardLink {
+  return Test-OwnedLink (Join-Path $RepoDir 'home\.pi\agent\pi-guard') (Join-Path $PiDir 'pi-guard')
+}
+function Migrate-LegacyGuardLink {
+  if (-not $script:LegacyGuardLink) { return }
+  $target = Join-Path $PiDir 'pi-guard'
+  if ($DryRun) { Say "PLAN: replace legacy owned $target link with a directory so profiles.jsonc remains user-owned"; return }
+  Remove-Item -LiteralPath $target -Force
+  New-Item -ItemType Directory -Force -Path $target | Out-Null
+  Say 'Migrated: legacy Pi guard link; profiles.jsonc is now user-owned'
+}
 function Install-Link([string]$Source, [string]$Target, [string]$Label) {
+  $guardDirectory = (Join-Path $PiDir 'pi-guard') + [IO.Path]::DirectorySeparatorChar
+  if ($DryRun -and $script:LegacyGuardLink -and $Target.StartsWith($guardDirectory, [StringComparison]::OrdinalIgnoreCase)) { Say "PLAN: link $Target -> $Source after migrating the legacy Pi guard link"; return }
   if (Test-OwnedLink $Source $Target) { Say "Unchanged: $Label ($Target)"; return }
   if (Test-PathEntry $Target) { Confirm-Conflict $Target; Invoke-Plan { Move-Item -LiteralPath $Target -Destination "$Target.bak" } "move $Target to $Target.bak"; Say "Backed up: $Target -> $Target.bak" }
   Invoke-Plan { New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Target) | Out-Null; New-Item -ItemType SymbolicLink -Path $Target -Target $Source | Out-Null } "create symbolic link $Target -> $Source"
@@ -162,6 +179,6 @@ function Bootstrap-Dependencies {
   Invoke-Plan { Invoke-InDirectory $webfetch { Say 'Installing Playwright Chromium for pi-webfetch'; & npx playwright install chromium; if ($LASTEXITCODE -ne 0) { throw 'Playwright Chromium install failed' } } } "(cd $webfetch && npx playwright install chromium)"
 }
 
-if ($Mode -eq 'install') { Preflight; foreach ($item in $PiLinks) { Preflight-LinkConflict (Join-Path $RepoDir "home\.pi\agent\$item") (Join-Path $PiDir $item) }; foreach ($item in $PackageLinks) { Preflight-LinkConflict (Join-Path $RepoDir "home\.pi\agent\packages\$item") (Join-Path $PackagesDir $item) }; foreach ($item in $ExtensionLinks) { Preflight-LinkConflict (Join-Path $RepoDir "home\.pi\agent\extensions\$item") (Join-Path $ExtensionsDir $item) }; if ($BootstrapPiDeps) { Bootstrap-Dependencies }; foreach ($item in $PiLinks) { Install-Link (Join-Path $RepoDir "home\.pi\agent\$item") (Join-Path $PiDir $item) "Pi $item" }; foreach ($item in $PackageLinks) { Install-Link (Join-Path $RepoDir "home\.pi\agent\packages\$item") (Join-Path $PackagesDir $item) "Pi package $item" }; foreach ($item in $ExtensionLinks) { Install-Link (Join-Path $RepoDir "home\.pi\agent\extensions\$item") (Join-Path $ExtensionsDir $item) "Pi extension $item" }; Say 'Pi setup complete. The tmux/worktree workflow is not installed on native Windows.' }
-elseif ($Mode -eq 'uninstall') { foreach ($item in $PiLinks) { Uninstall-Link (Join-Path $RepoDir "home\.pi\agent\$item") (Join-Path $PiDir $item) "Pi $item" }; foreach ($item in $PackageLinks) { Uninstall-Link (Join-Path $RepoDir "home\.pi\agent\packages\$item") (Join-Path $PackagesDir $item) "Pi package $item" }; foreach ($item in $ExtensionLinks) { Uninstall-Link (Join-Path $RepoDir "home\.pi\agent\extensions\$item") (Join-Path $ExtensionsDir $item) "Pi extension $item" } }
-else { foreach ($item in $PiLinks) { Status-Link (Join-Path $RepoDir "home\.pi\agent\$item") (Join-Path $PiDir $item) "Pi $item" }; foreach ($item in $PackageLinks) { Status-Link (Join-Path $RepoDir "home\.pi\agent\packages\$item") (Join-Path $PackagesDir $item) "Pi package $item" }; foreach ($item in $ExtensionLinks) { Status-Link (Join-Path $RepoDir "home\.pi\agent\extensions\$item") (Join-Path $ExtensionsDir $item) "Pi extension $item" } }
+if ($Mode -eq 'install') { Preflight; if (Test-LegacyGuardLink) { $script:LegacyGuardLink = $true }; foreach ($item in $PiLinks) { Preflight-LinkConflict (Join-Path $RepoDir "home\.pi\agent\$item") (Join-Path $PiDir $item) }; if (-not $script:LegacyGuardLink) { foreach ($item in $PiGuardLinks) { Preflight-LinkConflict (Join-Path $RepoDir "home\.pi\agent\pi-guard\$item") (Join-Path $PiDir "pi-guard\$item") } }; foreach ($item in $PackageLinks) { Preflight-LinkConflict (Join-Path $RepoDir "home\.pi\agent\packages\$item") (Join-Path $PackagesDir $item) }; foreach ($item in $ExtensionLinks) { Preflight-LinkConflict (Join-Path $RepoDir "home\.pi\agent\extensions\$item") (Join-Path $ExtensionsDir $item) }; Migrate-LegacyGuardLink; if ($BootstrapPiDeps) { Bootstrap-Dependencies }; foreach ($item in $PiLinks) { Install-Link (Join-Path $RepoDir "home\.pi\agent\$item") (Join-Path $PiDir $item) "Pi $item" }; foreach ($item in $PiGuardLinks) { Install-Link (Join-Path $RepoDir "home\.pi\agent\pi-guard\$item") (Join-Path $PiDir "pi-guard\$item") "Pi guard $item" }; foreach ($item in $PackageLinks) { Install-Link (Join-Path $RepoDir "home\.pi\agent\packages\$item") (Join-Path $PackagesDir $item) "Pi package $item" }; foreach ($item in $ExtensionLinks) { Install-Link (Join-Path $RepoDir "home\.pi\agent\extensions\$item") (Join-Path $ExtensionsDir $item) "Pi extension $item" }; Say 'Pi setup complete. The tmux/worktree workflow is not installed on native Windows.' }
+elseif ($Mode -eq 'uninstall') { foreach ($item in $PiLinks) { Uninstall-Link (Join-Path $RepoDir "home\.pi\agent\$item") (Join-Path $PiDir $item) "Pi $item" }; foreach ($item in $PiGuardLinks) { Uninstall-Link (Join-Path $RepoDir "home\.pi\agent\pi-guard\$item") (Join-Path $PiDir "pi-guard\$item") "Pi guard $item" }; foreach ($item in $PackageLinks) { Uninstall-Link (Join-Path $RepoDir "home\.pi\agent\packages\$item") (Join-Path $PackagesDir $item) "Pi package $item" }; foreach ($item in $ExtensionLinks) { Uninstall-Link (Join-Path $RepoDir "home\.pi\agent\extensions\$item") (Join-Path $ExtensionsDir $item) "Pi extension $item" } }
+else { foreach ($item in $PiLinks) { Status-Link (Join-Path $RepoDir "home\.pi\agent\$item") (Join-Path $PiDir $item) "Pi $item" }; foreach ($item in $PiGuardLinks) { Status-Link (Join-Path $RepoDir "home\.pi\agent\pi-guard\$item") (Join-Path $PiDir "pi-guard\$item") "Pi guard $item" }; foreach ($item in $PackageLinks) { Status-Link (Join-Path $RepoDir "home\.pi\agent\packages\$item") (Join-Path $PackagesDir $item) "Pi package $item" }; foreach ($item in $ExtensionLinks) { Status-Link (Join-Path $RepoDir "home\.pi\agent\extensions\$item") (Join-Path $ExtensionsDir $item) "Pi extension $item" } }
