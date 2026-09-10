@@ -1395,14 +1395,29 @@ The permissions gate remains loaded and will fail closed until the profile is co
     },
   });
 
-  // Ctrl+G opens Pi's external editor and Ctrl+Shift+G navigates fullscreen
-  // transcript search results, so retain the mnemonic on the unclaimed Alt+G.
-  pi.registerShortcut(Key.alt("g"), {
-    description: "Search and switch permissions profiles",
-    handler: async (ctx) => {
-      if (preserveConfigurationErrorStatus(ctx)) return;
-      await showProfilePicker(ctx);
-    },
+  // Ctrl+G opens Pi's external editor, Ctrl+Shift+G navigates fullscreen
+  // transcript search results, and Ctrl+Shift+P cycles models. Alt+G remains
+  // available where the terminal reports Option as Meta; Ctrl+Shift+I is the
+  // macOS-safe fallback that leaves Pi's defaults intact.
+  const showProfiles = async (ctx: ExtensionContext): Promise<void> => {
+    if (preserveConfigurationErrorStatus(ctx)) return;
+    await showProfilePicker(ctx);
+  };
+  for (const shortcut of [Key.alt("g"), "ctrl+shift+i"] as const) {
+    pi.registerShortcut(shortcut, {
+      description: "Search and switch permissions profiles",
+      handler: showProfiles,
+    });
+  }
+
+  /** Run a no-argument slash command through Pi's ordinary command dispatcher. */
+  const runCommandShortcut = (command: string) => () => {
+    pi.sendUserMessage(`/${command}`);
+  };
+
+  pi.registerShortcut("ctrl+shift+a", {
+    description: "Create and activate a custom permissions profile",
+    handler: runCommandShortcut("profile-add"),
   });
 
   pi.registerCommand("read-only", {
@@ -1530,6 +1545,23 @@ The permissions gate remains loaded and will fail closed until the profile is co
       );
     },
   });
+  pi.registerShortcut("ctrl+shift+b", {
+    description: "Show the active sandbox posture",
+    handler: runCommandShortcut("sandbox"),
+  });
+  pi.registerShortcut("ctrl+shift+n", {
+    description: "Use the active profile's Bash sandbox configuration",
+    handler: runCommandShortcut("sandbox-on"),
+  });
+  pi.registerShortcut("ctrl+shift+d", {
+    description: "Disable Bash sandboxing for this session",
+    handler: runCommandShortcut("sandbox-off"),
+  });
+  pi.registerShortcut("ctrl+shift+x", {
+    description: "Force a no-network Bash sandbox for this session",
+    handler: runCommandShortcut("sandbox-on-force"),
+  });
+
   pi.registerCommand("permissions", {
     description:
       "Explain which rule decided access: /permissions explain <tool> <input>",
@@ -1611,6 +1643,17 @@ The permissions gate remains loaded and will fail closed until the profile is co
     },
   });
 
+  pi.registerShortcut("ctrl+shift+e", {
+    description: "Start a permission-decision explanation",
+    handler: (ctx) => {
+      ctx.ui.setEditorText("/permissions explain ");
+      ctx.ui.notify(
+        "Specify a tool and input, then submit the command.",
+        "info",
+      );
+    },
+  });
+
   pi.registerCommand("socrates", {
     description: "Switch to the Socrates coaching profile",
     handler: async (_args, ctx) => {
@@ -1634,6 +1677,19 @@ The permissions gate remains loaded and will fail closed until the profile is co
         `Socrates profile disabled; active profile: ${policyConfig.defaultProfile}`,
       );
     },
+  });
+
+  pi.registerShortcut("ctrl+shift+c", {
+    description: "Switch to the Socrates coaching profile",
+    handler: runCommandShortcut("socrates"),
+  });
+  pi.registerShortcut("ctrl+shift+z", {
+    description: "Switch back to the configured default permissions profile",
+    handler: runCommandShortcut("socrates-off"),
+  });
+  pi.registerShortcut("ctrl+shift+r", {
+    description: "Switch to the read-only permissions profile",
+    handler: runCommandShortcut("read-only"),
   });
 
   pi.on("before_agent_start", async (event, ctx) => {

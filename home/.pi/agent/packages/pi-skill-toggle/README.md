@@ -14,6 +14,8 @@ Start Pi, then run:
 /toggle-skills
 ```
 
+In interactive Pi, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd> opens the same picker. This is the default-safe alternative to Option/Alt shortcuts on macOS.
+
 The overlay lists the skill's current and desired mode, source, path,
 description, and diagnostics.
 

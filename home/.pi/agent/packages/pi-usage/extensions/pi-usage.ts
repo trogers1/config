@@ -122,6 +122,11 @@ export default function piUsageExtension(pi: ExtensionAPI) {
 		closeDb();
 	});
 
+	pi.registerShortcut('ctrl+shift+u', {
+		description: 'Show token usage and cost reports',
+		handler: () => pi.sendUserMessage('/usage'),
+	});
+
 	pi.registerCommand('usage', {
 		description: 'Show token usage and cost reports, import history, or export CSV',
 		getArgumentCompletions: (prefix: string) => {

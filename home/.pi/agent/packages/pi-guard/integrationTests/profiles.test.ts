@@ -1351,6 +1351,22 @@ describe("permissions extension", () => {
     expect(harness.shortcuts.get("alt+g")?.description).toBe(
       "Search and switch permissions profiles",
     );
+    expect(harness.shortcuts.get("ctrl+shift+i")?.description).toBe(
+      "Search and switch permissions profiles",
+    );
+    expect([...harness.shortcuts.keys()]).toEqual(
+      expect.arrayContaining([
+        "ctrl+shift+a",
+        "ctrl+shift+b",
+        "ctrl+shift+c",
+        "ctrl+shift+d",
+        "ctrl+shift+e",
+        "ctrl+shift+n",
+        "ctrl+shift+r",
+        "ctrl+shift+x",
+        "ctrl+shift+z",
+      ]),
+    );
 
     await harness.runCommand({ name: "profile", args: "missing" });
     expect(harness.ui.notify).toHaveBeenLastCalledWith(

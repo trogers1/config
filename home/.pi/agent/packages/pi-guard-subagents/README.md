@@ -57,6 +57,7 @@ second interactive-subagents package.
 
 Forked from pi's `examples/extensions/subagent` with additions:
 
+- **Child-pane shortcut fallback.** The tool-details toggle responds to `Alt+T` and the macOS-safe `Ctrl+Shift+T`.
 - **Interactive tmux lifecycle.** Child processes run in their own tmux pane,
   with a persistent registry/loadout and no headless fallback. Pi must be
   started inside tmux (`tmux new -A -s pi 'pi'`).

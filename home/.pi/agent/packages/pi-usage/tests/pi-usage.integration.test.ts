@@ -95,6 +95,9 @@ describe('pi-usage extension', () => {
 			},
 		});
 		piUsageExtension(harness.api);
+		expect(harness.shortcuts.get('ctrl+shift+u')?.description).toBe(
+			'Show token usage and cost reports'
+		);
 
 		await harness.emit('session_start', { reason: 'startup' });
 		// session_start must not refresh a provider catalog: Pi awaits startup

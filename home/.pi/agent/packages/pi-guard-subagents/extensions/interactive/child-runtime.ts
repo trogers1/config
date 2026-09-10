@@ -94,9 +94,9 @@ export default function childRuntime(pi: ExtensionAPI): void {
 					`tool: ${activeTool}`,
 					`profile: ${loadout.profile ?? "default"}`,
 					`scope: ${loadout.writes?.join(", ") ?? "profile policy"}`,
-					"(alt+t to collapse)",
+					"(alt+t or ctrl+shift+t to collapse)",
 				]
-			: [`${loadout.agent} · ${childSessionId} · ${activeTool}`, "(alt+t to expand tools)"];
+			: [`${loadout.agent} · ${childSessionId} · ${activeTool}`, "(alt+t or ctrl+shift+t to expand tools)"];
 		uiContext.ui.setWidget("pi-guard-subagent", lines);
 	};
 
@@ -148,13 +148,15 @@ export default function childRuntime(pi: ExtensionAPI): void {
 			}
 		}, 100);
 	});
-	pi.registerShortcut("alt+t", {
-		description: "Expand or collapse subagent tools",
-		handler: async () => {
-			expanded = !expanded;
-			renderWidget();
-		},
-	});
+	for (const shortcut of ["alt+t", "ctrl+shift+t"] as const) {
+		pi.registerShortcut(shortcut, {
+			description: "Expand or collapse subagent tools",
+			handler: async () => {
+				expanded = !expanded;
+				renderWidget();
+			},
+		});
+	}
 	// Provider/model activity is deliberately recorded separately from turn
 	// activity: a turn can spend a long time waiting on a provider, and the
 	// parent status protocol should still have a useful explanation for that

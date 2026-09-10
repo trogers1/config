@@ -66,6 +66,9 @@ describe("pi-skill-toggle extension", () => {
       const harness = createCommandHarness(root, uiResult);
 
       piSkillToggle(harness.api);
+      expect(harness.shortcuts.get("ctrl+shift+t")?.description).toBe(
+        "Toggle whether skills are agent-invocable or manual-only",
+      );
       await harness.run("toggle-skills");
 
       expect(
@@ -144,6 +147,7 @@ function createCommandHarness(
     string,
     { handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> }
   >();
+  const shortcuts = new Map<string, { description?: string }>();
   const reload = vi.fn().mockResolvedValue(undefined);
   const ui = { notify: vi.fn(), custom: vi.fn().mockResolvedValue(result) };
   const context = {
@@ -161,11 +165,15 @@ function createCommandHarness(
     ) {
       commands.set(name, command);
     },
+    registerShortcut(shortcut: string, registration: { description?: string }) {
+      shortcuts.set(shortcut, registration);
+    },
   } as unknown as ExtensionAPI;
   return {
     api,
     reload,
     ui,
+    shortcuts,
     async run(name: string) {
       const command = commands.get(name);
       if (!command) throw new Error(`Command not registered: ${name}`);

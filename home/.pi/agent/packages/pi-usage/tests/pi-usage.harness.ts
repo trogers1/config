@@ -23,6 +23,7 @@ export function createPiUsageHarness({
 }) {
 	const handlers = new Map<string, Handler[]>();
 	const commands = new Map<string, RegisteredCommand>();
+	const shortcuts = new Map<string, { description?: string }>();
 	const notifications: Array<{ message: string; type: string | undefined }> = [];
 	const statuses: Array<{ key: string; text: string | undefined }> = [];
 	const modelRegistry = {
@@ -53,6 +54,9 @@ export function createPiUsageHarness({
 		registerCommand: vi.fn((name: string, command: RegisteredCommand) =>
 			commands.set(name, command)
 		),
+		registerShortcut: vi.fn((shortcut: string, registration: { description?: string }) =>
+			shortcuts.set(shortcut, registration)
+		),
 	} as unknown as ExtensionAPI;
 
 	return {
@@ -61,6 +65,7 @@ export function createPiUsageHarness({
 		modelRegistry,
 		notifications,
 		statuses,
+		shortcuts,
 		async emit(event: string, payload: unknown): Promise<void> {
 			for (const handler of handlers.get(event) ?? []) {
 				await handler(payload, context as unknown as ExtensionContext);

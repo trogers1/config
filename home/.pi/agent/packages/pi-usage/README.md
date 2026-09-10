@@ -4,6 +4,8 @@ Tracks pi assistant token usage and derived accounting meters in a local SQLite 
 
 ## Commands
 
+Press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>U</kbd> in interactive Pi to run `/usage` for the default report.
+
 ```text
 /usage                         # last 7 days
 /usage today
