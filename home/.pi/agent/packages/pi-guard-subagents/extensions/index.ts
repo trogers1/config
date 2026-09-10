@@ -37,7 +37,7 @@ import {
 	type ChildRecord,
 	type TerminalSignal,
 } from "./interactive/types.ts";
-import { discoverAgents, type AgentConfig, type AgentScope } from "./agents.ts";
+import { discoverAgents, formatAgentCatalog, type AgentConfig, type AgentScope } from "./agents.ts";
 import { ensureRunDir, slugify } from "./handoff.ts";
 
 export {
@@ -403,6 +403,17 @@ export default function (pi: ExtensionAPI) {
 			},
 		});
 	};
+
+	// Agent definitions are discovered at invocation time, so publish the same
+	// resolved catalog to the parent prompt on every turn. This makes builtin
+	// names and user overrides visible without asking the model to inspect this
+	// package or guess a valid `agent` value.
+	pi.on("before_agent_start", (event, ctx) => {
+		const scope: AgentScope = "user";
+		const { agents } = discoverAgents(ctx.cwd, scope);
+		return { systemPrompt: `${event.systemPrompt}\n\n${formatAgentCatalog(agents, scope)}` };
+	});
+
 	pi.on("session_shutdown", () => {
 		for (const watcher of watchers) watcher.stop();
 		watchers.clear();
@@ -494,7 +505,7 @@ export default function (pi: ExtensionAPI) {
 		name: "subagent",
 		label: "Subagent",
 		description:
-			"Launch guarded interactive subagents in tmux panes. No headless fallback. Launch is asynchronous: after calling this tool, end the turn instead of sleeping or polling; questions and terminal outcomes are delivered automatically.",
+			"Launch a guarded interactive subagent by its catalog name (built-ins: scout, explore, planner, reviewer, worker), or use tasks/chain for parallel/sequential delegation. The current resolved catalog and exact call patterns are included in the system prompt. No headless fallback: launches are asynchronous tmux panes, so end the turn instead of polling; questions and terminal outcomes arrive automatically.",
 		parameters: Params,
 		async execute(_id, p: ParamsType, _signal, _update, ctx) {
 			const mode = modeOf(p);

@@ -139,6 +139,37 @@ One of three modes per call:
 Optional per call: `runDir`, `agentScope`, `confirmProjectAgents`.
 Optional per task/step (and single): `cwd`, `writes: string[]`, `sessionId`, `label`.
 
+The extension injects the **resolved current agent catalog** into every parent
+agent turn. It lists the exact usable names (including user overrides), their
+purpose, model, profile, tools, and concrete single/parallel/chain calls. Use
+one of these shapes when invoking the tool:
+
+```ts
+subagent({ agent: "scout", task: "Find the retry implementation and report the key files." });
+
+subagent({
+	tasks: [
+		{ agent: "worker", task: "Add auth tests.", writes: ["tests/auth"] },
+		{ agent: "reviewer", task: "Review the validation changes." },
+	],
+});
+
+subagent({
+	chain: [
+		{ agent: "scout", task: "Map the cache implementation." },
+		{ agent: "planner", task: "Write a plan using these findings: {previous}" },
+	],
+});
+```
+
+By default, calls resolve builtin and user agents (`agentScope: "user"`). To
+use repository-defined `.pi/agents`, explicitly set `agentScope: "project"` or
+`"all"`; those agents require confirmation by default. To steer a live child,
+answer its question, or safely resume a completed child, call
+`subagent_message({ name, message })` with the persistent name from its launch
+or result. Do not poll or sleep after launching: child questions and terminal
+results are delivered automatically.
+
 Every result ends with metadata lines the orchestrator uses:
 
 ```

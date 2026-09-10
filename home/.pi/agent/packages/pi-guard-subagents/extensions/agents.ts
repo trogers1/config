@@ -43,6 +43,38 @@ export interface AgentDiscoveryResult {
 	projectAgentsDir: string | null;
 }
 
+/**
+ * Render the discovered agents as prompt-ready delegation guidance. Keeping
+ * this next to discovery makes the advertised names follow override precedence
+ * instead of drifting from the actual dispatcher.
+ */
+export function formatAgentCatalog(agents: readonly AgentConfig[], scope: AgentScope): string {
+	const entries = [...agents]
+		.sort((left, right) => left.name.localeCompare(right.name))
+		.map((agent) => {
+			const details = [
+				`source: ${agent.source}`,
+				agent.model ? `model: ${agent.model}` : "model: Pi default",
+				agent.profile ? `profile: ${agent.profile}` : "profile: inherited/default",
+				agent.tools?.length ? `tools: ${agent.tools.join(", ")}` : "tools: default child allowlist",
+			].join("; ");
+			return `- \`${agent.name}\` — ${agent.description} (${details})`;
+		});
+
+	return [
+		"## Available guarded subagents",
+		`Use the \`subagent\` tool to delegate. Its default \`agentScope\` is \`${scope}\`; the names below are exactly the names accepted in \`agent\`.`,
+		...entries,
+		"",
+		"Invocation patterns:",
+		'- One child: `subagent({ agent: "scout", task: "Map retry handling and report the relevant files." })`.',
+		'- Parallel independent work: `subagent({ tasks: [{ agent: "worker", task: "…", writes: ["src/auth"] }, { agent: "reviewer", task: "…" }] })`.',
+		'- Ordered work: `subagent({ chain: [{ agent: "scout", task: "…" }, { agent: "planner", task: "Plan from: {previous}" }] })`.',
+		'- To include repository-defined agents, set `agentScope: "project"` or `"all"`; project agents require confirmation unless explicitly disabled by the caller.',
+		"- Children are interactive tmux panes. Launches return immediately: do not poll or sleep. Child questions and final results arrive automatically. Use `subagent_message({ name, message })` only to steer a running child, answer its question, or resume a completed child.",
+	].join("\n");
+}
+
 const BUILTIN_AGENTS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "agents");
 
 function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {

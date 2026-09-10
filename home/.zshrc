@@ -81,28 +81,18 @@ fi
 # go
 # export PATH="/usr/local/go/bin:$PATH"
 
-# >>> dev worktree dhome >>>
-dhome() {
-    local env_line=""
-    local target=""
+# Worktree shell integration. The `dev` command handles workflow actions;
+# `dev home` returns this shell to the worktree associated with its tmux session.
+dev() {
+  if [ "${1:-}" != "home" ]; then
+    command dev "$@"
+    return
+  fi
 
-    if [ -z "${TMUX:-}" ]; then
-        echo "dhome is only available in a tmux dev session"
-        return 1
-    fi
-
-    env_line="$(tmux show-environment DTREE_WORKTREE_PATH 2>/dev/null || true)"
-    case "$env_line" in
-      DTREE_WORKTREE_PATH=*)
-            target="${env_line#DTREE_WORKTREE_PATH=}"
-            ;;
-        esac
-
-    if [ -z "$target" ]; then
-        echo "dhome is only available in a tmux dev session"
-        return 1
-    fi
-
-    cd "$target"
+  local env_line target
+  [ -n "${TMUX:-}" ] || { echo "dev home is only available in a tmux dev session"; return 1; }
+  env_line="$(tmux show-environment DTREE_WORKTREE_PATH 2>/dev/null || true)"
+  target="${env_line#DTREE_WORKTREE_PATH=}"
+  [ "$target" != "$env_line" ] && [ -n "$target" ] || { echo "dev home is only available in a tmux dev session"; return 1; }
+  cd "$target"
 }
-# <<< dev worktree dhome <<<
