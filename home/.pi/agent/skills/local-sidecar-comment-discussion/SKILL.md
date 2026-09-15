@@ -7,7 +7,8 @@ disable-model-invocation: true
 
 # Local Comment Discussions
 
-Find and read any *.comments files (sidecar comments files). They take the following form before any 'threads' have started:
+Find and read any `*.comments` or `comments.md` files (sidecar comments files). They take the following form before any 'threads' have started:
+
 
 ```.comments
 @<id1> <line>:<col>[-<line>:<col>] | <hash>== User comment
@@ -81,3 +82,6 @@ Snippet/pseudocode:
 ````
 
 DO NOT MAKE CHANGES OUTSIDE OF THE COMMENTS FILES UNLESS SPECIFICALLY REQUESTED TO DO SO or the comment indicates that the thread is resolved and changes ought to be made.
+
+NOTE:
+- Sidecar comment files or comment.md files can be either in the root of the project, or deeply nested. `comments.md` is usually at the root of the project.

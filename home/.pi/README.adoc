@@ -12,25 +12,26 @@ This repo manages selected global pi agent config:
 * `home/.pi/agent/models.json` → `~/.pi/agent/models.json`
 * `home/.pi/agent/skills` → `~/.pi/agent/skills`
 * `home/.pi/agent/usage` → `~/.pi/agent/usage`
-* `home/.pi/agent/pi-guard` → `~/.pi/agent/pi-guard`
+* `home/.pi/agent/pi-guard/profiles.jsonc` → `~/.pi/agent/pi-guard/profiles.jsonc` (personal setup only)
+* `home/.pi/agent/pi-guard/prompts` → `~/.pi/agent/pi-guard/prompts` (personal setup only)
 
 Pi-managed local state such as `auth.json`, sessions, downloaded packages, and helper binaries stays outside the repo.
 
 == Team installer
 
-For the macOS team Pi + tmux/worktree setup, use `./setup-dev-pi.sh` from the
-repository root rather than the personal full-config `./setup.sh`. Its Pi
-surface is explicit and includes all current package entries, extension entries,
-settings, models, skills, usage configuration, and guard prompts listed above.
-It deliberately does not link `pi-guard/profiles.jsonc`: that is a user-owned
-personal profile configuration. It creates symlinks only after dependency
-preflight succeeds; it does not install Pi itself.
+For the shared macOS Pi + tmux/worktree setup, use `./setup.sh` from the
+repository root. Its Pi surface is explicit and includes the current package
+entries, extension entries, settings, models, skills, and usage configuration.
+Guard profiles and prompts are deliberately personal and are installed only by
+`./setup-personal.sh`. Shared setup
+creates symlinks only after dependency preflight succeeds; it does not install
+Pi itself.
 
-Run `./setup-dev-pi.sh --bootstrap-pi-deps` only when you explicitly want to
+Run `./setup.sh --bootstrap-pi-deps` only when you explicitly want to
 run locked npm installs for the local Pi packages and download the Playwright
 Chromium used by `pi-webfetch`. See the root README for prerequisite,
 conflict-backup, status, and uninstall behavior.
 
-For a native Windows Pi-only setup, run `.\setup-dev-pi.ps1` in PowerShell from
-the repository root. It has the same explicit Pi resource surface but excludes
+For a native Windows Pi-only setup, run `.\setup.ps1` in PowerShell from the
+repository root. It has the same explicit shared Pi resource surface but excludes
 the Bash/tmux workflow and requires permission to create Windows symbolic links.

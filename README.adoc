@@ -10,36 +10,64 @@ Herein lies my configuration files 📜
 
 == Setup
 
-Run `./setup.sh` from this repository to install the full config.
-
-It will:
-
-* symlink each entry in `home/` into `~/`
-* symlink each entry in `xdg/` into `~/.config/`
-* run `./tmux_and_worktrees/setup.sh` to install the tmux/worktree helpers
-* reload tmux config automatically when a tmux server is already running
-
-If you only want the home + XDG symlinks, run `./setup_symlinks.sh` directly. For shell changes, open a new shell or run `source ~/.zshrc`.
-
-== Team dev + Pi setup (macOS)
-
-`setup.sh` remains the personal, full-dotfiles setup. Teammates who only need
-Pi and the non-writing tmux/worktree commands must run:
+The two macOS entry points have deliberately different ownership boundaries.
+Run the safe, additive shared setup with:
 
 [source,bash]
 ----
-./setup-dev-pi.sh
+./setup.sh
+----
+
+Run the separate personal-dotfile linker only on machines where this repository
+should own the complete personal configurations:
+
+[source,bash]
+----
+./setup-personal.sh
+----
+
+The personal installer has a stable, explicit manifest for home, XDG, Cursor,
+and Pi guard profile/prompt configuration. It does not invoke shared setup and
+does not install Pi packages, command wrappers, or worktree resources. To install both sets, run
+both commands explicitly. Both support `--status`, `--verify`, `--dry-run`, and
+`--uninstall`.
+
+=== Breaking setup migration
+
+The former setup scripts and `--mode` interface have been removed. Existing
+installations must run the explicit, one-time migration before the new shared
+setup:
+
+[source,bash]
+----
+./scripts/setup/migrate-legacy.sh
+----
+
+The migration splits the old whole `pi-guard` link while preserving
+`profiles.jsonc`, backs up regular shell/tmux files before removing known old
+marker blocks, and removes old `d*` wrappers only when their exact content
+matches an installer-generated wrapper. Normal `./setup.sh` detects known
+legacy state and exits before changing files.
+
+== Shared dev + Pi setup (macOS)
+
+The safe shared Pi and non-writing tmux/worktree workflow is installed with:
+
+[source,bash]
+----
+./setup.sh
 ----
 
 This macOS-only installer has an explicit, limited surface: it installs the
-shared Pi configuration (packages, extensions, skills, settings, usage, and
-guard prompts), the `dev` CLI (with `dnew`, `dopen`, `dtree`, `dclose`,
-`dkill`, and `dmerge` compatibility wrappers), and the tmux status helper. It does not install or link Cursor, Git, Ghostty,
+shared Pi configuration (packages, extensions, skills, settings, and usage),
+the `dev` CLI, and the tmux status helper. It does not install or link Cursor, Git, Ghostty,
 Neovim, OpenCode, or shell dotfiles. `wopen`, `wnew`, and `wclose` are excluded.
 
-Before changing files it requires existing `pi`, `tmux`, `git`, `python3`,
-`node`/`npm` (Node 22.19+), `nvim`, and `lazygit`. Missing tools cause a
-nonzero exit before modification, with current installation links or commands.
+Before changing files it requires existing `pi`, `tmux`, `git`, `python3`, and
+`node`/`npm` (Node 22.19+). Missing tools cause a nonzero exit before
+modification. Neovim and lazygit are optional, workflow-specific tools; setup
+does not require them, but warns when they are absent and shows the optional
+`brew install neovim` or `brew install lazygit` command.
 Pi itself is intentionally not installed by the script.
 
 The local Pi packages have dependencies that are not committed. A fresh clone
@@ -48,7 +76,7 @@ packages, bootstrap those dependencies explicitly:
 
 [source,bash]
 ----
-./setup-dev-pi.sh --bootstrap-pi-deps
+./setup.sh --bootstrap-pi-deps
 ----
 
 That command runs `npm ci` in each bundled Pi package and downloads Playwright
@@ -62,50 +90,50 @@ before moving it to an adjacent `<target>.bak` backup. For an existing regular
 place, copying it to `<target>.bak`, and appending only its marked managed
 block. `--non-interactive` fails on every such conflict rather than silently
 skipping or replacing a file. Existing `.bak` files are never overwritten.
-Uninstall restores an adjacent backup only after
-it verifies that the replacement is still installer-owned and unchanged;
-otherwise it preserves the user file and reports the conflict. The installer
+Uninstall removes only a replacement that is still installer-owned and
+unchanged. Adjacent backups are preserved for explicit manual restoration;
+the installer never promotes an untracked `.bak` file into active configuration. The installer
 never overwrites `~/bin/pi` and never follows a symlinked `~/.zshrc` or
 `~/.tmux.conf` to edit its target.
 
 The installer adds only uniquely marked blocks to a regular `~/.zshrc` (PATH,
-`dev home`, and its `dhome` compatibility wrapper) and regular `~/.tmux.conf` (workflow include). It does not reload
+`dev home`) and regular `~/.tmux.conf` (CSI-u extended-key settings and the workflow include). If either file is a symlink owned by `setup-personal.sh`, shared setup recognizes the checked-in configuration as providing the integration and does not edit through the link. It does not reload
 an existing tmux server; reload deliberately after reviewing the changes:
 `tmux source-file ~/.tmux.conf`.
 
 Pi resources installed here are global and therefore trusted by Pi for all
 projects. Option/Alt shortcuts depend on the terminal reporting Option as
 Meta, which is not macOS's default. The shared extensions therefore provide
-`Ctrl+Shift` fallbacks for every team slash command and shortcut; see each
-package's README for the command map. The included skills, browser tool, and usage tooling reflect
+`Ctrl+Shift` fallbacks for every shared slash command and shortcut; see each
+package's README for the command map. Run `./setup.sh --verify` after opening a new terminal to check every declared shared artifact. The included skills, browser tool, and usage tooling reflect
 the current repository configuration; review changes under `home/.pi/` as
-privileged executable configuration. `dtree` also retains its existing fallback
+privileged executable configuration. `dev tree` also retains its existing fallback
 initializer, which may link `.env`/Terraform files and run `npm ci` when it
 creates a worktree.
 
-== Team dev + Pi setup (Windows)
+== Shared dev + Pi setup (Windows)
 
-For native Windows, run the PowerShell installer from a PowerShell prompt:
+For native Windows, run the PowerShell shared installer from a PowerShell prompt:
 
 [source,powershell]
 ----
-.\setup-dev-pi.ps1
+.\setup.ps1
 ----
 
 It installs the same explicitly listed shared Pi resources (settings, models,
-skills, usage, guard prompts, packages, and extensions), with the same
-conflict backup, `-DryRun`, `-NonInteractive`, `-Status`, `-Uninstall`, and
-explicit `-BootstrapPiDeps` behavior. It requires Git, Pi, Node/npm 22.19+,
+skills, usage, packages, and extensions), with the same
+conflict backup, `-DryRun`, `-NonInteractive`, `-Status`, `-Verify`,
+`-Uninstall`, and explicit `-BootstrapPiDeps` behavior. It requires Git, Pi, Node/npm 22.19+,
 and permission to create symbolic links. Enable Windows Developer Mode or run
 PowerShell elevated if its symbolic-link preflight fails. Both team installers
 leave `~/.pi/agent/pi-guard/profiles.jsonc` user-owned; Pi falls back to its
 portable built-in profiles when that file is absent.
 
-The Windows installer deliberately does *not* install `dev`, the legacy `d*`
-wrappers, tmux configuration, or zsh integration: those are Bash/tmux-specific
+The Windows installer deliberately does *not* install `dev`, tmux configuration,
+or zsh integration: those are Bash/tmux-specific
 and remain supported only by the macOS installer. If your execution policy
 blocks local scripts, run it explicitly with:
-`powershell -ExecutionPolicy Bypass -File .\setup-dev-pi.ps1`.
+`powershell -ExecutionPolicy Bypass -File .\setup.ps1`.
 
 == XDG configs
 
@@ -114,4 +142,4 @@ See link:./xdg/README.adoc[`./xdg/README.adoc`] for the rationale and mapping.
 
 == link:./tmux_and_worktrees[Tmux and Worktrees]
 
-This config includes my development tmux+worktree setup for parallel agentic development. It can be installed via the link:./setup.sh[./setup.sh] script (or directly by running `bash ./tmux_and_worktrees/setup.sh`). This will set up tmux and worktree commands (see link:./tmux_and_worktrees/README.adoc[the README] for instructions/dependencies).
+This config includes my development tmux+worktree setup for parallel agentic development. Install the shared workflow with link:./setup.sh[`./setup.sh`]. Personal dotfiles are installed separately by `./setup-personal.sh`; see link:./tmux_and_worktrees/README.adoc[the README] for instructions and dependencies.

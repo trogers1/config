@@ -18,9 +18,7 @@ The `dev` CLI is the primary interface:
 
 `dev home` is only available inside a tmux dev session created by `dev new`,
 `dev open`, or `dev tree`; it needs the installed zsh shell integration because
-changing directories must happen in the current shell. The legacy `dnew`,
-`dopen`, `dtree`, `dclose`, `dkill`, `dmerge`, and `dhome` commands remain as
-compatibility wrappers around the corresponding `dev` commands.
+changing directories must happen in the current shell.
 
 * `wopen` -> `dev new`, but launch `nvim` with `NVIM_COLORSCHEME=shine`
 * `wnew` -> open a new Ghostty window with writing overrides, then run `wopen`
@@ -56,22 +54,22 @@ session name.
 
 == Install (or re-setup after updating)
 
-From this directory:
+From the repository root:
 
 [source,bash]
 ----
-bash setup.sh
+./setup.sh
+# Optional, only for Taylor's complete personal dotfiles:
+./setup-personal.sh
 source ~/.zshrc
 tmux source-file ~/.tmux.conf
 ----
 
-`setup.sh` will:
-
-* install thin command wrappers into `~/bin`
-* ensure `~/bin` is on `PATH` in `~/.zshrc`
-* remove any legacy alias block for these commands from `~/.zshrc`
-* install shell integration for `dev home` (plus the legacy `dhome` wrapper) in `~/.zshrc`
-* source tmux bindings from `~/.tmux.worktree.conf`
+Shared setup installs the thin command wrappers into `~/bin`, links the workflow
+bindings at `~/.tmux.worktree.conf`, and adds marked integration to regular shell
+and tmux files. Personal setup separately links Taylor's complete shell and tmux
+configurations. Verify them with `./setup.sh --verify` and, when used,
+`./setup-personal.sh --verify`.
 
 == tmux keybinds
 
@@ -123,13 +121,13 @@ its usual meaning: the base for a newly created branch.
 
 When creating a new branch, `dev tree` bases it on your current branch by default.
 If your current HEAD is detached, it falls back to `main`. If no matching local
-branch exists and the repository has an `origin` remote, `dtree` asks before
+branch exists and the repository has an `origin` remote, `dev tree` asks before
 fetching `origin`. When `origin/<branch>` exists after that fetch, it creates a
 local branch that tracks it; otherwise it creates the new branch from the base.
 `dev tree` now reuses tmux sessions by matching the resolved worktree path, so `dev tree B`
 from worktree `A` reconnects only to the session already bound to the same worktree path.
 If a session named for branch `B` already exists but points at some other checkout,
-`dtree` creates a new suffixed session instead of attaching you to the wrong worktree.
+`dev tree` creates a new suffixed session instead of attaching you to the wrong worktree.
 
 `dev new` follows the same rule for non-worktree sessions: it reuses the session for the
 resolved project path, and if the preferred `<repo>-dev` name is already attached to
@@ -159,7 +157,7 @@ worktree exactly as-is.
 the session attached to the resolved path even when a suffixed fallback session name
 was used.
 
-When you run `dclose`/`wclose` from inside the current tmux dev session, tmux switches
+When you run `dev close` or `wclose` from inside the current tmux dev session, tmux switches
 you to the most recently used remaining managed dev/writing session before closing the
 current one.
 

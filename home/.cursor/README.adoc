@@ -2,7 +2,7 @@
 
 `cli-config.json` maps to `~/.cursor/cli-config.json`.
 
-Only this file is symlinked by `setup_symlinks.sh`; the rest of `~/.cursor/` (chats, auth cache, skills, etc.) stays local.
+Only this file is symlinked by `setup-personal.sh`; the rest of `~/.cursor/` (chats, auth cache, skills, etc.) stays local.
 
 == Permissions
 

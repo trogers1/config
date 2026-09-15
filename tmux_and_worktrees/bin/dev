@@ -25,8 +25,6 @@ Commands:
                               Requires the installed zsh shell integration.
   help                       Show this help.
 
-Compatibility commands dnew, dopen, dtree, dclose, dkill, dmerge, and dhome
-remain available and delegate to their corresponding `dev` subcommands.
 EOF
 }
 
