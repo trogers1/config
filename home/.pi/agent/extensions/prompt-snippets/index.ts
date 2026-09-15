@@ -123,6 +123,11 @@ export default function (pi: ExtensionAPI) {
 			return;
 		}
 
+		// The core editor may collapse large pastes into a placeholder. Custom UI
+		// temporarily takes focus and can discard that placeholder's expanded
+		// payload, so snapshot the expanded text before opening the menu.
+		const editorTextBeforeMenu = ctx.ui.getEditorText();
+
 		// Working copy; only committed to `enabled` on confirm.
 		const working = new Set(enabled);
 
@@ -281,6 +286,7 @@ export default function (pi: ExtensionAPI) {
 		if (confirmed) {
 			enabled = working;
 		}
+		ctx.ui.setEditorText(editorTextBeforeMenu);
 		updateWidget(ctx);
 	}
 

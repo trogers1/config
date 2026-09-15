@@ -16,6 +16,8 @@ standalone instruction — toggle exactly the ones you want per message.
   - The menu is framed with top/bottom border lines and scrolls when the list
     exceeds the viewport (max height adapts to your terminal), with
     `↑ n more` / `↓ n more` indicators when clipped.
+  - Existing pasted content—including Pi's collapsed large-paste placeholders—is
+    preserved when the menu opens.
 - Active snippets show up as a widget above the editor:
   - `↑ prepend: ...` (accent color) — inserted before your message
   - `↓ append: ...` (warning color) — inserted after your message
