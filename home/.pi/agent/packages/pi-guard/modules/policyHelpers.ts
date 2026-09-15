@@ -1,5 +1,6 @@
 import { Type, type Static, type TSchema } from "typebox";
 import { Value } from "typebox/value";
+import { directoryGlobsSchema, type DirectoryGlobs } from "./directoryGlobs";
 
 const policyReferencePrefixSchemas = {
   builtinProfile: Type.Literal("builtin:"),
@@ -29,29 +30,38 @@ const compositionFragmentKinds = [
   "transform",
 ] as const satisfies readonly PolicyReferenceKind[];
 
-export function policyReferencePrefix(
-  kind: PolicyReferenceKind,
-): PolicyReferencePrefix {
+export function policyReferencePrefix({
+  kind,
+}: {
+  readonly kind: PolicyReferenceKind;
+}): PolicyReferencePrefix {
   return policyReferencePrefixSchemas[kind].const;
 }
 
-export function hasPolicyReferencePrefix(
-  name: string,
-  kind: PolicyReferenceKind,
-): boolean {
-  return name.startsWith(policyReferencePrefix(kind));
+export function hasPolicyReferencePrefix({
+  name,
+  kind,
+}: {
+  readonly name: string;
+  readonly kind: PolicyReferenceKind;
+}): boolean {
+  return name.startsWith(policyReferencePrefix({ kind }));
 }
 
-export function isBuiltinProfileName(name: string): boolean {
-  return hasPolicyReferencePrefix(name, "builtinProfile");
+export function isBuiltinProfileName({
+  name,
+}: {
+  readonly name: string;
+}): boolean {
+  return hasPolicyReferencePrefix({ name, kind: "builtinProfile" });
 }
 
-function escapeRegExp(value: string): string {
+function escapeRegExp({ value }: { readonly value: string }): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-const customProfileNamePattern = `^(?!(?:${reservedProfilePrefixKinds
-  .map((kind) => escapeRegExp(policyReferencePrefix(kind)))
+export const customProfileNamePattern = `^(?!(?:${reservedProfilePrefixKinds
+  .map((kind) => escapeRegExp({ value: policyReferencePrefix({ kind }) }))
   .join("|")})).+$`;
 
 export const builtinProfileNames = [
@@ -71,35 +81,46 @@ export const builtinProfileNames = [
 ] as const;
 export type BuiltinProfileName = (typeof builtinProfileNames)[number];
 
-export function reservedProfilePrefix(
-  name: string,
-): PolicyReferencePrefix | undefined {
+export function reservedProfilePrefix({
+  name,
+}: {
+  readonly name: string;
+}): PolicyReferencePrefix | undefined {
   const kind = reservedProfilePrefixKinds.find((candidate) =>
-    hasPolicyReferencePrefix(name, candidate),
+    hasPolicyReferencePrefix({ name, kind: candidate }),
   );
-  return kind ? policyReferencePrefix(kind) : undefined;
+  return kind ? policyReferencePrefix({ kind }) : undefined;
 }
 
-export function isReservedProfileName(name: string): boolean {
-  return reservedProfilePrefix(name) !== undefined;
+export function isReservedProfileName({
+  name,
+}: {
+  readonly name: string;
+}): boolean {
+  return reservedProfilePrefix({ name }) !== undefined;
 }
 
 /** True for a non-profile element rendered directly in a composition chain. */
-export function isCompositionFragmentName(name: string): boolean {
+export function isCompositionFragmentName({
+  name,
+}: {
+  readonly name: string;
+}): boolean {
   return compositionFragmentKinds.some((kind) =>
-    hasPolicyReferencePrefix(name, kind),
+    hasPolicyReferencePrefix({ name, kind }),
   );
 }
 
-const profileTransformNameSchema = Type.Union([
+export const profileTransformNameSchema = Type.Union([
   Type.Literal("transform:deny-asks"),
   Type.Literal("transform:allow-asks"),
   Type.Literal("transform:ask-all"),
   Type.Literal("transform:deny-all"),
 ]);
 export type ProfileTransformName = Static<typeof profileTransformNameSchema>;
-export const profileTransformNames: readonly ProfileTransformName[] =
-  profileTransformNameSchema.anyOf.map((schema) => schema.const);
+export const profileTransformNames = profileTransformNameSchema.anyOf.map(
+  (schema) => schema.const,
+) satisfies readonly ProfileTransformName[];
 
 const readPathContextSchema = Type.Union([
   Type.Literal("read"),
@@ -117,7 +138,7 @@ const decisionSchema = Type.Union([
   Type.Literal("ask"),
   Type.Literal("deny"),
 ]);
-const profileColorSchema = Type.Union([
+export const profileColorSchema = Type.Union([
   Type.Literal("black"),
   Type.Literal("red"),
   Type.Literal("green"),
@@ -128,6 +149,10 @@ const profileColorSchema = Type.Union([
   Type.Literal("cyan"),
   Type.Literal("white"),
 ]);
+export type ProfileColor = Static<typeof profileColorSchema>;
+export const profileColorNames = profileColorSchema.anyOf.map(
+  (schema) => schema.const,
+) satisfies readonly ProfileColor[];
 
 const sandboxConfigSchema = Type.Object(
   {
@@ -256,12 +281,36 @@ const pathRuleSchema = <ContextSchema extends TSchema>(
 const readPathRuleSchema = pathRuleSchema(readPathContextSchema);
 const writePathRuleSchema = pathRuleSchema(writePathContextSchema);
 
+const sandboxPathArrayNameSchema = Type.Union([
+  Type.Literal("extraWritePaths"),
+  Type.Literal("extraDenyReadPaths"),
+  Type.Literal("extraDenyWritePaths"),
+  Type.Literal("kernelUnenforcedProtectedPaths"),
+]);
+const sandboxConfigOverrideBaseSchema = Type.Partial(sandboxConfigSchema);
+const sandboxConfigOverrideSchema = Type.Object(
+  {
+    ...sandboxConfigOverrideBaseSchema.properties,
+    overwritePathArrays: Type.Optional(
+      Type.Array(sandboxPathArrayNameSchema, { uniqueItems: true }),
+    ),
+  },
+  { additionalProperties: false },
+);
+
+export const userPromptFilePathSchema = Type.String({
+  minLength: 2,
+  pattern: String.raw`^(?:/.+|~/.+)$`,
+  description:
+    "An absolute path or a path beginning with ~/. Relative paths are reserved for shipped profiles.",
+});
+export type UserPromptFilePath = Static<typeof userPromptFilePathSchema>;
+
 const profileProperties = {
   description: Type.Optional(Type.String({ minLength: 1 })),
   promptFile: Type.Optional(Type.Union([Type.String(), Type.Null()])),
   color: Type.Optional(profileColorSchema),
   emoji: Type.Optional(Type.String()),
-  directories: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
   // Command and custom-tool policy remain separate from path policy.
   // Dedicated path tools are governed exclusively by readPaths/writePaths.
   tools: toolsSchema,
@@ -289,16 +338,22 @@ const profileExtendsSchema = Type.Array(Type.String(), { minItems: 1 });
 
 const profileTransformsSchema = Type.Array(profileTransformNameSchema);
 
-const profileConfigProfileSchema = Type.Object(
+export const profileConfigProfileSchema = Type.Object(
   {
     ...profileProperties,
+    directoryGlobs: Type.Optional(directoryGlobsSchema),
     description: Type.String({ minLength: 1 }),
+    promptFile: Type.Optional(
+      Type.Union([userPromptFilePathSchema, Type.Null()]),
+    ),
     extends: Type.Optional(profileExtendsSchema),
     transforms: Type.Optional(profileTransformsSchema),
     tools: Type.Optional(profileProperties.tools),
-    readPaths: Type.Optional(profileProperties.readPaths),
-    writePaths: Type.Optional(profileProperties.writePaths),
-    sandbox: profileProperties.sandbox,
+    readPaths: Type.Optional(Type.Array(readPathRuleSchema)),
+    writePaths: Type.Optional(Type.Array(writePathRuleSchema)),
+    sandbox: Type.Optional(
+      Type.Union([sandboxConfigOverrideSchema, Type.Literal(false)]),
+    ),
   },
   {
     additionalProperties: false,
@@ -332,8 +387,9 @@ export type ReadPathRule = Static<typeof readPathRuleSchema>;
 export type WritePathRule = Static<typeof writePathRuleSchema>;
 export type PathRule = ReadPathRule | WritePathRule;
 export type ProtectedPathRule = Static<typeof protectedPathRuleSchema>;
-export type ProfileColor = Static<typeof profileColorSchema>;
 export type SandboxConfig = Static<typeof sandboxConfigSchema>;
+export type SandboxConfigOverride = Static<typeof sandboxConfigOverrideSchema>;
+type SandboxPathArrayName = Static<typeof sandboxPathArrayNameSchema>;
 export type ProfilePolicy = Static<typeof profileSchema>;
 export type CustomRuleSetPolicy = Static<typeof customRuleSetPolicySchema>;
 type PolicyConfigShape = Static<typeof policyConfigSchema>;
@@ -347,15 +403,23 @@ export type PolicyConfig<Names extends string = string> = Omit<
 type ProfileConfigProfileShape = Static<typeof profileConfigProfileSchema>;
 export type ProfileConfigProfile = Omit<
   ProfileConfigProfileShape,
-  "transforms"
+  "sandbox" | "transforms" | "directoryGlobs"
 > & {
+  directoryGlobs?: DirectoryGlobs;
+  sandbox?: SandboxConfigOverride | false;
   transforms?: readonly ProfileTransformName[];
 };
 export type ProfilePolicyOverride = Omit<
   ProfileConfigProfile,
-  "description" | "extends" | "transforms"
+  "description" | "extends" | "transforms" | "directoryGlobs"
 > & {
   description?: string;
+};
+
+export type ProfilePolicyFragment = Omit<Partial<ProfilePolicy>, "sandbox"> & {
+  /** Raw authoring metadata is accepted while resolving, but never runtime policy. */
+  directoryGlobs?: DirectoryGlobs;
+  sandbox?: SandboxConfigOverride | false;
 };
 
 /** JSON Schema source of truth for ~/.pi/agent/pi-guard/profiles.jsonc. */
@@ -394,6 +458,25 @@ export type ProfileConfigFile = Omit<
   rulesets?: Record<string, CustomRuleSetPolicy>;
   profiles: Record<string, ProfileConfigProfile>;
 };
+
+export function parseOrThrow<Schema extends TSchema>({
+  unverifiedData,
+  schema,
+  message,
+}: {
+  readonly unverifiedData: unknown;
+  readonly schema: Schema;
+  readonly message: string;
+}): Static<Schema> {
+  const validationError = Value.Errors(schema, unverifiedData)[0];
+  if (validationError)
+    throw new Error(
+      `${message} at ${validationError.instancePath || "/"}: ${validationError.message}`,
+    );
+  if (!Value.Check(schema, unverifiedData))
+    throw new Error(`${message}: schema validation failed`);
+  return unverifiedData;
+}
 
 export function assertProfilePolicy(
   policy: unknown,
@@ -514,7 +597,7 @@ const nonInteractiveGuidance =
 
 const profileTransformRegistry: Record<
   ProfileTransformName,
-  (policy: Partial<ProfilePolicy>) => Partial<ProfilePolicy>
+  (policy: ProfilePolicyFragment) => ProfilePolicyFragment
 > = {
   "transform:deny-asks": denyAsksTransform,
   "transform:allow-asks": allowAsksTransform,
@@ -523,8 +606,8 @@ const profileTransformRegistry: Record<
 };
 
 function denyAsksTransform(
-  policy: Partial<ProfilePolicy>,
-): Partial<ProfilePolicy> {
+  policy: ProfilePolicyFragment,
+): ProfilePolicyFragment {
   return mapProfileRules(policy, (rule) =>
     rule.decision === "ask"
       ? {
@@ -537,39 +620,33 @@ function denyAsksTransform(
 }
 
 function allowAsksTransform(
-  policy: Partial<ProfilePolicy>,
-): Partial<ProfilePolicy> {
+  policy: ProfilePolicyFragment,
+): ProfilePolicyFragment {
   return mapProfileRules(policy, (rule) =>
     rule.decision === "ask" ? { ...rule, decision: "allow" } : rule,
   );
 }
 
-function askAllTransform(
-  policy: Partial<ProfilePolicy>,
-): Partial<ProfilePolicy> {
+function askAllTransform(policy: ProfilePolicyFragment): ProfilePolicyFragment {
   return mapProfileRules(policy, (rule) =>
     rule.decision === "allow" ? { ...rule, decision: "ask" } : rule,
   );
 }
 
 function denyAllTransform(
-  policy: Partial<ProfilePolicy>,
-): Partial<ProfilePolicy> {
+  policy: ProfilePolicyFragment,
+): ProfilePolicyFragment {
   return mapProfileRules(policy, (rule) => ({ ...rule, decision: "deny" }));
 }
 
-export function applyPolicyTransforms(
-  policy: ProfilePolicy,
+export function applyPolicyTransforms<T extends ProfilePolicyFragment>(
+  policy: T,
   transforms: readonly ProfileTransformName[],
-): ProfilePolicy;
+): T;
 export function applyPolicyTransforms(
-  policy: Partial<ProfilePolicy>,
+  policy: ProfilePolicyFragment,
   transforms: readonly ProfileTransformName[],
-): Partial<ProfilePolicy>;
-export function applyPolicyTransforms(
-  policy: Partial<ProfilePolicy>,
-  transforms: readonly ProfileTransformName[],
-): Partial<ProfilePolicy> {
+): ProfilePolicyFragment {
   return transforms.reduce(
     (current, transformName) =>
       profileTransformRegistry[transformName](current),
@@ -577,18 +654,76 @@ export function applyPolicyTransforms(
   );
 }
 
+/**
+ * Compose raw sandbox declarations without leaking `overwritePathArrays` into
+ * the effective result. Scalars replace inherited values; path arrays append
+ * unless the child explicitly names them in `overwritePathArrays`. `false` is
+ * a hard opt-out, while an absent child declaration inherits unchanged.
+ */
+export function composeSandboxDeclarations(
+  base: SandboxConfigOverride | false | undefined,
+  override: SandboxConfigOverride | false | undefined,
+): SandboxConfigOverride | false | undefined {
+  if (override === undefined) return base;
+  if (override === false) return false;
+
+  const { overwritePathArrays = [], ...settings } = override;
+  if (base === false || base === undefined) return settings;
+  const composePathArray = (
+    name: SandboxPathArrayName,
+    inherited: readonly string[] | undefined,
+    local: readonly string[] | undefined,
+  ): string[] | undefined =>
+    overwritePathArrays.includes(name)
+      ? [...(local ?? [])]
+      : inherited === undefined && local === undefined
+        ? undefined
+        : [...(inherited ?? []), ...(local ?? [])];
+  const extraWritePaths = composePathArray(
+    "extraWritePaths",
+    base.extraWritePaths,
+    settings.extraWritePaths,
+  );
+  const extraDenyReadPaths = composePathArray(
+    "extraDenyReadPaths",
+    base.extraDenyReadPaths,
+    settings.extraDenyReadPaths,
+  );
+  const extraDenyWritePaths = composePathArray(
+    "extraDenyWritePaths",
+    base.extraDenyWritePaths,
+    settings.extraDenyWritePaths,
+  );
+  const kernelUnenforcedProtectedPaths = composePathArray(
+    "kernelUnenforcedProtectedPaths",
+    base.kernelUnenforcedProtectedPaths,
+    settings.kernelUnenforcedProtectedPaths,
+  );
+
+  return {
+    ...base,
+    ...settings,
+    ...(extraWritePaths === undefined ? {} : { extraWritePaths }),
+    ...(extraDenyReadPaths === undefined ? {} : { extraDenyReadPaths }),
+    ...(extraDenyWritePaths === undefined ? {} : { extraDenyWritePaths }),
+    ...(kernelUnenforcedProtectedPaths === undefined
+      ? {}
+      : { kernelUnenforcedProtectedPaths }),
+  };
+}
+
 export function extendProfile(
   base: ProfilePolicy,
-  override: Partial<ProfilePolicy>,
+  override: ProfilePolicyFragment,
 ): ProfilePolicy;
 export function extendProfile(
-  base: Partial<ProfilePolicy>,
-  override: Partial<ProfilePolicy>,
-): Partial<ProfilePolicy>;
+  base: ProfilePolicyFragment,
+  override: ProfilePolicyFragment,
+): ProfilePolicyFragment;
 export function extendProfile(
-  base: Partial<ProfilePolicy>,
-  override: Partial<ProfilePolicy>,
-): Partial<ProfilePolicy> {
+  base: ProfilePolicyFragment,
+  override: ProfilePolicyFragment,
+): ProfilePolicyFragment {
   const mergedTools: ProfilePolicy["tools"] = structuredClone(base.tools ?? {});
 
   // Append override rules; later rules win only when specificity ties.
@@ -615,9 +750,21 @@ export function extendProfile(
   ];
   assertNoProtectedPathRuleConflicts(mergedProtectedPathRules);
 
+  const {
+    sandbox: sandboxOverride,
+    directoryGlobs: rawDirectoryGlobs,
+    ...otherOverride
+  } = override;
+  const { directoryGlobs: baseDirectoryGlobs, ...basePolicy } = base;
+  // directoryGlobs is declaration-only metadata. Keep both destructures
+  // explicit: spreading either raw operand must never retain it.
+  void rawDirectoryGlobs;
+  void baseDirectoryGlobs;
+
   return {
-    ...base,
-    ...override,
+    ...basePolicy,
+    ...otherOverride,
+    sandbox: composeSandboxDeclarations(base.sandbox, sandboxOverride),
     tools: mergedTools,
     readPaths: [...(base.readPaths ?? []), ...(override.readPaths ?? [])],
     writePaths: [...(base.writePaths ?? []), ...(override.writePaths ?? [])],
@@ -626,9 +773,9 @@ export function extendProfile(
 }
 
 function mapProfileRules(
-  policy: Partial<ProfilePolicy>,
+  policy: ProfilePolicyFragment,
   mapRule: <T extends { decision: Decision; guidance?: string }>(rule: T) => T,
-): Partial<ProfilePolicy> {
+): ProfilePolicyFragment {
   return {
     ...policy,
     tools: Object.fromEntries(

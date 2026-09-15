@@ -1,489 +1,548 @@
 import fs from "node:fs";
-import path from "node:path";
 import { tmpdir } from "node:os";
+import path from "node:path";
+import { parse } from "jsonc-parser";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  applyProfileAuthoringCommit,
   applyProfileRuleChanges,
-  createCustomProfile,
   loadProfileConfig,
-  type ProfileRuleChange,
+  loadProfileConfigSnapshot,
+  ProfileConfigConflictError,
+  validateProfileAuthoringCommit,
 } from "../modules/profileConfig";
+import {
+  createProfileAuthoringDraft,
+  createProfileEditDraft,
+  type ProfileAuthoringDraft,
+} from "../modules/profileAuthoringModel";
+import {
+  decodeSandboxAuthoring,
+  serializeSandboxAuthoring,
+} from "../modules/profileAuthoring";
 import { policyConfig } from "../modules/policy";
+import type { ProfileConfigProfile } from "../modules/policyHelpers";
 
-const files: string[] = [];
-
+const directories: string[] = [];
 afterEach(() => {
-  for (const file of files.splice(0)) fs.rmSync(file, { force: true });
+  for (const directory of directories.splice(0))
+    fs.rmSync(directory, { force: true, recursive: true });
 });
-
 function tempConfig(): string {
-  const file = path.join(
-    tmpdir(),
-    `pi-guard-profile-${crypto.randomUUID()}.jsonc`,
+  const directory = fs.mkdtempSync(path.join(tmpdir(), "pi-guard-profile-"));
+  directories.push(directory);
+  return path.join(directory, "profiles.jsonc");
+}
+function isProfiles(
+  value: unknown,
+): value is Record<string, Record<string, unknown>> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.values(value).every(
+      (profile) =>
+        typeof profile === "object" &&
+        profile !== null &&
+        !Array.isArray(profile),
+    )
   );
-  files.push(file);
-  return file;
+}
+function profiles(configPath: string): Record<string, Record<string, unknown>> {
+  const document: unknown = parse(fs.readFileSync(configPath, "utf8"));
+  if (typeof document !== "object" || document === null)
+    throw new Error("document");
+  const raw = "profiles" in document ? document.profiles : undefined;
+  if (!isProfiles(raw)) throw new Error("profiles");
+  return raw;
+}
+function editDraft({
+  configPath,
+  name,
+}: {
+  readonly configPath: string;
+  readonly name: string;
+}): Extract<ProfileAuthoringDraft, { readonly mode: "edit" }> {
+  const definition = loadProfileConfigSnapshot(policyConfig, configPath).raw
+    ?.profiles[name];
+  if (!definition) throw new Error(`missing profile '${name}'`);
+  return createProfileEditDraft({ name, definition });
+}
+function commitEdit({
+  configPath,
+  draft,
+  expectedRevision,
+}: {
+  readonly configPath: string;
+  readonly draft: Extract<ProfileAuthoringDraft, { readonly mode: "edit" }>;
+  readonly expectedRevision?: string;
+}): void {
+  applyProfileAuthoringCommit({
+    fallback: policyConfig,
+    configPath,
+    draft,
+    expectedRevision,
+  });
 }
 
-function readRawProfiles(
-  configPath: string,
-): Record<string, Record<string, unknown>> {
-  return (
-    JSON.parse(fs.readFileSync(configPath, "utf8")) as {
-      profiles: Record<string, Record<string, unknown>>;
-    }
-  ).profiles;
-}
+const baseDefinition = {
+  description: "Existing",
+  extends: ["builtin:default"],
+} satisfies ProfileConfigProfile;
 
 describe("profile config mutations", () => {
-  it("creates and extends a profile without discarding JSONC comments", () => {
+  it("creates profiles through an authoring draft and narrowly applies ASK rules", () => {
     const configPath = tempConfig();
     fs.writeFileSync(configPath, '// retained\n{\n  "profiles": {}\n}\n');
-
-    createCustomProfile({
-      fallback: policyConfig,
-      configPath,
-      name: "local-work",
-      description: "Local work",
-      emoji: "🛡️",
-      extends: ["builtin:default"],
-      protectedPaths: [{ pattern: ".env", decision: "deny" }],
-      sandboxed: true,
+    const initial = createProfileAuthoringDraft({
+      activeProfile: "builtin:default",
+      startupCwd: "/local-work",
+      existingNames: new Set(),
     });
+    const draft: ProfileAuthoringDraft = {
+      ...initial,
+      name: "local-work",
+      definition: { ...initial.definition, description: "Local work" },
+    };
+    applyProfileAuthoringCommit({ fallback: policyConfig, configPath, draft });
     applyProfileRuleChanges({
       fallback: policyConfig,
       configPath,
       target: { mode: "update", profile: "local-work" },
       changes: [
-        {
-          kind: "bash",
-          pattern: "echo profile-rule",
-          decision: "allow",
-        },
+        { kind: "bash", pattern: "echo profile-rule", decision: "allow" },
       ],
     });
-
     expect(fs.readFileSync(configPath, "utf8")).toContain("// retained");
     expect(
       loadProfileConfig(policyConfig, configPath).profiles["local-work"].tools
         .bash,
-    ).toContainEqual(
-      expect.objectContaining({
-        pattern: "echo profile-rule",
-        decision: "allow",
-      }),
-    );
-  });
-
-  it("preserves scoped overrides when replacing an unscoped rule", () => {
-    const configPath = tempConfig();
-    fs.writeFileSync(
-      configPath,
-      JSON.stringify({
-        profiles: {
-          "scope-work": {
-            description: "Profile for scope identity regression coverage",
-            extends: ["builtin:default"],
-            readPaths: [
-              { pattern: "same.txt", decision: "deny", contexts: ["grep"] },
-              { pattern: "same.txt", decision: "ask" },
-            ],
-          },
-        },
-      }),
-    );
-
-    applyProfileRuleChanges({
-      fallback: policyConfig,
-      configPath,
-      target: { mode: "update", profile: "scope-work" },
-      changes: [{ kind: "read", pattern: "same.txt", decision: "allow" }],
+    ).toContainEqual({
+      pattern: "echo profile-rule",
+      decision: "allow",
     });
-
-    expect(readRawProfiles(configPath)["scope-work"].readPaths).toEqual([
-      { pattern: "same.txt", decision: "deny", contexts: ["grep"] },
-      { pattern: "same.txt", decision: "allow" },
-    ]);
   });
 
-  it("preserves comments on unchanged rules in an affected array", () => {
+  it("leaves omitted declarations byte-untouched, including ASK alternatives and contexts", () => {
     const configPath = tempConfig();
-    fs.writeFileSync(
-      configPath,
-      `{
+    const before = `// retain\n{
   "profiles": {
-    "comment-work": {
-      "description": "Comment preservation",
-      "extends": ["builtin:default"],
-      "readPaths": [
-        // Keep this explanation with the existing rule.
-        { "pattern": "keep.txt", "decision": "deny" }
-      ]
+    "existing": {
+      "description": "Existing", "extends": ["builtin:default"],
+      "tools": { "deploy": [{ "decision": "deny", "match": { "environment": "prod" } }], "bash": [{ "pattern": "npm *", "decision": "ask", "alternatives": ["npm test"] }] },
+      "readPaths": [{ "pattern": "secret/**", "decision": "ask", "contexts": ["grep"], "alternatives": ["request access"] }],
+      "directoryGlobs": ["/old/**"]
     }
   }
-}
-`,
-    );
-
-    applyProfileRuleChanges({
-      fallback: policyConfig,
+}\n`;
+    fs.writeFileSync(configPath, before);
+    const initial = editDraft({ configPath, name: "existing" });
+    commitEdit({
       configPath,
-      target: { mode: "update", profile: "comment-work" },
-      changes: [{ kind: "read", pattern: "new.txt", decision: "allow" }],
-    });
-
-    const source = fs.readFileSync(configPath, "utf8");
-    expect(source).toContain(
-      "// Keep this explanation with the existing rule.",
-    );
-    expect(
-      loadProfileConfig(policyConfig, configPath).profiles["comment-work"]
-        .readPaths,
-    ).toContainEqual({ pattern: "keep.txt", decision: "deny" });
-  });
-
-  it("keeps comments attached to unchanged rules when an earlier rule is replaced", () => {
-    const configPath = tempConfig();
-    fs.writeFileSync(
-      configPath,
-      `{
-  "profiles": {
-    "shift-comments": {
-      "description": "Comment identity preservation",
-      "extends": ["builtin:default"],
-      "readPaths": [
-        // This ASK is being replaced.
-        { "pattern": "replace.txt", "decision": "ask", "contexts": ["read"] },
-        // This explanation must stay with keep.txt.
-        { "pattern": "keep.txt", "decision": "deny", "contexts": ["grep"] }
-      ]
-    }
-  }
-}
-`,
-    );
-
-    applyProfileRuleChanges({
-      fallback: policyConfig,
-      configPath,
-      target: { mode: "update", profile: "shift-comments" },
-      changes: [
-        {
-          kind: "read",
-          pattern: "replace.txt",
-          decision: "allow",
-          contexts: ["read"],
-        },
-      ],
-    });
-
-    const source = fs.readFileSync(configPath, "utf8");
-    expect(source).toMatch(
-      /\/\/ This explanation must stay with keep\.txt\.\s*\{ "pattern": "keep\.txt", "decision": "deny", "contexts": \["grep"\] \}/,
-    );
-    expect(
-      loadProfileConfig(policyConfig, configPath).profiles["shift-comments"]
-        .readPaths,
-    ).toEqual(
-      expect.arrayContaining([
-        { pattern: "keep.txt", decision: "deny", contexts: ["grep"] },
-        { pattern: "replace.txt", decision: "allow", contexts: ["read"] },
-      ]),
-    );
-  });
-
-  it("persists a mixed Bash, read, and write batch atomically", () => {
-    const configPath = tempConfig();
-    fs.writeFileSync(configPath, '{\n  "profiles": {}\n}\n');
-
-    applyProfileRuleChanges({
-      fallback: policyConfig,
-      configPath,
-      target: {
-        mode: "create-child",
-        profile: "batch-work",
-        extends: ["builtin:default"],
-        description: "Mixed batch",
-        emoji: "💅",
+      draft: {
+        ...initial,
+        definition: { ...initial.definition, sandbox: false },
       },
-      changes: [
-        { kind: "bash", pattern: "echo batch", decision: "allow" },
-        { kind: "read", pattern: "input.txt", decision: "deny" },
-        { kind: "write", pattern: "output.txt", decision: "deny" },
+    });
+    const raw = profiles(configPath).existing;
+    expect(raw.sandbox).toBe(false);
+    expect(raw.tools).toEqual({
+      deploy: [{ decision: "deny", match: { environment: "prod" } }],
+      bash: [{ pattern: "npm *", decision: "ask", alternatives: ["npm test"] }],
+    });
+    expect(raw.readPaths).toEqual([
+      {
+        pattern: "secret/**",
+        decision: "ask",
+        contexts: ["grep"],
+        alternatives: ["request access"],
+      },
+    ]);
+    expect(raw.directoryGlobs).toEqual(["/old/**"]);
+    expect(fs.readFileSync(configPath, "utf8")).toContain("// retain");
+  });
+
+  it("writes candidates in exact order while retaining LCS comments", () => {
+    const configPath = tempConfig();
+    fs.writeFileSync(
+      configPath,
+      `{
+  "profiles": { "existing": {
+    "description": "Existing", "extends": ["builtin:default"],
+    "tools": { "bash": [
+      { "pattern": "A", "decision": "allow" },
+      // retained B
+      { "pattern": "B", "decision": "deny" }
+    ] },
+    "directoryGlobs": ["/work/a/**", "/work/b/**"]
+  } }
+}\n`,
+    );
+    const initial = editDraft({ configPath, name: "existing" });
+    commitEdit({
+      configPath,
+      draft: {
+        ...initial,
+        definition: {
+          ...initial.definition,
+          tools: {
+            bash: [
+              { pattern: "B", decision: "deny" },
+              { pattern: "C", decision: "allow" },
+            ],
+          },
+          directoryGlobs: ["/work/b/**", "/work/c/**"],
+        },
+      },
+    });
+    expect(profiles(configPath).existing.tools).toEqual({
+      bash: [
+        { pattern: "B", decision: "deny" },
+        { pattern: "C", decision: "allow" },
       ],
     });
+    expect(profiles(configPath).existing.directoryGlobs).toEqual([
+      "/work/b/**",
+      "/work/c/**",
+    ]);
+    expect(fs.readFileSync(configPath, "utf8")).toContain("// retained B");
+  });
 
-    const profile = loadProfileConfig(policyConfig, configPath).profiles[
-      "batch-work"
-    ];
-    expect(profile.tools.bash).toContainEqual({
-      pattern: "echo batch",
-      decision: "allow",
+  it("retains row and sandbox comments when a neighboring value changes", () => {
+    const configPath = tempConfig();
+    fs.writeFileSync(
+      configPath,
+      `{"profiles":{"existing":{"description":"Existing","extends":["builtin:default"],"directoryGlobs":[
+// keep a
+"/work/a/**",
+// keep b
+"/work/b/**"],"sandbox":{"network":"deny", // retain network
+"allowAppleEvents":false // retain events
+}}}}`,
+    );
+    const initial = editDraft({ configPath, name: "existing" });
+    commitEdit({
+      configPath,
+      draft: {
+        ...initial,
+        definition: {
+          ...initial.definition,
+          directoryGlobs: ["/work/new/**", "/work/a/**", "/work/b/**"],
+          sandbox: { network: "allow", allowAppleEvents: false },
+        },
+      },
     });
-    expect(profile.readPaths).toContainEqual({
-      pattern: "input.txt",
-      decision: "deny",
+    expect(profiles(configPath).existing.directoryGlobs).toEqual([
+      "/work/new/**",
+      "/work/a/**",
+      "/work/b/**",
+    ]);
+    const source = fs.readFileSync(configPath, "utf8");
+    expect(source).toContain("// keep b");
+    expect(source).toContain("// retain events");
+  });
+
+  it("preserves comments on unchanged rules when a neighboring rule changes", () => {
+    const configPath = tempConfig();
+    fs.writeFileSync(
+      configPath,
+      `{
+  "profiles": {
+    "existing": {
+      "description": "Existing",
+      "extends": ["builtin:default"],
+      "tools": {
+        "bash": [
+          // retained first-rule comment
+          { "pattern": "keep", "decision": "ask" },
+          { "pattern": "change", "decision": "ask" }
+        ]
+      }
+    }
+  }
+}\n`,
+    );
+    const initial = editDraft({ configPath, name: "existing" });
+    commitEdit({
+      configPath,
+      draft: {
+        ...initial,
+        definition: {
+          ...initial.definition,
+          tools: {
+            bash: [
+              { pattern: "keep", decision: "ask" },
+              { pattern: "changed", decision: "deny" },
+            ],
+          },
+        },
+      },
     });
-    expect(profile.writePaths).toContainEqual({
-      pattern: "output.txt",
-      decision: "deny",
+    expect(fs.readFileSync(configPath, "utf8")).toContain(
+      "// retained first-rule comment",
+    );
+    expect(profiles(configPath).existing.tools).toEqual({
+      bash: [
+        { pattern: "keep", decision: "ask" },
+        { pattern: "changed", decision: "deny" },
+      ],
     });
   });
 
-  it("does not write a child or partial changes when a later change is invalid", () => {
+  it("rejects protected rules that do not satisfy their stricter schema", () => {
     const configPath = tempConfig();
-    const before = '{\n  "profiles": {}\n}\n';
+    const before = `{"profiles":{"existing":{"description":"Existing","extends":["builtin:default"]}}}`;
     fs.writeFileSync(configPath, before);
+    const initial = editDraft({ configPath, name: "existing" });
+    const protectedPathRules = [{ pattern: ".env", decision: "deny" as const }];
+    Object.defineProperty(protectedPathRules[0], "decision", { value: "ask" });
+    const invalid: ProfileAuthoringDraft = {
+      ...initial,
+      definition: {
+        ...initial.definition,
+        protectedPathRules,
+      },
+    };
+    expect(() =>
+      applyProfileAuthoringCommit({
+        fallback: policyConfig,
+        configPath,
+        draft: invalid,
+      }),
+    ).toThrow("schema validation failed");
+    expect(fs.readFileSync(configPath, "utf8")).toBe(before);
+  });
 
+  it("rejects optimistic and byte-identical stale authoring candidates without writing", () => {
+    const configPath = tempConfig();
+    const reviewed = `{"profiles":{"existing":{"description":"Existing","extends":["builtin:default"],"readPaths":[{"pattern":"unchanged.txt","decision":"ask","contexts":["read"]}]}}}`;
+    fs.writeFileSync(configPath, reviewed);
+    const initial = editDraft({ configPath, name: "existing" });
+    const prepared = validateProfileAuthoringCommit({
+      fallback: policyConfig,
+      configPath,
+      draft: initial,
+    });
+    expect(prepared.updated).toBe(reviewed);
+    const externallyChanged = `${reviewed}\n// changed by another editor\n`;
+    fs.writeFileSync(configPath, externallyChanged);
+    expect(() =>
+      commitEdit({
+        configPath,
+        draft: initial,
+        expectedRevision: prepared.sourceRevision,
+      }),
+    ).toThrow(ProfileConfigConflictError);
+    expect(fs.readFileSync(configPath, "utf8")).toBe(externallyChanged);
+    expect(fs.readdirSync(path.dirname(configPath))).toEqual([
+      "profiles.jsonc",
+    ]);
+  });
+
+  it("rejects stale ASK rule changes without writing", () => {
+    const configPath = tempConfig();
+    const reviewed = `{"profiles":{"existing":{"description":"Existing","extends":["builtin:default"],"tools":{"bash":[{"pattern":"unchanged","decision":"allow"}]}}}}`;
+    fs.writeFileSync(configPath, reviewed);
+    const expectedRevision = loadProfileConfigSnapshot(
+      policyConfig,
+      configPath,
+    ).sourceRevision;
+    const externallyChanged = `${reviewed}\n// changed by another editor\n`;
+    fs.writeFileSync(configPath, externallyChanged);
     expect(() =>
       applyProfileRuleChanges({
         fallback: policyConfig,
         configPath,
-        target: {
-          mode: "create-child",
-          profile: "failed-batch",
-          extends: ["builtin:default"],
-          description: "Should not persist",
-          emoji: "💅",
-        },
-        changes: [
-          { kind: "bash", pattern: "echo partial", decision: "allow" },
-          {
-            kind: "read",
-            pattern: "bad-scope",
-            decision: "deny",
-            contexts: [],
-          },
-        ],
+        expectedRevision,
+        target: { mode: "update", profile: "existing" },
+        changes: [{ kind: "bash", pattern: "unchanged", decision: "allow" }],
       }),
-    ).toThrow("contexts");
-
-    expect(fs.readFileSync(configPath, "utf8")).toBe(before);
-    expect(
-      loadProfileConfig(policyConfig, configPath).profiles,
-    ).not.toHaveProperty("failed-batch");
-  });
-
-  it("preserves non-overlapping scoped contexts in a batch", () => {
-    const configPath = tempConfig();
-    fs.writeFileSync(
-      configPath,
-      JSON.stringify({
-        profiles: {
-          "context-work": {
-            description: "Context batch",
-            extends: ["builtin:default"],
-            writePaths: [
-              { pattern: "shared.txt", decision: "deny", contexts: ["write"] },
-            ],
-          },
-        },
-      }),
-    );
-
-    applyProfileRuleChanges({
-      fallback: policyConfig,
-      configPath,
-      target: { mode: "update", profile: "context-work" },
-      changes: [
-        {
-          kind: "write",
-          pattern: "shared.txt",
-          decision: "allow",
-          contexts: ["edit"],
-        },
-      ],
-    });
-
-    expect(readRawProfiles(configPath)["context-work"].writePaths).toEqual([
-      { pattern: "shared.txt", decision: "deny", contexts: ["write"] },
-      { pattern: "shared.txt", decision: "allow", contexts: ["edit"] },
+    ).toThrow(ProfileConfigConflictError);
+    expect(fs.readFileSync(configPath, "utf8")).toBe(externallyChanged);
+    expect(fs.readdirSync(path.dirname(configPath))).toEqual([
+      "profiles.jsonc",
     ]);
   });
 
-  it("splits a multi-context rule and preserves an unscoped fallback", () => {
+  it("rewrites complete declarations, omitting explicit fields while preserving custom siblings", () => {
     const configPath = tempConfig();
     fs.writeFileSync(
       configPath,
       JSON.stringify({
         profiles: {
-          "split-work": {
-            description: "Context split",
-            extends: ["builtin:default"],
-            writePaths: [
-              {
-                pattern: "shared.txt",
-                decision: "deny",
-                contexts: ["edit", "write"],
-              },
-              { pattern: "shared.txt", decision: "ask" },
-            ],
-          },
-        },
-      }),
-    );
-
-    applyProfileRuleChanges({
-      fallback: policyConfig,
-      configPath,
-      target: { mode: "update", profile: "split-work" },
-      changes: [
-        {
-          kind: "write",
-          pattern: "shared.txt",
-          decision: "allow",
-          contexts: ["edit"],
-        },
-      ],
-    });
-
-    expect(readRawProfiles(configPath)["split-work"].writePaths).toEqual([
-      { pattern: "shared.txt", decision: "deny", contexts: ["write"] },
-      { pattern: "shared.txt", decision: "ask" },
-      { pattern: "shared.txt", decision: "allow", contexts: ["edit"] },
-    ]);
-  });
-
-  it("rejects contextual Bash/protected changes before any write", () => {
-    const configPath = tempConfig();
-    const before = '{\n  "profiles": {}\n}\n';
-    fs.writeFileSync(configPath, before);
-    const malformed = {
-      kind: "bash",
-      pattern: "echo ambiguous",
-      decision: "allow",
-      contexts: ["bash"],
-    } as unknown as ProfileRuleChange;
-
-    expect(() =>
-      applyProfileRuleChanges({
-        fallback: policyConfig,
-        configPath,
-        target: {
-          mode: "create-child",
-          profile: "ambiguous",
-          extends: ["builtin:default"],
-          description: "Must not write",
-          emoji: "💅",
-        },
-        changes: [malformed],
-      }),
-    ).toThrow("contexts are not valid for bash");
-    expect(fs.readFileSync(configPath, "utf8")).toBe(before);
-  });
-
-  it("applies a swap of two request-derived Bash identities without loss", () => {
-    const configPath = tempConfig();
-    fs.writeFileSync(
-      configPath,
-      JSON.stringify({
-        profiles: {
-          swap: {
-            description: "Swap fixture",
-            extends: ["builtin:default"],
+          existing: {
+            ...baseDefinition,
+            sandbox: { network: "deny" },
+            directoryGlobs: ["/old/**"],
             tools: {
-              bash: [
-                { pattern: "echo A", decision: "ask" },
-                { pattern: "echo B", decision: "ask" },
-              ],
+              deploy: [{ decision: "ask" }],
+              bash: [{ pattern: "old", decision: "ask" }],
+            },
+            readPaths: [{ pattern: "x", decision: "ask", contexts: ["read"] }],
+          },
+        },
+      }),
+    );
+    const initial = editDraft({ configPath, name: "existing" });
+    commitEdit({
+      configPath,
+      draft: {
+        ...initial,
+        definition: {
+          ...initial.definition,
+          sandbox: undefined,
+          directoryGlobs: undefined,
+          tools: { deploy: [{ decision: "ask" }], bash: undefined },
+        },
+      },
+    });
+    const raw = profiles(configPath).existing;
+    expect(raw).not.toHaveProperty("sandbox");
+    expect(raw).not.toHaveProperty("directoryGlobs");
+    expect(raw.tools).toEqual({ deploy: [{ decision: "ask" }] });
+    expect(raw.readPaths).toEqual([
+      { pattern: "x", decision: "ask", contexts: ["read"] },
+    ]);
+  });
+
+  it("keeps no-op authoring commits write-free and rejects invalid candidates before artifacts", () => {
+    const configPath = tempConfig();
+    const before =
+      '{\n  "profiles": {\n    "existing": { "description": "Existing", "extends": ["builtin:default"] }\n  }\n}\n';
+    fs.writeFileSync(configPath, before);
+    const initial = editDraft({ configPath, name: "existing" });
+    expect(
+      validateProfileAuthoringCommit({
+        fallback: policyConfig,
+        configPath,
+        draft: initial,
+      }).updated,
+    ).toBe(before);
+    commitEdit({ configPath, draft: initial });
+    const invalid: ProfileAuthoringDraft = {
+      ...initial,
+      definition: { ...initial.definition, directoryGlobs: ["relative"] },
+    };
+    expect(() =>
+      applyProfileAuthoringCommit({
+        fallback: policyConfig,
+        configPath,
+        draft: invalid,
+      }),
+    ).toThrow("not-absolute");
+    expect(fs.readFileSync(configPath, "utf8")).toBe(before);
+    expect(fs.readdirSync(path.dirname(configPath))).toEqual([
+      "profiles.jsonc",
+    ]);
+  });
+
+  it("renames exact graph references while retaining declaration syntax and key position", () => {
+    const configPath = tempConfig();
+    fs.writeFileSync(
+      configPath,
+      `{
+  "defaultProfile": "old\\\"name",
+  "profiles": {
+    // retain old declaration
+    "old\\\"name": { "description": "Old", "extends": ["builtin:default"], "directoryGlobs": ["/old\\\"name/**"] },
+    "child": { "description": "Child", "extends": ["builtin:default", "old\\\"name", "old\\\"name"] },
+    "old\\\"name-more": { "description": "Similar parent", "extends": ["builtin:default"] }
+  }
+}\n`,
+    );
+    const initial = editDraft({ configPath, name: 'old"name' });
+    commitEdit({ configPath, draft: { ...initial, name: 'new"name' } });
+    const source = fs.readFileSync(configPath, "utf8");
+    expect(source).toContain("// retain old declaration");
+    expect(source).toContain('"new\\\"name": { "description": "Old"');
+    expect(source).toContain(
+      '"extends": ["builtin:default", "new\\\"name", "new\\\"name"]',
+    );
+    expect(source).toContain('"directoryGlobs": ["/old\\\"name/**"]');
+    const document = parse(source) as {
+      defaultProfile: string;
+      profiles: Record<string, { extends?: string[] }>;
+    };
+    expect(document.defaultProfile).toBe('new"name');
+    expect(Object.keys(document.profiles)).toEqual([
+      'new"name',
+      "child",
+      'old"name-more',
+    ]);
+  });
+
+  it("composes local metadata and declaration changes in one authoring candidate", () => {
+    const configPath = tempConfig();
+    fs.writeFileSync(
+      configPath,
+      `{"profiles":{"existing":{"description":"Existing","extends":["builtin:default"]}}}`,
+    );
+    const initial = editDraft({ configPath, name: "existing" });
+    commitEdit({
+      configPath,
+      draft: {
+        ...initial,
+        name: "renamed",
+        definition: {
+          ...initial.definition,
+          emoji: "🛡️",
+          directoryGlobs: ["/work/**"],
+        },
+      },
+    });
+    expect(profiles(configPath).renamed).toMatchObject({
+      emoji: "🛡️",
+      directoryGlobs: ["/work/**"],
+    });
+    expect(fs.readdirSync(path.dirname(configPath))).toEqual([
+      "profiles.jsonc",
+    ]);
+  });
+
+  it("normalizes standalone sandbox overwrites before runtime validation", () => {
+    const configPath = tempConfig();
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        profiles: {
+          standalone: {
+            description: "Standalone sandbox overwrite normalization profile.",
+            tools: { bash: [{ pattern: "*", decision: "allow" }] },
+            readPaths: [{ pattern: "*", decision: "allow" }],
+            writePaths: [{ pattern: "*", decision: "allow" }],
+            sandbox: {
+              network: "deny",
+              extraWritePaths: [],
+              overwritePathArrays: ["extraWritePaths"],
             },
           },
         },
       }),
     );
-
-    applyProfileRuleChanges({
-      fallback: policyConfig,
-      configPath,
-      target: { mode: "update", profile: "swap" },
-      changes: [
-        {
-          kind: "bash",
-          pattern: "echo B",
-          replacePattern: "echo A",
-          decision: "allow",
-        },
-        {
-          kind: "bash",
-          pattern: "echo A",
-          replacePattern: "echo B",
-          decision: "deny",
-        },
-      ],
-    });
-
-    expect(readRawProfiles(configPath).swap.tools).toEqual({
-      bash: [
-        { pattern: "echo B", decision: "allow" },
-        { pattern: "echo A", decision: "deny" },
-      ],
-    });
-  });
-
-  it("writes nonempty bash rules directly and omits empty tools", () => {
-    const emptyConfigPath = tempConfig();
-    fs.writeFileSync(emptyConfigPath, '{\n  "profiles": {}\n}\n');
-    createCustomProfile({
-      fallback: policyConfig,
-      configPath: emptyConfigPath,
-      name: "empty-rules",
-      description: "No direct rules",
-      extends: ["builtin:default"],
-      bashRules: [],
-    });
-    expect(readRawProfiles(emptyConfigPath)["empty-rules"]).not.toHaveProperty(
-      "tools",
-    );
-
-    const configPath = tempConfig();
-    fs.writeFileSync(configPath, '{\n  "profiles": {}\n}\n');
-    createCustomProfile({
-      fallback: policyConfig,
-      configPath,
-      name: "direct-rules",
-      description: "Direct rules",
-      extends: ["builtin:default"],
-      bashRules: [
-        {
-          pattern: "git status",
-          decision: "allow",
-          guidance: "Inspect the working tree without changing files.",
-        },
-      ],
-    });
-
     expect(
-      loadProfileConfig(policyConfig, configPath).profiles["direct-rules"].tools
-        .bash,
-    ).toContainEqual({
-      pattern: "git status",
-      decision: "allow",
-      guidance: "Inspect the working tree without changing files.",
-    });
-    expect(readRawProfiles(configPath)["direct-rules"].tools).toEqual({
-      bash: [
-        {
-          pattern: "git status",
-          decision: "allow",
-          guidance: "Inspect the working tree without changing files.",
-        },
-      ],
-    });
+      loadProfileConfig(policyConfig, configPath).profiles.standalone.sandbox,
+    ).toEqual({ network: "deny", extraWritePaths: [] });
   });
 
-  it("does not overwrite an invalid source file", () => {
-    const configPath = tempConfig();
-    fs.writeFileSync(configPath, "{ invalid");
-
-    expect(() =>
-      createCustomProfile({
-        fallback: policyConfig,
-        configPath,
-        name: "local-work",
-        description: "Local work",
-        extends: ["builtin:default"],
+  it("canonicalizes empty appends but retains empty overwrites", () => {
+    const append = {
+      network: "deny",
+      extraWritePaths: [],
+    } satisfies Parameters<typeof decodeSandboxAuthoring>[0]["raw"];
+    const overwrite = {
+      network: "deny",
+      extraWritePaths: [],
+      overwritePathArrays: ["extraWritePaths"],
+    } satisfies Parameters<typeof decodeSandboxAuthoring>[0]["raw"];
+    expect(
+      serializeSandboxAuthoring({
+        value: decodeSandboxAuthoring({ raw: append }),
       }),
-    ).toThrow("JSONC parse error");
-    expect(fs.readFileSync(configPath, "utf8")).toBe("{ invalid");
+    ).toEqual({ network: "deny" });
+    expect(
+      serializeSandboxAuthoring({
+        value: decodeSandboxAuthoring({ raw: overwrite }),
+      }),
+    ).toEqual(overwrite);
   });
 });

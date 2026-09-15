@@ -144,6 +144,8 @@ function writeProfileConfig({
           sandbox: sandboxEnabled
             ? {
                 network: "deny",
+                allowLocalBinding: false,
+                overwritePathArrays: ["kernelUnenforcedProtectedPaths"],
                 extraWritePaths: ["extra"],
                 extraDenyWritePaths: ["outside"],
                 ...sandboxOverrides,
@@ -157,6 +159,49 @@ function writeProfileConfig({
             "Sandbox-capable fallback profile for switchable Bash boundaries",
           extends: ["builtin:default"],
           sandbox: { network: "deny" },
+        },
+      },
+    }),
+  );
+  process.env.PI_GUARD_PROFILE_CONFIG = configPath;
+}
+
+function writeOverwriteProfileConfig(
+  parentWritable: string,
+  childWritable: string,
+): void {
+  const configDirectory = fs.mkdtempSync(
+    path.join(os.tmpdir(), `pi-sandbox-profile-${crypto.randomUUID()}`),
+  );
+  tempDirectories.push(configDirectory);
+  const configPath = path.join(configDirectory, "profiles.jsonc");
+  fs.writeFileSync(
+    configPath,
+    JSON.stringify({
+      defaultProfile: "child",
+      profiles: {
+        parent: {
+          description:
+            "Synthetic parent profile granting one extra writable path",
+          extends: ["builtin:default"],
+          // Keep the policy gate permissive so this test isolates the kernel
+          // write boundary rather than protected-path or operand decisions.
+          readPaths: [{ pattern: "*", decision: "allow" }],
+          writePaths: [{ pattern: "*", decision: "allow" }],
+          protectedPathRules: [],
+          sandbox: {
+            network: "deny",
+            extraWritePaths: [parentWritable],
+          },
+        },
+        child: {
+          description:
+            "Synthetic child profile replacing the parent's extra writable path",
+          extends: ["parent"],
+          sandbox: {
+            overwritePathArrays: ["extraWritePaths"],
+            extraWritePaths: [childWritable],
+          },
         },
       },
     }),
@@ -179,11 +224,18 @@ function writeComposedProfileConfig(): void {
           description:
             "Base profile for composed denied-network sandbox posture",
           extends: ["builtin:default"],
-          sandbox: { network: "deny" },
+          sandbox: {
+            network: "deny",
+            allowLocalBinding: false,
+            overwritePathArrays: ["kernelUnenforcedProtectedPaths"],
+            extraWritePaths: ["inherited-token-lock"],
+          },
         },
         inherited: {
-          description: "Inherited profile selecting the base sandbox posture",
+          description:
+            "Inherited profile adding a TLS setting without replacing sandbox capabilities",
           extends: ["base"],
+          sandbox: { enableWeakerNetworkIsolation: true },
         },
         replacement: {
           description:
@@ -391,6 +443,84 @@ describe("sandbox full-harness OS acceptance", () => {
       await new Promise<void>((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve())),
       );
+    }
+  });
+
+  it("retains inherited writable paths when a child adds a sandbox setting", async () => {
+    const root = fixture();
+    writeComposedProfileConfig();
+    const harness = createExtensionHarness({ contextCwd: root, hasUI: false });
+    await harness.start();
+    try {
+      const command = node({
+        source:
+          "require('fs').mkdirSync('inherited-token-lock', { recursive: true }); require('fs').writeFileSync('inherited-token-lock/token.lock', 'locked')",
+      });
+      expect(
+        exitCodeFrom({
+          result: await harness.executeTool({
+            name: "bash",
+            params: { command, timeout: 10 },
+          }),
+        }),
+      ).toBe(0);
+      expect(
+        fs.readFileSync(
+          path.join(root, "inherited-token-lock/token.lock"),
+          "utf8",
+        ),
+      ).toBe("locked");
+    } finally {
+      await harness.shutdown();
+    }
+  });
+
+  it("overwrites inherited extra write paths only when the child explicitly replaces them", async () => {
+    const root = fixture();
+    // CWD descendants are already writable under the sandbox, so create
+    // unique absolute exception roots outside it to prove overwrite semantics.
+    const parentWritable = fs.mkdtempSync(
+      path.join(os.tmpdir(), `pi-sandbox-parent-${crypto.randomUUID()}-`),
+    );
+    const childWritable = fs.mkdtempSync(
+      path.join(os.tmpdir(), `pi-sandbox-child-${crypto.randomUUID()}-`),
+    );
+    tempDirectories.push(parentWritable, childWritable);
+    writeOverwriteProfileConfig(parentWritable, childWritable);
+    const harness = createExtensionHarness({ contextCwd: root, hasUI: false });
+    await harness.start();
+    try {
+      expect(
+        exitCodeFrom({
+          result: await harness.executeTool({
+            name: "bash",
+            params: {
+              command: `printf child-content > ${JSON.stringify(path.join(childWritable, "child-marker"))}`,
+              timeout: 10,
+            },
+          }),
+        }),
+      ).toBe(0);
+      expect(
+        fs.readFileSync(path.join(childWritable, "child-marker"), "utf8"),
+      ).toBe("child-content");
+
+      expect(
+        exitCodeFrom({
+          result: await harness.executeTool({
+            name: "bash",
+            params: {
+              command: `printf parent-content > ${JSON.stringify(path.join(parentWritable, "parent-marker"))}`,
+              timeout: 10,
+            },
+          }),
+        }),
+      ).not.toBe(0);
+      expect(fs.existsSync(path.join(parentWritable, "parent-marker"))).toBe(
+        false,
+      );
+    } finally {
+      await harness.shutdown();
     }
   });
 

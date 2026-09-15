@@ -13,7 +13,13 @@ import { policyConfig as genericPolicyConfig } from "../modules/policy";
 import { policyReferencePrefix } from "../modules/policyHelpers";
 import {
   ProfileConfigLoadError,
+  ProfileConfigMalformedError,
+  ProfileConfigMissingError,
+  ProfileConfigSchemaInvalidError,
+  ProfileConfigUnreadableError,
+  loadDirectoryGlobDeclarations,
   loadProfileConfig,
+  loadRawProfileDeclarations,
 } from "../modules/profileConfig";
 
 const temporaryDirectories: string[] = [];
@@ -148,7 +154,7 @@ describe("profile configuration", () => {
           "client-work": {
             "description": "Client workspace profile for editor and vendor access rules.",
             "extends": ["builtin:default"],
-            "directories": ["/workspace/client",],
+            "directoryGlobs": ["/workspace/client/**",],
             "tools": {
               "bash": [{ "pattern": "client-cli *", "decision": "allow" }],
             },
@@ -165,7 +171,7 @@ describe("profile configuration", () => {
     );
 
     const clientWork = config.profiles["client-work"];
-    expect(clientWork.directories).toEqual(["/workspace/client"]);
+    expect("directoryGlobs" in clientWork).toBe(false);
     expect(clientWork.tools.bash).toEqual(
       expect.arrayContaining([{ pattern: "client-cli *", decision: "allow" }]),
     );
@@ -294,6 +300,182 @@ describe("profile configuration", () => {
     expect(config.profiles.standalone).toMatchObject({ emoji: "🧪" });
   });
 
+  it("retains directoryGlobs in raw declarations but strips them from resolved policy", () => {
+    const configPath = writeConfig(
+      JSON.stringify({
+        profiles: {
+          standalone: {
+            ...genericPolicyConfig.profiles["builtin:default"],
+            directoryGlobs: ["/workspace/project/**"],
+          },
+        },
+      }),
+    );
+
+    const raw = loadRawProfileDeclarations(configPath);
+    expect(raw).toHaveLength(1);
+    expect(raw[0]).toMatchObject({
+      profile: "standalone",
+      definition: { directoryGlobs: ["/workspace/project/**"] },
+    });
+
+    const resolved = loadProfileConfig(genericPolicyConfig, configPath);
+    expect("directoryGlobs" in resolved.profiles.standalone).toBe(false);
+  });
+
+  it("resolves a standalone complete profile with directoryGlobs", () => {
+    const config = loadProfileConfig(
+      genericPolicyConfig,
+      writeConfig(
+        JSON.stringify({
+          profiles: {
+            standalone: {
+              ...genericPolicyConfig.profiles["builtin:default"],
+              description:
+                "Standalone complete profile with directory selection metadata.",
+              directoryGlobs: ["~/workspace/**"],
+            },
+          },
+        }),
+      ),
+    );
+
+    expect(config.profiles.standalone.description).toContain(
+      "directory selection",
+    );
+    expect("directoryGlobs" in config.profiles.standalone).toBe(false);
+  });
+
+  it("returns directory glob declarations in source order", () => {
+    const configPath = writeConfig(
+      JSON.stringify({
+        profiles: {
+          first: {
+            ...genericPolicyConfig.profiles["builtin:default"],
+            directoryGlobs: ["/workspace/first/**"],
+          },
+          second: {
+            ...genericPolicyConfig.profiles["builtin:default"],
+            directoryGlobs: ["/workspace/second/**", "/workspace/shared/**"],
+          },
+          omitted: genericPolicyConfig.profiles["builtin:default"],
+        },
+      }),
+    );
+
+    expect(loadDirectoryGlobDeclarations(configPath)).toEqual([
+      ["first", ["/workspace/first/**"]],
+      ["second", ["/workspace/second/**", "/workspace/shared/**"]],
+    ]);
+  });
+
+  it("preserves JSONC source order for integer-like profile names", () => {
+    const complete = JSON.stringify(
+      genericPolicyConfig.profiles["builtin:default"],
+    );
+    const configPath = writeConfig(
+      `{"profiles":{"2":${complete},"1":${complete}}}`,
+    );
+
+    expect(
+      loadRawProfileDeclarations(configPath).map(({ profile }) => profile),
+    ).toEqual(["2", "1"]);
+  });
+
+  it.each([
+    {
+      label: "missing",
+      makePath: () => {
+        const directory = fs.mkdtempSync(
+          path.join(os.tmpdir(), "pi-guard-missing-strict-"),
+        );
+        temporaryDirectories.push(directory);
+        return path.join(directory, "does-not-exist.jsonc");
+      },
+      error: ProfileConfigMissingError,
+      detail: undefined,
+    },
+    {
+      label: "malformed",
+      makePath: () => writeConfig('{ "profiles": '),
+      error: ProfileConfigMalformedError,
+      detail: "JSONC parse error",
+    },
+    {
+      label: "schema-invalid",
+      makePath: () =>
+        writeConfig(
+          JSON.stringify({ profiles: { standalone: { description: 42 } } }),
+        ),
+      error: ProfileConfigSchemaInvalidError,
+      detail: "schema validation failed",
+    },
+  ])(
+    "distinguishes strict loader $label files",
+    ({ makePath, error, detail }) => {
+      const configPath = makePath();
+      try {
+        loadRawProfileDeclarations(configPath);
+        throw new Error("expected loadRawProfileDeclarations to throw");
+      } catch (caught) {
+        expect(caught).toBeInstanceOf(error);
+        expect((caught as { configPath: string }).configPath).toBe(configPath);
+        if (detail) expect((caught as Error).message).toContain(detail);
+      }
+    },
+  );
+
+  it("distinguishes an unreadable strict-loader path", () => {
+    const directory = fs.mkdtempSync(
+      path.join(os.tmpdir(), "pi-guard-unreadable-"),
+    );
+    temporaryDirectories.push(directory);
+
+    expect(() => loadRawProfileDeclarations(directory)).toThrow(
+      ProfileConfigUnreadableError,
+    );
+  });
+
+  it("rejects the legacy directories declaration", () => {
+    const configPath = writeConfig(
+      JSON.stringify({
+        profiles: {
+          standalone: {
+            ...genericPolicyConfig.profiles["builtin:default"],
+            directories: ["/workspace/project"],
+          },
+        },
+      }),
+    );
+
+    expect(() => loadRawProfileDeclarations(configPath)).toThrow(
+      ProfileConfigSchemaInvalidError,
+    );
+  });
+
+  it("rejects a semantically invalid directory glob", () => {
+    const semanticInvalidGlob = `/${Array.from({ length: 33 }, () => "*?").join(
+      "/",
+    )}`;
+    const configPath = writeConfig(
+      JSON.stringify({
+        profiles: {
+          standalone: {
+            ...genericPolicyConfig.profiles["builtin:default"],
+            directoryGlobs: [semanticInvalidGlob],
+          },
+        },
+      }),
+    );
+
+    expect(() => loadRawProfileDeclarations(configPath)).toThrowError(
+      /directoryGlobs.*too-many-wildcards/,
+    );
+    expect(() =>
+      loadProfileConfig(genericPolicyConfig, configPath),
+    ).toThrowError(/directoryGlobs.*too-many-wildcards/);
+  });
+
   it("rejects a valid profile when its description is omitted", () => {
     const configPath = writeConfig(
       JSON.stringify({
@@ -419,9 +601,9 @@ describe("profile configuration", () => {
         expect((error as Error).message).toContain(configPath);
         expect((error as Error).message).toContain(name);
         expect((error as Error).message).toContain(
-          name.startsWith(policyReferencePrefix("transform"))
-            ? policyReferencePrefix("transform")
-            : policyReferencePrefix("builtinProfile"),
+          name.startsWith(policyReferencePrefix({ kind: "transform" }))
+            ? policyReferencePrefix({ kind: "transform" })
+            : policyReferencePrefix({ kind: "builtinProfile" }),
         );
       }
     },
@@ -775,6 +957,7 @@ describe("extension harness profile configuration failures", () => {
       const uiHarness = createHarness({ hasUI: true });
       expect(uiHarness.commands).toEqual([
         "profile-add",
+        "profile-edit",
         "profile",
         "read-only",
         "sandbox-on",
@@ -827,14 +1010,30 @@ describe("extension harness profile configuration failures", () => {
     temporaryDirectories.push(directory);
     const missingConfigPath = path.join(directory, "does-not-exist.jsonc");
     process.env.PI_GUARD_PROFILE_CONFIG = missingConfigPath;
+    // The worker harness itself is launched under an orchestration-only
+    // subagent profile. It is not shipped configuration, so exclude it while
+    // verifying a missing config falls back gracefully to shipped profiles.
+    const inheritedSubagentProfile = process.env.PI_SUBAGENT_PROFILE;
+    const inheritedPermissibleGlobs = process.env.PI_SUBAGENT_PERMISSIBLE_GLOBS;
+    delete process.env.PI_SUBAGENT_PROFILE;
+    delete process.env.PI_SUBAGENT_PERMISSIBLE_GLOBS;
+    try {
+      const harness = createHarness({ hasUI: true });
+      await emitSessionStart(harness);
 
-    const harness = createHarness({ hasUI: true });
-    await emitSessionStart(harness);
-
-    expect(harness.notifications).toHaveLength(0);
-    expect(harness.statuses.at(-1)).not.toEqual({
-      key: "permissions",
-      text: "invalid-permissions",
-    });
+      expect(harness.notifications).toHaveLength(0);
+      expect(harness.statuses.at(-1)).not.toEqual({
+        key: "permissions",
+        text: "invalid-permissions",
+      });
+    } finally {
+      if (inheritedSubagentProfile === undefined)
+        delete process.env.PI_SUBAGENT_PROFILE;
+      else process.env.PI_SUBAGENT_PROFILE = inheritedSubagentProfile;
+      if (inheritedPermissibleGlobs === undefined)
+        delete process.env.PI_SUBAGENT_PERMISSIBLE_GLOBS;
+      else
+        process.env.PI_SUBAGENT_PERMISSIBLE_GLOBS = inheritedPermissibleGlobs;
+    }
   });
 });

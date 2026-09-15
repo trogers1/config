@@ -4,7 +4,7 @@
     "review-tools": {
       "description": "Review workspace profile for GitHub and GitLab CLI tooling.",
       "extends": ["builtin:default"],
-      "directories": ["/workspace"],
+      "directoryGlobs": ["/workspace"],
       "tools": {
         "bash": [
           { "pattern": "glab *", "decision": "allow" },
@@ -22,7 +22,7 @@
     "address-comments": {
       "description": "Workspace profile for addressing review comments and committing changes.",
       "extends": ["builtin:default"],
-      "directories": ["/workspace"],
+      "directoryGlobs": ["/workspace"],
       "tools": {
         "bash": [{ "pattern": "git commit -m *", "decision": "allow" }],
       },

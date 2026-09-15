@@ -36,9 +36,9 @@ agent boundary, run Pi itself in a container or VM.
 
 All shipped profiles configure sandboxing. `builtin:default` and the restricted
 workflow profiles deny network access; `builtin:default-with-net`,
-`builtin:deps-mutator`, and `builtin:git-full` allow it. Custom profiles inherit
-the sandbox posture of their resolved parent unless they set `sandbox` to a new
-object or `false`.
+`builtin:deps-mutator`, and `builtin:git-full` allow it. Custom profiles compose sandbox settings from their resolved parent unless they set
+`sandbox: false`. `false` is a hard opt-out: it disables an inherited sandbox
+rather than leaving an earlier parent setting in effect.
 
 Set `sandbox` on a custom profile to choose its posture:
 
@@ -121,9 +121,53 @@ working directory.
 
 - An omitted value inherits the resolved parent value.
 - `sandbox: false` explicitly disables inherited sandboxing.
-- An object replaces an inherited sandbox object; its nested fields do not
-  deep-merge.
+- An object composes with an inherited sandbox object. Scalar values replace
+  inherited values, while path arrays append to inherited arrays by default.
+- `overwritePathArrays` replaces selected inherited path arrays. It accepts any
+  of `extraWritePaths`, `extraDenyReadPaths`, `extraDenyWritePaths`, and
+  `kernelUnenforcedProtectedPaths`; omitting the selected local array explicitly
+  resets it to an empty list.
 - Profile transforms do not alter sandbox metadata.
+
+Profiles compose left to right: the first `extends` parent is the base, each
+later parent is composed over it, then the declaring profile is composed last.
+For one sandbox field, the declaring profile's scalar value has precedence;
+path arrays append in that same order unless `overwritePathArrays` selects that
+array. At translation time, protected denies are compiled first (except explicit
+kernel waivers), write allows are accumulated, and sandbox write denies remain
+carve-outs because the sandbox runtime gives denies precedence over allows.
+
+### Raw declarations and authoring
+
+The JSONC profile stores the **raw** local declaration, while `/sandbox` and
+policy enforcement show the **effective** composed result. Keep these distinct:
+an omitted `sandbox` inherits; editing a child must not copy all effective parent
+values into that child. `sandbox: false` is the only declaration that disables
+an inherited sandbox.
+
+`/profile-add` has optional **Sandbox** and **Directory globs** sections in its
+final overview, alongside the four rule sections (Bash, read paths, write paths,
+and protected safeguards). A newly opened Directory globs section starts with
+the trusted absolute startup CWD; remove every row to omit activation.
+`/profile-edit` exposes those same six sections only for the active user-owned
+profile. It edits local raw rules, sandbox, and
+directory-glob declarations; identity and composition (`extends` and
+transforms) are excluded. Directory activation and sandbox capability expansion
+are reviewed separately and each need a second confirmation before the one
+validated atomic save.
+
+For each sandbox path array, the authoring UI defaults to **append inherited
+paths**. Selecting **overwrite inherited paths** adds the field to
+`overwritePathArrays`; selecting it with no local values intentionally resets
+the inherited array. This applies to all four fields:
+`extraWritePaths`, `extraDenyReadPaths`, `extraDenyWritePaths`, and
+`kernelUnenforcedProtectedPaths`. A failed validation or revision conflict does
+not partially write a profile; reload and retry from the retained creation draft
+where offered.
+
+The kernel-waiver field exists for narrow compatibility cases such as Git
+metadata accessed implicitly by a Git/GitLab workflow. It remains gate-enforced;
+keep any waiver exact and minimal.
 
 ## Policy translation
 
@@ -138,7 +182,8 @@ backend-neutral `SandboxSpec` before Bash is executed.
   dynamically widen the sandbox.
 - Effective protected denies become both read and write denials.
 - A protected allow can restore a protected read exception, but never grants
-  write access on its own.
+  write access on its own. Denies take precedence over allows, including a
+  sandbox write-deny carve-out over an allowed root.
 - If the backend cannot preserve a required restriction or protected-path
   precedence, sandbox preparation fails closed.
 - If it cannot represent an allow, the sandbox stays active but remains

@@ -1314,7 +1314,7 @@ export function resolveRequestedPath(
   return path.resolve(cwd, expandHome(requestedPath));
 }
 
-export function expandHome(value: string): string {
+function expandHome(value: string): string {
   if (value === "~") return process.env.HOME ?? value;
   if (value.startsWith("~/"))
     return path.join(process.env.HOME ?? "~", value.slice(2));

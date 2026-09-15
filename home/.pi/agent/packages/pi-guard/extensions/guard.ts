@@ -1,4 +1,3 @@
-import fs from "node:fs";
 import path from "node:path";
 import {
   extractShellCommands,
@@ -13,7 +12,6 @@ import {
   decideProtectedBashPathReferences,
   displayPath,
   evaluatePathByPattern,
-  expandHome,
   matchesGlobPattern,
   rankPathRules,
   resolveRequestedPath,
@@ -33,7 +31,10 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Key, truncateToWidth } from "@earendil-works/pi-tui";
 import {
-  formatProfileName,
+  createProfileAuthoringFlow,
+  isProfileAuthoringAbort,
+} from "../modules/profileAuthoringFlow";
+import {
   ProfilePicker,
   type ProfilePickerItem,
 } from "../modules/profilePicker.lib";
@@ -42,6 +43,7 @@ import {
   assertProfilePolicy,
   definePolicyConfig,
   extendProfile,
+  composeSandboxDeclarations,
   isCompositionFragmentName,
   withProtectedPathRules,
   type CustomToolRule,
@@ -51,8 +53,10 @@ import {
   type ProfileColor,
   type PolicyConfig,
   type ProfilePolicy,
+  profileTransformNames,
   type ProfilePolicyOverride,
-  type ProtectedPathRule,
+  type ProfileTransformName,
+  type SandboxConfigOverride,
   type ReadPathContext,
   type Rule,
   type ToolPolicy,
@@ -69,29 +73,55 @@ import {
 } from "../modules/ruleSpecificity";
 import {
   applyProfileRuleChanges,
-  assertUnambiguousProfileRuleChanges,
-  createCustomProfile,
-  loadProfileConfig,
+  applyProfileAuthoringCommit,
+  validateProfileAuthoringCommit,
+  validateCustomProfileName,
+  loadProfileConfigSnapshot,
   loadRawProfileConfig,
+  ProfileAuthoringValidationError,
+  ProfileConfigConflictError,
   ProfileConfigLoadError,
   type RawProfileConfig,
-  type BashRule,
   type ProfileMutationTarget,
-  type ProfileRuleChange,
 } from "../modules/profileConfig";
 import {
   builtinCompositionChains,
   policyConfig as genericPolicyConfig,
 } from "../modules/policy";
 import { formatProfileColor } from "../modules/profileColors";
+import { editProfileGeneral } from "../modules/profileGeneralEditor";
 import {
   editProfileRuleRows,
   type AskRuleCandidate,
   type EditableRuleRow,
-  ruleLayerLabel,
 } from "../modules/profileRuleEditor";
+import {
+  generalSectionPresentation,
+  metadataConfirmationTitle,
+  metadataSectionPresentation,
+  postSaveActivationFailureMessage,
+} from "../modules/profileAuthoringPresentation";
+import {
+  isConservativelyBroadDirectoryActivation,
+  summarizeSandboxSecurityExpansion,
+} from "../modules/profileMetadataEditor";
+import type { EffectiveSandboxAuthoring } from "../modules/profileAuthoring";
+import {
+  createProfileAuthoringDraft,
+  createProfileEditDraft,
+  defaultCustomProfileEmoji,
+  suggestedProfileName,
+  type ProfileGeneralDraft,
+} from "../modules/profileAuthoringModel";
+import { runProfileAuthoringWizard } from "../modules/profileAuthoringWizard";
+import type { OrderedSelectionOption } from "../modules/profileOrderedSelectionEditor";
+import {
+  matchDirectoryGlobs,
+  type DirectoryGlobDeclaration,
+} from "../modules/directoryGlobs";
 import { ruleSetRegistry } from "../modules/ruleSets.lib";
 import { parseSubagentPermissibleRules } from "../modules/subagentScopes";
+import { readRuntimePromptFile } from "../modules/profilePromptFile";
 import {
   clearSandboxCaches,
   resolveSandbox,
@@ -220,19 +250,31 @@ export default function (pi: ExtensionAPI) {
     process.env.PI_GUARD_PROFILE_CONFIG?.trim() || undefined;
 
   let rawProfileConfig: RawProfileConfig | undefined;
+  let profileConfigRevision: string | undefined;
+  let directoryGlobDeclarations: readonly DirectoryGlobDeclaration[] = [];
   let policyConfig: PolicyConfig = genericPolicyConfig;
   let profileConfigErrorReason: string | undefined;
 
   /** Refresh the in-memory policy only after a complete, valid config load. */
   function reloadPolicyConfig(): void {
     try {
-      policyConfig = loadProfileConfig(genericPolicyConfig, profileConfigPath);
-      rawProfileConfig = loadRawProfileConfig(profileConfigPath);
+      // Policy, raw declarations, and source-order directory metadata must
+      // come from one file read so a concurrent write cannot mix revisions.
+      const snapshot = loadProfileConfigSnapshot(
+        genericPolicyConfig,
+        profileConfigPath,
+      );
+      policyConfig = snapshot.config;
+      rawProfileConfig = snapshot.raw;
+      profileConfigRevision = snapshot.sourceRevision;
+      directoryGlobDeclarations = snapshot.directoryGlobDeclarations;
       profileConfigErrorReason = undefined;
     } catch (error) {
       if (!(error instanceof ProfileConfigLoadError)) throw error;
       policyConfig = genericPolicyConfig;
       rawProfileConfig = undefined;
+      profileConfigRevision = undefined;
+      directoryGlobDeclarations = [];
       profileConfigErrorReason = error.message;
     }
   }
@@ -243,23 +285,14 @@ export default function (pi: ExtensionAPI) {
   const profileNames = () => typedKeys(policyConfig.profiles);
 
   function profileForDirectory(cwd: string): ProfileName | undefined {
-    const resolvedCwd = path.resolve(cwd);
-    let match: { profile: ProfileName; length: number } | undefined;
+    return matchDirectoryGlobs(cwd, directoryGlobDeclarations)?.profile;
+  }
 
-    for (const profile of profileNames()) {
-      for (const configuredDirectory of activePolicy(profile).directories ??
-        []) {
-        const directory = path.resolve(expandHome(configuredDirectory));
-        const relative = path.relative(directory, resolvedCwd);
-        if (relative === ".." || relative.startsWith(`..${path.sep}`)) continue;
-
-        if (!match || directory.length >= match.length) {
-          match = { profile, length: directory.length };
-        }
-      }
-    }
-
-    return match?.profile;
+  /** One authority ordering for all post-mutation activation paths. */
+  function finalActivationProfile(intended: ProfileName): ProfileName {
+    return subagentProfile && isProfileName(subagentProfile)
+      ? subagentProfile
+      : (profileForDirectory(startupCwd) ?? intended);
   }
 
   function isProfileName(value: string): boolean {
@@ -536,7 +569,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
     // Directory selections are intentionally stronger than the persisted
     // session choice: opening or resuming a session in a configured directory
     // must get that directory's policy.
-    const directoryProfile = profileForDirectory(ctx.cwd ?? startupCwd);
+    const directoryProfile = profileForDirectory(startupCwd);
     if (directoryProfile) activeProfile = directoryProfile;
 
     // A subagent's declared profile is authoritative even when resuming a
@@ -605,20 +638,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
     await clearSandboxCaches();
   });
 
-  const profileTransformOptions = [
-    "none",
-    "transform:deny-asks",
-    "transform:allow-asks",
-    "transform:ask-all",
-    "transform:deny-all",
-  ] as const;
-
-  /**
-   * Collect a composition list interactively. Rulesets are intentionally shown
-   * alongside profiles: both are valid `extends` fragments, but a ruleset
-   * cannot itself become active.
-   */
-  const shippedRuleSetDescriptions: Record<string, string> = {
+  const shippedRuleSetDescriptions: Readonly<Record<string, string>> = {
     "ruleset:shell": "Standard shell command policy.",
     "ruleset:git": "Git inspection and mutation policy.",
     "ruleset:packageManagers": "Package manager command policy.",
@@ -635,400 +655,248 @@ The permissions gate remains loaded and will fail closed until the profile is co
     "ruleset:test-write-protection": "Protect test files from writes.",
   };
 
-  async function chooseComposition(
-    ctx: ExtensionContext,
-  ): Promise<string[] | undefined> {
-    const items: ProfilePickerItem[] = [
-      ...profileNames().map((name) => {
+  const transformDescriptions = {
+    "transform:deny-asks": "Turn every ask decision into deny.",
+    "transform:allow-asks": "Turn every ask decision into allow.",
+    "transform:ask-all": "Turn every allow decision into ask.",
+    "transform:deny-all": "Turn every allow and ask decision into deny.",
+  } as const satisfies Record<ProfileTransformName, string>;
+
+  function compositionOptions({
+    editingProfile,
+  }: {
+    readonly editingProfile?: string;
+  }): readonly OrderedSelectionOption<string>[] {
+    const profiles = profileNames()
+      .filter((name) => name !== editingProfile)
+      .map((name) => {
         const profile = activePolicy(name);
         return {
-          name,
+          value: name,
           description: profile.description ?? "Permissions profile.",
-          emoji: profile.emoji,
-          color: profile.color,
+          emoji: profile.emoji ?? "🧩",
         };
-      }),
-      ...Object.keys(ruleSetRegistry).map((name) => ({
-        name,
-        description: shippedRuleSetDescriptions[name] ?? "Shipped rule set.",
-        emoji: "🧩",
-        color: "cyan" as const,
-      })),
-      ...Object.keys(rawProfileConfig?.rulesets ?? {}).map((name) => ({
-        name: `customruleset:${name}`,
+      });
+    const shipped = Object.keys(ruleSetRegistry).map((name) => ({
+      value: name,
+      description: shippedRuleSetDescriptions[name] ?? "Shipped rule set.",
+      emoji: "🧩",
+    }));
+    const custom = Object.keys(rawProfileConfig?.rulesets ?? {}).map(
+      (name) => ({
+        value: `customruleset:${name}`,
         description: `Custom rule set: ${name}`,
         emoji: "🧩",
-        color: "cyan" as const,
-      })),
-    ];
-    const remaining = new Map(items.map((item) => [item.name, item]));
-    const selected: string[] = [];
-    while (remaining.size > 0) {
-      const choices: ProfilePickerItem[] = [
-        ...remaining.values(),
-        {
-          name: "Done",
-          description: "Finish composing this profile.",
-          emoji: "✅",
-        },
-      ];
-      // Later selections win tied rules, so show each new selection at the
-      // top of the composition stack—the same order rules are effectively
-      // layered by the resolver.
-      const selectedItems = selected
-        .map((name) => items.find((item) => item.name === name))
-        .filter((item): item is ProfilePickerItem => item !== undefined)
-        .reverse();
-      const choice = await ctx.ui.custom<string | null>(
-        (tui, theme, _keys, done) => {
-          const picker = new ProfilePicker(choices, theme, done, () =>
-            done(null),
-          );
-          return {
-            get focused() {
-              return picker.focused;
-            },
-            set focused(value: boolean) {
-              picker.focused = value;
-            },
-            render: (width) =>
-              [
-                theme.fg(
-                  "accent",
-                  theme.bold("Profile composition (final selection wins ties)"),
-                ),
-                ...(selectedItems.length === 0
-                  ? [theme.fg("dim", "  No profiles or rulesets selected yet.")]
-                  : selectedItems.map(
-                      (item, index) =>
-                        `${theme.fg("dim", `${index + 1}.`)} ${formatProfileName(item)} ${theme.fg("muted", `— ${item.description}`)}`,
-                    )),
-                theme.fg(
-                  "dim",
-                  "Type to search names and descriptions; final selections win equal-specificity ties. Select ✅ Done when finished.",
-                ),
-                ...picker.render(width),
-              ].map((line) => truncateToWidth(line, width)),
-            invalidate: () => picker.invalidate(),
-            handleInput: (data) => {
-              picker.handleInput(data);
-              tui.requestRender();
-            },
-          };
-        },
-      );
-      if (choice === null || choice === undefined) return undefined;
-      if (choice === "Done") return selected.length ? selected : undefined;
-      selected.push(choice);
-      remaining.delete(choice);
-    }
-    return selected;
+      }),
+    );
+    return [...profiles, ...shipped, ...custom];
   }
 
-  async function runProfileAdd(ctx: ExtensionContext): Promise<void> {
+  function transformOptions(): readonly OrderedSelectionOption<ProfileTransformName>[] {
+    return profileTransformNames.map((value) => ({
+      value,
+      description: transformDescriptions[value],
+      emoji: "🔀",
+    }));
+  }
+
+  function compositionSandboxBaseline({
+    composition,
+  }: {
+    readonly composition: readonly string[];
+  }): EffectiveSandboxAuthoring | SandboxConfigOverride {
+    let sandbox: SandboxConfigOverride | false | undefined;
+    for (const name of composition) {
+      const candidate = isProfileName(name)
+        ? activePolicy(name).sandbox
+        : undefined;
+      sandbox = composeSandboxDeclarations(sandbox, candidate);
+    }
+    return sandbox;
+  }
+
+  function explicitSaveActivationProfile({
+    intended,
+  }: {
+    readonly intended: ProfileName;
+  }): ProfileName {
+    return subagentProfile && isProfileName(subagentProfile)
+      ? subagentProfile
+      : intended;
+  }
+
+  async function runProfileAuthoringCommand({
+    mode,
+    ctx,
+  }: {
+    readonly mode: "create" | "edit";
+    readonly ctx: ExtensionContext;
+  }): Promise<void> {
     if (!ctx.hasUI) {
-      ctx.ui.notify("/profile-add requires an interactive UI", "error");
-      return;
-    }
-    const extendsTargets = await chooseComposition(ctx);
-    if (!extendsTargets) {
       ctx.ui.notify(
-        "Profile creation cancelled: choose at least one base.",
-        "warning",
+        `/profile-${mode === "create" ? "add" : "edit"} requires an interactive UI`,
+        "error",
       );
       return;
     }
-    const transformDescriptions: Record<
-      (typeof profileTransformOptions)[number],
-      string
-    > = {
-      none: "Keep the composed decisions unchanged.",
-      "transform:deny-asks": "Turn every ask decision into deny.",
-      "transform:allow-asks": "Turn every ask decision into allow.",
-      "transform:ask-all": "Turn every allow decision into ask.",
-      "transform:deny-all": "Turn every allow and ask decision into deny.",
-    };
-    let transform: (typeof profileTransformOptions)[number] = "none";
-    // Rule collections are edited from one overview. Every section is
-    // optional and drafts remain available while navigating back.
-    let bashRules: BashRule[] = [];
-    let readPathRules: PathRule[] = [];
-    let writePathRules: PathRule[] = [];
-    let protectedPaths: ProtectedPathRule[] = [];
-    const sandboxed = await ctx.ui.confirm(
-      "Sandbox Bash?",
-      "Enable a no-network kernel sandbox for Bash commands?",
-    );
-    async function requiredInput(
-      title: string,
-      placeholder: string,
-      error: string,
-    ): Promise<string | undefined> {
-      while (true) {
-        const value = (await ctx.ui.input(title, placeholder))?.trim();
-        if (value) return value;
-        if (value === undefined) return undefined;
-        // Reopen the same wizard field rather than abandoning all prior
-        // composition choices. Pi's stock input dialog has no inline-error
-        // surface, so the error is shown immediately before retrying it.
-        ctx.ui.notify(error, "error");
-      }
-    }
-    const name = await requiredInput(
-      "Profile name:",
-      "custom-profile",
-      "A profile name is required.",
-    );
-    if (!name) return;
-    const description = await requiredInput(
-      "Profile description:",
-      "",
-      "A profile description is required.",
-    );
-    if (!description) return;
-    const emoji =
-      (
-        await ctx.ui.input("Profile emoji (optional; Default: 💅):", "💅")
-      )?.trim() || "💅";
-    const durableDecision = (decision: Decision): "allow" | "deny" =>
-      decision === "allow" ? "allow" : "deny";
-    const createAndActivate = async (): Promise<boolean> => {
-      try {
-        const ruleChanges: ProfileRuleChange[] = [
-          ...bashRules.map((rule) => ({ kind: "bash" as const, ...rule })),
-          ...readPathRules.map((rule) => ({
-            kind: "read" as const,
-            pattern: rule.pattern,
-            decision: durableDecision(rule.decision),
-            guidance: rule.guidance,
-            contexts: rule.contexts,
-          })),
-          ...writePathRules.map((rule) => ({
-            kind: "write" as const,
-            pattern: rule.pattern,
-            decision: durableDecision(rule.decision),
-            guidance: rule.guidance,
-            contexts: rule.contexts,
-          })),
-          ...protectedPaths.map((rule) => ({
-            kind: "protected" as const,
-            ...rule,
-          })),
-        ];
-        assertUnambiguousProfileRuleChanges(ruleChanges, profileConfigPath);
-        createCustomProfile({
-          fallback: genericPolicyConfig,
-          configPath: profileConfigPath,
-          name,
-          description,
-          emoji,
-          // Later composition entries win equal-specificity ties.
-          extends: extendsTargets,
-          transforms: transform === "none" ? undefined : [transform],
-          protectedPaths,
-          bashRules,
-          readPathRules,
-          writePathRules,
-          sandboxed,
-        });
-        reloadPolicyConfig();
-        if (!isProfileName(name))
-          throw new Error(
-            `Profile '${name}' was saved but could not be loaded.`,
-          );
-        await activateProfile(
-          name,
-          ctx,
-          `Created and activated profile: ${name}`,
-        );
-        return true;
-      } catch (error) {
-        ctx.ui.notify(
-          error instanceof Error ? error.message : String(error),
-          "error",
-        );
-        return false;
-      }
-    };
-    while (true) {
-      const sandboxSummary = sandboxed ? "on · network denied" : "off";
-      const preview = (rules: readonly { pattern: string }[]): string =>
-        rules.length === 0
-          ? "none"
-          : rules
-              .slice(0, 3)
-              .map((rule) => rule.pattern)
-              .join(", ");
-      const overview = [
-        `Create profile: ${name}`,
-        `Description: ${description}`,
-        `Extends (later wins ties): ${extendsTargets.join(", ")}`,
-        `Transform: ${transform}`,
-        `Sandbox Bash: ${sandboxSummary}`,
-        "",
-        `⚙️ Bash preview: ${preview(bashRules)}`,
-        `📖 Read-path preview: ${preview(readPathRules)}`,
-        `✏️ Write-path preview: ${preview(writePathRules)}`,
-        `🛡️ Protected preview: ${preview(protectedPaths)}`,
-      ].join("\n");
-      const section = await ctx.ui.select(
-        `Create profile · Rules overview\n\n${overview}`,
-        [
-          "Create and activate profile",
-          `⚙️ Bash rules (${bashRules.length}) · Edit`,
-          `📖 Read-path rules (${readPathRules.length}) · Edit`,
-          `✏️ Write-path rules (${writePathRules.length}) · Edit`,
-          `🛡️ Protected safeguards (${protectedPaths.length}) · Edit`,
-          `Transform (${transform}) · Edit`,
-        ],
+    const editableDefinition =
+      mode === "edit" ? rawProfileConfig?.profiles[activeProfile] : undefined;
+    if (mode === "edit" && editableDefinition === undefined) {
+      ctx.ui.notify(
+        `/profile-edit can only edit the active user-owned profile ('${activeProfile}' is not editable).`,
+        "error",
       );
-      if (!section) {
-        const discard = await ctx.ui.confirm(
-          "Discard profile draft?",
-          "No profile has been written. Discard the complete draft?",
-        );
-        if (discard) return;
-        continue;
-      }
-      if (section === "Create and activate profile") {
-        if (await createAndActivate()) return;
-        // Keep metadata and every section draft open after a failed write.
-        continue;
-      }
-      if (section.startsWith("Transform")) {
-        const selectedTransform = await ctx.ui.custom<string | null>(
-          (tui, theme, _keys, done) => {
-            const picker = new ProfilePicker(
-              profileTransformOptions.map((name) => ({
-                name,
-                description: transformDescriptions[name],
-                emoji: name === "none" ? "➖" : "🔀",
-              })),
-              theme,
-              done,
-              () => done(null),
-            );
+      return;
+    }
+    const initial =
+      mode === "edit" && editableDefinition !== undefined
+        ? createProfileEditDraft({
+            name: activeProfile,
+            definition: editableDefinition,
+          })
+        : createProfileAuthoringDraft({
+            activeProfile,
+            startupCwd,
+            existingNames: new Set(
+              Object.keys(rawProfileConfig?.profiles ?? {}),
+            ),
+          });
+    const existingDirectories = editableDefinition?.directoryGlobs ?? [];
+    const authoringRevision = profileConfigRevision;
+    const flow = createProfileAuthoringFlow({ ctx });
+    try {
+      await runProfileAuthoringWizard({
+        ctx,
+        flow,
+        initial,
+        startupCwd,
+        compositionOptions: compositionOptions({
+          editingProfile: mode === "edit" ? activeProfile : undefined,
+        }),
+        transformOptions: transformOptions(),
+        resolvedParentSandbox: compositionSandboxBaseline,
+        validateName: ({ name }) => {
+          try {
+            validateCustomProfileName({
+              name,
+              existingNames: new Set(
+                Object.keys(rawProfileConfig?.profiles ?? {}),
+              ),
+              currentName: mode === "edit" ? activeProfile : undefined,
+            });
+          } catch (error) {
+            return error instanceof Error ? error.message : String(error);
+          }
+          return undefined;
+        },
+        submit: async ({ draft }) => {
+          if (
+            draft.mode === "edit" &&
+            subagentProfile === draft.originalName &&
+            draft.name !== draft.originalName
+          )
             return {
-              get focused() {
-                return picker.focused;
-              },
-              set focused(value: boolean) {
-                picker.focused = value;
-              },
-              render: (width: number) =>
-                [
-                  theme.fg("accent", theme.bold("Optional policy transform")),
-                  theme.fg(
-                    "dim",
-                    "Applied after composition; none leaves composed decisions unchanged.",
-                  ),
-                  ...picker.render(width),
-                ].map((line) => truncateToWidth(line, width)),
-              invalidate: () => picker.invalidate(),
-              handleInput: (data: string) => {
-                picker.handleInput(data);
-                tui.requestRender();
-              },
+              status: "invalid",
+              issues: [
+                {
+                  section: "general",
+                  code: "invalid-name",
+                  message: `Cannot rename '${draft.originalName}': authoritative PI_SUBAGENT_PROFILE still selects it. Update the parent or launcher and restart first.`,
+                },
+              ],
             };
-          },
-        );
-        switch (selectedTransform) {
-          case "none":
-          case "transform:deny-asks":
-          case "transform:allow-asks":
-          case "transform:ask-all":
-          case "transform:deny-all":
-            transform = selectedTransform;
-        }
-        continue;
-      }
-      const sectionKind = section.startsWith("⚙️")
-        ? "bash"
-        : section.startsWith("📖")
-          ? "read"
-          : section.startsWith("✏️")
-            ? "write"
-            : "protected";
-      const currentPatterns =
-        sectionKind === "bash"
-          ? bashRules
-          : sectionKind === "read"
-            ? readPathRules
-            : sectionKind === "write"
-              ? writePathRules
-              : protectedPaths;
-      const edited = await editProfileRuleRows(ctx, {
-        mode: "create",
-        kind: sectionKind,
-        title: `${ruleLayerLabel[sectionKind]} rules for new profile`,
-        rows: currentPatterns.map((rule, index) => ({
-          id: `${sectionKind}-${index}`,
-          kind: sectionKind,
-          pattern: rule.pattern,
-          decision: rule.decision === "ask" ? "deny" : rule.decision,
-          guidance: rule.guidance,
-          contexts:
-            "contexts" in rule
-              ? (rule.contexts as readonly PathContext[])
-              : undefined,
-          origin: "create" as const,
-        })),
+          try {
+            const prepared = validateProfileAuthoringCommit({
+              fallback: genericPolicyConfig,
+              configPath: profileConfigPath,
+              expectedRevision: authoringRevision,
+              draft,
+            });
+            const candidate =
+              prepared.resolvedConfig.profiles[prepared.profile];
+            if (!candidate)
+              throw new Error(
+                `Profile '${prepared.profile}' was prepared but could not be resolved.`,
+              );
+            const security = summarizeSandboxSecurityExpansion({
+              current: activePolicy(activeProfile).sandbox,
+              candidate: candidate.sandbox,
+            });
+            if (security.unsafe) {
+              const confirmed = await flow.confirm({
+                title: metadataConfirmationTitle({ kind: "sandbox" }),
+                message: security.warnings.join("\n"),
+              });
+              if (isProfileAuthoringAbort(confirmed))
+                return { status: "retry" };
+              if (!confirmed) return { status: "retry" };
+            }
+            const candidateDirectories = draft.definition.directoryGlobs ?? [];
+            const broad =
+              draft.mode === "create"
+                ? candidateDirectories.length > 0
+                : isConservativelyBroadDirectoryActivation({
+                    candidate: candidateDirectories,
+                    existing: existingDirectories,
+                  });
+            if (broad) {
+              const confirmed = await flow.confirm({
+                title: metadataConfirmationTitle({
+                  kind: "directoryGlobs",
+                }),
+                message:
+                  draft.mode === "create"
+                    ? `This profile can activate automatically for the configured ${metadataSectionPresentation.directoryGlobs.label}.`
+                    : `${metadataSectionPresentation.directoryGlobs.label} activation is broader than its existing declaration.`,
+              });
+              if (isProfileAuthoringAbort(confirmed))
+                return { status: "retry" };
+              if (!confirmed) return { status: "retry" };
+            }
+            if (flow.signal.aborted) return { status: "retry" };
+            applyProfileAuthoringCommit({
+              fallback: genericPolicyConfig,
+              configPath: profileConfigPath,
+              expectedRevision: authoringRevision,
+              draft,
+            });
+            try {
+              reloadPolicyConfig();
+              if (!isProfileName(draft.name))
+                throw new Error(
+                  `Profile '${draft.name}' was saved but could not be loaded.`,
+                );
+              const activated = explicitSaveActivationProfile({
+                intended: draft.name,
+              });
+              await activateProfile(
+                activated,
+                ctx,
+                `${draft.mode === "create" ? "Created and activated" : "Updated"} profile: ${activated}`,
+              );
+            } catch (error) {
+              ctx.ui.notify(
+                postSaveActivationFailureMessage({
+                  profile: draft.name,
+                  error,
+                }),
+                "error",
+              );
+            }
+            return { status: "saved" };
+          } catch (error) {
+            if (error instanceof ProfileConfigConflictError) {
+              reloadPolicyConfig();
+              return { status: "retry" };
+            }
+            if (error instanceof ProfileAuthoringValidationError)
+              return { status: "invalid", issues: error.issues };
+            throw error;
+          }
+        },
       });
-      // Back retains this section's in-memory draft; only the overview's
-      // explicit discard can abandon the complete profile draft.
-      if (edited.action === "clear") {
-        if (sectionKind === "bash") bashRules = [];
-        else if (sectionKind === "read") readPathRules = [];
-        else if (sectionKind === "write") writePathRules = [];
-        else protectedPaths = [];
-        continue;
-      }
-      const rules: Array<{
-        pattern: string;
-        decision: "allow" | "deny";
-        guidance?: string;
-        contexts?: PathContext[];
-      }> = edited.rows
-        .filter(
-          (rule) => rule.pattern.trim().length > 0 && rule.decision !== "skip",
-        )
-        .map((rule) => ({
-          pattern: rule.pattern,
-          decision: rule.decision === "deny" ? "deny" : "allow",
-          guidance: rule.guidance,
-          contexts: rule.contexts ? [...rule.contexts] : undefined,
-        }));
-      if (sectionKind === "bash")
-        bashRules = rules.map(({ pattern, decision, guidance }) => ({
-          pattern,
-          decision,
-          guidance,
-        }));
-      else if (sectionKind === "read")
-        readPathRules = rules.map((rule) => ({
-          ...rule,
-          contexts: rule.contexts?.filter(
-            (context): context is ReadPathContext =>
-              context === "read" ||
-              context === "grep" ||
-              context === "find" ||
-              context === "ls",
-          ),
-        }));
-      else if (sectionKind === "write")
-        writePathRules = rules.map((rule) => ({
-          ...rule,
-          contexts: rule.contexts?.filter(
-            (context): context is WritePathContext =>
-              context === "edit" || context === "write" || context === "bash",
-          ),
-        }));
-      else
-        protectedPaths = rules.map((rule) => ({
-          pattern: rule.pattern,
-          decision: rule.decision,
-          guidance: rule.guidance,
-        }));
+    } finally {
+      flow.dispose();
     }
   }
 
@@ -1052,25 +920,6 @@ The permissions gate remains loaded and will fail closed until the profile is co
         matchedPattern?: string;
       };
 
-  function suggestedChildProfileName(profile: string, cwd: string): string {
-    const profileStem =
-      profile
-        .replace(/^builtin:/, "")
-        .replace(/[^a-zA-Z0-9]+/g, "-")
-        .replace(/^-|-$/g, "") || "profile";
-    const directoryStem =
-      path
-        .basename(path.resolve(cwd))
-        .replace(/[^a-zA-Z0-9]+/g, "-")
-        .replace(/^-|-$/g, "") || "directory";
-    const base = `${profileStem}-${directoryStem}`;
-    const names = new Set(Object.keys(rawProfileConfig?.profiles ?? {}));
-    let name = base;
-    let suffix = 2;
-    while (names.has(name)) name = `${base}-${suffix++}`;
-    return name;
-  }
-
   async function rememberDecisions(
     drafts: ReadonlyArray<{
       draft: PendingRuleChangeDraft;
@@ -1078,7 +927,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
       guidance?: string;
     }>,
     ctx: ExtensionContext,
-    suggestedProfile?: string,
+    childGeneral?: Extract<ProfileGeneralDraft, { readonly mode: "create" }>,
   ): Promise<boolean> {
     let profile = activeProfile;
     try {
@@ -1096,17 +945,14 @@ The permissions gate remains loaded and will fail closed until the profile is co
         // The collision-free suggestion is the inline editor's default target;
         // accepting the save screen must not open a separate naming dialog.
         // (Callers may still provide a preselected suggested profile.)
-        const name = (
-          suggestedProfile ??
-          suggestedChildProfileName(profile, ctx.cwd ?? startupCwd)
-        ).trim();
-        if (!name) return false;
-        profile = name;
+        if (!childGeneral) return false;
+        profile = childGeneral.name;
         target = {
           mode: "create-child",
           profile,
-          description: `Custom extension of ${activeProfile}.`,
-          emoji: "💅",
+          description: childGeneral.description,
+          emoji: childGeneral.emoji || undefined,
+          color: childGeneral.color,
           extends: [activeProfile],
         };
       }
@@ -1116,6 +962,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
       applyProfileRuleChanges({
         fallback: genericPolicyConfig,
         configPath: profileConfigPath,
+        expectedRevision: profileConfigRevision,
         target,
         changes: drafts.map(({ draft, decision, guidance }) =>
           draft.kind === "bash"
@@ -1156,9 +1003,15 @@ The permissions gate remains loaded and will fail closed until the profile is co
       const effects = [...effectCounts]
         .map(([effect, count]) => `${count} ${effect}`)
         .join(", ");
-      await activateProfile(profile, ctx, `Saved ${effects} to ${profile}.`);
+      const finalProfile = finalActivationProfile(profile);
+      await activateProfile(
+        finalProfile,
+        ctx,
+        `Saved ${effects} to ${finalProfile}.`,
+      );
       return true;
     } catch (error) {
+      if (error instanceof ProfileConfigConflictError) reloadPolicyConfig();
       ctx.ui.notify(
         error instanceof Error ? error.message : String(error),
         "error",
@@ -1174,7 +1027,8 @@ The permissions gate remains loaded and will fail closed until the profile is co
   ): RememberDecision {
     let retainedRows: EditableRuleRow[] | undefined;
     let pruneRetainedOnNextInvocation = false;
-    let retainedTargetProfile: string | undefined;
+    let childGeneral:
+      Extract<ProfileGeneralDraft, { readonly mode: "create" }> | undefined;
     return async (patterns, suppliedPathTraces) => {
       const traces = suppliedPathTraces ?? pathTraces;
       const candidates: AskRuleCandidate[] = [];
@@ -1244,14 +1098,26 @@ The permissions gate remains loaded and will fail closed until the profile is co
         ? { mode: "update", profile: activeProfile }
         : {
             mode: "create-child",
-            profile: suggestedChildProfileName(
-              activeProfile,
-              ctx.cwd ?? startupCwd,
-            ),
+            profile: suggestedProfileName({
+              profile: activeProfile,
+              cwd: startupCwd,
+              existingNames: new Set(
+                Object.keys(rawProfileConfig?.profiles ?? {}),
+              ),
+            }),
             extends: [activeProfile],
             description: `Custom extension of ${activeProfile}.`,
-            emoji: "💅",
+            emoji: defaultCustomProfileEmoji,
           };
+      if (target.mode === "create-child" && childGeneral === undefined) {
+        childGeneral = {
+          mode: "create",
+          name: target.profile,
+          description: target.description,
+          emoji: defaultCustomProfileEmoji,
+          color: undefined,
+        };
+      }
       const candidateIdentity = (candidate: AskRuleCandidate): string =>
         `${candidate.kind}\0${candidate.kind === "bash" ? "" : candidate.context}\0${candidate.requestedValue}`;
       const rows: EditableRuleRow[] = candidates.map((candidate, index) => ({
@@ -1277,25 +1143,19 @@ The permissions gate remains loaded and will fail closed until the profile is co
         pruneRetainedOnNextInvocation = false;
       }
       while (true) {
-        const currentTarget: ProfileMutationTarget =
-          target.mode === "create-child"
-            ? {
-                ...target,
-                profile: retainedTargetProfile ?? target.profile,
-              }
-            : target;
-        const edited = await editProfileRuleRows(ctx, {
-          mode: "ask",
-          title: `Resolve ASK · ${rows.length} profile change${rows.length === 1 ? "" : "s"}`,
-          rows: retainedRows ?? rows,
-          target: currentTarget,
-          allowAddRemove: true,
-          defaultKind: rows[0]?.kind,
-          defaultDecision: "deny",
+        const currentTarget: ProfileMutationTarget = target;
+        const edited = await editProfileRuleRows({
+          ctx,
+          options: {
+            mode: "ask",
+            title: `Resolve ASK · ${rows.length} profile change${rows.length === 1 ? "" : "s"}`,
+            rows: retainedRows ?? rows,
+            allowAddRemove: true,
+            defaultKind: rows[0]?.kind,
+            defaultDecision: "deny",
+          },
         });
         retainedRows = edited.rows;
-        retainedTargetProfile =
-          edited.targetProfile?.trim() || currentTarget.profile;
         if (edited.action === "back") return { approved: false, back: true };
         const selected = edited.rows.filter(
           (row) =>
@@ -1304,10 +1164,85 @@ The permissions gate remains loaded and will fail closed until the profile is co
             row.pattern.trim().length > 0,
         );
         if (selected.length === 0) return { approved: false, back: true };
-        const targetProfile =
-          currentTarget.mode === "create-child"
-            ? edited.targetProfile?.trim() || currentTarget.profile
-            : undefined;
+        if (currentTarget.mode === "create-child") {
+          while (true) {
+            const generalResult = await editProfileGeneral({
+              ctx,
+              initial: childGeneral ?? {
+                mode: "create",
+                name: currentTarget.profile,
+                description: currentTarget.description,
+                emoji: currentTarget.emoji ?? defaultCustomProfileEmoji,
+                color: currentTarget.color,
+              },
+              title: `${generalSectionPresentation.label} for new custom profile`,
+              validateName: ({ name }) => {
+                try {
+                  validateCustomProfileName({
+                    name,
+                    existingNames: new Set(
+                      Object.keys(rawProfileConfig?.profiles ?? {}),
+                    ),
+                  });
+                } catch (error) {
+                  return error instanceof Error ? error.message : String(error);
+                }
+                return undefined;
+              },
+            });
+            if (generalResult === null || generalResult.action === "cancel")
+              return { approved: false, back: true };
+            if (generalResult.draft.mode === "create")
+              childGeneral = generalResult.draft;
+            if (generalResult.action === "back") break;
+            const saved = await rememberDecisions(
+              selected.map((row) => ({
+                draft:
+                  row.kind === "bash"
+                    ? {
+                        kind: "bash" as const,
+                        pattern: row.pattern,
+                        replacePattern:
+                          row.origin === "request"
+                            ? (row.request?.matchedPattern ??
+                              row.request?.initialPattern)
+                            : undefined,
+                      }
+                    : {
+                        kind:
+                          row.kind === "read"
+                            ? ("read" as const)
+                            : ("write" as const),
+                        pattern: row.pattern,
+                        contexts: row.contexts,
+                        replacePattern:
+                          row.origin === "request"
+                            ? (row.request?.matchedPattern ??
+                              row.request?.initialPattern)
+                            : undefined,
+                      },
+                decision:
+                  row.decision === "deny"
+                    ? ("deny" as const)
+                    : ("allow" as const),
+                guidance: row.decision === "deny" ? row.guidance : undefined,
+              })),
+              ctx,
+              childGeneral,
+            );
+            if (!saved) continue;
+            retainedRows = edited.rows.filter(
+              (row) => row.request && row.decision === "skip",
+            );
+            pruneRetainedOnNextInvocation = true;
+            return {
+              approved: selected.every((row) => row.decision === "allow"),
+              profileUpdated: true,
+              handledRejection: selected.some((row) => row.decision === "deny"),
+            };
+          }
+          continue;
+        }
         const saved = await rememberDecisions(
           selected.map((row) => ({
             draft:
@@ -1335,7 +1270,6 @@ The permissions gate remains loaded and will fail closed until the profile is co
             guidance: row.decision === "deny" ? row.guidance : undefined,
           })),
           ctx,
-          targetProfile,
         );
         if (!saved) continue;
         // A post-save re-check must rebuild from enforcement's remaining ASK
@@ -1356,7 +1290,13 @@ The permissions gate remains loaded and will fail closed until the profile is co
 
   pi.registerCommand("profile-add", {
     description: "Create and activate a custom permissions profile",
-    handler: async (_args, ctx) => await runProfileAdd(ctx),
+    handler: async (_args, ctx) =>
+      await runProfileAuthoringCommand({ mode: "create", ctx }),
+  });
+  pi.registerCommand("profile-edit", {
+    description: "Edit raw declarations on the active custom profile",
+    handler: async (_args, ctx) =>
+      await runProfileAuthoringCommand({ mode: "edit", ctx }),
   });
 
   pi.registerCommand("profile", {
@@ -1712,9 +1652,14 @@ The permissions gate remains loaded and will fail closed until the profile is co
     }
 
     if (policy.promptFile) {
-      const promptPath = resolvePolicyRelativePath(policy.promptFile);
-      const prompt = fs.readFileSync(promptPath, "utf8").trim();
-      promptSections.push(prompt);
+      promptSections.push(
+        readRuntimePromptFile({
+          profile: activeProfile,
+          declaredPath: policy.promptFile,
+          allowPackageRelative: true,
+          packageRoot: path.resolve(moduleDir, ".."),
+        }),
+      );
     }
 
     if (promptSections.length === 1) return undefined;
@@ -2802,7 +2747,7 @@ function resolveCompositionChain(
   const resolve = (name: string): string[] => {
     const builtinChain = builtinCompositionChains[name];
     if (builtinChain) return [...builtinChain];
-    if (isCompositionFragmentName(name)) {
+    if (isCompositionFragmentName({ name })) {
       return [name];
     }
 
@@ -3082,13 +3027,6 @@ function evaluateByPattern(
     decision: winner?.item.decision ?? defaultDecision,
     rule: winner?.item,
   };
-}
-
-function resolvePolicyRelativePath(value: string): string {
-  const expanded = expandHome(value);
-  return path.isAbsolute(expanded)
-    ? expanded
-    : path.resolve(moduleDir, "..", expanded);
 }
 
 export function stripJsonCommentsAndTrailingCommas(input: string): string {

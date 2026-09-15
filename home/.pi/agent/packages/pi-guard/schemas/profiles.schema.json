@@ -177,7 +177,15 @@
           "properties": {
             "description": { "type": "string", "minLength": 1 },
             "promptFile": {
-              "anyOf": [{ "type": "string" }, { "type": "null" }]
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 2,
+                  "pattern": "^(?:/.+|~/.+)$",
+                  "description": "An absolute path or a path beginning with ~/. Relative paths are reserved for shipped profiles."
+                },
+                { "type": "null" }
+              ]
             },
             "color": {
               "anyOf": [
@@ -193,10 +201,6 @@
               ]
             },
             "emoji": { "type": "string" },
-            "directories": {
-              "type": "array",
-              "items": { "type": "string", "minLength": 1 }
-            },
             "tools": {
               "type": "object",
               "properties": {
@@ -290,8 +294,7 @@
                   }
                 },
                 "additionalProperties": false
-              },
-              "minItems": 1
+              }
             },
             "writePaths": {
               "type": "array",
@@ -326,8 +329,7 @@
                   }
                 },
                 "additionalProperties": false
-              },
-              "minItems": 1
+              }
             },
             "protectedPathRules": {
               "type": "array",
@@ -351,7 +353,6 @@
               "anyOf": [
                 {
                   "type": "object",
-                  "required": ["network"],
                   "properties": {
                     "network": {
                       "anyOf": [
@@ -392,12 +393,39 @@
                         { "type": "string", "const": "block" },
                         { "type": "string", "const": "warn" }
                       ]
+                    },
+                    "overwritePathArrays": {
+                      "type": "array",
+                      "items": {
+                        "anyOf": [
+                          { "type": "string", "const": "extraWritePaths" },
+                          { "type": "string", "const": "extraDenyReadPaths" },
+                          { "type": "string", "const": "extraDenyWritePaths" },
+                          {
+                            "type": "string",
+                            "const": "kernelUnenforcedProtectedPaths"
+                          }
+                        ]
+                      },
+                      "uniqueItems": true
                     }
                   },
                   "additionalProperties": false
                 },
                 { "type": "boolean", "const": false }
               ]
+            },
+            "directoryGlobs": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024,
+                "pattern": "^(?:~|/|(?:~/|/)(?!.*\\*{3})(?:\\*\\*|(?!(?:\\.{1,2})(?:/|$))(?!(?:[^/]*\\*\\*))[^\\\\/\\u0000-\\u001f\\u007f~\\[\\]{}()!+|^$]+)(?:/(?:\\*\\*|(?!(?:\\.{1,2})(?:/|$))(?!(?:[^/]*\\*\\*))[^\\\\/\\u0000-\\u001f\\u007f~\\[\\]{}()!+|^$]+))*)$"
+              },
+              "minItems": 1,
+              "maxItems": 128,
+              "uniqueItems": true
             },
             "extends": {
               "type": "array",

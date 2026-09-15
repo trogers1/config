@@ -1,15 +1,60 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { readPathContexts, type PathContext } from "../modules/policyHelpers";
+import {
+  defaultCustomProfileEmoji,
+  suggestedProfileName,
+} from "../modules/profileAuthoringModel";
 import { loadRawProfileConfig } from "../modules/profileConfig";
+import {
+  generalSectionPresentation,
+  metadataConfirmationTitle,
+  profileAuthoringInvalidMarker,
+  ruleSectionPresentation,
+} from "../modules/profileAuthoringPresentation";
 import { askPermissionChoices } from "../modules/profileUpdate";
+import type { ProfileAuthoringOverviewSelection } from "../modules/profileAuthoringOverview";
 import { createExtensionHarness } from "./support/extensionHarness";
 
+const submitOverviewSelection = {
+  kind: "action",
+  id: "submit",
+} as const satisfies ProfileAuthoringOverviewSelection;
+function overviewSectionSelection({
+  id,
+}: {
+  readonly id:
+    "bash" | "read" | "write" | "protected" | "sandbox" | "directoryGlobs";
+}): ProfileAuthoringOverviewSelection {
+  return { kind: "section", id };
+}
+
 const originalConfigPath = process.env.PI_GUARD_PROFILE_CONFIG;
+const originalSubagentProfile = process.env.PI_SUBAGENT_PROFILE;
 const [denyChoice, allowOnceChoice, saveRulesChoice] = askPermissionChoices;
 const temporaryDirectories: string[] = [];
+
+/** Remove terminal cursor styling before asserting user-visible copy. */
+function plainText(value: string): string {
+  return value.replace(
+    /\x1b(?:\][^\x07]*\x07|_[^\x07]*\x07|\[[0-?]*[ -/]*[@-~])/g,
+    "",
+  );
+}
+
+function expectedInlineChildName({
+  existingNames,
+}: {
+  readonly existingNames: ReadonlySet<string>;
+}): string {
+  return suggestedProfileName({
+    profile: "builtin:default",
+    cwd: process.cwd(),
+    existingNames,
+  });
+}
 
 function writeConfig(config: object): string {
   const directory = fs.mkdtempSync(
@@ -28,6 +73,9 @@ function restoreEnvironment(): void {
   if (originalConfigPath === undefined)
     delete process.env.PI_GUARD_PROFILE_CONFIG;
   else process.env.PI_GUARD_PROFILE_CONFIG = originalConfigPath;
+  if (originalSubagentProfile === undefined)
+    delete process.env.PI_SUBAGENT_PROFILE;
+  else process.env.PI_SUBAGENT_PROFILE = originalSubagentProfile;
 }
 
 afterEach(() => {
@@ -67,7 +115,9 @@ describe("profile updates through the public extension surface", () => {
     picker.type(saveRulesChoice);
     picker.press("Enter");
     const editor = await harness.ui.waitForRuleForm();
-    expect(editor.render().join("\n")).toContain("⚙️ BASH COMMAND");
+    expect(editor.render().join("\n")).toContain(
+      ruleSectionPresentation.bash.label,
+    );
     editor.press("Enter");
     expect(await pending).toBeUndefined();
     await harness.callToolWithoutPrompt({
@@ -206,6 +256,181 @@ describe("profile updates through the public extension surface", () => {
 
     expect(await request).toMatchObject({ block: true });
     expect(fs.readFileSync(configPath, "utf8")).toBe(before);
+  });
+
+  it("treats Ctrl+C in an ASK rule editor as local Back and retains its draft", async () => {
+    const configPath = writeConfig({ profiles: {} });
+    const before = fs.readFileSync(configPath, "utf8");
+    process.env.PI_GUARD_PROFILE_CONFIG = configPath;
+    const harness = createExtensionHarness({
+      interactiveUi: true,
+      contextCwd: "/workspace/retained-child",
+    });
+    await harness.start();
+    const entries = [...harness.entries];
+
+    const pending = harness.callTool({
+      toolName: "bash",
+      input: { command: "echo retain-child-draft" },
+    });
+    (await harness.ui.waitForPermissionChoice()).choose(saveRulesChoice);
+    const editor = await harness.ui.waitForRuleForm();
+    for (let index = 0; index < 40; index++) editor.press("ArrowRight");
+    editor.type(" retained");
+    editor.press("CtrlC");
+
+    // Rule editors keep their local Back behavior. They do not receive the
+    // General form's root-cancel semantics.
+    (await harness.ui.waitForPermissionChoice()).choose(saveRulesChoice);
+    const reopened = await harness.ui.waitForRuleForm();
+    expect(plainText(reopened.render().join("\n"))).toContain(
+      "echo retain-child-draft retained",
+    );
+    expect(fs.readFileSync(configPath, "utf8")).toBe(before);
+    expect(harness.entries).toEqual(entries);
+    // Ctrl+C and Escape both retain the local draft while returning to the
+    // request picker. End the pending request from that production picker;
+    // saving the retained draft is covered by the inline child save flow.
+    reopened.press("Escape");
+    (await harness.ui.waitForPermissionChoice()).choose(denyChoice);
+
+    expect(await pending).toMatchObject({ block: true });
+    expect(fs.readFileSync(configPath, "utf8")).toBe(before);
+  });
+
+  it("returns General Escape to the retained ASK rules before saving", async () => {
+    const configPath = writeConfig({ profiles: {} });
+    process.env.PI_GUARD_PROFILE_CONFIG = configPath;
+    const harness = createExtensionHarness({
+      interactiveUi: true,
+      contextCwd: "/workspace/general-back",
+    });
+    await harness.start();
+
+    const pending = harness.callTool({
+      toolName: "bash",
+      input: { command: "echo general-back" },
+    });
+    (await harness.ui.waitForPermissionChoice()).choose(saveRulesChoice);
+    const rules = await harness.ui.waitForRuleForm();
+    rules.press("Tab"); // allow → deny
+    rules.press("ArrowDown");
+    rules.type("Return through the approved workflow.");
+    rules.press("Enter");
+
+    const general = await harness.ui.waitForProfileGeneralForm();
+    general.press("ArrowDown");
+    general.type(" retained");
+    general.press("Escape");
+    const reopenedRules = await harness.ui.waitForRuleForm();
+    expect(plainText(reopenedRules.render().join("\n"))).toContain(
+      "Return through the approved workflow.",
+    );
+    reopenedRules.press("Enter");
+    const reopenedGeneral = await harness.ui.waitForProfileGeneralForm();
+    expect(reopenedGeneral.render().join("\n")).toContain(
+      "Custom extension of builtin:default. retained",
+    );
+    reopenedGeneral.press("Enter");
+
+    expect(await pending).toMatchObject({ block: true });
+    expect(
+      loadRawProfileConfig(configPath)?.profiles[
+        expectedInlineChildName({ existingNames: new Set() })
+      ].tools?.bash,
+    ).toContainEqual({
+      pattern: "echo general-back",
+      decision: "deny",
+      guidance: "Return through the approved workflow.",
+    });
+  });
+
+  it("returns General Ctrl+C to the permission picker without writing a child", async () => {
+    const configPath = writeConfig({ profiles: {} });
+    const before = fs.readFileSync(configPath, "utf8");
+    process.env.PI_GUARD_PROFILE_CONFIG = configPath;
+    const harness = createExtensionHarness({ interactiveUi: true });
+    await harness.start();
+
+    const pending = harness.callTool({
+      toolName: "bash",
+      input: { command: "echo cancel-general" },
+    });
+    (await harness.ui.waitForPermissionChoice()).choose(saveRulesChoice);
+    (await harness.ui.waitForRuleForm()).press("Enter");
+    (await harness.ui.waitForProfileGeneralForm()).press("CtrlC");
+    (await harness.ui.waitForPermissionChoice()).choose(denyChoice);
+
+    expect(await pending).toMatchObject({ block: true });
+    expect(fs.readFileSync(configPath, "utf8")).toBe(before);
+    expect(loadRawProfileConfig(configPath)?.profiles).toEqual({});
+  });
+
+  it("does not open General or create a child when every ASK rule is skipped", async () => {
+    const configPath = writeConfig({ profiles: {} });
+    const before = fs.readFileSync(configPath, "utf8");
+    process.env.PI_GUARD_PROFILE_CONFIG = configPath;
+    const harness = createExtensionHarness({ interactiveUi: true });
+    await harness.start();
+
+    const pending = harness.callTool({
+      toolName: "bash",
+      input: { command: "echo skip-general" },
+    });
+    (await harness.ui.waitForPermissionChoice()).choose(saveRulesChoice);
+    const rules = await harness.ui.waitForRuleForm();
+    rules.press("Tab"); // allow → deny
+    rules.press("Tab"); // deny → skip
+    expect(rules.render().join("\n")).toContain(
+      "Save disabled: every row is skipped",
+    );
+    rules.press("Escape");
+    expect(harness.ui.custom).toHaveBeenCalledTimes(2); // picker + rules only
+    (await harness.ui.waitForPermissionChoice()).choose(denyChoice);
+
+    expect(await pending).toMatchObject({ block: true });
+    expect(fs.readFileSync(configPath, "utf8")).toBe(before);
+  });
+
+  it("keeps PI_SUBAGENT_PROFILE authoritative after saving an inline ASK child", async () => {
+    const configPath = writeConfig({ profiles: {} });
+    process.env.PI_GUARD_PROFILE_CONFIG = configPath;
+    delete process.env.PI_SUBAGENT_PROFILE;
+    vi.resetModules();
+    const { createExtensionHarness: createSubagentHarness } =
+      await import("./support/extensionHarness");
+    process.env.PI_SUBAGENT_PROFILE = "builtin:default";
+    const harness = createSubagentHarness({
+      interactiveUi: true,
+      contextCwd: "/workspace/authority-child",
+    });
+    await harness.start();
+    const entriesBeforeSave = harness.entries.length;
+
+    const pending = harness.callTool({
+      toolName: "bash",
+      input: { command: "echo authority-child" },
+    });
+    (await harness.ui.waitForPermissionChoice()).choose(saveRulesChoice);
+    (await harness.ui.waitForRuleForm()).press("Enter");
+    const general = await harness.ui.waitForProfileGeneralForm();
+    const expectedChild = expectedInlineChildName({ existingNames: new Set() });
+    expect(general.render().join("\n")).toContain(expectedChild);
+    general.press("Enter");
+    // The saved child cannot override the launcher's authoritative parent.
+    (await harness.ui.waitForPermissionChoice()).choose(denyChoice);
+
+    expect(await pending).toMatchObject({ block: true });
+    const child = loadRawProfileConfig(configPath)?.profiles[expectedChild];
+    expect(child).toMatchObject({
+      extends: ["builtin:default"],
+      tools: { bash: [{ pattern: "echo authority-child", decision: "allow" }] },
+    });
+    expect(process.env.PI_SUBAGENT_PROFILE).toBe("builtin:default");
+    expect(process.env.PI_GUARD_ACTIVE_PROFILE).toBe("builtin:default");
+    expect(
+      JSON.stringify(harness.entries.slice(entriesBeforeSave)),
+    ).not.toContain(`"profile":"${expectedChild}"`);
   });
 
   it("adds a labelled related rule with changed kind/context in the atomic ASK batch", async () => {
@@ -474,10 +699,10 @@ describe("profile updates through the public extension surface", () => {
     );
     const form = await harness.ui.waitForRuleForm();
     const rendered = form.render().join("\n");
-    expect(rendered).toContain("📖 READ PATH");
+    expect(rendered).toContain(ruleSectionPresentation.read.label);
     expect(rendered).toContain("Requested value");
     expect(rendered).toContain("Context/source   read");
-    expect(rendered).toContain("profiles.read-work.readPaths");
+    expect(rendered).toContain("Writes to        profile readPaths");
     expect(rendered).toContain("writes are unaffected");
     form.press("Enter");
     await pending;
@@ -577,10 +802,20 @@ describe("profile updates through the public extension surface", () => {
     const rendered = form.render().join("\n");
     expect(rendered).toContain("Requested value");
     expect(rendered).toContain("generated/a.ts");
-    expect(rendered).toContain("profiles.broaden-work.writePaths");
+    expect(rendered).toContain("Writes to        profile writePaths");
     expect(rendered).toMatch(/broader|custom/i);
     form.press("Enter");
     await pending;
+
+    // Mutated candidates append after retained declarations. This persisted
+    // order is security-significant for ties, while the sibling DENY remains
+    // a distinct durable rule and matches preview.
+    expect(
+      loadRawProfileConfig(configPath)?.profiles["broaden-work"].writePaths,
+    ).toEqual([
+      { pattern: "outside.ts", decision: "deny", contexts: ["write"] },
+      { pattern: "generated/**", decision: "allow", contexts: ["write"] },
+    ]);
 
     expect(
       await harness.callToolWithoutPrompt({
@@ -704,7 +939,7 @@ describe("profile updates through the public extension surface", () => {
     );
     const form = await harness.ui.waitForRuleForm();
     const rendered = form.render().join("\n");
-    expect(rendered).toContain("READ PATH");
+    expect(rendered).toContain(ruleSectionPresentation.read.label);
     expect(rendered).toContain("ls · bash (ls path reference)");
     form.press("Enter");
     await pending;
@@ -1057,7 +1292,7 @@ describe("profile updates through the public extension surface", () => {
     );
   });
 
-  it("leaves the config and active shipped profile unchanged after a cancelled invalid child target", async () => {
+  it("keeps General and rule drafts after child-name validation, then saves atomically", async () => {
     const configPath = writeConfig({
       defaultProfile: "builtin:default",
       profiles: {
@@ -1067,42 +1302,56 @@ describe("profile updates through the public extension surface", () => {
         },
       },
     });
-    const before = fs.readFileSync(configPath, "utf8");
     process.env.PI_GUARD_PROFILE_CONFIG = configPath;
-    const harness = createExtensionHarness({ interactiveUi: true });
+    const harness = createExtensionHarness({
+      interactiveUi: true,
+      contextCwd: "/workspace/general-validation",
+    });
     await harness.start();
     const pending = harness.callTool({
       toolName: "bash",
-      input: { command: "echo child-target > package.json" },
+      input: { command: "echo child-target" },
     });
-    (await harness.ui.waitForPermissionChoice()).choose(
-      "Save rule(s) to profile…",
+    (await harness.ui.waitForPermissionChoice()).choose(saveRulesChoice);
+    const rules = await harness.ui.waitForRuleForm();
+    rules.press("Tab"); // allow → deny
+    rules.press("ArrowDown");
+    rules.type("Use the child workflow.");
+    rules.press("Enter");
+
+    const general = await harness.ui.waitForProfileGeneralForm();
+    const prefilled = general.render().join("\n");
+    expect(prefilled).toContain(generalSectionPresentation.label);
+    expect(prefilled).toContain(
+      expectedInlineChildName({ existingNames: new Set(["default-custom"]) }),
     );
-    const form = await harness.ui.waitForRuleForm();
-    expect(form.render().join("\n")).toContain("Target");
-    for (let index = 0; index < 40; index++) form.press("ArrowRight");
-    for (let index = 0; index < 40; index++) form.press("Backspace");
-    form.type("default-custom");
-    form.press("Enter");
-    const retryForm = await harness.ui.waitForRuleForm();
-    expect(harness.ui.notify).toHaveBeenCalledWith(
-      expect.stringContaining("already exists"),
-      "error",
-    );
-    expect(retryForm.render().join("\n")).toContain("default-custom");
-    retryForm.press("Escape");
-    (await harness.ui.waitForPermissionChoice()).choose("No (default)");
+    expect(prefilled).toContain("Custom extension of builtin:default.");
+    expect(prefilled).toContain(defaultCustomProfileEmoji);
+    general.press("CtrlU");
+    general.type("default-custom");
+    general.press("Enter");
+    expect(general.render().join("\n")).toContain("already exists");
+    general.press("CtrlU");
+    general.type("recovered-custom");
+    general.press("Enter");
+
     expect(await pending).toMatchObject({ block: true });
-    expect(fs.readFileSync(configPath, "utf8")).toBe(before);
-    expect(harness.entries).toHaveLength(0);
-    const retry = harness.callTool({
-      toolName: "bash",
-      input: { command: "echo child-target > package.json" },
+    expect(
+      loadRawProfileConfig(configPath)?.profiles["recovered-custom"],
+    ).toMatchObject({
+      description: "Custom extension of builtin:default.",
+      emoji: defaultCustomProfileEmoji,
+      extends: ["builtin:default"],
+      tools: {
+        bash: [
+          {
+            pattern: "echo child-target",
+            decision: "deny",
+            guidance: "Use the child workflow.",
+          },
+        ],
+      },
     });
-    const retryPicker = await harness.ui.waitForPermissionChoice();
-    expect(retryPicker.render().join("\n")).toContain("permission request");
-    retryPicker.choose("No (default)");
-    expect(await retry).toMatchObject({ block: true });
   });
 
   it("saves combined Bash and ordinary path allows and continues after re-evaluation", async () => {
@@ -1135,8 +1384,9 @@ describe("profile updates through the public extension surface", () => {
       "Save rule(s) to profile…",
     );
     const editor = await harness.ui.waitForRuleForm();
-    expect(editor.render().join("\n")).toMatch(
-      /✏️ WRITE PATH[\s\S]*⚙️ BASH COMMAND/,
+    const rendered = editor.render().join("\n");
+    expect(rendered.indexOf(ruleSectionPresentation.write.label)).toBeLessThan(
+      rendered.indexOf(ruleSectionPresentation.bash.label),
     );
     editor.press("Enter");
     expect(await pending).toBeUndefined();
@@ -1194,8 +1444,9 @@ describe("profile updates through the public extension surface", () => {
       "Save rule(s) to profile…",
     );
     const commandForm = await harness.ui.waitForRuleForm();
-    expect(commandForm.render().join("\n")).toMatch(
-      /✏️ WRITE PATH[\s\S]*⚙️ BASH COMMAND/,
+    const rendered = commandForm.render().join("\n");
+    expect(rendered.indexOf(ruleSectionPresentation.write.label)).toBeLessThan(
+      rendered.indexOf(ruleSectionPresentation.bash.label),
     );
     commandForm.press("ArrowDown"); // path row → Bash row
     commandForm.press("Tab"); // allow → deny
@@ -1239,5 +1490,188 @@ describe("profile updates through the public extension surface", () => {
       toolName: "write",
       input: { path: "both.txt", content: "now allowed" },
     });
+  });
+
+  it("edits every /profile-edit destination without flattening untouched local ASK declarations", async () => {
+    const configPath = writeConfig({
+      defaultProfile: "edit-work",
+      profiles: {
+        "edit-work": {
+          description: "Raw declaration preservation fixture.",
+          extends: ["builtin:default"],
+          tools: {
+            bash: [
+              {
+                pattern: "echo ask",
+                decision: "ask",
+                alternatives: ["echo safe"],
+              },
+            ],
+            deploy: [{ decision: "deny", match: { target: "release" } }],
+          },
+          readPaths: [
+            {
+              pattern: "secret.txt",
+              decision: "ask",
+              contexts: ["read", "grep"],
+            },
+          ],
+          writePaths: [
+            { pattern: "output.txt", decision: "ask", contexts: ["write"] },
+          ],
+          protectedPathRules: [{ pattern: ".env", decision: "deny" }],
+          sandbox: { network: "deny", extraWritePaths: ["/tmp/inherited"] },
+          directoryGlobs: ["/workspace/old"],
+        },
+      },
+    });
+    process.env.PI_GUARD_PROFILE_CONFIG = configPath;
+    const customize = {
+      mode: "customize",
+      network: { mode: "local", value: "allow" },
+      allowLocalBinding: { mode: "omitted" },
+      allowAppleEvents: { mode: "omitted" },
+      enableWeakerNetworkIsolation: { mode: "omitted" },
+      onUnavailable: { mode: "omitted" },
+      extraWritePaths: { mode: "overwrite", value: ["/tmp/local"] },
+      extraDenyReadPaths: { mode: "inherit" },
+      extraDenyWritePaths: { mode: "inherit" },
+      kernelUnenforcedProtectedPaths: { mode: "inherit" },
+    } as const;
+    const result = (rows: object[]) => ({ action: "save", rows });
+    const harness = createExtensionHarness({
+      confirm: true,
+      customResults: [
+        overviewSectionSelection({ id: "bash" }),
+        result([
+          {
+            id: "bash-0",
+            kind: "bash",
+            pattern: "echo ask",
+            decision: "ask",
+            origin: "existing",
+          },
+        ]),
+        overviewSectionSelection({ id: "read" }),
+        result([
+          {
+            id: "read-0",
+            kind: "read",
+            pattern: "secret.txt",
+            decision: "ask",
+            contexts: ["read", "grep"],
+            origin: "existing",
+          },
+        ]),
+        overviewSectionSelection({ id: "write" }),
+        result([
+          {
+            id: "write-0",
+            kind: "write",
+            pattern: "output.txt",
+            decision: "ask",
+            contexts: ["write"],
+            origin: "existing",
+          },
+        ]),
+        overviewSectionSelection({ id: "protected" }),
+        result([
+          {
+            id: "protected-0",
+            kind: "protected",
+            pattern: ".env",
+            decision: "deny",
+            origin: "existing",
+          },
+        ]),
+        overviewSectionSelection({ id: "sandbox" }),
+        { action: "save", draft: customize },
+        overviewSectionSelection({ id: "directoryGlobs" }),
+        { action: "save", draft: { mode: "set", value: ["/workspace/new"] } },
+        submitOverviewSelection,
+      ],
+    });
+    await harness.start();
+    await harness.runCommand("profile-edit");
+
+    expect(
+      loadRawProfileConfig(configPath)?.profiles["edit-work"],
+    ).toMatchObject({
+      tools: {
+        bash: [
+          { pattern: "echo ask", decision: "ask", alternatives: ["echo safe"] },
+        ],
+        deploy: [{ decision: "deny", match: { target: "release" } }],
+      },
+      readPaths: [
+        { pattern: "secret.txt", decision: "ask", contexts: ["read", "grep"] },
+      ],
+      writePaths: [
+        { pattern: "output.txt", decision: "ask", contexts: ["write"] },
+      ],
+      protectedPathRules: [{ pattern: ".env", decision: "deny" }],
+      sandbox: {
+        network: "allow",
+        extraWritePaths: ["/tmp/local"],
+        overwritePathArrays: ["extraWritePaths"],
+      },
+      directoryGlobs: ["/workspace/new"],
+    });
+    expect(harness.ui.confirm).toHaveBeenCalledWith(
+      metadataConfirmationTitle({ kind: "sandbox" }),
+      expect.any(String),
+      expect.anything(),
+    );
+  });
+
+  it("keeps bytes and activation unchanged for a cancelled or empty /profile-edit, and rejects an external revision", async () => {
+    const configPath = writeConfig({
+      defaultProfile: "edit-work",
+      profiles: {
+        "edit-work": { description: "Editable", extends: ["builtin:default"] },
+      },
+    });
+    const before = fs.readFileSync(configPath, "utf8");
+    process.env.PI_GUARD_PROFILE_CONFIG = configPath;
+    const noop = createExtensionHarness({
+      customResults: [submitOverviewSelection],
+    });
+    await noop.start();
+    const entries = [...noop.entries];
+    await noop.runCommand("profile-edit");
+    expect(fs.readFileSync(configPath, "utf8")).toBe(before);
+    expect(noop.entries.slice(entries.length)).toHaveLength(1);
+    expect(noop.entries.at(-1)).toMatchObject({
+      data: { profile: "edit-work" },
+    });
+
+    const harness = createExtensionHarness({ interactiveUi: true });
+    await harness.start();
+    const pending = harness.runCommand("profile-edit");
+    const overview = await harness.ui.waitForProfileAuthoringOverview();
+    overview.choose({ selection: overviewSectionSelection({ id: "bash" }) });
+    const editor = await harness.ui.waitForRuleForm();
+    editor.press("CtrlN");
+    editor.type("echo concurrent");
+    editor.press("Enter");
+    fs.writeFileSync(
+      configPath,
+      fs
+        .readFileSync(configPath, "utf8")
+        .replace("Editable", "Changed elsewhere"),
+    );
+    (await harness.ui.waitForProfileAuthoringOverview()).choose({
+      selection: submitOverviewSelection,
+    });
+    const retriedOverview = await harness.ui.waitForProfileAuthoringOverview();
+    expect(retriedOverview.render().join("\n")).not.toContain(
+      profileAuthoringInvalidMarker,
+    );
+    harness.ui.sendTerminalInput({ data: "\x03" });
+    await pending;
+    expect(
+      loadRawProfileConfig(configPath)?.profiles["edit-work"].description,
+    ).toBe("Changed elsewhere");
+    expect(harness.entries).toHaveLength(0);
   });
 });

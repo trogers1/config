@@ -45,10 +45,12 @@ describe("sandbox profile composition", () => {
       }),
     );
 
-    expect(config.profiles.child.sandbox).toEqual({
-      network: "deny",
-      extraWritePaths: ["/tmp"],
-    });
+    expect(config.profiles.child.sandbox).toEqual(
+      expect.objectContaining({
+        network: "deny",
+        extraWritePaths: ["/tmp"],
+      }),
+    );
   });
 
   it("allows a child profile to disable an inherited sandbox explicitly", () => {
@@ -78,34 +80,198 @@ describe("sandbox profile composition", () => {
     expect(config.profiles.child.sandbox).toBe(false);
   });
 
-  it("replaces sandbox configuration instead of deep-merging it", () => {
+  it("composes sandbox configuration through profile extension", () => {
     const config = loadProfileConfig(
       genericPolicyConfig,
       writeConfig({
         profiles: {
           base: {
             description:
-              "Base profile for sandbox replacement and deny-read metadata",
+              "Base profile for composed sandbox and deny-read metadata",
             extends: ["builtin:default"],
             sandbox: {
               network: "deny",
               extraWritePaths: ["/tmp"],
               extraDenyReadPaths: ["~/.ssh"],
+              allowAppleEvents: true,
             },
           },
           child: {
             description:
-              "Child profile replacing inherited sandbox configuration",
+              "Child profile composing inherited sandbox configuration",
             extends: ["base"],
             sandbox: {
               network: "allow",
+              enableWeakerNetworkIsolation: true,
             },
           },
         },
       }),
     );
 
-    expect(config.profiles.child.sandbox).toEqual({ network: "allow" });
+    expect(config.profiles.child.sandbox).toEqual(
+      expect.objectContaining({
+        network: "allow",
+        extraWritePaths: ["/tmp"],
+        extraDenyReadPaths: ["~/.ssh"],
+        allowAppleEvents: true,
+        enableWeakerNetworkIsolation: true,
+      }),
+    );
+  });
+
+  it("composes sandbox path arrays and permits partial sandbox overrides", () => {
+    const config = loadProfileConfig(
+      genericPolicyConfig,
+      writeConfig({
+        profiles: {
+          base: {
+            description: "Base profile with a sandbox path exception",
+            extends: ["builtin:default"],
+            sandbox: {
+              network: "deny",
+              extraWritePaths: ["/tmp"],
+            },
+          },
+          child: {
+            description: "Child profile adding a sandbox path exception",
+            extends: ["base"],
+            sandbox: {
+              extraWritePaths: ["/var/tmp"],
+            },
+          },
+        },
+      }),
+    );
+
+    expect(config.profiles.child.sandbox).toEqual(
+      expect.objectContaining({
+        network: "deny",
+        extraWritePaths: ["/tmp", "/var/tmp"],
+      }),
+    );
+  });
+
+  it.each([
+    "extraWritePaths",
+    "extraDenyReadPaths",
+    "extraDenyWritePaths",
+    "kernelUnenforcedProtectedPaths",
+  ] as const)(
+    "composes append and both overwrite forms for %s",
+    (arrayName) => {
+      const basePath =
+        arrayName === "kernelUnenforcedProtectedPaths"
+          ? "**/.base/**"
+          : `/base/${arrayName}`;
+      const localPath =
+        arrayName === "kernelUnenforcedProtectedPaths"
+          ? "**/.local/**"
+          : `/local/${arrayName}`;
+      const config = loadProfileConfig(
+        genericPolicyConfig,
+        writeConfig({
+          profiles: {
+            base: {
+              description: "Base sandbox array fixture",
+              extends: ["builtin:default"],
+              sandbox: { network: "deny", [arrayName]: [basePath] },
+              protectedPathRules: [
+                { pattern: basePath, decision: "deny" },
+                { pattern: localPath, decision: "deny" },
+              ],
+            },
+            appended: {
+              description: "Append fixture",
+              extends: ["base"],
+              sandbox: { [arrayName]: [localPath] },
+            },
+            overwritten: {
+              description: "Non-empty overwrite fixture",
+              extends: ["base"],
+              sandbox: {
+                overwritePathArrays: [arrayName],
+                [arrayName]: [localPath],
+              },
+            },
+            cleared: {
+              description: "Empty overwrite fixture",
+              extends: ["base"],
+              sandbox: { overwritePathArrays: [arrayName] },
+            },
+          },
+        }),
+      );
+      const appended = config.profiles.appended.sandbox;
+      const overwritten = config.profiles.overwritten.sandbox;
+      const cleared = config.profiles.cleared.sandbox;
+      if (!appended || !overwritten || !cleared)
+        throw new Error("Expected enabled sandbox declarations");
+      expect(appended[arrayName]).toEqual(
+        expect.arrayContaining([basePath, localPath]),
+      );
+      expect(overwritten[arrayName]).toEqual([localPath]);
+      expect(cleared[arrayName]).toEqual([]);
+    },
+  );
+
+  it("allows a child to overwrite inherited sandbox path arrays", () => {
+    const config = loadProfileConfig(
+      genericPolicyConfig,
+      writeConfig({
+        profiles: {
+          base: {
+            description: "Base profile with broad sandbox capabilities",
+            extends: ["builtin:default"],
+            sandbox: {
+              network: "allow",
+              extraWritePaths: ["/tmp"],
+              kernelUnenforcedProtectedPaths: ["**/.git/**"],
+            },
+          },
+          child: {
+            description: "Child profile narrowing sandbox capabilities",
+            extends: ["base"],
+            sandbox: {
+              overwritePathArrays: [
+                "extraWritePaths",
+                "kernelUnenforcedProtectedPaths",
+              ],
+              extraWritePaths: ["/var/tmp"],
+            },
+          },
+        },
+      }),
+    );
+
+    expect(config.profiles.child.sandbox).toEqual(
+      expect.objectContaining({
+        extraWritePaths: ["/var/tmp"],
+        kernelUnenforcedProtectedPaths: [],
+      }),
+    );
+  });
+
+  it("rejects unknown keys in a partial child sandbox", () => {
+    expect(() =>
+      loadProfileConfig(
+        genericPolicyConfig,
+        writeConfig({
+          profiles: {
+            base: {
+              description: "Base profile with an enabled sandbox",
+              extends: ["builtin:default"],
+              sandbox: { network: "deny" },
+            },
+            child: {
+              description: "Child profile with an invalid sandbox override",
+              extends: ["base"],
+              sandbox: { allowAppleEventz: true },
+            },
+          },
+        }),
+      ),
+    ).toThrow(/sandbox/);
   });
 
   it("leaves sandbox metadata unchanged when transforms rewrite other rules", () => {
@@ -127,9 +293,11 @@ describe("sandbox profile composition", () => {
       }),
     );
 
-    expect(config.profiles.base.sandbox).toEqual({
-      network: "allow",
-      extraDenyReadPaths: ["~/.aws"],
-    });
+    expect(config.profiles.base.sandbox).toEqual(
+      expect.objectContaining({
+        network: "allow",
+        extraDenyReadPaths: ["~/.aws"],
+      }),
+    );
   });
 });

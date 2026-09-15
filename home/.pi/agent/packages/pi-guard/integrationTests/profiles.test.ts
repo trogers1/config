@@ -44,6 +44,7 @@ describe("permissions extension", () => {
 
   afterEach(() => {
     vi.unstubAllEnvs();
+    vi.restoreAllMocks();
     for (const directory of temporaryDirectories.splice(0)) {
       fs.rmSync(directory, { recursive: true, force: true });
     }
@@ -796,7 +797,7 @@ describe("permissions extension", () => {
     ).resolves.toBeUndefined();
   });
 
-  it("does not require directories for a profile to be selected", async () => {
+  it("does not require directory globs for a profile to be selected", async () => {
     const harness = createExtensionHarness();
     await harness.start();
 
@@ -815,19 +816,20 @@ describe("permissions extension", () => {
               description:
                 "Workspace review profile bound to the outer project directory.",
               extends: ["builtin:default"],
-              directories: ["/workspace"],
+              directoryGlobs: ["/workspace/**"],
             },
             "inner-review": {
               description:
                 "Nested coaching review profile with the most-specific directory binding.",
               extends: ["builtin:default"],
-              directories: ["/workspace/coaching"],
+              directoryGlobs: ["/workspace/coaching/**"],
             },
           },
         }),
       ),
     );
 
+    vi.spyOn(process, "cwd").mockReturnValue("/workspace/coaching/example");
     const harness = createExtensionHarness({
       contextCwd: "/workspace/coaching/example",
     });
@@ -838,7 +840,7 @@ describe("permissions extension", () => {
     ).toContain("inner-review");
   });
 
-  it("selects profiles bound with ~ directories", async () => {
+  it("selects profiles bound with ~ directory globs", async () => {
     vi.stubEnv(
       "PI_GUARD_PROFILE_CONFIG",
       writeTempConfig(
@@ -848,20 +850,20 @@ describe("permissions extension", () => {
               description:
                 "Home-directory-bound default permissions profile for nested startup paths.",
               extends: ["builtin:default"],
-              directories: ["~/pi-guard-home-binding-test"],
+              directoryGlobs: ["~/pi-guard-home-binding-test/**"],
             },
           },
         }),
       ),
     );
 
-    const harness = createExtensionHarness({
-      contextCwd: path.join(
-        process.env.HOME ?? os.homedir(),
-        "pi-guard-home-binding-test",
-        "nested",
-      ),
-    });
+    const startupDirectory = path.join(
+      process.env.HOME ?? os.homedir(),
+      "pi-guard-home-binding-test",
+      "nested",
+    );
+    vi.spyOn(process, "cwd").mockReturnValue(startupDirectory);
+    const harness = createExtensionHarness({ contextCwd: startupDirectory });
     await harness.start();
 
     expect(
@@ -869,7 +871,7 @@ describe("permissions extension", () => {
     ).toContain("home-bound");
   });
 
-  it("selects profiles bound with startup-relative directories", async () => {
+  it("selects profiles bound with absolute directory globs", async () => {
     vi.stubEnv(
       "PI_GUARD_PROFILE_CONFIG",
       writeTempConfig(
@@ -879,16 +881,22 @@ describe("permissions extension", () => {
               description:
                 "Startup-relative integration test profile directory binding.",
               extends: ["builtin:default"],
-              directories: ["integrationTests"],
+              directoryGlobs: [
+                path.join(process.cwd(), "integrationTests", "**"),
+              ],
             },
           },
         }),
       ),
     );
 
-    const harness = createExtensionHarness({
-      contextCwd: path.join(process.cwd(), "integrationTests", "fixtures"),
-    });
+    const startupDirectory = path.join(
+      process.cwd(),
+      "integrationTests",
+      "fixtures",
+    );
+    vi.spyOn(process, "cwd").mockReturnValue(startupDirectory);
+    const harness = createExtensionHarness({ contextCwd: startupDirectory });
     await harness.start();
 
     expect(
@@ -906,13 +914,14 @@ describe("permissions extension", () => {
               description:
                 "Workspace-bound profile overriding persisted profile selection on resume.",
               extends: ["builtin:default"],
-              directories: ["/workspace"],
+              directoryGlobs: ["/workspace/**"],
             },
           },
         }),
       ),
     );
 
+    vi.spyOn(process, "cwd").mockReturnValue("/workspace/project");
     const harness = createExtensionHarness({
       contextCwd: "/workspace/project",
       entries: [
@@ -935,6 +944,7 @@ describe("permissions extension", () => {
     // to /workspace, with address-comments declared later.
     vi.stubEnv("PI_GUARD_PROFILE_CONFIG", customProfileConfigPath);
 
+    vi.spyOn(process, "cwd").mockReturnValue("/workspace");
     const harness = createExtensionHarness({ contextCwd: "/workspace" });
     await harness.start();
 

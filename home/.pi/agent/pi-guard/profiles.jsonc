@@ -189,7 +189,10 @@
         "customruleset:config-symlink-boundaries",
       ],
       "sandbox": false,
-      "directories": ["~/Code/config", "~/code/config"],
+      "directoryGlobs": [
+        "~/Code/config",
+        "~/code/config",
+      ],
       "readPaths": [
         {
           "pattern": "/Users/*/.nvm/versions/**/lib/node_modules/@earendil-works/pi-coding-agent/**",
@@ -248,6 +251,42 @@
           "decision": "allow",
           "contexts": [
             "grep"
+          ]
+        },
+        {
+          "pattern": "/Users/taylor.rogers/Code/config/.pi/orchestration/*",
+          "decision": "allow",
+          "contexts": [
+            "read"
+          ]
+        },
+        {
+          "pattern": "/Users/taylor.rogers/Code/config/.pi/**",
+          "decision": "allow",
+          "contexts": [
+            "read"
+          ]
+        },
+        {
+          "pattern": "/Users/taylor.rogers/Code/config/.pi/**",
+          "decision": "allow",
+          "contexts": [
+            "ls"
+          ]
+        },
+        {
+          "pattern": "/Users/taylor.rogers/Code/config/home/.pi/agent/*",
+          "decision": "deny",
+          "guidance": "Those files are symlinks to the real ones at ./home/.pi",
+          "contexts": [
+            "read"
+          ]
+        },
+        {
+          "pattern": "/Users/taylor.rogers/Code/config/home/.pi/agent/pi-guard/profiles.jsonc",
+          "decision": "allow",
+          "contexts": [
+            "read"
           ]
         },
       ],
@@ -310,6 +349,87 @@
             "pattern": "npx prettier --write *",
             "decision": "deny",
             "guidance": "Just use `npm run fix:prettier`"
+          },
+          {
+            "pattern": "./node_modules/.bin/prettier *",
+            "decision": "deny",
+            "guidance": "Use `npm run prettier:fix` or `npm run fix:prettier`"
+          },
+          {
+            "pattern": "npx vitest",
+            "decision": "deny",
+            "guidance": "Use npm test instead"
+          },
+          {
+            "pattern": "node_modules/prettier/bin/prettier.cjs",
+            "decision": "deny",
+            "guidance": "Use npm run fix:prettier"
+          },
+          {
+            "pattern": "node_modules/prettier/bin/prettier.cjs *",
+            "decision": "deny",
+            "guidance": "Use npm run fix:prettier"
+          },
+          {
+            "pattern": "npx tsc",
+            "decision": "deny",
+            "guidance": "Use npm run check:all"
+          },
+          {
+            "pattern": "npx tsc *",
+            "decision": "deny",
+            "guidance": "Use npm run check:all"
+          },
+          {
+            "pattern": "npx prettier *",
+            "decision": "deny",
+            "guidance": "Use npm run fix:prettier"
+          },
+          {
+            "pattern": "npx vitest *",
+            "decision": "deny",
+            "guidance": "Just use `npm test -- `"
+          },
+          {
+            "pattern": "npm * --ignore-scripts *",
+            "decision": "deny",
+            "guidance": "Do not use --ignore-scripts"
+          },
+          {
+            "pattern": "npm --ignore-scripts test *",
+            "decision": "deny",
+            "guidance": "Do not use --ignore-scripts"
+          },
+          {
+            "pattern": "./node_modules/.bin/vitest *",
+            "decision": "deny",
+            "guidance": "Just use `npm test --` instead"
+          },
+          {
+            "pattern": "node -e * prettier *",
+            "decision": "deny",
+            "guidance": "Just use `npm run fix:prettier` to format"
+          },
+          {
+            "pattern": "printf *",
+            "decision": "allow"
+          },
+          {
+            "pattern": "node --version",
+            "decision": "allow"
+          },
+          {
+            "pattern": "npm --version",
+            "decision": "allow"
+          },
+          {
+            "pattern": "echo *",
+            "decision": "allow"
+          },
+          {
+            "pattern": "prettier --write *",
+            "decision": "deny",
+            "guidance": "Just use `npm run fix:prettier`"
           }
         ]
       },
@@ -368,13 +488,7 @@
       "description": "GitLab skill scripts with network access and gate-only .git access for merge-request workflows.",
       "extends": ["personal"],
       "sandbox": {
-        "network": "allow",
         "enableWeakerNetworkIsolation": true,
-        "extraWritePaths": [
-          "/var/folders/*/*/T/**",
-          "~/.local/share/lightcast-mcp/tokens/**",
-        ],
-        "kernelUnenforcedProtectedPaths": ["**/.env*", "**/.git", "**/.git/**"],
       },
       "tools": {
         "bash": [
@@ -492,6 +606,22 @@
             "decision": "deny",
             "guidance": "You don't need to check that. Ask if you need anything specific."
           },
+          {
+            "pattern": "docker version",
+            "decision": "allow"
+          },
+          {
+            "pattern": "docker info *",
+            "decision": "allow"
+          },
+          {
+            "pattern": "echo *",
+            "decision": "allow"
+          },
+          {
+            "pattern": "docker context *",
+            "decision": "allow"
+          },
         ],
       },
       "readPaths": [
@@ -500,6 +630,15 @@
           "decision": "allow",
           "contexts": [
             "grep"
+          ]
+        }
+      ],
+      "writePaths": [
+        {
+          "pattern": "/dev/null",
+          "decision": "allow",
+          "contexts": [
+            "bash"
           ]
         }
       ],

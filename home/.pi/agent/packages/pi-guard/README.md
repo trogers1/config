@@ -140,7 +140,7 @@ different specificity.
 
 Dangerous or guardrail-loosening profiles are named to make their behavior
 obvious (`deps-mutator`, `git-full`). Profiles may define optional `color`,
-`emoji`, `directories`, and `promptFile` metadata.
+`emoji`, `directoryGlobs`, and `promptFile` metadata.
 
 ## Commands
 
@@ -148,8 +148,10 @@ obvious (`deps-mutator`, `git-full`). Profiles may define optional `color`,
 - `Alt+G` opens the same picker without leaving a draft prompt. `Ctrl+Shift+I` is its macOS-safe fallback; `Ctrl+G` remains Pi's external-editor shortcut, `Ctrl+Shift+G` navigates to the previous fullscreen transcript search result, and `Ctrl+Shift+P` cycles models.
 - The remaining no-argument commands also have conflict-free `Ctrl+Shift` aliases: `A` `/profile-add`, `R` `/read-only`, `B` `/sandbox`, `N` `/sandbox-on`, `D` `/sandbox-off`, `X` `/sandbox-on-force`, `C` `/socrates`, and `Z` `/socrates-off`. `Ctrl+Shift+E` starts `/permissions explain ` in the editor so you can provide the required tool and input.
 - `/profile <name>` switches to a profile.
-- `/profile-add` creates a custom profile from composed bases and optional rules. Each Bash, read-path, write-path, and protected-safeguard section is independently editable; empty sections are valid. Protected safeguards are cross-cutting: denies block reads and writes, while allows only carve exceptions to protected denies and never grant ordinary permission. The final overview validates and activates all selected fields atomically.
-- For an ASK request, choose `No (default)`, `Allow once`, or `Save rule(s) to profile…` when the request is concrete and authorable. The shared editor identifies the read/write/Bash destination and context, keeps the requested value immutable, permits pattern edits and deny steering, and saves all non-skipped rows atomically before re-checking the same request. Tab cycles allow/deny/skip; Reset restores exact ASK patterns and allow decisions; Esc goes back with the draft retained. Protected safeguards are never offered as the resolution to an ordinary ASK.
+- `/profile-add` creates a custom profile through one overview with ten sections: General, Prompt, Composition, Transforms, Bash, Read, Write, Protected, Sandbox, and Startup Directory globs. It validates the complete raw draft, reports typed errors on every affected section, and saves and activates the profile atomically. Sandbox capability expansion and automatic directory activation each require a second explicit confirmation.
+- `/profile-edit` uses the same ten-section wizard for the active user-owned profile. It edits the exact raw declaration without materializing inherited values, including full identity rename, Prompt inheritance/disable/file modes, ordered composition and transforms, rules, Sandbox, and startup globs. Renames update exact `defaultProfile` and custom `extends` references while preserving JSONC comments and declaration order.
+- In `/profile-add` and `/profile-edit`, Escape is local Back and retains section changes; Ctrl+C aborts the complete command without writing. A successful explicit save activates the saved profile immediately unless `PI_SUBAGENT_PROFILE` is authoritative.
+- For an ASK request, choose `No (default)`, `Allow once`, or `Save rule(s) to profile…` when the request is concrete and authorable. Inline ASK remains rule-only and never exposes Prompt, Composition, Transforms, Sandbox, or Directory management. It may reuse General to create a child profile, defaulting its emoji from the shared custom-profile default and leaving color inherited. Esc returns to retained rules; Ctrl+C returns locally to the permission picker. Child creation and all selected rules are committed atomically before the request is checked again.
 - `/read-only` switches to the `builtin:read-only` permissions profile.
 - `/sandbox` reports the active sandbox state, backend, network posture,
   writable roots, subagent scope, Bash-tool ownership, and translation coverage.
@@ -386,56 +388,94 @@ pattern wholesale, write a from-scratch profile that owns its list.
 
 ## Directory-selected profiles
 
-`directories` is an optional per-profile setting. When Pi starts or resumes in a
-configured directory (including one of its descendants), that profile is
-selected automatically. The most-specific directory wins; profiles declared
-later break a tie. This selection takes precedence over a profile saved in the
-session, so a resumed session receives the policy appropriate to its current
-directory.
+`directoryGlobs` is optional declaration metadata on a custom profile. A glob
+identifies a _project root_: if it matches an ancestor of Pi's startup working
+directory (`startupCwd`), the profile applies to that root and every descendant.
+Matching is lexical and does not inspect the filesystem.
 
-The package ships portable profiles only. Add custom profiles and directory
-bindings in the user-owned JSON file
-`~/.pi/agent/pi-guard/profiles.jsonc`. The package reads it synchronously;
-configuration is data, not executable code. Add the bundled schema as
-`$schema` to get completion and validation in JSON-aware editors:
+Use an absolute path, `~/path`, or `~` for the home directory. `*` matches
+within one directory name, while `**` matches complete directory levels.
 
 ```jsonc
 {
   "$schema": "https://raw.githubusercontent.com/trogers1/config/main/home/.pi/agent/packages/pi-guard/schemas/profiles.schema.json",
   "defaultProfile": "client-work",
   "profiles": {
+    // Use this profile anywhere below ~/Code/client.
     "client-work": {
       "description": "Client work profile for the client repository.",
       "extends": ["builtin:default"],
-      "directories": ["~/Code/client"],
+      "directoryGlobs": ["~/Code/client"],
+    },
+    // Select this profile for a project such as /work/acme/frontend.
+    "frontend-work": {
+      "description": "Frontend workspace profile.",
+      "extends": ["builtin:default"],
+      "directoryGlobs": ["/work/*/frontend"],
+    },
+    // Select this profile from any project below the home directory.
+    "personal-work": {
+      "description": "Personal projects profile.",
+      "extends": ["builtin:default"],
+      "directoryGlobs": ["~"],
     },
   },
 }
 ```
 
-Every custom profile requires a nonempty `description`. The picker searches this text as well as the profile name, so include the profile's primary workflow keywords (for example, `git`, `docs`, or `tests`).
+A profile can contain up to 128 unique directory globs. Globs are lexical (they
+do not require the directories to exist); avoid trailing slashes, `.` or `..`
+segments, and shell-only syntax such as character classes or brace expansion.
+
+For overlapping matches, selection ranks the longest literal character prefix,
+then the depth of the matched root, then the latest profile declaration. Thus a
+literal project binding outranks a broad wildcard; later declarations decide
+only an otherwise equal match.
+
+At startup or resume, selection priority is: `PI_SUBAGENT_PROFILE`, then the
+best `directoryGlobs` match for `startupCwd`, then the persisted session profile,
+then `defaultProfile`. A directory selection therefore overrides a saved session
+choice, and the subagent environment remains authoritative.
+
+The package ships portable profiles only. Add custom profiles and directory
+bindings in `~/.pi/agent/pi-guard/profiles.jsonc`. When this file does not
+exist, pi-guard simply uses the shipped profiles and does not create a file. The
+first successful `/profile-add` save creates it. Every custom profile requires a
+nonempty `description`; the picker searches it as well as the profile name.
 
 `extends` is optional. When supplied, it names a built-in profile by its
 canonical name (for example `builtin:default`), a shipped rule set by its
 `ruleset:` name, a custom rule set by its `customruleset:` name, or another
-custom profile. Custom profile names are exact:
-`extends: ["default"]` resolves only a custom profile literally named
-`default`; it does not fall back to `builtin:default`. Without `extends`, the
-profile is fully custom and must provide every required policy field.
-Directories may be absolute, use `~`, or be relative to the directory where Pi
-was started. Omit `directories` when no automatic selection is wanted. A missing
-config file leaves the portable profiles active. An existing invalid config file
-keeps the extension registered but blocks permissions until the file is fixed.
-`PI_SUBAGENT_PROFILE` remains authoritative and overrides both directory and
-persisted profile selection. TypeScript consumers should import the public
-policy types from `@trogers1/pi-guard/config`.
+custom profile. Custom profile names are exact: `extends: ["default"]` resolves
+only a custom profile literally named `default`; it does not fall back to
+`builtin:default`. Without `extends`, the profile is fully custom and must
+provide every required policy field. Omit `directoryGlobs` when no automatic
+selection is wanted. A missing config file leaves the portable profiles active.
+An existing invalid config file keeps the extension registered but blocks
+permissions until the file is fixed. TypeScript consumers should import the
+public policy types from `@trogers1/pi-guard/config`.
+
+`/profile-add` and `/profile-edit` share an overview-first wizard for General,
+Prompt, Composition, Transforms, four rule sections, Sandbox, and Startup
+Directory globs. General edits the required name/description and optional emoji
+and color. A rename atomically updates exact custom-profile `extends` references
+and `defaultProfile` while retaining JSONC declaration order and comments. It
+cannot rename a profile currently named by authoritative `PI_SUBAGENT_PROFILE`;
+update the parent/launcher and restart that worker first.
+
+Prompt omission inherits instructions, `null` disables inherited instructions,
+and a string selects a file. User-authored paths must be absolute or begin with
+`~/`. Existing targets must open as readable regular files, decode as strict
+UTF-8, and be no larger than 256 KiB. A missing target may be created as an empty
+file only during final commit when its parent exists. Runtime opens and checks
+the same descriptor again on every agent start and fails closed if the target is
+missing, non-regular, oversized, unreadable, or invalid UTF-8.
 
 User-defined profile names must not start with `builtin:`, `ruleset:`,
-`customruleset:`, or `transform:`. Defining a profile such as `builtin:default` in the user
-configuration is a hard validation error; the extension remains registered but
-blocks every tool call until the reserved name is removed. There are no legacy
-aliases: old unnamespaced built-in selectors such as `worker` or `read-only`
-fail closed with the list of available canonical names.
+`customruleset:`, or `transform:`. Defining a profile such as `builtin:default`
+is invalid and blocks tool calls until the configuration is corrected. Use the
+canonical built-in profile names, such as `builtin:worker` and
+`builtin:read-only`.
 
 ## Subagent environment
 
@@ -468,8 +508,8 @@ Profile status metadata is configured per profile:
 }
 ```
 
-Supported colors: `black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`,
-`white`.
+Supported colors: `black`, `red`, `green`, `yellow`, `orange`, `blue`, `magenta`,
+`cyan`, `white`.
 
 ## Policy model
 
@@ -500,6 +540,19 @@ breaks ties.
 - Deny rules can include `guidance` and `alternatives`; these are returned in the
   blocked tool result, so Pi automatically gives them to the model without
   another prompt.
+
+### Authoring matcher syntax
+
+These syntaxes differ; do not copy Bash wildcard expectations into path rules.
+Sandbox path arrays are sandbox-runtime paths, **not** either policy matcher.
+
+| Field                | What it matches                                                          | Examples                                               | Wildcards                                                                                       |
+| -------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------ | ----------------------------------------------------------------------------------------------- |
+| `tools.bash`         | normalized Bash command segments                                         | `git status`, `npm test *`                             | `*` matches any characters, including spaces and `/`; `?` matches one non-whitespace character. |
+| `readPaths`          | `read`, `grep`, `find`, and `ls` paths, startup-relative unless absolute | `docs/**/*.md`                                         | `*` stays in one path segment; `**` matches directories.                                        |
+| `writePaths`         | `edit`/`write` and analyzable Bash filesystem references/context         | `src/**/*.ts`                                          | `*` stays in one path segment; `**` matches directories.                                        |
+| `protectedPathRules` | cross-cutting read/write safeguards                                      | `**/.env*`, `.env.template`                            | Uses the path-rule syntax above; an allow only exempts a broader protected deny.                |
+| `directoryGlobs`     | ancestors/project roots of the immutable startup CWD                     | `~/Code/client`, `/work/*/frontend`, `/srv/**/service` | `*` stays in one segment; `**` is a complete directory segment.                                 |
 
 For example:
 
