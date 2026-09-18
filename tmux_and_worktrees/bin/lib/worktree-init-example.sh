@@ -34,26 +34,30 @@ fi
 repo_root="$(cd "$REPO_ROOT" && pwd -P)"
 terraform_root="$repo_root/terraform"
 
-find "$terraform_root" -type d -name .terraform -print 2>/dev/null |
-while IFS= read -r terraform_dir; do
-    relative_dir="${terraform_dir#"$repo_root"/}"
+# Terraform is optional. Avoid a missing root turning the fallback initializer
+# into a failing pipeline under `set -o pipefail` before dtree can open tmux.
+if [ -d "$terraform_root" ]; then
+    find "$terraform_root" -type d -name .terraform -print |
+    while IFS= read -r terraform_dir; do
+        relative_dir="${terraform_dir#"$repo_root"/}"
 
-    if [ ! -e "$relative_dir" ] && [ ! -L "$relative_dir" ]; then
-        mkdir -p "$(dirname "$relative_dir")"
-        ln -s "$terraform_dir" "$relative_dir"
-        log "Linked $relative_dir from main checkout"
-    fi
-done
+        if [ ! -e "$relative_dir" ] && [ ! -L "$relative_dir" ]; then
+            mkdir -p "$(dirname "$relative_dir")"
+            ln -s "$terraform_dir" "$relative_dir"
+            log "Linked $relative_dir from main checkout"
+        fi
+    done
 
-# tfvars files commonly hold per-developer or environment-specific
-# values and are deliberately untracked. Mirror them at their original paths.
-find "$terraform_root" -type f -name '*.tfvars' -print 2>/dev/null |
-while IFS= read -r terraform_file; do
-    relative_file="${terraform_file#"$repo_root"/}"
+    # tfvars files commonly hold per-developer or environment-specific
+    # values and are deliberately untracked. Mirror them at their original paths.
+    find "$terraform_root" -type f -name '*.tfvars' -print |
+    while IFS= read -r terraform_file; do
+        relative_file="${terraform_file#"$repo_root"/}"
 
-    if [ ! -e "$relative_file" ] && [ ! -L "$relative_file" ]; then
-        mkdir -p "$(dirname "$relative_file")"
-        ln -s "$terraform_file" "$relative_file"
-        log "Linked $relative_file from main checkout"
-    fi
-done
+        if [ ! -e "$relative_file" ] && [ ! -L "$relative_file" ]; then
+            mkdir -p "$(dirname "$relative_file")"
+            ln -s "$terraform_file" "$relative_file"
+            log "Linked $relative_file from main checkout"
+        fi
+    done
+fi
