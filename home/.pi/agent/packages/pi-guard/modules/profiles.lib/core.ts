@@ -3,6 +3,7 @@ import {
   extendProfile,
   type ProfilePolicy,
 } from "../policyHelpers";
+import { goBuildCacheSandboxWritePaths } from "../dependencyCaches";
 import { ruleSetRegistry } from "../ruleSets.lib/index";
 import {
   baseCompositionChain,
@@ -46,6 +47,7 @@ export const readOnlyProfile: ProfilePolicy = {
   emoji: "🔎",
   sandbox: {
     network: "deny",
+    extraWritePaths: [...goBuildCacheSandboxWritePaths],
     kernelUnenforcedProtectedPaths: gitMetadataKernelWaiver,
   },
   tools: readOnlyShellPosture.tools!,

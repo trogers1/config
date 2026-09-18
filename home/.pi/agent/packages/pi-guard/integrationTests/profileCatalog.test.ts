@@ -224,6 +224,31 @@ describe("shipped profile catalog", () => {
     }
   });
 
+  it("permits Go's macOS build cache for built-in Go build/test profiles", () => {
+    const goBuildProfiles: BuiltinProfileName[] = [
+      "builtin:default",
+      "builtin:default-with-net",
+      "builtin:worker",
+      "builtin:tests-hidden",
+      "builtin:tests-only",
+      "builtin:reviewer",
+      "builtin:deps-mutator",
+      "builtin:implementation-only",
+      "builtin:git-full",
+    ];
+
+    for (const name of goBuildProfiles) {
+      const sandbox = policyConfig.profiles[name].sandbox;
+      expect(typeof sandbox === "object" && sandbox !== null, name).toBe(true);
+      expect(sandbox && sandbox.extraWritePaths, name).toEqual(
+        expect.arrayContaining([
+          "~/Library/Caches/go-build",
+          "~/Library/Caches/go-build/**",
+        ]),
+      );
+    }
+  });
+
   it("leaves hidden test paths kernel-readable so test runners can execute them", () => {
     const sandbox = policyConfig.profiles["builtin:tests-hidden"].sandbox;
     expect(typeof sandbox === "object" && sandbox !== null).toBe(true);

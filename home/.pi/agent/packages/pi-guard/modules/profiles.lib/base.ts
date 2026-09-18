@@ -1,4 +1,5 @@
 import type { ProfilePolicy, Rule } from "../policyHelpers";
+import { goBuildCacheSandboxWritePaths } from "../dependencyCaches";
 import { ruleSetRegistry, type RuleSetName } from "../ruleSets.lib/index";
 
 /** Bash rules composed from the named rule sets, in composition order. */
@@ -53,6 +54,7 @@ export const baseProfile: ProfilePolicy = {
   sandbox: {
     network: "deny",
     allowLocalBinding: true,
+    extraWritePaths: [...goBuildCacheSandboxWritePaths],
     kernelUnenforcedProtectedPaths: gitMetadataKernelWaiver,
   },
   // No promptFile means: keep Pi's normal system prompt unchanged.
