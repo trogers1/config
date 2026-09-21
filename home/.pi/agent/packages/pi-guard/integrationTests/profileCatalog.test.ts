@@ -224,7 +224,7 @@ describe("shipped profile catalog", () => {
     }
   });
 
-  it("permits Go's macOS build cache for built-in Go build/test profiles", () => {
+  it("permits Go's compiler and module caches for built-in Go build/test profiles", () => {
     const goBuildProfiles: BuiltinProfileName[] = [
       "builtin:default",
       "builtin:default-with-net",
@@ -244,6 +244,10 @@ describe("shipped profile catalog", () => {
         expect.arrayContaining([
           "~/Library/Caches/go-build",
           "~/Library/Caches/go-build/**",
+          "~/go/pkg/mod",
+          "~/go/pkg/mod/**",
+          "~/go/pkg/sumdb",
+          "~/go/pkg/sumdb/**",
         ]),
       );
     }

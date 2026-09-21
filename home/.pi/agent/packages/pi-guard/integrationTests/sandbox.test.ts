@@ -573,6 +573,32 @@ describe("sandbox full-harness OS acceptance", () => {
     expect(fs.statSync(temporaryDirectory).mode & 0o777).toBe(0o700);
   });
 
+  it("permits Go's module-cache metadata through the complete sandboxed Pi path", async () => {
+    const root = fixture();
+    const cacheParent = path.join(
+      os.homedir(),
+      "go",
+      "pkg",
+      "mod",
+      "cache",
+      "download",
+    );
+    expect(fs.existsSync(cacheParent)).toBe(true);
+
+    // Go writes module stat and download metadata here even when all required
+    // source modules are already cached. This executes through the complete Pi
+    // tool, policy gate, SRT wrapper, and macOS Seatbelt backend.
+    expect(
+      await runThroughPi({
+        root,
+        command: node({
+          source:
+            "const fs = require('fs'); const path = require('path'); const directory = fs.mkdtempSync(path.join(process.env.HOME, 'go/pkg/mod/cache/download/pi-guard-sandbox-')); fs.rmSync(directory, { recursive: true });",
+        }),
+      }),
+    ).toBe(0);
+  });
+
   it("runs Go through the complete sandboxed Pi path with SRT's private TMPDIR", async () => {
     const root = fixture();
     fs.writeFileSync(path.join(root, "go.mod"), "module sandbox-temp-check\n");
