@@ -70,13 +70,21 @@ export PATH="$HOME/.opencode/bin:$PATH"
 # rancher-desktop
 export PATH="$HOME/.rd/bin:$PATH"
 # Rancher Desktop uses a per-user Docker socket; Docker Desktop works via its default socket.
-if [[ -z "${DOCKER_HOST:-}" && -S "$HOME/.rd/docker.sock" ]]; then
-   # https://docs.rancherdesktop.io/how-to-guides/using-testcontainers/
-  export DOCKER_HOST="unix://$HOME/.rd/docker.sock"
-  export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock
-  export TESTCONTAINERS_HOST_OVERRIDE=$(rdctl info --field ip-address)
-  export TESTCONTAINERS_RYUK_DISABLED=true
-fi
+# Rancher may start after tmux has opened this shell, so retry at every prompt
+# until its socket is available. Existing processes cannot inherit this later;
+# commands started from this shell after the next prompt can.
+configure-rancher-desktop() {
+  if [[ -z "${DOCKER_HOST:-}" && -S "$HOME/.rd/docker.sock" ]]; then
+    # https://docs.rancherdesktop.io/how-to-guides/using-testcontainers/
+    export DOCKER_HOST="unix://$HOME/.rd/docker.sock"
+    export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock
+    export TESTCONTAINERS_HOST_OVERRIDE=$(rdctl info --field ip-address)
+    export TESTCONTAINERS_RYUK_DISABLED=true
+  fi
+}
+configure-rancher-desktop
+add-zsh-hook -d precmd configure-rancher-desktop 2>/dev/null || true
+add-zsh-hook precmd configure-rancher-desktop
 
 # go
 # export PATH="/usr/local/go/bin:$PATH"
@@ -96,3 +104,4 @@ dev() {
   [ "$target" != "$env_line" ] && [ -n "$target" ] || { echo "dev home is only available in a tmux dev session"; return 1; }
   cd "$target"
 }
+eval "$(/Users/taylor.rogers/.local/bin/mise activate zsh)"
