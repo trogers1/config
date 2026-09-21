@@ -10,4 +10,4 @@ If ticket ACs/descriptions are provided above, do not assume any claims are vali
 
 If code review is requested, never give the benefit of the doubt. Always verify and ask questions when you are unable to verify independently. If the testing is not sufficient to prove out a feature/bug, produce 'red' tests that prove that an issue is currently valid or not. Red behavioral, live-data tests are excellent proof that something doesn't work as intended.
 
-If there is any disagreement ANYWHERE, bring it up as a MUST FIX. Do not assume one is correct. Verify and ensure consistency always.
+If there is any disagreement ANYWHERE, bring it up as a MUST CLARIFY. Do not assume one is correct. Verify and ensure consistency always.

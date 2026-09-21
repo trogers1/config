@@ -106,3 +106,38 @@ it('does something else', () => {
 ## Re-use And Derive
 
 Do not write custom code when other code can simply be re-used or slightly modified. Keep logic centralized and shared when possible.
+
+## Prefer Hard-Failures over silent fallthrough
+
+Do NOT let implicit fall-throughs or silent failures occur. All of these sort of patterns are red flags:
+
+```ts
+// Continuing is usually a bad sign unless somehow necessary in that exact case
+if (!whatWeExpect) continue
+
+// Returning empty is often a sign that somethig is wrong and should be explicityly thrown and handled by the caller
+if (caseWeHandle){
+   return data
+}
+return []
+
+// ALWAYS throw errors instead of silent recovery
+const res = await fetch()
+
+// Do this (conceptually)
+if (!res.ok){
+  // Throw the right error!
+  switch(res.statusCode){
+     case(400):
+       throw new BadRequestError()
+     case(404):
+       throw new NotFoundError()
+     default:
+       throw new InternalError()
+  }
+}
+
+// NOT this
+if (!res.ok) return
+
+```
