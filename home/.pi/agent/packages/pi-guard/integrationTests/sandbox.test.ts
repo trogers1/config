@@ -553,6 +553,65 @@ describe("sandbox full-harness OS acceptance", () => {
     );
   });
 
+  it("gives every sandboxed Pi process a private, existing SRT temporary directory", async () => {
+    const root = fixture();
+    const output = path.join(root, "allowed", "sandbox-tmpdir");
+
+    expect(
+      await runThroughPi({
+        root,
+        command: node({
+          source:
+            "require('fs').writeFileSync('allowed/sandbox-tmpdir', process.env.TMPDIR)",
+        }),
+      }),
+    ).toBe(0);
+
+    const temporaryDirectory = fs.readFileSync(output, "utf8");
+    expect(temporaryDirectory).toMatch(/^\/private\/tmp\/pi-guard-/);
+    expect(fs.statSync(temporaryDirectory).isDirectory()).toBe(true);
+    expect(fs.statSync(temporaryDirectory).mode & 0o777).toBe(0o700);
+  });
+
+  it("runs Go through the complete sandboxed Pi path with SRT's private TMPDIR", async () => {
+    const root = fixture();
+    fs.writeFileSync(path.join(root, "go.mod"), "module sandbox-temp-check\n");
+    const programDirectory = path.join(root, "allowed", "go-temp-check");
+    fs.mkdirSync(programDirectory);
+    fs.writeFileSync(
+      path.join(programDirectory, "main.go"),
+      `package main
+
+import (
+  "os"
+  "path/filepath"
+)
+
+func main() {
+  directory, err := os.MkdirTemp("", "pi-guard-go-")
+  if err != nil {
+    panic(err)
+  }
+  defer os.RemoveAll(directory)
+  if err := os.WriteFile(filepath.Join(directory, "written"), []byte("ok"), 0o600); err != nil {
+    panic(err)
+  }
+}
+`,
+    );
+
+    // This is the user-facing failure mode: Go must create its compiler work
+    // directory before it can compile or run the program. Execute it through
+    // the real Pi tool, policy gate, SRT wrapper, and macOS Seatbelt backend.
+    expect(
+      await runThroughPi({
+        root,
+        command: "go run ./allowed/go-temp-check",
+        timeout: 120,
+      }),
+    ).toBe(0);
+  });
+
   it("permits a /tmp mktemp directory through macOS's /private/tmp resolution", async () => {
     const root = fixture();
     const createAndRemoveTempDirectory = node({

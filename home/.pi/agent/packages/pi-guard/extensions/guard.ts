@@ -138,6 +138,7 @@ import { parseSubagentPermissibleRules } from "../modules/subagentScopes";
 import { readRuntimePromptFile } from "../modules/profilePromptFile";
 import {
   clearSandboxCaches,
+  ensureSandboxTemporaryDirectory,
   resolveSandbox,
   type SandboxResolution,
 } from "../modules/sandbox.lib";
@@ -573,9 +574,28 @@ export default function (pi: GuardExtensionAPI) {
 
   async function resolveActiveSandbox(cwd: string): Promise<SandboxResolution> {
     if (sandboxOverride === "disabled") return { kind: "none" };
+    const policy = effectiveSandboxPolicy(activeProfile);
+    // SRT otherwise forces TMPDIR=/tmp/claude for every filesystem-sandboxed
+    // child, without guaranteeing that directory exists. Give each Pi process
+    // its own existing root and grant it only at the kernel sandbox layer;
+    // ordinary agent read/write path rules intentionally remain unchanged.
+    const sandbox = policy.sandbox;
+    const sandboxedPolicy =
+      typeof sandbox === "object" && sandbox !== null
+        ? {
+            ...policy,
+            sandbox: {
+              ...sandbox,
+              extraWritePaths: [
+                ...(sandbox.extraWritePaths ?? []),
+                ensureSandboxTemporaryDirectory(),
+              ],
+            },
+          }
+        : policy;
     return await resolveSandbox({
       profile: activeProfile,
-      policy: effectiveSandboxPolicy(activeProfile),
+      policy: sandboxedPolicy,
       startupCwd: cwd,
       subagentScopes: subagentPermissibleRules,
       configurationError: configurationErrorReason(),

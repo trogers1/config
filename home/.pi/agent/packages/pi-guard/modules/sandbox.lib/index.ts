@@ -7,6 +7,7 @@ import type {
   SandboxState,
 } from "./types";
 
+export { ensureSandboxTemporaryDirectory } from "./temporaryDirectory";
 export { translatePolicy } from "./translate";
 export type {
   CoverageItem,

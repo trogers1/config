@@ -176,6 +176,16 @@ backend-neutral `SandboxSpec` before Bash is executed.
 
 ### Filesystem
 
+For every Pi process that enables filesystem sandboxing, pi-guard creates one
+owner-only directory under `/private/tmp` (shown to sandboxed children as their
+`TMPDIR`) and adds that exact directory to the kernel write roots. This avoids
+SRT's unusable `/tmp/claude` fallback while keeping temporary compiler and tool
+files isolated from sibling Pi processes and subagents. The directory is not
+added to ordinary agent read/write path rules: it is an internal runtime
+capability, not an agent workspace. Pi-guard removes it best-effort on process
+exit and conservatively removes its own stale, current-user directories when
+sandboxing first activates.
+
 - Bash writes start denied. Only effective `writePaths` rules applicable to the
   `bash` context, plus `extraWritePaths`, open writable roots.
 - `ask` write rules remain kernel-denied. Approving an ask prompt does not
