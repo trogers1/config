@@ -151,7 +151,7 @@ obvious (`deps-mutator`, `git-full`). Profiles may define optional `color`,
 - `/profile-add` creates a custom profile through one overview with ten sections: General, Prompt, Composition, Transforms, Bash, Read, Write, Protected, Sandbox, and Startup Directory globs. It validates the complete raw draft, reports typed errors on every affected section, and saves and activates the profile atomically. Sandbox capability expansion and automatic directory activation each require a second explicit confirmation.
 - `/profile-edit` uses the same ten-section wizard for the active user-owned profile. It edits the exact raw declaration without materializing inherited values, including full identity rename, Prompt inheritance/disable/file modes, ordered composition and transforms, rules, Sandbox, and startup globs. Renames update exact `defaultProfile` and custom `extends` references while preserving JSONC comments and declaration order.
 - In `/profile-add` and `/profile-edit`, Escape is local Back and retains section changes; Ctrl+C aborts the complete command without writing. A successful explicit save activates the saved profile immediately unless `PI_SUBAGENT_PROFILE` is authoritative.
-- For an ASK request, choose `No (default)`, `Allow once`, or `Save rule(s) to profile…` when the request is concrete and authorable. Inline ASK remains rule-only and never exposes Prompt, Composition, Transforms, Sandbox, or Directory management. It may reuse General to create a child profile, defaulting its emoji from the shared custom-profile default and leaving color inherited. Esc returns to retained rules; Ctrl+C returns locally to the permission picker. Child creation and all selected rules are committed atomically before the request is checked again.
+- For an ASK request, choose `No (default)`, `Allow once`, or `Save rule(s) to profile…` when the request is concrete and authorable. Inline ASK remains rule-only and never exposes Prompt, Composition, Transforms, Sandbox, or Directory management. A durable save updates only the active user-owned profile; built-in and composed profiles cannot create compatibility child profiles. Esc returns to retained rules; Ctrl+C returns locally to the permission picker. Selected rules are committed atomically before the request is checked again.
 - `/read-only` switches to the `builtin:read-only` permissions profile.
 - `/sandbox` reports the active sandbox state, backend, network posture,
   writable roots, subagent scope, Bash-tool ownership, and translation coverage.
@@ -452,8 +452,20 @@ only a custom profile literally named `default`; it does not fall back to
 provide every required policy field. Omit `directoryGlobs` when no automatic
 selection is wanted. A missing config file leaves the portable profiles active.
 An existing invalid config file keeps the extension registered but blocks
-permissions until the file is fixed. TypeScript consumers should import the
-public policy types from `@trogers1/pi-guard/config`.
+permissions until the file is fixed. Once an existing source has been adopted,
+its later deletion is also fail-closed; this differs from the initial optional
+missing-file fallback to shipped profiles. Running instances detect source
+revision changes before accepting picker/editor answers, discard stale UI
+state, and re-evaluate the immutable request against the replacement policy.
+
+Writes use cooperative locks, atomic replacement, and optimistic revisions:
+a conflicting writer is never silently overwritten and must refresh/review its
+draft before retrying. The emergency **Force write** lock action is destructive
+and deliberately not serialization: a racing owner can release or replace the
+lock while it is being removed. API consumers should use the named object
+arguments of the current guard helpers; legacy positional and child-save
+compatibility APIs are removed. TypeScript consumers should import the public
+policy types from `@trogers1/pi-guard/config`.
 
 `/profile-add` and `/profile-edit` share an overview-first wizard for General,
 Prompt, Composition, Transforms, four rule sections, Sandbox, and Startup

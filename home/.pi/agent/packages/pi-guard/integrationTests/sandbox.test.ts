@@ -1147,7 +1147,7 @@ describe("sandbox full-harness OS acceptance", () => {
       const root = fixture();
       // -g keeps the browser from taking focus. This deliberately exercises
       // LaunchServices rather than asserting anything about browser networking.
-      const command = "open -g https://example.com";
+      const command = "open -g https://google.com";
 
       expect(
         await runThroughPi({

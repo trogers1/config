@@ -34,9 +34,9 @@ const minimalPaths: Pick<ProfilePolicy, "readPaths" | "writePaths"> = {
 
 describe("profile composition", () => {
   it("multi-extends folds left-to-right so the rightmost parent wins on conflicts", () => {
-    const config = loadProfileConfig(
-      genericPolicyConfig,
-      writeConfig({
+    const config = loadProfileConfig({
+      fallback: genericPolicyConfig,
+      configPath: writeConfig({
         profiles: {
           left: {
             description:
@@ -58,15 +58,15 @@ describe("profile composition", () => {
           },
         },
       }),
-    );
+    });
 
     expect(decideBash("demo", config.profiles.composed)).toBe("deny");
   });
 
   it("fold-is-concatenation: extending read-only then default re-opens bash to ask", () => {
-    const config = loadProfileConfig(
-      genericPolicyConfig,
-      writeConfig({
+    const config = loadProfileConfig({
+      fallback: genericPolicyConfig,
+      configPath: writeConfig({
         profiles: {
           reopened: {
             description:
@@ -75,7 +75,7 @@ describe("profile composition", () => {
           },
         },
       }),
-    );
+    });
 
     expect(
       decideBash("python scripts/build.py", config.profiles.reopened),
@@ -83,9 +83,9 @@ describe("profile composition", () => {
   });
 
   it("transform:deny-asks converts every ordinary ask to deny", () => {
-    const config = loadProfileConfig(
-      genericPolicyConfig,
-      writeConfig({
+    const config = loadProfileConfig({
+      fallback: genericPolicyConfig,
+      configPath: writeConfig({
         profiles: {
           "worker-like": {
             description:
@@ -95,7 +95,7 @@ describe("profile composition", () => {
           },
         },
       }),
-    );
+    });
 
     expect(
       decideBash("python scripts/build.py", config.profiles["worker-like"]),
@@ -103,9 +103,9 @@ describe("profile composition", () => {
   });
 
   it("transform:allow-asks converts every ordinary ask to allow", () => {
-    const config = loadProfileConfig(
-      genericPolicyConfig,
-      writeConfig({
+    const config = loadProfileConfig({
+      fallback: genericPolicyConfig,
+      configPath: writeConfig({
         profiles: {
           "auto-approve": {
             description:
@@ -115,7 +115,7 @@ describe("profile composition", () => {
           },
         },
       }),
-    );
+    });
 
     expect(
       decideBash("python scripts/build.py", config.profiles["auto-approve"]),
@@ -123,9 +123,9 @@ describe("profile composition", () => {
   });
 
   it("transform:ask-all converts every ordinary allow to ask", () => {
-    const config = loadProfileConfig(
-      genericPolicyConfig,
-      writeConfig({
+    const config = loadProfileConfig({
+      fallback: genericPolicyConfig,
+      configPath: writeConfig({
         profiles: {
           paranoid: {
             description:
@@ -135,7 +135,7 @@ describe("profile composition", () => {
           },
         },
       }),
-    );
+    });
 
     expect(decideBash("git status --short", config.profiles.paranoid)).toBe(
       "ask",
@@ -143,9 +143,9 @@ describe("profile composition", () => {
   });
 
   it("transform:deny-all converts every ordinary decision to deny", () => {
-    const config = loadProfileConfig(
-      genericPolicyConfig,
-      writeConfig({
+    const config = loadProfileConfig({
+      fallback: genericPolicyConfig,
+      configPath: writeConfig({
         profiles: {
           paranoid: {
             description:
@@ -155,7 +155,7 @@ describe("profile composition", () => {
           },
         },
       }),
-    );
+    });
 
     expect(decideBash("ls", config.profiles.paranoid)).toBe("deny");
     expect(decideBash("git status --short", config.profiles.paranoid)).toBe(
@@ -176,9 +176,9 @@ describe("profile composition", () => {
       { pattern: "safe.env", decision: "allow" },
       { pattern: "**/.env*", decision: "deny" },
     ];
-    const config = loadProfileConfig(
-      genericPolicyConfig,
-      writeConfig({
+    const config = loadProfileConfig({
+      fallback: genericPolicyConfig,
+      configPath: writeConfig({
         profiles: {
           parent: {
             description:
@@ -195,7 +195,7 @@ describe("profile composition", () => {
           },
         },
       }),
-    );
+    });
 
     expect(config.profiles.child.protectedPathRules).toEqual(
       protectedPathRules,
@@ -203,9 +203,9 @@ describe("profile composition", () => {
   });
 
   it("empty transforms arrays are accepted as a no-op", () => {
-    const config = loadProfileConfig(
-      genericPolicyConfig,
-      writeConfig({
+    const config = loadProfileConfig({
+      fallback: genericPolicyConfig,
+      configPath: writeConfig({
         profiles: {
           unchanged: {
             description:
@@ -215,7 +215,7 @@ describe("profile composition", () => {
           },
         },
       }),
-    );
+    });
 
     expect(
       decideBash("python scripts/build.py", config.profiles.unchanged),
@@ -223,9 +223,9 @@ describe("profile composition", () => {
   });
 
   it("transform:deny-asks transforms inherited rules but preserves profile overrides to bash, path, and custom-tool rules", () => {
-    const config = loadProfileConfig(
-      genericPolicyConfig,
-      writeConfig({
+    const config = loadProfileConfig({
+      fallback: genericPolicyConfig,
+      configPath: writeConfig({
         profiles: {
           "worker-like": {
             description:
@@ -241,7 +241,7 @@ describe("profile composition", () => {
           },
         },
       }),
-    );
+    });
 
     const policy = config.profiles["worker-like"];
     // The inherited default policy is transformed.
@@ -259,9 +259,9 @@ describe("profile composition", () => {
   });
 
   it("transform order is applied left-to-right", () => {
-    const config = loadProfileConfig(
-      genericPolicyConfig,
-      writeConfig({
+    const config = loadProfileConfig({
+      fallback: genericPolicyConfig,
+      configPath: writeConfig({
         profiles: {
           ordered: {
             description:
@@ -271,7 +271,7 @@ describe("profile composition", () => {
           },
         },
       }),
-    );
+    });
 
     expect(decideBash("python scripts/build.py", config.profiles.ordered)).toBe(
       "allow",
@@ -280,9 +280,9 @@ describe("profile composition", () => {
 
   it("unknown transform names fail loudly with a path to the bad entry", () => {
     expect(() =>
-      loadProfileConfig(
-        genericPolicyConfig,
-        writeConfig({
+      loadProfileConfig({
+        fallback: genericPolicyConfig,
+        configPath: writeConfig({
           profiles: {
             invalid: {
               description:
@@ -292,15 +292,15 @@ describe("profile composition", () => {
             },
           },
         }),
-      ),
+      }),
     ).toThrowError(/\/profiles\/invalid\/transforms\/0/);
   });
 
   it("empty extends arrays fail validation", () => {
     expect(() =>
-      loadProfileConfig(
-        genericPolicyConfig,
-        writeConfig({
+      loadProfileConfig({
+        fallback: genericPolicyConfig,
+        configPath: writeConfig({
           profiles: {
             invalid: {
               description:
@@ -311,7 +311,7 @@ describe("profile composition", () => {
             },
           },
         }),
-      ),
+      }),
     ).toThrowError(/\/profiles\/invalid\/extends/);
   });
 
@@ -321,9 +321,9 @@ describe("profile composition", () => {
       .spyOn(console, "warn")
       .mockImplementation(() => undefined);
 
-    loadProfileConfig(
-      genericPolicyConfig,
-      writeConfig({
+    loadProfileConfig({
+      fallback: genericPolicyConfig,
+      configPath: writeConfig({
         profiles: {
           "override-status": {
             description:
@@ -335,7 +335,7 @@ describe("profile composition", () => {
           },
         },
       }),
-    );
+    });
 
     expect(warnSpy).toHaveBeenCalled();
     warnSpy.mockRestore();

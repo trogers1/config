@@ -2,7 +2,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { loadRawProfileConfig } from "../modules/profileConfig";
+import {
+  loadRawProfileConfig,
+  profileConfigLockSettings,
+  setProfileConfigLockWaitForTesting,
+} from "../modules/profileConfig";
 import type {
   ProfileAuthoringOverviewSectionId,
   ProfileAuthoringOverviewSelection,
@@ -70,6 +74,497 @@ const setDirectories = (value: string[]) => ({
 });
 
 describe("/profile-edit public command", () => {
+  it("offers destructive Force write after a timeout and preserves the lock and draft when declined", async () => {
+    const configPath = writeConfig({
+      defaultProfile: "edited",
+      profiles: {
+        edited: { description: "Before force.", extends: ["builtin:default"] },
+      },
+    });
+    const lockPath = `${configPath}${profileConfigLockSettings.suffix}`;
+    const promptPath = path.join(
+      path.dirname(configPath),
+      "declined-force-prompt.md",
+    );
+    const before = fs.readFileSync(configPath, "utf8");
+    process.env.PI_GUARD_PROFILE_CONFIG = configPath;
+    fs.writeFileSync(lockPath, JSON.stringify({ token: "blocked" }));
+    const resetWait = setProfileConfigLockWaitForTesting({ wait: () => {} });
+    try {
+      const harness = createExtensionHarness({ interactiveUi: true });
+      await harness.start();
+      const entriesBefore = [...harness.entries];
+      const statusesBefore = [...harness.ui.setStatus.mock.calls];
+      const activeProfileBefore = process.env.PI_GUARD_ACTIVE_PROFILE;
+      const pending = harness.runCommand("profile-edit");
+      (await harness.ui.waitForProfileAuthoringOverview()).choose({
+        selection: overviewSectionSelection({ id: "general" }),
+      });
+      const general = await harness.ui.waitForProfileGeneralForm();
+      general.press("ArrowDown");
+      general.press("CtrlU");
+      general.type("Retained force draft.");
+      general.press("Enter");
+      (await harness.ui.waitForProfileAuthoringOverview()).choose({
+        selection: overviewSectionSelection({ id: "prompt" }),
+      });
+      const prompt = await harness.ui.waitForCustomModal();
+      prompt.press("Tab");
+      prompt.press("Tab");
+      prompt.type(promptPath);
+      prompt.press("Enter");
+      (await harness.ui.waitForProfileAuthoringOverview()).choose({
+        selection: submitOverviewSelection,
+      });
+      // Declining retains the draft in the retry loop; then exit that retained editor.
+      const retainedOverview =
+        await harness.ui.waitForProfileAuthoringOverview();
+      const retainedOverviewText = retainedOverview.render(1_000).join("\n");
+      expect(retainedOverviewText).toContain("Retained force draft.");
+      expect(retainedOverviewText).toContain(promptPath);
+      harness.ui.sendTerminalInput({ data: "\x03" });
+      await pending;
+      expect(harness.ui.confirm).toHaveBeenCalledWith(
+        "Force write profile?",
+        expect.stringContaining("emergency destructive action"),
+        expect.anything(),
+      );
+      expect(harness.ui.confirm).toHaveBeenCalledTimes(1);
+      expect(fs.readFileSync(configPath, "utf8")).toBe(before);
+      expect(fs.existsSync(lockPath)).toBe(true);
+      expect(fs.existsSync(promptPath)).toBe(false);
+      expect(harness.entries).toEqual(entriesBefore);
+      expect(harness.ui.setStatus.mock.calls).toEqual(statusesBefore);
+      expect(process.env.PI_GUARD_ACTIVE_PROFILE).toBe(activeProfileBefore);
+      // Declining returns to the authoring retry loop rather than discarding the edited draft.
+      expect(harness.ui.custom).toHaveBeenCalledTimes(6);
+    } finally {
+      resetWait();
+    }
+  });
+
+  it("aborts when Force confirmation returns an abort result without durable effects", async () => {
+    const configPath = writeConfig({
+      defaultProfile: "edited",
+      profiles: {
+        edited: { description: "Before force.", extends: ["builtin:default"] },
+      },
+    });
+    const lockPath = `${configPath}${profileConfigLockSettings.suffix}`;
+    const promptPath = path.join(
+      path.dirname(configPath),
+      "abort-result-force-prompt.md",
+    );
+    const before = fs.readFileSync(configPath, "utf8");
+    process.env.PI_GUARD_PROFILE_CONFIG = configPath;
+    fs.writeFileSync(lockPath, JSON.stringify({ token: "blocked" }));
+    const resetWait = setProfileConfigLockWaitForTesting({ wait: () => {} });
+    try {
+      const harness = createExtensionHarness({ interactiveUi: true });
+      await harness.start();
+      const entriesBefore = [...harness.entries];
+      const statusesBefore = [...harness.ui.setStatus.mock.calls];
+      const activeProfileBefore = process.env.PI_GUARD_ACTIVE_PROFILE;
+      harness.ui.confirm.mockImplementationOnce(() =>
+        Promise.resolve(undefined),
+      );
+      const pending = harness.runCommand("profile-edit");
+      (await harness.ui.waitForProfileAuthoringOverview()).choose({
+        selection: overviewSectionSelection({ id: "general" }),
+      });
+      const general = await harness.ui.waitForProfileGeneralForm();
+      general.press("ArrowDown");
+      general.press("CtrlU");
+      general.type("Aborted Force result.");
+      general.press("Enter");
+      (await harness.ui.waitForProfileAuthoringOverview()).choose({
+        selection: overviewSectionSelection({ id: "prompt" }),
+      });
+      const prompt = await harness.ui.waitForCustomModal();
+      prompt.press("Tab");
+      prompt.press("Tab");
+      prompt.type(promptPath);
+      prompt.press("Enter");
+      (await harness.ui.waitForProfileAuthoringOverview()).choose({
+        selection: submitOverviewSelection,
+      });
+      // An undefined confirmation response is an abort result, not approval.
+      // It must retain the draft and never re-open Force confirmation.
+      const retainedOverview =
+        await harness.ui.waitForProfileAuthoringOverview();
+      expect(retainedOverview.render(1_000).join("\n")).toContain(
+        "Aborted Force result.",
+      );
+      harness.ui.sendTerminalInput({ data: "\x03" });
+      await pending;
+      expect(fs.readFileSync(configPath, "utf8")).toBe(before);
+      expect(fs.existsSync(promptPath)).toBe(false);
+      expect(fs.existsSync(lockPath)).toBe(true);
+      expect(harness.entries).toEqual(entriesBefore);
+      expect(harness.ui.setStatus.mock.calls).toEqual(statusesBefore);
+      expect(process.env.PI_GUARD_ACTIVE_PROFILE).toBe(activeProfileBefore);
+      expect(harness.ui.confirm).toHaveBeenCalledTimes(1);
+      expect(harness.ui.custom).toHaveBeenCalledTimes(6);
+    } finally {
+      resetWait();
+    }
+  });
+
+  it("aborts at the active Force confirmation with Ctrl+C without durable effects", async () => {
+    const configPath = writeConfig({
+      defaultProfile: "edited",
+      profiles: {
+        edited: { description: "Before force.", extends: ["builtin:default"] },
+      },
+    });
+    const lockPath = `${configPath}${profileConfigLockSettings.suffix}`;
+    const promptPath = path.join(
+      path.dirname(configPath),
+      "aborted-force-prompt.md",
+    );
+    const before = fs.readFileSync(configPath, "utf8");
+    process.env.PI_GUARD_PROFILE_CONFIG = configPath;
+    fs.writeFileSync(lockPath, JSON.stringify({ token: "blocked" }));
+    const resetWait = setProfileConfigLockWaitForTesting({ wait: () => {} });
+    try {
+      const harness = createExtensionHarness({
+        interactiveUi: true,
+        pendingStockUi: true,
+      });
+      await harness.start();
+      const entriesBefore = [...harness.entries];
+      const statusesBefore = [...harness.ui.setStatus.mock.calls];
+      const activeProfileBefore = process.env.PI_GUARD_ACTIVE_PROFILE;
+      const pending = harness.runCommand("profile-edit");
+      (await harness.ui.waitForProfileAuthoringOverview()).choose({
+        selection: overviewSectionSelection({ id: "general" }),
+      });
+      const general = await harness.ui.waitForProfileGeneralForm();
+      general.press("ArrowDown");
+      general.press("CtrlU");
+      general.type("Aborted at Force confirmation.");
+      general.press("Enter");
+      (await harness.ui.waitForProfileAuthoringOverview()).choose({
+        selection: overviewSectionSelection({ id: "prompt" }),
+      });
+      const prompt = await harness.ui.waitForCustomModal();
+      prompt.press("Tab");
+      prompt.press("Tab");
+      prompt.type(promptPath);
+      prompt.press("Enter");
+      (await harness.ui.waitForProfileAuthoringOverview()).choose({
+        selection: submitOverviewSelection,
+      });
+      const confirmation = await harness.ui.waitForConfirmation();
+      expect(confirmation.title).toBe("Force write profile?");
+      harness.ui.sendTerminalInput({ data: "\x03" });
+      await pending;
+      expect(fs.readFileSync(configPath, "utf8")).toBe(before);
+      expect(fs.existsSync(promptPath)).toBe(false);
+      expect(fs.existsSync(lockPath)).toBe(true);
+      expect(harness.entries).toEqual(entriesBefore);
+      expect(harness.ui.setStatus.mock.calls).toEqual(statusesBefore);
+      expect(process.env.PI_GUARD_ACTIVE_PROFILE).toBe(activeProfileBefore);
+      expect(harness.ui.confirm).toHaveBeenCalledTimes(1);
+    } finally {
+      resetWait();
+    }
+  });
+
+  it("retries safely with its retained draft when the observed Force lock disappears before confirmation", async () => {
+    const promptName = "disappeared-force-prompt.md";
+    const configPath = writeConfig({
+      defaultProfile: "edited",
+      profiles: {
+        edited: { description: "Before force.", extends: ["builtin:default"] },
+      },
+    });
+    const promptPath = path.join(path.dirname(configPath), promptName);
+    const lockPath = `${configPath}${profileConfigLockSettings.suffix}`;
+    const foreignSidecarPath = `${lockPath}${profileConfigLockSettings.ownerSuffix}foreign`;
+    const foreignSidecar = JSON.stringify({ token: "foreign" });
+    const before = fs.readFileSync(configPath, "utf8");
+    process.env.PI_GUARD_PROFILE_CONFIG = configPath;
+    fs.writeFileSync(lockPath, JSON.stringify({ token: "observed" }));
+    fs.writeFileSync(foreignSidecarPath, foreignSidecar);
+    const resetWait = setProfileConfigLockWaitForTesting({ wait: () => {} });
+    try {
+      const harness = createExtensionHarness({ interactiveUi: true });
+      await harness.start();
+      const entriesBefore = [...harness.entries];
+      const statusesBefore = [...harness.ui.setStatus.mock.calls];
+      const activeProfileBefore = process.env.PI_GUARD_ACTIVE_PROFILE;
+      harness.ui.confirm.mockImplementationOnce((title, message) => {
+        expect(title).toBe("Force write profile?");
+        expect(message).toContain("emergency destructive action");
+        fs.unlinkSync(lockPath);
+        return Promise.resolve(true);
+      });
+      const pending = harness.runCommand("profile-edit");
+      (await harness.ui.waitForProfileAuthoringOverview()).choose({
+        selection: overviewSectionSelection({ id: "general" }),
+      });
+      const general = await harness.ui.waitForProfileGeneralForm();
+      general.press("ArrowDown");
+      general.press("CtrlU");
+      general.type("Retained after released lock.");
+      general.press("Enter");
+      (await harness.ui.waitForProfileAuthoringOverview()).choose({
+        selection: overviewSectionSelection({ id: "prompt" }),
+      });
+      const prompt = await harness.ui.waitForCustomModal();
+      prompt.press("Tab");
+      prompt.press("Tab");
+      prompt.type(promptPath);
+      prompt.press("Enter");
+      (await harness.ui.waitForProfileAuthoringOverview()).choose({
+        selection: submitOverviewSelection,
+      });
+      const retry = await harness.ui.waitForProfileAuthoringOverview();
+      expect(retry.render().join("\n")).toContain(
+        "Retained after released lock.",
+      );
+      expect(harness.ui.notify).toHaveBeenCalledWith(
+        "The blocking lock was already released; retry the save normally.",
+        "info",
+      );
+      harness.ui.sendTerminalInput({ data: "\x03" });
+      await pending;
+      expect(fs.readFileSync(configPath, "utf8")).toBe(before);
+      expect(fs.existsSync(promptPath)).toBe(false);
+      expect(fs.readFileSync(foreignSidecarPath, "utf8")).toBe(foreignSidecar);
+      expect(fs.existsSync(lockPath)).toBe(false);
+      expect(harness.entries).toEqual(entriesBefore);
+      expect(harness.ui.setStatus.mock.calls).toEqual(statusesBefore);
+      expect(process.env.PI_GUARD_ACTIVE_PROFILE).toBe(activeProfileBefore);
+      expect(harness.ui.confirm).toHaveBeenCalledTimes(1);
+    } finally {
+      resetWait();
+    }
+  });
+
+  it("preserves a replacement Force lock without config, prompt, activation, or repeated confirmation effects", async () => {
+    const promptName = "replacement-force-prompt.md";
+    const configPath = writeConfig({
+      defaultProfile: "edited",
+      profiles: {
+        edited: { description: "Before force.", extends: ["builtin:default"] },
+      },
+    });
+    const promptPath = path.join(path.dirname(configPath), promptName);
+    const lockPath = `${configPath}${profileConfigLockSettings.suffix}`;
+    const replacement = JSON.stringify({ token: "replacement" });
+    const before = fs.readFileSync(configPath, "utf8");
+    process.env.PI_GUARD_PROFILE_CONFIG = configPath;
+    fs.writeFileSync(lockPath, JSON.stringify({ token: "observed" }));
+    const resetWait = setProfileConfigLockWaitForTesting({ wait: () => {} });
+    try {
+      const harness = createExtensionHarness({ interactiveUi: true });
+      await harness.start();
+      const entriesBefore = [...harness.entries];
+      const statusesBefore = [...harness.ui.setStatus.mock.calls];
+      const activeProfileBefore = process.env.PI_GUARD_ACTIVE_PROFILE;
+      harness.ui.confirm.mockImplementationOnce(() => {
+        fs.unlinkSync(lockPath);
+        fs.writeFileSync(lockPath, replacement);
+        return Promise.resolve(true);
+      });
+      const pending = harness.runCommand("profile-edit");
+      (await harness.ui.waitForProfileAuthoringOverview()).choose({
+        selection: overviewSectionSelection({ id: "general" }),
+      });
+      const general = await harness.ui.waitForProfileGeneralForm();
+      general.press("ArrowDown");
+      general.press("CtrlU");
+      general.type("Retained after replacement lock.");
+      general.press("Enter");
+      (await harness.ui.waitForProfileAuthoringOverview()).choose({
+        selection: overviewSectionSelection({ id: "prompt" }),
+      });
+      const prompt = await harness.ui.waitForCustomModal();
+      prompt.press("Tab");
+      prompt.press("Tab");
+      prompt.type(promptPath);
+      prompt.press("Enter");
+      (await harness.ui.waitForProfileAuthoringOverview()).choose({
+        selection: submitOverviewSelection,
+      });
+      const retry = await harness.ui.waitForProfileAuthoringOverview();
+      expect(retry.render().join("\n")).toContain(
+        "Retained after replacement lock.",
+      );
+      expect(harness.ui.notify).toHaveBeenCalledWith(
+        "The blocking lock changed; it was not removed. Retry normally.",
+        "info",
+      );
+      harness.ui.sendTerminalInput({ data: "\x03" });
+      await pending;
+      expect(fs.readFileSync(configPath, "utf8")).toBe(before);
+      expect(fs.existsSync(promptPath)).toBe(false);
+      expect(fs.readFileSync(lockPath, "utf8")).toBe(replacement);
+      expect(harness.entries).toEqual(entriesBefore);
+      expect(harness.ui.setStatus.mock.calls).toEqual(statusesBefore);
+      expect(process.env.PI_GUARD_ACTIVE_PROFILE).toBe(activeProfileBefore);
+      expect(harness.ui.confirm).toHaveBeenCalledTimes(1);
+    } finally {
+      resetWait();
+    }
+  });
+
+  it("preserves the reviewed revision through accepted Force and reloads a source conflict without durable effects", async () => {
+    const promptName = "conflict-force-prompt.md";
+    const configPath = writeConfig({
+      defaultProfile: "edited",
+      profiles: {
+        edited: { description: "Before force.", extends: ["builtin:default"] },
+      },
+    });
+    const promptPath = path.join(path.dirname(configPath), promptName);
+    const lockPath = `${configPath}${profileConfigLockSettings.suffix}`;
+    const externalDescription = "External source revision.";
+    process.env.PI_GUARD_PROFILE_CONFIG = configPath;
+    fs.writeFileSync(lockPath, JSON.stringify({ token: "observed" }));
+    const resetWait = setProfileConfigLockWaitForTesting({ wait: () => {} });
+    try {
+      const harness = createExtensionHarness({ interactiveUi: true });
+      await harness.start();
+      const entriesBefore = [...harness.entries];
+      const activeProfileBefore = process.env.PI_GUARD_ACTIVE_PROFILE;
+      harness.ui.confirm.mockImplementationOnce(() => {
+        fs.writeFileSync(
+          configPath,
+          JSON.stringify({
+            defaultProfile: "edited",
+            profiles: {
+              edited: {
+                description: externalDescription,
+                extends: ["builtin:default"],
+              },
+              unrelated: {
+                description: "Concurrent unrelated profile.",
+                extends: ["builtin:default"],
+              },
+            },
+          }),
+        );
+        return Promise.resolve(true);
+      });
+      const pending = harness.runCommand("profile-edit");
+      (await harness.ui.waitForProfileAuthoringOverview()).choose({
+        selection: overviewSectionSelection({ id: "general" }),
+      });
+      const general = await harness.ui.waitForProfileGeneralForm();
+      general.press("ArrowDown");
+      general.press("CtrlU");
+      general.type("Retained after revision conflict.");
+      general.press("Enter");
+      (await harness.ui.waitForProfileAuthoringOverview()).choose({
+        selection: overviewSectionSelection({ id: "prompt" }),
+      });
+      const prompt = await harness.ui.waitForCustomModal();
+      prompt.press("Tab");
+      prompt.press("Tab");
+      prompt.type(promptPath);
+      prompt.press("Enter");
+      (await harness.ui.waitForProfileAuthoringOverview()).choose({
+        selection: submitOverviewSelection,
+      });
+      const retry = await harness.ui.waitForProfileAuthoringOverview();
+      expect(retry.render().join("\n")).toContain(
+        "Retained after revision conflict.",
+      );
+      // The retained draft is now reviewed against the refreshed revision and
+      // can commit in this same command; the unrelated external declaration
+      // remains present.
+      retry.choose({ selection: submitOverviewSelection });
+      await pending;
+      expect(
+        loadRawProfileConfig({ configPath })?.profiles.edited.description,
+      ).toBe("Retained after revision conflict.");
+      expect(loadRawProfileConfig({ configPath })?.profiles.unrelated).toEqual({
+        description: "Concurrent unrelated profile.",
+        extends: ["builtin:default"],
+      });
+      expect(fs.existsSync(promptPath)).toBe(true);
+      expect(fs.existsSync(lockPath)).toBe(false);
+      expect(harness.entries).toHaveLength(entriesBefore.length + 1);
+      expect(harness.ui.setStatus.mock.calls).toContainEqual([
+        "permissions",
+        expect.stringContaining("edited"),
+      ]);
+      expect(process.env.PI_GUARD_ACTIVE_PROFILE).toBe(activeProfileBefore);
+      expect(harness.ui.confirm).toHaveBeenCalledTimes(1);
+    } finally {
+      resetWait();
+    }
+  });
+
+  it("Force removes the observed lock, then commits after normal reacquisition", async () => {
+    const promptName = "successful-force-prompt.md";
+    const configPath = writeConfig({
+      defaultProfile: "edited",
+      profiles: {
+        edited: { description: "Before force.", extends: ["builtin:default"] },
+      },
+    });
+    const lockPath = `${configPath}${profileConfigLockSettings.suffix}`;
+    const promptPath = path.join(path.dirname(configPath), promptName);
+    process.env.PI_GUARD_PROFILE_CONFIG = configPath;
+    fs.writeFileSync(lockPath, JSON.stringify({ token: "blocked" }));
+    const resetWait = setProfileConfigLockWaitForTesting({ wait: () => {} });
+    try {
+      const harness = createExtensionHarness({
+        interactiveUi: true,
+        confirm: true,
+      });
+      await harness.start();
+      const entriesBefore = [...harness.entries];
+      const statusesBefore = [...harness.ui.setStatus.mock.calls];
+      const pending = harness.runCommand("profile-edit");
+      (await harness.ui.waitForProfileAuthoringOverview()).choose({
+        selection: overviewSectionSelection({ id: "general" }),
+      });
+      const general = await harness.ui.waitForProfileGeneralForm();
+      general.press("ArrowDown");
+      general.press("CtrlU");
+      general.type("Saved after force.");
+      general.press("Enter");
+      (await harness.ui.waitForProfileAuthoringOverview()).choose({
+        selection: overviewSectionSelection({ id: "prompt" }),
+      });
+      const prompt = await harness.ui.waitForCustomModal();
+      prompt.press("Tab");
+      prompt.press("Tab");
+      prompt.type(promptPath);
+      prompt.press("Enter");
+      (await harness.ui.waitForProfileAuthoringOverview()).choose({
+        selection: submitOverviewSelection,
+      });
+      await pending;
+      expect(fs.existsSync(lockPath)).toBe(false);
+      expect(fs.existsSync(promptPath)).toBe(true);
+      expect(
+        loadRawProfileConfig({ configPath })?.profiles.edited,
+      ).toMatchObject({
+        description: "Saved after force.",
+        promptFile: promptPath,
+      });
+      expect(process.env.PI_GUARD_ACTIVE_PROFILE).toBe("edited");
+      expect(harness.entries).toHaveLength(entriesBefore.length + 1);
+      expect(harness.entries.at(-1)).toMatchObject({
+        type: "custom",
+        customType: "pi-guard-profile",
+        data: { profile: "edited" },
+      });
+      expect(
+        harness.ui.setStatus.mock.calls.slice(statusesBefore.length),
+      ).toContainEqual(["permissions", expect.stringContaining("edited")]);
+      expect(harness.ui.confirm).toHaveBeenCalledTimes(1);
+    } finally {
+      resetWait();
+    }
+  });
+
   it("creates a missing Prompt file at commit and can explicitly disable it without security confirmation", async () => {
     const configPath = writeConfig({
       defaultProfile: "edited",
@@ -100,9 +595,10 @@ describe("/profile-edit public command", () => {
     await createPrompt;
 
     expect(fs.existsSync(promptPath)).toBe(true);
-    expect(loadRawProfileConfig(configPath)?.profiles.edited.promptFile).toBe(
-      promptPath,
-    );
+    expect(
+      loadRawProfileConfig({ configPath: configPath })?.profiles.edited
+        .promptFile,
+    ).toBe(promptPath);
     expect(harness.ui.confirm).not.toHaveBeenCalled();
 
     const disablePrompt = harness.runCommand("profile-edit");
@@ -118,9 +614,45 @@ describe("/profile-edit public command", () => {
     await disablePrompt;
 
     expect(
-      loadRawProfileConfig(configPath)?.profiles.edited.promptFile,
+      loadRawProfileConfig({ configPath: configPath })?.profiles.edited
+        .promptFile,
     ).toBeNull();
     expect(harness.ui.confirm).not.toHaveBeenCalled();
+  });
+
+  it("selects builtin:committer compositionally through the public profile-edit command", async () => {
+    const configPath = writeConfig({
+      defaultProfile: "sidecar",
+      profiles: {
+        sidecar: {
+          description: "Sidecar profile.",
+          extends: ["builtin:default"],
+        },
+      },
+    });
+    process.env.PI_GUARD_PROFILE_CONFIG = configPath;
+    const harness = createExtensionHarness({ interactiveUi: true });
+    await harness.start();
+
+    const pending = harness.runCommand("profile-edit");
+    (await harness.ui.waitForProfileAuthoringOverview()).choose({
+      selection: overviewSectionSelection({ id: "composition" }),
+    });
+    const editor = await harness.ui.waitForCustomModal();
+    editor.press("CtrlN");
+    const picker = await harness.ui.waitForCustomModal();
+    picker.type("builtin:committer");
+    picker.press("Enter");
+    const resumedEditor = await harness.ui.waitForCustomModal();
+    expect(resumedEditor.render().join("\n")).toContain("builtin:committer");
+    // Ctrl+C aborts the command-scoped flow; reaching this editor exercises
+    // the composition path that previously crashed while resolving raw config.
+    resumedEditor.press("CtrlC");
+    await pending;
+
+    expect(
+      loadRawProfileConfig({ configPath })?.profiles.sidecar.extends,
+    ).toEqual(["builtin:default"]);
   });
 
   it("returns from an empty protected section on Escape without mutating config or session", async () => {
@@ -231,7 +763,7 @@ describe("/profile-edit public command", () => {
     });
     await pending;
 
-    const saved = loadRawProfileConfig(configPath);
+    const saved = loadRawProfileConfig({ configPath: configPath });
     expect(saved?.defaultProfile).toBe("renamed");
     expect(saved?.profiles.renamed).toMatchObject({
       emoji: "✨",
@@ -244,7 +776,9 @@ describe("/profile-edit public command", () => {
       "renamed",
     ]);
     expect(saved?.profiles.similarlyNamed.extends).toEqual(["edited-more"]);
-    expect(write).toHaveBeenCalledTimes(1);
+    // The immutable owner generation and one config temporary file are written;
+    // hard-link publication/release does not rename the lock pathname.
+    expect(write).toHaveBeenCalledTimes(2);
     expect(rename).toHaveBeenCalledTimes(1);
   });
 
@@ -279,9 +813,10 @@ describe("/profile-edit public command", () => {
     });
     await pending;
 
-    expect(loadRawProfileConfig(configPath)?.profiles.edited.description).toBe(
-      "Persisted before activation failure.",
-    );
+    expect(
+      loadRawProfileConfig({ configPath: configPath })?.profiles.edited
+        .description,
+    ).toBe("Persisted before activation failure.");
     expect(harness.ui.notify).toHaveBeenCalledWith(
       postSaveActivationFailureMessage({
         profile: "edited",
@@ -331,8 +866,10 @@ describe("/profile-edit public command", () => {
     await pending;
 
     expect(fs.readFileSync(configPath, "utf8")).toBe(before);
-    expect(write).not.toHaveBeenCalled();
-    expect(rename).not.toHaveBeenCalled();
+    // A no-op still writes/releases an owner generation, but never creates or
+    // replaces a configuration temporary file.
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(rename).toHaveBeenCalledTimes(0);
   });
 
   it("edits all rule sections through their visible forms: ASK cycles, row add/remove, clear, Back, and protected constraints", async () => {
@@ -409,7 +946,8 @@ describe("/profile-edit public command", () => {
     });
     await pending;
 
-    const profile = loadRawProfileConfig(configPath)?.profiles.edited;
+    const profile = loadRawProfileConfig({ configPath: configPath })?.profiles
+      .edited;
     expect(profile?.tools?.bash).toEqual([]);
     expect(profile?.readPaths).toEqual([
       { pattern: "read.txt", decision: "allow", contexts: ["read"] },
@@ -476,9 +1014,10 @@ describe("/profile-edit public command", () => {
     });
     await harness.start();
     await harness.runCommand("profile-edit");
-    expect(loadRawProfileConfig(configPath)?.profiles.edited.readPaths).toEqual(
-      [{ pattern: "same.txt", decision: "ask", contexts: ["read"] }],
-    );
+    expect(
+      loadRawProfileConfig({ configPath: configPath })?.profiles.edited
+        .readPaths,
+    ).toEqual([{ pattern: "same.txt", decision: "ask", contexts: ["read"] }]);
     expect(fs.readFileSync(configPath, "utf8")).toContain(
       "// Preserve this user-owned comment",
     );
@@ -530,7 +1069,8 @@ describe("/profile-edit public command", () => {
       expect.any(String),
       expect.anything(),
     );
-    const profile = loadRawProfileConfig(configPath)?.profiles.child;
+    const profile = loadRawProfileConfig({ configPath: configPath })?.profiles
+      .child;
     expect(profile?.sandbox).toBeUndefined(); // accept removes the restrictive child declaration.
 
     const directory = createExtensionHarness({
@@ -565,7 +1105,8 @@ describe("/profile-edit public command", () => {
       expect.anything(),
     );
     expect(
-      loadRawProfileConfig(configPath)?.profiles.child?.directoryGlobs,
+      loadRawProfileConfig({ configPath: configPath })?.profiles.child
+        ?.directoryGlobs,
     ).toEqual(["/work/child"]); // rejected broad/nonidentical replacement is not written.
   });
 
@@ -873,13 +1414,13 @@ describe("/profile-edit public command", () => {
     expect(process.env.PI_SUBAGENT_PROFILE).toBe("edited");
   });
 
-  it("persists an inline ASK child while PI_SUBAGENT_PROFILE remains authoritative", async () => {
+  it("rejects an inline ASK persistence attempt for an authoritative built-in profile", async () => {
     const configPath = writeConfig({ profiles: {} });
-    // An otherwise empty user config selects the shipped fallback while still
-    // providing a user-owned destination for the atomic child creation.
+    // An otherwise empty user config selects the shipped fallback, which is
+    // not a user-owned destination for durable ASK decisions.
     process.env.PI_GUARD_PROFILE_CONFIG = configPath;
-    // The selected active profile is shipped, so the durable ASK save must
-    // create a user-owned child rather than modify the shipped declaration.
+    // The selected active profile is shipped, so persistent saves are
+    // rejected instead of creating a child that authority would not select.
     delete process.env.PI_SUBAGENT_PROFILE;
     vi.resetModules();
     const { createExtensionHarness: createSubagentHarness } =
@@ -896,31 +1437,19 @@ describe("/profile-edit public command", () => {
     (await harness.ui.waitForPermissionChoice()).choose(
       "Save rule(s) to profile…",
     );
-    // A shipped active target saves through the inline ASK rule form, which
-    // creates a suggested user-owned child when its accepted rule is saved.
-    const editor = await harness.ui.waitForRuleForm();
-    editor.press("Enter");
-    const general = await harness.ui.waitForProfileGeneralForm();
-    expect(general.render().join("\n")).toContain("default-pi-guard");
-    general.press("Enter");
-    // The authority remains active, so the original request is still ASK and
-    // receives the normal retry picker rather than running under the child.
-    (await harness.ui.waitForPermissionChoice()).choose("No (default)");
     expect(await pending).toMatchObject({ block: true });
-
-    const savedProfiles = loadRawProfileConfig(configPath)?.profiles ?? {};
-    const child = Object.entries(savedProfiles).find(([, profile]) =>
-      profile.extends?.includes("builtin:default"),
+    expect(harness.ui.notify).toHaveBeenCalledWith(
+      expect.stringContaining("not user-owned"),
+      "error",
     );
-    expect(child).toBeDefined();
-    expect(child?.[1].tools?.bash).toContainEqual({
-      pattern: "echo remembered-permission",
-      decision: "allow",
-    });
+
+    const savedProfiles =
+      loadRawProfileConfig({ configPath: configPath })?.profiles ?? {};
+    expect(savedProfiles).toEqual({});
     expect(process.env.PI_SUBAGENT_PROFILE).toBe("builtin:default");
     expect(process.env.PI_GUARD_ACTIVE_PROFILE).toBe("builtin:default");
     expect(
       JSON.stringify(harness.entries.slice(entriesBeforeSave)),
-    ).not.toContain(`"profile":"${child?.[0]}"`);
+    ).not.toContain('"profile":"');
   });
 });

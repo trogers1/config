@@ -617,16 +617,28 @@ export function createExtensionHarness(
         }),
       });
     }),
-    editor: vi.fn().mockImplementation((...args: EditorArguments) =>
-      Promise.resolve(
-        strictInteractions
-          ? consumeInteraction("editor", {
-              title: args[0],
-              prompt: args[1],
-            }).response
-          : options.editorResult,
-      ),
-    ),
+    editor: vi.fn().mockImplementation((...args: EditorArguments) => {
+      if (strictInteractions)
+        return Promise.resolve(
+          consumeInteraction("editor", {
+            title: args[0],
+            prompt: args[1],
+          }).response,
+        );
+      if (!options.pendingStockUi) return Promise.resolve(options.editorResult);
+      return pendingStock<string | undefined, InteractiveInput>({
+        signal: signalFrom({ args }),
+        fallback: undefined,
+        publish: publishInput,
+        create: ({ resolve, reject }) => ({
+          title: args[0],
+          prompt: args[1],
+          resolve,
+          reject,
+          resolved: false,
+        }),
+      });
+    }),
     input: vi.fn().mockImplementation((...args: InputArguments) => {
       if (strictInteractions)
         return Promise.resolve(

@@ -18,6 +18,7 @@ import {
   extendProfile,
   hasPolicyReferencePrefix,
   isBuiltinProfileName,
+  parseOrThrow,
   policyReferencePrefix,
   profileConfigFileSchema,
   reservedProfilePrefix,
@@ -144,17 +145,19 @@ function throwProfileConfigError(
   throw new ProfileConfigLoadError(configPath, details, instancePath);
 }
 
-const defaultProfileConfigPath = path.join(
-  homedir(),
-  ".pi",
-  "agent",
-  "pi-guard",
-  "profiles.jsonc",
-);
-
 /** Resolve the user-owned profile file used by the profile loader and mutators. */
-export function resolveProfileConfigPath(configPath?: string): string {
-  return configPath ?? defaultProfileConfigPath;
+export function resolveProfileConfigPath({
+  configPath,
+}: {
+  readonly configPath?: string;
+}): string {
+  // Resolve HOME at the point of use. Besides matching a process whose HOME is
+  // established after module loading, this prevents a previously resolved
+  // default path from silently becoming authority for a later runtime.
+  return (
+    configPath ??
+    path.join(homedir(), ".pi", "agent", "pi-guard", "profiles.jsonc")
+  );
 }
 
 function isProfileConfigFile(value: unknown): value is ProfileConfigFile {
@@ -172,9 +175,14 @@ function isShippedRuleSetName(
  * transforms. Returns `undefined` when the file is missing or invalid so that
  * callers can fall back to other behavior.
  */
-export function loadRawProfileConfig(
-  configPath = resolveProfileConfigPath(),
-): RawProfileConfig | undefined {
+export function loadRawProfileConfig({
+  configPath: suppliedConfigPath,
+}: {
+  readonly configPath?: string;
+} = {}): RawProfileConfig | undefined {
+  const configPath = resolveProfileConfigPath({
+    configPath: suppliedConfigPath,
+  });
   if (!fs.existsSync(configPath)) return undefined;
 
   try {
@@ -184,11 +192,11 @@ export function loadRawProfileConfig(
     });
     if (errors.length > 0) return undefined;
 
-    const validationError = Value.Errors(profileConfigFileSchema, parsed)[0];
-    if (validationError) return undefined;
-    if (!isProfileConfigFile(parsed)) return undefined;
-
-    return parsed;
+    return parseOrThrow({
+      unverifiedData: parsed,
+      schema: profileConfigFileSchema,
+      message: `Invalid pi-guard profile config at ${configPath}: schema validation failed`,
+    });
   } catch {
     return undefined;
   }
@@ -218,9 +226,14 @@ function profileNamesInSourceOrder(source: string): readonly string[] {
 }
 
 /** Return complete validated declarations in source order. */
-export function loadRawProfileDeclarations(
-  configPath = resolveProfileConfigPath(),
-): readonly RawProfileDeclaration[] {
+export function loadRawProfileDeclarations({
+  configPath: suppliedConfigPath,
+}: {
+  readonly configPath?: string;
+} = {}): readonly RawProfileDeclaration[] {
+  const configPath = resolveProfileConfigPath({
+    configPath: suppliedConfigPath,
+  });
   if (!fs.existsSync(configPath))
     throw new ProfileConfigMissingError(configPath);
   let source: string;
@@ -286,10 +299,12 @@ function directoryDeclaration(
   return [profile, globs];
 }
 
-export function loadDirectoryGlobDeclarations(
-  configPath = resolveProfileConfigPath(),
-): readonly DirectoryGlobDeclaration[] {
-  return loadRawProfileDeclarations(configPath).flatMap(
+export function loadDirectoryGlobDeclarations({
+  configPath,
+}: {
+  readonly configPath?: string;
+} = {}): readonly DirectoryGlobDeclaration[] {
+  return loadRawProfileDeclarations({ configPath }).flatMap(
     ({ profile, definition }) =>
       definition.directoryGlobs === undefined
         ? []
@@ -298,11 +313,21 @@ export function loadDirectoryGlobDeclarations(
 }
 
 /** One coherent configuration snapshot for consumers needing policy and metadata. */
+export type ProfileConfigSnapshotRuntime = {
+  /**
+   * Narrow read seam for deterministic runtime interleaving coverage. The
+   * returned text is the sole authority for every field in one snapshot.
+   */
+  readonly readSource: ({
+    configPath,
+  }: {
+    readonly configPath: string;
+  }) => string | undefined;
+};
+
 export type ProfileConfigSnapshot = {
   /** Opaque content revision for optimistic profile mutations. */
   readonly sourceRevision: string;
-  /** Opaque source identity; callers must not interpret its representation. */
-  readonly sourceIdentity: string;
   readonly config: PolicyConfig;
   readonly raw: RawProfileConfig | undefined;
   readonly declarations: readonly RawProfileDeclaration[];
@@ -314,28 +339,39 @@ export type ProfileConfigSnapshot = {
  * with directory metadata from another. Parse/schema errors retain the strict
  * loader's error distinctions.
  */
-export function loadProfileConfigSnapshot(
-  fallback: PolicyConfig,
-  configPath = resolveProfileConfigPath(),
-): ProfileConfigSnapshot {
-  if (!fs.existsSync(configPath))
-    return {
-      sourceRevision: sourceRevision(undefined),
-      sourceIdentity: "missing",
-      config: fallback,
-      raw: undefined,
-      declarations: [],
-      directoryGlobDeclarations: [],
-    };
-  let source: string;
+export function loadProfileConfigSnapshot({
+  fallback,
+  configPath: suppliedConfigPath,
+  runtime,
+}: {
+  readonly fallback: PolicyConfig;
+  readonly configPath?: string;
+  readonly runtime?: ProfileConfigSnapshotRuntime;
+}): ProfileConfigSnapshot {
+  const configPath = resolveProfileConfigPath({
+    configPath: suppliedConfigPath,
+  });
+  let source: string | undefined;
   try {
-    source = fs.readFileSync(configPath, "utf8");
+    source = runtime
+      ? runtime.readSource({ configPath })
+      : fs.existsSync(configPath)
+        ? fs.readFileSync(configPath, "utf8")
+        : undefined;
   } catch (error) {
     throw new ProfileConfigUnreadableError(
       configPath,
       error instanceof Error ? error.message : String(error),
     );
   }
+  if (source === undefined)
+    return {
+      sourceRevision: sourceRevision(undefined),
+      config: fallback,
+      raw: undefined,
+      declarations: [],
+      directoryGlobDeclarations: [],
+    };
   const errors: ParseError[] = [];
   const parsed: unknown = parse(source, errors, { allowTrailingComma: true });
   if (errors.length > 0)
@@ -343,7 +379,12 @@ export function loadProfileConfigSnapshot(
       configPath,
       `JSONC parse error: ${errors.map((error) => printParseErrorCode(error.error)).join(", ")}`,
     );
-  const config = loadProfileConfigSource(fallback, configPath, source, parsed);
+  const config = loadProfileConfigSource({
+    fallback,
+    configPath,
+    source,
+    parsedSource: parsed,
+  });
   if (errors.length > 0 || !isProfileConfigFile(parsed))
     throw new ProfileConfigMalformedError(
       configPath,
@@ -353,10 +394,8 @@ export function loadProfileConfigSnapshot(
     profile,
     definition: parsed.profiles[profile],
   }));
-  const identity = fs.statSync(configPath);
   return {
     sourceRevision: sourceRevision(source),
-    sourceIdentity: `${identity.dev}:${identity.ino}`,
     config,
     raw: parsed,
     declarations,
@@ -374,17 +413,23 @@ export function loadProfileConfigSnapshot(
  * transforms. Configuration is deliberately JSON-only: loading it must not
  * execute code or delay Pi's startup lifecycle.
  */
-export function loadProfileConfig(
-  fallback: PolicyConfig,
-  configPath = resolveProfileConfigPath(),
-): PolicyConfig {
+export function loadProfileConfig({
+  fallback,
+  configPath: suppliedConfigPath,
+}: {
+  readonly fallback: PolicyConfig;
+  readonly configPath?: string;
+}): PolicyConfig {
+  const configPath = resolveProfileConfigPath({
+    configPath: suppliedConfigPath,
+  });
   if (!fs.existsSync(configPath)) return fallback;
   try {
-    return loadProfileConfigSource(
+    return loadProfileConfigSource({
       fallback,
       configPath,
-      fs.readFileSync(configPath, "utf8"),
-    );
+      source: fs.readFileSync(configPath, "utf8"),
+    });
   } catch (error) {
     if (error instanceof ProfileConfigLoadError) throw error;
     throwProfileConfigError(
@@ -395,12 +440,17 @@ export function loadProfileConfig(
 }
 
 /** Validate and resolve a profile document already held in memory. */
-function loadProfileConfigSource(
-  fallback: PolicyConfig,
-  configPath: string,
-  source: string,
-  parsedSource?: unknown,
-): PolicyConfig {
+function loadProfileConfigSource({
+  fallback,
+  configPath,
+  source,
+  parsedSource,
+}: {
+  readonly fallback: PolicyConfig;
+  readonly configPath: string;
+  readonly source: string;
+  readonly parsedSource?: unknown;
+}): PolicyConfig {
   try {
     const errors: ParseError[] = [];
     const parsed: unknown =
@@ -447,16 +497,20 @@ function loadProfileConfigSource(
       }
     }
 
-    const validationError = Value.Errors(profileConfigFileSchema, parsed)[0];
-    if (validationError) {
+    try {
+      parseOrThrow({
+        unverifiedData: parsed,
+        schema: profileConfigFileSchema,
+        message: "schema validation failed",
+      });
+    } catch (error) {
       throwProfileConfigError(
         configPath,
-        `schema validation failed at ${validationError.instancePath || "/"}: ${validationError.message}`,
+        error instanceof Error ? error.message : String(error),
       );
     }
-    if (!isProfileConfigFile(parsed)) {
+    if (!isProfileConfigFile(parsed))
       throwProfileConfigError(configPath, "schema validation failed");
-    }
 
     // TypeBox checks the shape, while directoryGlobs has additional semantic
     // constraints shared by directory selection and authoring.
@@ -644,16 +698,7 @@ export type ProfileRuleChange =
       kind: OrdinaryPathRuleKind;
       contexts?: readonly PathContext[];
     });
-export type ProfileMutationTarget =
-  | { mode: "update"; profile: string }
-  | {
-      mode: "create-child";
-      profile: string;
-      extends: readonly [string, ...string[]];
-      description: string;
-      emoji?: string;
-      color?: ProfileConfigProfile["color"];
-    };
+export type ProfileMutationTarget = { mode: "update"; profile: string };
 
 type ProfileRuleIdentity = {
   readonly kind: RuleKind;
@@ -701,12 +746,17 @@ function assertUnambiguousProfileRuleIdentities({
 /** Reject duplicate/overlapping ASK rows before their atomic mutation. */
 export function assertUnambiguousProfileRuleChanges({
   changes,
-  configPath = resolveProfileConfigPath(),
+  configPath: suppliedConfigPath,
 }: {
   readonly changes: readonly ProfileRuleChange[];
   readonly configPath?: string;
 }): void {
-  assertUnambiguousProfileRuleIdentities({ rules: changes, configPath });
+  assertUnambiguousProfileRuleIdentities({
+    rules: changes,
+    configPath: resolveProfileConfigPath({
+      configPath: suppliedConfigPath,
+    }),
+  });
 }
 
 const jsoncFormatting = { insertSpaces: true, tabSize: 2, eol: "\n" };
@@ -725,7 +775,11 @@ function sourceRevision(source: string | undefined): string {
     .digest("hex");
 }
 
-function readMutationSource(configPath: string): string {
+function readMutationSource({
+  configPath,
+}: {
+  readonly configPath: string;
+}): string {
   if (!fs.existsSync(configPath)) return '{\n  "profiles": {}\n}\n';
   const source = fs.readFileSync(configPath, "utf8");
   const errors: ParseError[] = [];
@@ -751,11 +805,306 @@ function readMutationSource(configPath: string): string {
   return source;
 }
 
-function atomicallyWriteProfileConfig(
-  configPath: string,
-  source: string,
-  expectedRevision?: string,
-): void {
+export const profileConfigLockSettings = {
+  suffix: ".lock",
+  ownerSuffix: ".owner-",
+  retryMilliseconds: 10,
+  maximumAttempts: 25,
+} as const;
+
+export type ProfileConfigLockIdentity = {
+  readonly device: number;
+  readonly inode: number;
+  /** Diagnostic only: malformed owner metadata remains normal contention. */
+  readonly token?: string;
+};
+
+type ProfileConfigLock = {
+  readonly lockPath: string;
+  readonly ownerGenerationPath: string;
+  readonly identity: Required<ProfileConfigLockIdentity>;
+};
+
+/** Normal contention is never recovered automatically; an orphan needs manual or Force write handling. */
+export class ProfileConfigLockTimeoutError extends ProfileConfigLoadError {
+  readonly lockPath: string;
+  readonly observedLockIdentity: ProfileConfigLockIdentity | undefined;
+  constructor({
+    configPath,
+    lockPath,
+    observedLockIdentity,
+  }: {
+    readonly configPath: string;
+    readonly lockPath: string;
+    readonly observedLockIdentity: ProfileConfigLockIdentity | undefined;
+  }) {
+    super(
+      configPath,
+      "profile configuration is locked; bounded wait expired. Automatic recovery is disabled. Verify no writer is active before manual deletion or using Force write.",
+    );
+    this.name = "ProfileConfigLockTimeoutError";
+    this.lockPath = lockPath;
+    this.observedLockIdentity = observedLockIdentity;
+  }
+}
+
+const ownershipLost =
+  "profile configuration lock ownership was lost; retry the operation";
+
+let profileConfigLockWait = (): void => {
+  Atomics.wait(
+    new Int32Array(new SharedArrayBuffer(4)),
+    0,
+    0,
+    profileConfigLockSettings.retryMilliseconds,
+  );
+};
+
+/** Test seam for deterministic contention tests; production always uses bounded waits. */
+export function setProfileConfigLockWaitForTesting({
+  wait,
+}: {
+  readonly wait: () => void;
+}): () => void {
+  const previous = profileConfigLockWait;
+  profileConfigLockWait = wait;
+  return () => {
+    profileConfigLockWait = previous;
+  };
+}
+
+function waitForProfileConfigLockRetry({}: Record<never, never>): void {
+  profileConfigLockWait();
+}
+
+function ownerToken({
+  ownerGenerationPath,
+}: {
+  readonly ownerGenerationPath: string;
+}): string | undefined {
+  try {
+    const value: unknown = JSON.parse(
+      fs.readFileSync(ownerGenerationPath, "utf8"),
+    );
+    if (typeof value !== "object" || value === null) return undefined;
+    const token: unknown = Reflect.get(value, "token");
+    return typeof token === "string" ? token : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function lockIdentity({
+  lockPath,
+}: {
+  readonly lockPath: string;
+}): ProfileConfigLockIdentity | undefined {
+  try {
+    // Read the metadata between two identity observations. If publication changed
+    // while reading, fail closed rather than pairing an inode with another
+    // generation's token.
+    const before = fs.lstatSync(lockPath);
+    if (!before.isFile()) return undefined;
+    const token = ownerToken({ ownerGenerationPath: lockPath });
+    const after = fs.lstatSync(lockPath);
+    if (!after.isFile() || before.dev !== after.dev || before.ino !== after.ino)
+      return undefined;
+    return { device: after.dev, inode: after.ino, token };
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT")
+      return undefined;
+    throw error;
+  }
+}
+
+function sameLockIdentity({
+  left,
+  right,
+}: {
+  readonly left: ProfileConfigLockIdentity;
+  readonly right: ProfileConfigLockIdentity;
+}): boolean {
+  return (
+    left.device === right.device &&
+    left.inode === right.inode &&
+    (right.token === undefined || left.token === right.token)
+  );
+}
+
+function lockIsOwned({ lock }: { readonly lock: ProfileConfigLock }): boolean {
+  const current = lockIdentity({ lockPath: lock.lockPath });
+  return (
+    current !== undefined &&
+    sameLockIdentity({ left: current, right: lock.identity })
+  );
+}
+
+function assertProfileConfigLockOwnership({
+  lock,
+  configPath,
+}: {
+  readonly lock: ProfileConfigLock;
+  readonly configPath: string;
+}): void {
+  if (!lockIsOwned({ lock }))
+    throw new ProfileConfigLoadError(configPath, ownershipLost);
+}
+
+function acquireProfileConfigLock({
+  lockPath,
+}: {
+  readonly lockPath: string;
+}): ProfileConfigLock | undefined {
+  const ownerGenerationPath = `${lockPath}${profileConfigLockSettings.ownerSuffix}${randomUUID()}`;
+  const token = randomUUID();
+  try {
+    fs.writeFileSync(ownerGenerationPath, JSON.stringify({ token }), {
+      encoding: "utf8",
+      flag: "wx",
+    });
+    const stat = fs.lstatSync(ownerGenerationPath);
+    if (!stat.isFile() || ownerToken({ ownerGenerationPath }) !== token)
+      throw new Error("owner generation metadata could not be validated");
+    const identity = { device: stat.dev, inode: stat.ino, token };
+    try {
+      fs.linkSync(ownerGenerationPath, lockPath);
+      return { lockPath, ownerGenerationPath, identity };
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "EEXIST")
+        return undefined;
+      throw new ProfileConfigLoadError(
+        lockPath,
+        "hard-link lock publication is unavailable; use a filesystem supporting atomic hard links",
+      );
+    }
+  } finally {
+    // An unpublished generation is inert. A published owner retains its sidecar.
+    try {
+      if (fs.lstatSync(ownerGenerationPath).nlink === 1)
+        fs.unlinkSync(ownerGenerationPath);
+    } catch {
+      /* published, already removed, or unavailable */
+    }
+  }
+}
+
+function releaseProfileConfigLock({
+  lock,
+}: {
+  readonly lock: ProfileConfigLock;
+}): void {
+  if (!lockIsOwned({ lock })) {
+    // Our sidecar pathname is capability-unique. Losing the public link must
+    // never unlink its replacement, but this inert private generation can be
+    // cleaned without touching another owner.
+    try {
+      fs.unlinkSync(lock.ownerGenerationPath);
+    } catch (error) {
+      if (!(
+        error instanceof Error &&
+        "code" in error &&
+        error.code === "ENOENT"
+      ))
+        throw error;
+    }
+    return;
+  }
+  try {
+    fs.unlinkSync(lock.lockPath);
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT"))
+      throw error;
+  }
+  // This pathname is unique to this owner; never clean any other generation.
+  try {
+    fs.unlinkSync(lock.ownerGenerationPath);
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT"))
+      throw error;
+  }
+}
+
+/**
+ * Destructive emergency escape hatch. Node has no conditional-unlink/CAS, so a
+ * release/reacquire between comparison and unlink can remove a newer lock. A
+ * writer which passed ownership before force may still rename, then later
+ * release and remove a successor lock; force is not serialization.
+ */
+export function forceRemoveProfileConfigLock({
+  configPath,
+  observedLockIdentity,
+}: {
+  readonly configPath: string;
+  readonly observedLockIdentity: ProfileConfigLockIdentity | undefined;
+}): "removed" | "already-released" | "lock-changed" {
+  const lockPath = `${configPath}${profileConfigLockSettings.suffix}`;
+  const current = lockIdentity({ lockPath });
+  if (!current) return "already-released";
+  if (
+    !observedLockIdentity ||
+    !sameLockIdentity({ left: current, right: observedLockIdentity })
+  )
+    return "lock-changed";
+  try {
+    fs.unlinkSync(lockPath);
+    return "removed";
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT")
+      return "already-released";
+    throw error;
+  }
+}
+
+function withProfileConfigLock<Result>({
+  configPath,
+  operation,
+}: {
+  readonly configPath: string;
+  readonly operation: ({
+    lock,
+  }: {
+    readonly lock: ProfileConfigLock;
+  }) => Result;
+}): Result {
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  const lockPath = `${configPath}${profileConfigLockSettings.suffix}`;
+  let observedLockIdentity: ProfileConfigLockIdentity | undefined;
+  for (
+    let attempt = 0;
+    attempt < profileConfigLockSettings.maximumAttempts;
+    attempt++
+  ) {
+    const lock = acquireProfileConfigLock({ lockPath });
+    if (!lock) {
+      observedLockIdentity = lockIdentity({ lockPath });
+      waitForProfileConfigLockRetry({});
+      continue;
+    }
+    try {
+      assertProfileConfigLockOwnership({ lock, configPath });
+      return operation({ lock });
+    } finally {
+      releaseProfileConfigLock({ lock });
+    }
+  }
+  throw new ProfileConfigLockTimeoutError({
+    configPath,
+    lockPath,
+    observedLockIdentity,
+  });
+}
+
+function atomicallyWriteProfileConfig({
+  configPath,
+  source,
+  expectedRevision,
+  lock,
+}: {
+  readonly configPath: string;
+  readonly source: string;
+  readonly expectedRevision?: string;
+  readonly lock: ProfileConfigLock;
+}): void {
   const directory = path.dirname(configPath);
   fs.mkdirSync(directory, { recursive: true });
   const temporaryPath = path.join(
@@ -763,6 +1112,7 @@ function atomicallyWriteProfileConfig(
     `.${path.basename(configPath)}.${randomUUID()}.tmp`,
   );
   try {
+    assertProfileConfigLockOwnership({ lock, configPath });
     fs.writeFileSync(temporaryPath, source, { encoding: "utf8", flag: "wx" });
     if (fs.existsSync(configPath))
       fs.chmodSync(temporaryPath, fs.statSync(configPath).mode & 0o7777);
@@ -776,6 +1126,7 @@ function atomicallyWriteProfileConfig(
       sourceRevision(current) !== expectedRevision
     )
       throw new ProfileConfigConflictError(configPath);
+    assertProfileConfigLockOwnership({ lock, configPath });
     fs.renameSync(temporaryPath, configPath);
   } finally {
     try {
@@ -863,11 +1214,16 @@ function assertUnambiguousDeclarationRules(
 }
 
 /** Prepare a declaration-only UPDATE without writing the configuration. */
-function prepareAuthoringDeclarationCandidate(
-  options: AuthoringDeclarationCandidateOptions,
-  sourceOverride?: string,
-): PreparedAuthoringDeclarationCandidate {
-  const configPath = resolveProfileConfigPath(options.configPath);
+function prepareAuthoringDeclarationCandidate({
+  options,
+  sourceOverride,
+}: {
+  readonly options: AuthoringDeclarationCandidateOptions;
+  readonly sourceOverride?: string;
+}): PreparedAuthoringDeclarationCandidate {
+  const configPath = resolveProfileConfigPath({
+    configPath: options.configPath,
+  });
   if (declarationEditIsEmpty(options.edit))
     throw new ProfileConfigLoadError(
       configPath,
@@ -897,7 +1253,7 @@ function prepareAuthoringDeclarationCandidate(
       "protected-path",
       configPath,
     );
-  const source = sourceOverride ?? readMutationSource(configPath);
+  const source = sourceOverride ?? readMutationSource({ configPath });
   const parsed: unknown = parse(source, [], { allowTrailingComma: true });
   if (
     !isMutationDocument(parsed) ||
@@ -1142,12 +1498,17 @@ function applySourceTextEdits(
   );
 }
 
-function prepareAuthoringGeneralCandidate(
-  options: AuthoringGeneralCandidateOptions,
-  sourceOverride?: string,
-): PreparedAuthoringGeneralCandidate {
-  const configPath = resolveProfileConfigPath(options.configPath);
-  const source = sourceOverride ?? readMutationSource(configPath);
+function prepareAuthoringGeneralCandidate({
+  options,
+  sourceOverride,
+}: {
+  readonly options: AuthoringGeneralCandidateOptions;
+  readonly sourceOverride?: string;
+}): PreparedAuthoringGeneralCandidate {
+  const configPath = resolveProfileConfigPath({
+    configPath: options.configPath,
+  });
+  const source = sourceOverride ?? readMutationSource({ configPath });
   const parsed: unknown = parse(source, [], { allowTrailingComma: true });
   if (!isMutationDocument(parsed))
     throw new ProfileConfigLoadError(
@@ -1565,8 +1926,10 @@ export function validateProfileAuthoringCommit({
   draft,
   configPath: requestedConfigPath,
 }: ProfileAuthoringCommitOptions): PreparedProfileAuthoringCommit {
-  const configPath = resolveProfileConfigPath(requestedConfigPath);
-  const source = readMutationSource(configPath);
+  const configPath = resolveProfileConfigPath({
+    configPath: requestedConfigPath,
+  });
+  const source = readMutationSource({ configPath });
   const parsed: unknown = parse(source, [], { allowTrailingComma: true });
   if (!isMutationDocument(parsed))
     throw new ProfileConfigLoadError(
@@ -1634,15 +1997,15 @@ export function validateProfileAuthoringCommit({
       }),
     );
   } else {
-    const renamed = prepareAuthoringGeneralCandidate(
-      {
+    const renamed = prepareAuthoringGeneralCandidate({
+      options: {
         fallback,
         configPath,
         profile: draft.originalName,
         edit: { name: draft.name, emoji: draft.definition.emoji },
       },
-      updated,
-    );
+      sourceOverride: updated,
+    });
     updated = renamed.updated;
     profile = draft.name;
     updated = applyProfileScalarEdit({
@@ -1680,15 +2043,15 @@ export function validateProfileAuthoringCommit({
       value: draft.definition.transforms,
       configPath,
     });
-    updated = prepareAuthoringDeclarationCandidate(
-      {
+    updated = prepareAuthoringDeclarationCandidate({
+      options: {
         fallback,
         configPath,
         profile,
         edit: authoringDeclarationEdit({ definition: draft.definition }),
       },
-      updated,
-    ).updated;
+      sourceOverride: updated,
+    }).updated;
   }
 
   const candidateDocument: unknown = parse(updated, [], {
@@ -1711,7 +2074,11 @@ export function validateProfileAuthoringCommit({
 
   let resolvedConfig: PolicyConfig;
   try {
-    resolvedConfig = loadProfileConfigSource(fallback, configPath, updated);
+    resolvedConfig = loadProfileConfigSource({
+      fallback,
+      configPath,
+      source: updated,
+    });
   } catch (error) {
     if (!(error instanceof ProfileConfigLoadError) || !error.instancePath)
       throw error;
@@ -1744,30 +2111,45 @@ export function validateProfileAuthoringCommit({
 export function applyProfileAuthoringCommit(
   options: ProfileAuthoringCommitOptions,
 ): PreparedProfileAuthoringCommit {
-  const prepared = validateProfileAuthoringCommit(options);
-  if (
-    options.expectedRevision !== undefined &&
-    options.expectedRevision !== prepared.sourceRevision
-  )
-    throw new ProfileConfigConflictError(prepared.configPath);
-  if (prepared.updated === prepared.source) return prepared;
-  const created = prepared.promptFile
-    ? createMissingPromptFile({
-        validation: prepared.promptFile,
-        profile: prepared.profile,
-      })
-    : undefined;
-  try {
-    atomicallyWriteProfileConfig(
-      prepared.configPath,
-      prepared.updated,
-      options.expectedRevision ?? prepared.sourceRevision,
-    );
-  } catch (error) {
-    rollbackCreatedPromptFile({ created });
-    throw error;
-  }
-  return prepared;
+  const configPath = resolveProfileConfigPath({
+    configPath: options.configPath,
+  });
+  return withProfileConfigLock({
+    configPath,
+    operation: ({ lock }) => {
+      // Prepare only after acquiring the lock so every mutation is replayed
+      // against the latest complete source, including prompt-file creation.
+      const prepared = validateProfileAuthoringCommit(options);
+      if (
+        options.expectedRevision !== undefined &&
+        options.expectedRevision !== prepared.sourceRevision
+      )
+        throw new ProfileConfigConflictError(prepared.configPath);
+      if (prepared.updated === prepared.source) return prepared;
+      assertProfileConfigLockOwnership({
+        lock,
+        configPath: prepared.configPath,
+      });
+      const created = prepared.promptFile
+        ? createMissingPromptFile({
+            validation: prepared.promptFile,
+            profile: prepared.profile,
+          })
+        : undefined;
+      try {
+        atomicallyWriteProfileConfig({
+          configPath: prepared.configPath,
+          source: prepared.updated,
+          expectedRevision: options.expectedRevision ?? prepared.sourceRevision,
+          lock,
+        });
+      } catch (error) {
+        rollbackCreatedPromptFile({ created });
+        throw error;
+      }
+      return prepared;
+    },
+  });
 }
 
 /**
@@ -1980,7 +2362,9 @@ type PreparedProfileRuleChanges = {
 function prepareProfileRuleChanges(
   options: ApplyProfileRuleChangesOptions,
 ): PreparedProfileRuleChanges {
-  const configPath = resolveProfileConfigPath(options.configPath);
+  const configPath = resolveProfileConfigPath({
+    configPath: options.configPath,
+  });
   if (options.changes.length === 0)
     throw new ProfileConfigLoadError(
       configPath,
@@ -2007,7 +2391,7 @@ function prepareProfileRuleChanges(
         configPath,
         `invalid durable decision '${String(change.decision)}' for '${change.pattern}'`,
       );
-  const source = readMutationSource(configPath);
+  const source = readMutationSource({ configPath });
   const parsed: unknown = parse(source, [], { allowTrailingComma: true });
   if (!isMutationDocument(parsed))
     throw new ProfileConfigLoadError(
@@ -2020,33 +2404,8 @@ function prepareProfileRuleChanges(
       configPath,
       `profile '${options.target.profile}' does not exist`,
     );
-  if (options.target.mode === "create-child" && targetExists)
-    throw new ProfileConfigLoadError(
-      configPath,
-      `profile '${options.target.profile}' already exists`,
-    );
-
   const profilePath = ["profiles", options.target.profile];
   let updated = source;
-  if (options.target.mode === "create-child") {
-    if (options.target.extends.length === 0)
-      throw new ProfileConfigLoadError(
-        configPath,
-        "create targets require at least one extends target",
-      );
-    const child: ProfileConfigProfile = {
-      description: options.target.description,
-      extends: [...options.target.extends],
-    };
-    if (options.target.emoji !== undefined) child.emoji = options.target.emoji;
-    if (options.target.color !== undefined) child.color = options.target.color;
-    updated = applyEdits(
-      updated,
-      modify(updated, profilePath, child, {
-        formattingOptions: jsoncFormatting,
-      }),
-    );
-  }
   const document: unknown = parse(updated, [], { allowTrailingComma: true });
   const locationFor = (kind: RuleKind): Array<string | number> =>
     kind === "bash"
@@ -2135,34 +2494,56 @@ function prepareProfileRuleChanges(
   };
 }
 
-function commitPreparedProfileRuleChanges(
-  fallback: PolicyConfig,
-  prepared: PreparedProfileRuleChanges,
-  expectedRevision?: string,
-): void {
+function commitPreparedProfileRuleChanges({
+  fallback,
+  prepared,
+  expectedRevision,
+  lock,
+}: {
+  readonly fallback: PolicyConfig;
+  readonly prepared: PreparedProfileRuleChanges;
+  readonly expectedRevision?: string;
+  readonly lock: ProfileConfigLock;
+}): void {
   // Validate before opening a temporary file; this is the same core used by
   // Declaration edits use the same validation-before-write invariant.
-  loadProfileConfigSource(fallback, prepared.configPath, prepared.updated);
+  loadProfileConfigSource({
+    fallback,
+    configPath: prepared.configPath,
+    source: prepared.updated,
+  });
   if (
     expectedRevision !== undefined &&
     expectedRevision !== prepared.sourceRevision
   )
     throw new ProfileConfigConflictError(prepared.configPath);
   if (prepared.updated === prepared.source) return;
-  atomicallyWriteProfileConfig(
-    prepared.configPath,
-    prepared.updated,
-    expectedRevision ?? prepared.sourceRevision,
-  );
+  atomicallyWriteProfileConfig({
+    configPath: prepared.configPath,
+    source: prepared.updated,
+    expectedRevision: expectedRevision ?? prepared.sourceRevision,
+    lock,
+  });
 }
 
 /** Apply a set of rule changes in one validated, atomic mutation. */
 export function applyProfileRuleChanges(
   options: ApplyProfileRuleChangesOptions,
 ): void {
-  commitPreparedProfileRuleChanges(
-    options.fallback,
-    prepareProfileRuleChanges(options),
-    options.expectedRevision,
-  );
+  const configPath = resolveProfileConfigPath({
+    configPath: options.configPath,
+  });
+  withProfileConfigLock({
+    configPath,
+    operation: ({ lock }) => {
+      // Rebuild the intended mutation from the just-locked source rather than
+      // committing a candidate prepared by a concurrent writer's snapshot.
+      commitPreparedProfileRuleChanges({
+        fallback: options.fallback,
+        prepared: prepareProfileRuleChanges(options),
+        expectedRevision: options.expectedRevision,
+        lock,
+      });
+    },
+  });
 }

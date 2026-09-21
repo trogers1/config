@@ -2,10 +2,7 @@ import fs from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  defaultCustomProfileEmoji,
-  suggestedProfileName,
-} from "../modules/profileAuthoringModel";
+import { defaultCustomProfileEmoji } from "../modules/profileAuthoringModel";
 import { loadRawProfileConfig } from "../modules/profileConfig";
 import {
   compositionSectionLabel,
@@ -139,18 +136,6 @@ async function addOrderedEntry({
   resumed.press("Enter");
 }
 
-function expectedInlineChildName({
-  existingNames = new Set<string>(),
-}: {
-  readonly existingNames?: ReadonlySet<string>;
-} = {}): string {
-  return suggestedProfileName({
-    profile: "builtin:default",
-    cwd: process.cwd(),
-    existingNames,
-  });
-}
-
 function temporaryConfig(): string {
   const file = path.join(
     tmpdir(),
@@ -224,7 +209,9 @@ describe("/profile-add", () => {
     await run;
 
     expect(
-      loadRawProfileConfig(configPath)?.profiles["local-test-work"],
+      loadRawProfileConfig({ configPath: configPath })?.profiles[
+        "local-test-work"
+      ],
     ).toMatchObject({
       description: "Local test work",
       extends: ["builtin:default", "builtin:read-only"],
@@ -346,7 +333,9 @@ describe("/profile-add", () => {
     await run;
 
     expect(
-      loadRawProfileConfig(configPath)?.profiles["layered-work"],
+      loadRawProfileConfig({ configPath: configPath })?.profiles[
+        "layered-work"
+      ],
     ).toMatchObject({
       tools: { bash: [{ pattern: "echo created", decision: "allow" }] },
       readPaths: [{ pattern: "docs/**", decision: "deny", contexts: ["read"] }],
@@ -413,7 +402,7 @@ describe("/profile-add", () => {
     await chooseOverview({ harness, selection: submitOverviewSelection });
     await run;
     expect(
-      loadRawProfileConfig(configPath)?.profiles["back-work"],
+      loadRawProfileConfig({ configPath: configPath })?.profiles["back-work"],
     ).toMatchObject({
       tools: { bash: [{ pattern: "echo retained", decision: "deny" }] },
     });
@@ -479,7 +468,9 @@ describe("/profile-add", () => {
     );
     expect(retainedRenderedOverview).toContain(profileAuthoringInvalidMarker);
     expect(
-      loadRawProfileConfig(configPath)?.profiles["duplicate-work"],
+      loadRawProfileConfig({ configPath: configPath })?.profiles[
+        "duplicate-work"
+      ],
     ).toBeUndefined();
     retainedOverview.choose({
       selection: overviewSectionSelection({ id: "bash" }),
@@ -502,103 +493,31 @@ describe("/profile-add", () => {
     });
     await run;
     expect(
-      loadRawProfileConfig(configPath)?.profiles["duplicate-work"],
+      loadRawProfileConfig({ configPath: configPath })?.profiles[
+        "duplicate-work"
+      ],
     ).toBeDefined();
   });
 
-  it("uses the immutable startup directory in the prefilled inline child profile name", async () => {
+  it("rejects persistent ASK saves to an authoritative built-in profile without creating a child", async () => {
     const configPath = temporaryConfig();
-    process.env.PI_GUARD_PROFILE_CONFIG = configPath;
-    const harness = createExtensionHarness({
-      interactiveUi: true,
-      contextCwd: "/workspace/remembered-project",
-    });
-    await harness.start();
-
-    const pending = harness.callTool({
-      toolName: "bash",
-      input: { command: "echo remembered-permission" },
-    });
-    (await harness.ui.waitForPermissionChoice()).choose(
-      "Save rule(s) to profile…",
-    );
-    const editor = await harness.ui.waitForRuleForm();
-    expect(editor.render().join("\n")).toContain(
-      "Writes to        profile tools.bash",
-    );
-    editor.press("Enter");
-    const general = await harness.ui.waitForProfileGeneralForm();
-    const expectedProfile = expectedInlineChildName();
-    expect(general.render().join("\n")).toContain(expectedProfile);
-    general.press("Enter");
-    await pending;
-
-    expect(
-      loadRawProfileConfig(configPath)?.profiles[expectedProfile],
-    ).toMatchObject({
-      extends: ["builtin:default"],
-      tools: {
-        bash: [{ pattern: "echo remembered-permission", decision: "allow" }],
-      },
-    });
-    expect(harness.entries.at(-1)).toMatchObject({
-      customType: "pi-guard-profile",
-      data: { profile: expectedProfile },
-    });
-    await harness.callToolWithoutPrompt({
-      toolName: "bash",
-      input: { command: "echo remembered-permission" },
-    });
-  });
-
-  it("retains an edited child target after a collision and permits correction", async () => {
-    const configPath = temporaryConfig();
-    fs.writeFileSync(
-      configPath,
-      JSON.stringify({
-        profiles: {
-          "default-custom": {
-            description: "Existing collision target",
-            extends: ["builtin:default"],
-          },
-        },
-      }),
-    );
+    const before = fs.readFileSync(configPath, "utf8");
     process.env.PI_GUARD_PROFILE_CONFIG = configPath;
     const harness = createExtensionHarness({ interactiveUi: true });
     await harness.start();
 
     const pending = harness.callTool({
       toolName: "bash",
-      input: { command: "echo retain-target" },
+      input: { command: "echo built-in-save-is-rejected" },
     });
     (await harness.ui.waitForPermissionChoice()).choose(
       "Save rule(s) to profile…",
     );
-    const first = await harness.ui.waitForRuleForm();
-    first.press("Enter");
-    const general = await harness.ui.waitForProfileGeneralForm();
-    for (let index = 0; index < 40; index++) general.press("ArrowRight");
-    for (let index = 0; index < 40; index++) general.press("Backspace");
-    general.type("default-custom"); // force a persistence collision
-    general.press("Enter");
 
-    const retry = await harness.ui.waitForProfileGeneralForm();
-    expect(retry.render().join("\n")).toContain("default-custom");
-    for (let index = 0; index < 40; index++) retry.press("ArrowRight");
-    for (let index = 0; index < 40; index++) retry.press("Backspace");
-    retry.type("recovered-custom");
-    retry.press("Enter");
-    await pending;
-
-    expect(
-      loadRawProfileConfig(configPath)?.profiles["recovered-custom"],
-    ).toMatchObject({
-      extends: ["builtin:default"],
-      tools: {
-        bash: [{ pattern: "echo retain-target", decision: "allow" }],
-      },
-    });
+    expect(await pending).toMatchObject({ block: true });
+    expect(harness.ui.custom).toHaveBeenCalledTimes(1);
+    expect(fs.readFileSync(configPath, "utf8")).toBe(before);
+    expect(loadRawProfileConfig({ configPath })?.profiles).toEqual({});
   });
 
   it("remembers a denied ASK command and optional steering in the active custom profile", async () => {
@@ -636,7 +555,7 @@ describe("/profile-add", () => {
 
     expect(result).toMatchObject({ block: true });
     expect(
-      loadRawProfileConfig(configPath)?.profiles["my-profile"],
+      loadRawProfileConfig({ configPath: configPath })?.profiles["my-profile"],
     ).toMatchObject({
       tools: {
         bash: [
@@ -653,168 +572,38 @@ describe("/profile-add", () => {
     });
   });
 
-  it("does not create a child when every authorable ASK row is skipped", async () => {
-    const configPath = temporaryConfig();
-    process.env.PI_GUARD_PROFILE_CONFIG = configPath;
-    const harness = createExtensionHarness({ interactiveUi: true });
-    await harness.start();
-
-    const pending = harness.callTool({
-      toolName: "bash",
-      input: { command: "echo hello > package.json" },
-    });
-    (await harness.ui.waitForPermissionChoice()).choose(
-      "Save rule(s) to profile…",
-    );
-    const editor = await harness.ui.waitForRuleForm();
-    editor.press("Tab"); // allow → deny
-    editor.press("Tab"); // deny → skip
-    expect(editor.render().join("\n")).toContain(
-      "Save disabled: every row is skipped",
-    );
-    editor.press("Escape");
-    (await harness.ui.waitForPermissionChoice()).choose("No (default)");
-    const result = await pending;
-
-    expect(result).toMatchObject({ block: true });
-    // package.json is already allowed by the ordinary inherited path policy;
-    // only the separately ASKed Bash rule is authorable in this request.
-    expect(
-      loadRawProfileConfig(configPath)?.profiles["path-only"],
-    ).toBeUndefined();
-  });
-
-  it("saves a Bash-only ASK without inventing a protected safeguard", async () => {
-    const configPath = temporaryConfig();
-    process.env.PI_GUARD_PROFILE_CONFIG = configPath;
-    const harness = createExtensionHarness({
-      interactiveUi: true,
-      contextCwd: "/workspace/bash-only-project",
-    });
-    await harness.start();
-
-    const pending = harness.callTool({
-      toolName: "bash",
-      input: { command: "echo hello > package.json" },
-    });
-    (await harness.ui.waitForPermissionChoice()).choose(
-      "Save rule(s) to profile…",
-    );
-    const editor = await harness.ui.waitForRuleForm();
-    editor.press("Enter");
-    (await harness.ui.waitForProfileGeneralForm()).press("Enter");
-    const result = await pending;
-
-    expect(result).toBeUndefined();
-    expect(
-      loadRawProfileConfig(configPath)?.profiles[expectedInlineChildName()],
-    ).toMatchObject({
-      tools: {
-        bash: [{ pattern: "echo hello > package.json", decision: "allow" }],
-      },
-    });
-  });
-
-  it("persists only non-skipped edited command choices from a multi-command ASK", async () => {
-    const configPath = temporaryConfig();
-    process.env.PI_GUARD_PROFILE_CONFIG = configPath;
-    const harness = createExtensionHarness({
-      interactiveUi: true,
-      contextCwd: "/workspace/multi-command-project",
-    });
-    await harness.start();
-
-    const pending = harness.callTool({
-      toolName: "bash",
-      input: { command: "echo first; echo second" },
-    });
-    (await harness.ui.waitForPermissionChoice()).choose(
-      "Save rule(s) to profile…",
-    );
-    const editor = await harness.ui.waitForRuleForm();
-    editor.press("Tab"); // first allow → deny
-    editor.press("Tab"); // first deny → skip
-    editor.press("ArrowDown");
-    editor.press("Tab"); // second allow → deny
-    editor.press("Enter");
-    (await harness.ui.waitForProfileGeneralForm()).press("Enter");
-    const result = await pending;
-
-    expect(result).toMatchObject({ block: true });
-    expect(
-      loadRawProfileConfig(configPath)?.profiles[expectedInlineChildName()],
-    ).toMatchObject({
-      tools: {
-        bash: [{ pattern: "echo second", decision: "deny" }],
-      },
-    });
-  });
-
-  it("does not mutate a profile when every update choice is skipped", async () => {
-    const configPath = temporaryConfig();
-    const before = fs.readFileSync(configPath, "utf8");
-    process.env.PI_GUARD_PROFILE_CONFIG = configPath;
-    const harness = createExtensionHarness({ interactiveUi: true });
-    await harness.start();
-
-    const pending = harness.callTool({
-      toolName: "bash",
-      input: { command: "echo skipped" },
-    });
-    (await harness.ui.waitForPermissionChoice()).choose(
-      "Save rule(s) to profile…",
-    );
-    const editor = await harness.ui.waitForRuleForm();
-    editor.press("Tab"); // allow → deny
-    editor.press("Tab"); // deny → skip
-    expect(editor.render().join("\n")).toContain(
-      "Save disabled: every row is skipped",
-    );
-    editor.press("Escape");
-    (await harness.ui.waitForPermissionChoice()).choose("No (default)");
-    const result = await pending;
-
-    expect(result).toMatchObject({ block: true });
-    expect(fs.readFileSync(configPath, "utf8")).toBe(before);
-  });
-
-  it("discards an overview draft without changing bytes or the active profile", async () => {
+  it("completes a current local allow save after top-level re-evaluation", async () => {
     const configPath = temporaryConfig();
     fs.writeFileSync(
       configPath,
-      `{
-  "defaultProfile": "existing",
-  "profiles": { "existing": { "description": "Existing profile" } }
-}
-`,
+      JSON.stringify({
+        defaultProfile: "mutable",
+        profiles: {
+          mutable: { description: "Mutable", extends: ["builtin:default"] },
+        },
+      }),
     );
-    const before = fs.readFileSync(configPath, "utf8");
     process.env.PI_GUARD_PROFILE_CONFIG = configPath;
-    const harness = createExtensionHarness({
-      interactiveUi: true,
-      confirm: true,
-    });
+    const harness = createExtensionHarness({ interactiveUi: true });
     await harness.start();
-    const entriesBefore = harness.entries.map((entry) => ({ ...entry }));
 
-    const run = harness.runCommand("profile-add");
-    await choosePicker(harness, "builtin:default");
-    await choosePicker(harness, "Done");
-    await completeGeneral({
-      harness,
-      name: "discarded",
-      description: "Discarded draft",
+    const pending = harness.callTool({
+      toolName: "bash",
+      input: { command: "echo current-save-completes" },
     });
-    const overview = await harness.ui.waitForProfileAuthoringOverview();
-    overview.cancel();
-    await run;
+    (await harness.ui.waitForPermissionChoice()).choose(
+      "Save rule(s) to profile…",
+    );
+    (await harness.ui.waitForRuleForm()).press("Enter");
 
-    expect(fs.readFileSync(configPath, "utf8")).toBe(before);
-    expect(loadRawProfileConfig(configPath)?.defaultProfile).toBe("existing");
+    expect(await pending).toBeUndefined();
+    expect(harness.ui.custom).toHaveBeenCalledTimes(2);
     expect(
-      loadRawProfileConfig(configPath)?.profiles.discarded,
-    ).toBeUndefined();
-    expect(harness.entries).toEqual(entriesBefore);
+      loadRawProfileConfig({ configPath })?.profiles.mutable.tools?.bash,
+    ).toContainEqual({
+      pattern: "echo current-save-completes",
+      decision: "allow",
+    });
   });
 
   it("authors optional sandbox and directory declarations through the command and confirms both capabilities", async () => {
@@ -862,7 +651,9 @@ describe("/profile-add", () => {
 
     expect(harness.ui.custom).toHaveBeenCalled();
     expect(
-      loadRawProfileConfig(configPath)?.profiles["metadata-work"],
+      loadRawProfileConfig({ configPath: configPath })?.profiles[
+        "metadata-work"
+      ],
     ).toMatchObject({
       sandbox: {
         network: "allow",
@@ -955,7 +746,9 @@ describe("/profile-add", () => {
     );
     expect(fs.readFileSync(configPath, "utf8")).toBe(before);
     expect(
-      loadRawProfileConfig(configPath)?.profiles["rejected-metadata"],
+      loadRawProfileConfig({ configPath: configPath })?.profiles[
+        "rejected-metadata"
+      ],
     ).toBeUndefined();
     expect(harness.entries).toHaveLength(0);
   });

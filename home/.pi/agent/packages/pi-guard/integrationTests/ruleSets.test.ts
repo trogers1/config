@@ -44,9 +44,9 @@ describe("rule-set namespace", () => {
   });
 
   it("ruleset:shell-guards resolves to the shipped guards partial policy", () => {
-    const config = loadProfileConfig(
-      genericPolicyConfig,
-      writeConfig({
+    const config = loadProfileConfig({
+      fallback: genericPolicyConfig,
+      configPath: writeConfig({
         profiles: {
           guarded: {
             description:
@@ -56,7 +56,7 @@ describe("rule-set namespace", () => {
           },
         },
       }),
-    );
+    });
 
     expect(
       config.profiles.guarded.tools.bash?.some(
@@ -66,9 +66,9 @@ describe("rule-set namespace", () => {
   });
 
   it("ruleset:read-only-shell and ruleset:read-only-path resolve through JSONC", () => {
-    const config = loadProfileConfig(
-      genericPolicyConfig,
-      writeConfig({
+    const config = loadProfileConfig({
+      fallback: genericPolicyConfig,
+      configPath: writeConfig({
         profiles: {
           comparison: {
             description: "Read-only shell and path ruleset comparison profile.",
@@ -76,7 +76,7 @@ describe("rule-set namespace", () => {
           },
         },
       }),
-    );
+    });
 
     const resolved = config.profiles.comparison;
     const shell = ruleSetRegistry["ruleset:read-only-shell"];
@@ -135,9 +135,9 @@ describe("rule-set namespace", () => {
   });
 
   it("custom rule sets resolve as partial policies through customruleset: references", () => {
-    const config = loadProfileConfig(
-      genericPolicyConfig,
-      writeConfig({
+    const config = loadProfileConfig({
+      fallback: genericPolicyConfig,
+      configPath: writeConfig({
         rulesets: {
           "infra-mutation-deny": {
             tools: {
@@ -153,7 +153,7 @@ describe("rule-set namespace", () => {
           },
         },
       }),
-    );
+    });
 
     expect(decideBash("terraform apply", config.profiles.guarded)).toBe("deny");
     expect(config.profiles["infra-mutation-deny"]).toBeUndefined();
@@ -162,9 +162,9 @@ describe("rule-set namespace", () => {
   it("user profiles may not use reserved rule-set prefixes", () => {
     for (const name of ["ruleset:evil", "customruleset:evil"]) {
       expect(() =>
-        loadProfileConfig(
-          genericPolicyConfig,
-          writeConfig({
+        loadProfileConfig({
+          fallback: genericPolicyConfig,
+          configPath: writeConfig({
             profiles: {
               [name]: {
                 description:
@@ -173,16 +173,16 @@ describe("rule-set namespace", () => {
               },
             },
           }),
-        ),
+        }),
       ).toThrow(/reserved profile name/);
     }
   });
 
   it("custom rule sets reject profile fields and unknown references fail loudly", () => {
     expect(() =>
-      loadProfileConfig(
-        genericPolicyConfig,
-        writeConfig({
+      loadProfileConfig({
+        fallback: genericPolicyConfig,
+        configPath: writeConfig({
           rulesets: {
             invalid: { description: "Rule sets are not profiles." },
           },
@@ -194,13 +194,13 @@ describe("rule-set namespace", () => {
             },
           },
         }),
-      ),
+      }),
     ).toThrow(/schema validation failed/);
 
     expect(() =>
-      loadProfileConfig(
-        genericPolicyConfig,
-        writeConfig({
+      loadProfileConfig({
+        fallback: genericPolicyConfig,
+        configPath: writeConfig({
           profiles: {
             guarded: {
               description: "Profile with a missing custom rule set.",
@@ -208,15 +208,15 @@ describe("rule-set namespace", () => {
             },
           },
         }),
-      ),
+      }),
     ).toThrow(/unknown custom rule set/);
   });
 
   it("unknown rule set names fail loudly", () => {
     expect(() =>
-      loadProfileConfig(
-        genericPolicyConfig,
-        writeConfig({
+      loadProfileConfig({
+        fallback: genericPolicyConfig,
+        configPath: writeConfig({
           profiles: {
             custom: {
               description: "Invalid profile for unknown rule-set validation.",
@@ -225,15 +225,15 @@ describe("rule-set namespace", () => {
             },
           },
         }),
-      ),
+      }),
     ).toThrow(/unknown rule set/);
   });
 
   it("prototype properties do not resolve as rule sets", () => {
     expect(() =>
-      loadProfileConfig(
-        genericPolicyConfig,
-        writeConfig({
+      loadProfileConfig({
+        fallback: genericPolicyConfig,
+        configPath: writeConfig({
           profiles: {
             custom: {
               description:
@@ -243,14 +243,14 @@ describe("rule-set namespace", () => {
             },
           },
         }),
-      ),
+      }),
     ).toThrow(/unknown inherited profile/);
   });
 
   it("extends can mix builtin profiles and rule sets", () => {
-    const config = loadProfileConfig(
-      genericPolicyConfig,
-      writeConfig({
+    const config = loadProfileConfig({
+      fallback: genericPolicyConfig,
+      configPath: writeConfig({
         profiles: {
           mixed: {
             description:
@@ -260,7 +260,7 @@ describe("rule-set namespace", () => {
           },
         },
       }),
-    );
+    });
 
     expect(decideBash("find . -delete", config.profiles.mixed)).toBe("deny");
   });
@@ -280,9 +280,9 @@ describe("rule-set namespace", () => {
   });
 
   it("deps-mutations-allow opens dependency work while publish stays denied", () => {
-    const config = loadProfileConfig(
-      genericPolicyConfig,
-      writeConfig({
+    const config = loadProfileConfig({
+      fallback: genericPolicyConfig,
+      configPath: writeConfig({
         profiles: {
           "deps-work": {
             description:
@@ -295,7 +295,7 @@ describe("rule-set namespace", () => {
           },
         },
       }),
-    );
+    });
 
     expect(decideBash("npm install lodash", config.profiles["deps-work"])).toBe(
       "allow",
@@ -306,9 +306,9 @@ describe("rule-set namespace", () => {
   });
 
   it("deps-mutations-guard restores the standard guarded posture", () => {
-    const config = loadProfileConfig(
-      genericPolicyConfig,
-      writeConfig({
+    const config = loadProfileConfig({
+      fallback: genericPolicyConfig,
+      configPath: writeConfig({
         profiles: {
           guarded: {
             description:
@@ -321,7 +321,7 @@ describe("rule-set namespace", () => {
           },
         },
       }),
-    );
+    });
 
     expect(decideBash("npm install lodash", config.profiles.guarded)).toBe(
       "deny",
@@ -329,9 +329,9 @@ describe("rule-set namespace", () => {
   });
 
   it("git-write composes commit permissions onto any base", () => {
-    const config = loadProfileConfig(
-      genericPolicyConfig,
-      writeConfig({
+    const config = loadProfileConfig({
+      fallback: genericPolicyConfig,
+      configPath: writeConfig({
         profiles: {
           committer: {
             description:
@@ -341,7 +341,7 @@ describe("rule-set namespace", () => {
           },
         },
       }),
-    );
+    });
 
     expect(decideBash("git commit -m test", config.profiles.committer)).toBe(
       "allow",
@@ -355,9 +355,9 @@ describe("rule-set namespace", () => {
     expect(ruleSetNames()).toEqual(Object.keys(ruleSetRegistry));
 
     for (const name of ruleSetNames()) {
-      const config = loadProfileConfig(
-        genericPolicyConfig,
-        writeConfig({
+      const config = loadProfileConfig({
+        fallback: genericPolicyConfig,
+        configPath: writeConfig({
           profiles: {
             comparison: {
               description:
@@ -367,7 +367,7 @@ describe("rule-set namespace", () => {
             },
           },
         }),
-      );
+      });
       const resolved = config.profiles.comparison;
       const registered = ruleSetRegistry[name];
 

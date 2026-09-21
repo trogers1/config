@@ -23,9 +23,9 @@ function writeConfig(contents: unknown): string {
 
 describe("sandbox profile composition", () => {
   it("inherits sandbox configuration through profile extension", () => {
-    const config = loadProfileConfig(
-      genericPolicyConfig,
-      writeConfig({
+    const config = loadProfileConfig({
+      fallback: genericPolicyConfig,
+      configPath: writeConfig({
         profiles: {
           base: {
             description:
@@ -43,7 +43,7 @@ describe("sandbox profile composition", () => {
           },
         },
       }),
-    );
+    });
 
     expect(config.profiles.child.sandbox).toEqual(
       expect.objectContaining({
@@ -54,9 +54,9 @@ describe("sandbox profile composition", () => {
   });
 
   it("allows a child profile to disable an inherited sandbox explicitly", () => {
-    const config = loadProfileConfig(
-      genericPolicyConfig,
-      writeConfig({
+    const config = loadProfileConfig({
+      fallback: genericPolicyConfig,
+      configPath: writeConfig({
         profiles: {
           base: {
             description:
@@ -75,15 +75,15 @@ describe("sandbox profile composition", () => {
           },
         },
       }),
-    );
+    });
 
     expect(config.profiles.child.sandbox).toBe(false);
   });
 
   it("composes sandbox configuration through profile extension", () => {
-    const config = loadProfileConfig(
-      genericPolicyConfig,
-      writeConfig({
+    const config = loadProfileConfig({
+      fallback: genericPolicyConfig,
+      configPath: writeConfig({
         profiles: {
           base: {
             description:
@@ -107,7 +107,7 @@ describe("sandbox profile composition", () => {
           },
         },
       }),
-    );
+    });
 
     expect(config.profiles.child.sandbox).toEqual(
       expect.objectContaining({
@@ -121,9 +121,9 @@ describe("sandbox profile composition", () => {
   });
 
   it("composes sandbox path arrays and permits partial sandbox overrides", () => {
-    const config = loadProfileConfig(
-      genericPolicyConfig,
-      writeConfig({
+    const config = loadProfileConfig({
+      fallback: genericPolicyConfig,
+      configPath: writeConfig({
         profiles: {
           base: {
             description: "Base profile with a sandbox path exception",
@@ -142,7 +142,7 @@ describe("sandbox profile composition", () => {
           },
         },
       }),
-    );
+    });
 
     expect(config.profiles.child.sandbox).toEqual(
       expect.objectContaining({
@@ -168,9 +168,9 @@ describe("sandbox profile composition", () => {
         arrayName === "kernelUnenforcedProtectedPaths"
           ? "**/.local/**"
           : `/local/${arrayName}`;
-      const config = loadProfileConfig(
-        genericPolicyConfig,
-        writeConfig({
+      const config = loadProfileConfig({
+        fallback: genericPolicyConfig,
+        configPath: writeConfig({
           profiles: {
             base: {
               description: "Base sandbox array fixture",
@@ -201,7 +201,7 @@ describe("sandbox profile composition", () => {
             },
           },
         }),
-      );
+      });
       const appended = config.profiles.appended.sandbox;
       const overwritten = config.profiles.overwritten.sandbox;
       const cleared = config.profiles.cleared.sandbox;
@@ -216,9 +216,9 @@ describe("sandbox profile composition", () => {
   );
 
   it("allows a child to overwrite inherited sandbox path arrays", () => {
-    const config = loadProfileConfig(
-      genericPolicyConfig,
-      writeConfig({
+    const config = loadProfileConfig({
+      fallback: genericPolicyConfig,
+      configPath: writeConfig({
         profiles: {
           base: {
             description: "Base profile with broad sandbox capabilities",
@@ -242,7 +242,7 @@ describe("sandbox profile composition", () => {
           },
         },
       }),
-    );
+    });
 
     expect(config.profiles.child.sandbox).toEqual(
       expect.objectContaining({
@@ -254,9 +254,9 @@ describe("sandbox profile composition", () => {
 
   it("rejects unknown keys in a partial child sandbox", () => {
     expect(() =>
-      loadProfileConfig(
-        genericPolicyConfig,
-        writeConfig({
+      loadProfileConfig({
+        fallback: genericPolicyConfig,
+        configPath: writeConfig({
           profiles: {
             base: {
               description: "Base profile with an enabled sandbox",
@@ -270,14 +270,14 @@ describe("sandbox profile composition", () => {
             },
           },
         }),
-      ),
+      }),
     ).toThrow(/sandbox/);
   });
 
   it("leaves sandbox metadata unchanged when transforms rewrite other rules", () => {
-    const config = loadProfileConfig(
-      genericPolicyConfig,
-      writeConfig({
+    const config = loadProfileConfig({
+      fallback: genericPolicyConfig,
+      configPath: writeConfig({
         profiles: {
           base: {
             description:
@@ -291,7 +291,7 @@ describe("sandbox profile composition", () => {
           },
         },
       }),
-    );
+    });
 
     expect(config.profiles.base.sandbox).toEqual(
       expect.objectContaining({

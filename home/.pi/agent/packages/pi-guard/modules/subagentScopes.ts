@@ -1,13 +1,17 @@
 import type { Rule } from "./policyHelpers";
 
+export type NonEmptyRuleArray = [Rule, ...Rule[]];
+
 /**
  * Parse PI_SUBAGENT_PERMISSIBLE_GLOBS into the same rule shape used by the
  * existing permissions gate. Keeping this logic in one module lets the gate
  * and any future sandbox narrowing share the exact same normalization.
  */
-export function parseSubagentPermissibleRules(
-  value: string | undefined,
-): Rule[] | undefined {
+export function parseSubagentPermissibleRules({
+  value,
+}: {
+  readonly value: string | undefined;
+}): NonEmptyRuleArray | undefined {
   if (value === undefined) return undefined;
 
   const scopes = value
@@ -18,7 +22,9 @@ export function parseSubagentPermissibleRules(
     .filter(Boolean);
   const guidance =
     "This subagent may only access paths in its declared permissible scope.";
-  const rules: Rule[] = [{ pattern: "**", decision: "deny", guidance }];
+  const rules: [Rule, ...Rule[]] = [
+    { pattern: "**", decision: "deny", guidance },
+  ];
 
   for (const scope of scopes) {
     if (scope === ".") {

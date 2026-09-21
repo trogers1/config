@@ -9,8 +9,8 @@
 
 Replace divergent standard-profile CREATE and EDIT flows with one overview-first,
 raw-declaration authoring experience. Inline ASK remains a narrow, contextual rule
-save flow; it reuses the shared General component only when it must create a child
-profile.
+save flow. Durable ASK updates only the currently active user-owned profile; it never
+creates a child profile.
 
 The persisted `profiles` representation remains a keyed object. This is a hard cut:
 there are no compatibility adapters, aliases, migrations, or fallback handling for
@@ -76,7 +76,7 @@ that will be saved.
 
 ### General
 
-General is one shared component used by CREATE, EDIT, and ASK child creation:
+General is one shared component used by CREATE and EDIT:
 
 - Name and description are required in both CREATE and EDIT.
 - Emoji is optional; clearing it omits the local declaration.
@@ -204,20 +204,17 @@ then directory matching against immutable startup CWD, then persisted selection,
 configured default. The post-save rule is deliberately distinct from startup/resume
 selection.
 
-## Inline ASK child creation
+## Inline ASK durable updates
 
 ASK remains limited to concrete request-derived rule changes. It must not expose
 Composition, Transforms, Prompt, Sandbox, or Directory management.
 
-When ASK needs a child profile, it uses the shared General component and:
-
-- generates the collision-free child name with the existing suggested-child algorithm;
-- pre-fills its parent/composition context, generated description, and `💅` emoji;
-- leaves color inherited/omitted;
-- does not embed the generated name in any text input or description;
-- applies `Esc` Back to retained rule rows and local `Ctrl+C` cancellation back to the
-  permission picker; and
-- commits the child plus ASK rules atomically in one config mutation.
+This supersedes inline ASK child creation: a durable ASK decision updates the same
+active user-owned profile only, atomically with its request-derived rules. Built-in,
+shipped, composed, or otherwise non-user-owned active profiles reject durable saves
+with a clear error; they never create a child, switch active selection, or expose
+General. `Esc` Back retains rule rows and local `Ctrl+C` returns to the permission
+picker.
 
 ## Implementation boundaries and type rules
 
@@ -275,9 +272,10 @@ for all of the following:
     explicit saved profile wins over directory after CREATE and EDIT, while
     `PI_SUBAGENT_PROFILE` remains authoritative; startup/resume precedence remains
     independently covered.
-11. Inline ASK existing-profile updates and child creation: General prefills,
-    inherited color, local Ctrl+C cancellation to the permission picker, no
-    management-surface leakage, and atomic child-plus-rules save.
+11. Inline ASK durable updates only the active user-owned profile; built-in and other
+    non-user-owned active profiles reject the save without creating a child or exposing
+    management surfaces. Cover retained rows, local Ctrl+C cancellation to the
+    permission picker, and atomic same-profile rule saves.
 12. Registry/type-oriented tests proving exhaustive synchronized section dispatch and
     no private-state-driven component tests.
 
@@ -296,8 +294,9 @@ run the schema freshness check. Retain dependency-cruiser boundaries.
 ## Completion checklist
 
 - [x] One shared CREATE/EDIT overview and the exact ten-section order.
-- [x] CREATE/EDIT/ASK defaults, General fields, name generation, cancellation, and
-      keyboard rules above.
+- [x] CREATE/EDIT defaults, General fields, name generation, cancellation, and
+      keyboard rules above; inline ASK durably updates only the active user-owned
+      profile and never creates a child.
 - [x] Prompt’s three modes, user-path hard cut, file validation/runtime failure model,
       and documented external side-effect boundary.
 - [x] Raw fidelity, custom-tool preservation, resolver-valid composition, transforms,

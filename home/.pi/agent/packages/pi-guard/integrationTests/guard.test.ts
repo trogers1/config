@@ -201,12 +201,12 @@ describe("shell policy parser", () => {
 
   it("fails closed when unbash reports a parse error", async () => {
     const ctx = context(process.cwd(), false);
-    const result = await gateBash(
-      "git status 'unterminated",
-      process.cwd(),
-      ctx,
-      parserPolicy,
-    );
+    const result = await gateBash({
+      command: "git status 'unterminated",
+      startupCwd: process.cwd(),
+      ctx: ctx,
+      activePolicy: parserPolicy,
+    });
 
     expect(result).toMatchObject({ block: true });
     expect(result?.reason).toContain("could not be classified completely");
@@ -215,12 +215,12 @@ describe("shell policy parser", () => {
 
   it("allows a parse-error ASK with exactly one non-authorable prompt", async () => {
     const ctx = context(process.cwd(), true);
-    const result = await gateBash(
-      "python scripts/build.py 'unterminated",
-      process.cwd(),
-      ctx,
-      parserPolicy,
-    );
+    const result = await gateBash({
+      command: "python scripts/build.py 'unterminated",
+      startupCwd: process.cwd(),
+      ctx: ctx,
+      activePolicy: parserPolicy,
+    });
 
     expect(result).toBeUndefined();
     expect(vi.mocked(ctx.ui.custom)).toHaveBeenCalledTimes(1);
@@ -233,12 +233,12 @@ describe("shell policy parser", () => {
     } satisfies ProfilePolicy;
     const ctx = context(process.cwd());
 
-    const result = await gateBash(
-      "cat .env 'unterminated",
-      process.cwd(),
-      ctx,
-      policy,
-    );
+    const result = await gateBash({
+      command: "cat .env 'unterminated",
+      startupCwd: process.cwd(),
+      ctx: ctx,
+      activePolicy: policy,
+    });
 
     expect(result).toMatchObject({ block: true });
     expect(result?.reason).toContain("protected-path policy");
@@ -247,12 +247,12 @@ describe("shell policy parser", () => {
 
   it("blocks unbash parse errors without attempting a non-interactive prompt", async () => {
     const ctx = nonInteractiveContext(process.cwd());
-    const result = await gateBash(
-      "git status 'unterminated",
-      process.cwd(),
-      ctx,
-      parserPolicy,
-    );
+    const result = await gateBash({
+      command: "git status 'unterminated",
+      startupCwd: process.cwd(),
+      ctx: ctx,
+      activePolicy: parserPolicy,
+    });
 
     expect(result).toMatchObject({ block: true });
     expect(result?.reason).toContain("could not be classified completely");
@@ -260,12 +260,12 @@ describe("shell policy parser", () => {
   });
 
   it("denies a compound command when any parsed segment is denied", async () => {
-    const result = await gateBash(
-      "git status --short && git checkout main",
-      process.cwd(),
-      context(process.cwd()),
-      parserPolicy,
-    );
+    const result = await gateBash({
+      command: "git status --short && git checkout main",
+      startupCwd: process.cwd(),
+      ctx: context(process.cwd()),
+      activePolicy: parserPolicy,
+    });
 
     expect(result).toMatchObject({ block: true });
     expect(result?.reason).toContain("git checkout main");
@@ -292,12 +292,12 @@ describe("shell policy parser", () => {
       },
     } satisfies ProfilePolicy;
 
-    const combined = await gateBash(
-      "git checkout main && git reset --hard",
-      process.cwd(),
-      context(process.cwd()),
-      steeringPolicy,
-    );
+    const combined = await gateBash({
+      command: "git checkout main && git reset --hard",
+      startupCwd: process.cwd(),
+      ctx: context(process.cwd()),
+      activePolicy: steeringPolicy,
+    });
     expect(combined).toMatchObject({ block: true });
     expect(combined?.reason).toContain(
       "Switch branches with a dedicated tool instead.",
@@ -306,12 +306,12 @@ describe("shell policy parser", () => {
     expect(combined?.reason).toContain("git stash push");
 
     // Two segments matching the same deny rule must not repeat its steering.
-    const duplicated = await gateBash(
-      "git checkout main && git checkout feature",
-      process.cwd(),
-      context(process.cwd()),
-      steeringPolicy,
-    );
+    const duplicated = await gateBash({
+      command: "git checkout main && git checkout feature",
+      startupCwd: process.cwd(),
+      ctx: context(process.cwd()),
+      activePolicy: steeringPolicy,
+    });
     expect(duplicated).toMatchObject({ block: true });
     const guidance = "Switch branches with a dedicated tool instead.";
     expect(duplicated?.reason?.split(guidance)).toHaveLength(2);
@@ -323,7 +323,12 @@ describe("shell policy parser", () => {
       "echo `git checkout main`",
     ]) {
       await expect(
-        gateBash(command, process.cwd(), context(process.cwd()), parserPolicy),
+        gateBash({
+          command: command,
+          startupCwd: process.cwd(),
+          ctx: context(process.cwd()),
+          activePolicy: parserPolicy,
+        }),
       ).resolves.toMatchObject({ block: true });
     }
   });
@@ -334,12 +339,12 @@ describe("shell policy parser", () => {
       protectedPathRules: [{ pattern: "**/.db", decision: "deny" }],
     } satisfies ProfilePolicy;
 
-    const result = await gateBash(
-      "cat .db",
-      process.cwd(),
-      context(process.cwd()),
-      policy,
-    );
+    const result = await gateBash({
+      command: "cat .db",
+      startupCwd: process.cwd(),
+      ctx: context(process.cwd()),
+      activePolicy: policy,
+    });
     expect(result).toMatchObject({ block: true });
     expect(result?.reason).toContain("protected from disclosure and mutation");
   });
@@ -349,12 +354,12 @@ describe("shell policy parser", () => {
     const ctx = context(startupCwd);
 
     await expect(
-      gateBash(
-        "cd docs && cd drafts && ls ../../..",
-        startupCwd,
-        ctx,
-        parserPolicy,
-      ),
+      gateBash({
+        command: "cd docs && cd drafts && ls ../../..",
+        startupCwd: startupCwd,
+        ctx: ctx,
+        activePolicy: parserPolicy,
+      }),
     ).resolves.toBeUndefined();
     expect(vi.mocked(ctx.ui.custom).mock.calls).toHaveLength(1);
   });
@@ -465,12 +470,12 @@ describe("default profile bash policy", () => {
     const ctx = context(repositoryRoot, false);
 
     await expect(
-      gateBash(
-        "cd home/.pi/agent/packages/pi-guard && npm test",
-        repositoryRoot,
-        ctx,
-        policyConfig.profiles["builtin:default"],
-      ),
+      gateBash({
+        command: "cd home/.pi/agent/packages/pi-guard && npm test",
+        startupCwd: repositoryRoot,
+        ctx: ctx,
+        activePolicy: policyConfig.profiles["builtin:default"],
+      }),
     ).resolves.toBeUndefined();
     expect(vi.mocked(ctx.ui.custom)).not.toHaveBeenCalled();
   });
@@ -480,12 +485,13 @@ describe("default profile bash policy", () => {
     const ctx = context(repositoryRoot, false);
 
     await expect(
-      gateBash(
-        "git diff --stat -- home/.pi/agent/packages/pi-guard/integrationTests",
-        repositoryRoot,
-        ctx,
-        policyConfig.profiles["builtin:default"],
-      ),
+      gateBash({
+        command:
+          "git diff --stat -- home/.pi/agent/packages/pi-guard/integrationTests",
+        startupCwd: repositoryRoot,
+        ctx: ctx,
+        activePolicy: policyConfig.profiles["builtin:default"],
+      }),
     ).resolves.toBeUndefined();
     expect(vi.mocked(ctx.ui.custom)).not.toHaveBeenCalled();
   });
@@ -494,12 +500,12 @@ describe("default profile bash policy", () => {
     const ctx = context(process.cwd(), false);
 
     await expect(
-      gateBash(
-        "ls -la modules",
-        process.cwd(),
-        ctx,
-        policyConfig.profiles["builtin:default"],
-      ),
+      gateBash({
+        command: "ls -la modules",
+        startupCwd: process.cwd(),
+        ctx: ctx,
+        activePolicy: policyConfig.profiles["builtin:default"],
+      }),
     ).resolves.toBeUndefined();
     expect(vi.mocked(ctx.ui.custom)).not.toHaveBeenCalled();
   });
@@ -507,12 +513,12 @@ describe("default profile bash policy", () => {
   it("still gates path-shaped attached option values", async () => {
     const ctx = context(process.cwd(), false);
 
-    const result = await gateBash(
-      "ls --output=.env modules",
-      process.cwd(),
-      ctx,
-      policyConfig.profiles["builtin:default"],
-    );
+    const result = await gateBash({
+      command: "ls --output=.env modules",
+      startupCwd: process.cwd(),
+      ctx: ctx,
+      activePolicy: policyConfig.profiles["builtin:default"],
+    });
     expect(result).toMatchObject({ block: true });
     expect(result?.reason).toContain("--output=.env");
     expect(vi.mocked(ctx.ui.custom)).toHaveBeenCalled();
@@ -538,12 +544,12 @@ describe("default profile bash policy", () => {
         const ctx = context(process.cwd());
 
         await expect(
-          gateBash(
-            `cat ${piDocs}`,
-            process.cwd(),
-            ctx,
-            policyConfig.profiles[profile],
-          ),
+          gateBash({
+            command: `cat ${piDocs}`,
+            startupCwd: process.cwd(),
+            ctx: ctx,
+            activePolicy: policyConfig.profiles[profile],
+          }),
           document,
         ).resolves.toBeUndefined();
         expect(vi.mocked(ctx.ui.custom), document).not.toHaveBeenCalled();
@@ -563,12 +569,12 @@ describe("default profile bash policy", () => {
       );
 
       await expect(
-        gateBash(
-          `cat ${packageDependency}`,
-          path.join(process.cwd(), "test-project"),
-          ctx,
-          policyConfig.profiles[profile],
-        ),
+        gateBash({
+          command: `cat ${packageDependency}`,
+          startupCwd: path.join(process.cwd(), "test-project"),
+          ctx: ctx,
+          activePolicy: policyConfig.profiles[profile],
+        }),
       ).resolves.toBeUndefined();
       expect(vi.mocked(ctx.ui.custom)).not.toHaveBeenCalled();
     },
@@ -588,20 +594,20 @@ describe("default profile bash policy", () => {
     const ctx = context(process.cwd(), false);
 
     await expect(
-      gateBash(
-        "rg needle modules/allowed.ts",
-        process.cwd(),
-        ctx,
-        restrictivePolicy,
-      ),
+      gateBash({
+        command: "rg needle modules/allowed.ts",
+        startupCwd: process.cwd(),
+        ctx: ctx,
+        activePolicy: restrictivePolicy,
+      }),
     ).resolves.toBeUndefined();
     await expect(
-      gateBash(
-        "rg --glob 'modules/**' needle modules/allowed.ts",
-        process.cwd(),
-        ctx,
-        restrictivePolicy,
-      ),
+      gateBash({
+        command: "rg --glob 'modules/**' needle modules/allowed.ts",
+        startupCwd: process.cwd(),
+        ctx: ctx,
+        activePolicy: restrictivePolicy,
+      }),
     ).resolves.toBeUndefined();
 
     for (const command of [
@@ -623,24 +629,39 @@ describe("default profile bash policy", () => {
       'git log > "$OUTPUT"',
     ]) {
       await expect(
-        gateBash(command, process.cwd(), ctx, restrictivePolicy),
+        gateBash({
+          command: command,
+          startupCwd: process.cwd(),
+          ctx: ctx,
+          activePolicy: restrictivePolicy,
+        }),
         command,
       ).resolves.toMatchObject({ block: true });
     }
 
     await expect(
-      gateBash(
-        "git show HEAD~3:src/example.ts",
-        process.cwd(),
-        ctx,
-        restrictivePolicy,
-      ),
+      gateBash({
+        command: "git show HEAD~3:src/example.ts",
+        startupCwd: process.cwd(),
+        ctx: ctx,
+        activePolicy: restrictivePolicy,
+      }),
     ).resolves.toBeUndefined();
     await expect(
-      gateBash("git show HEAD", process.cwd(), ctx, restrictivePolicy),
+      gateBash({
+        command: "git show HEAD",
+        startupCwd: process.cwd(),
+        ctx: ctx,
+        activePolicy: restrictivePolicy,
+      }),
     ).resolves.toBeUndefined();
     await expect(
-      gateBash("git rev-parse HEAD~3", process.cwd(), ctx, restrictivePolicy),
+      gateBash({
+        command: "git rev-parse HEAD~3",
+        startupCwd: process.cwd(),
+        ctx: ctx,
+        activePolicy: restrictivePolicy,
+      }),
     ).resolves.toBeUndefined();
   });
 
@@ -679,12 +700,12 @@ describe("default profile bash policy", () => {
         writePaths: [{ pattern: "**", decision: "deny" as const }],
       } satisfies ProfilePolicy;
       const ctx = nonInteractiveContext(process.cwd());
-      const result = await gateBash(
-        command,
-        process.cwd(),
-        ctx,
-        restrictivePolicy,
-      );
+      const result = await gateBash({
+        command: command,
+        startupCwd: process.cwd(),
+        ctx: ctx,
+        activePolicy: restrictivePolicy,
+      });
 
       expect(result).toMatchObject({ block: true });
       expect(vi.mocked(ctx.ui.custom)).not.toHaveBeenCalled();
@@ -698,12 +719,12 @@ describe("default profile bash policy", () => {
     restrictivePolicy.writePaths = [{ pattern: "**", decision: "deny" }];
     const ctx = nonInteractiveContext(process.cwd());
 
-    const result = await gateBash(
-      'git diff "$LEFT" "$RIGHT"',
-      process.cwd(),
-      ctx,
-      restrictivePolicy,
-    );
+    const result = await gateBash({
+      command: 'git diff "$LEFT" "$RIGHT"',
+      startupCwd: process.cwd(),
+      ctx: ctx,
+      activePolicy: restrictivePolicy,
+    });
 
     expect(result).toMatchObject({ block: true });
     expect(vi.mocked(ctx.ui.custom)).not.toHaveBeenCalled();
@@ -726,7 +747,12 @@ describe("default profile bash policy", () => {
       const ctx = context(process.cwd(), true);
 
       await expect(
-        gateBash(command, process.cwd(), ctx, restrictivePolicy),
+        gateBash({
+          command: command,
+          startupCwd: process.cwd(),
+          ctx: ctx,
+          activePolicy: restrictivePolicy,
+        }),
       ).resolves.toBeUndefined();
       expect(vi.mocked(ctx.ui.custom)).toHaveBeenCalledOnce();
     },
@@ -745,12 +771,12 @@ describe("default profile bash policy", () => {
       'cat "${ROOT}/credentials"',
     ]) {
       await expect(
-        gateBash(
-          command,
-          process.cwd(),
-          nonInteractiveContext(process.cwd()),
-          restrictivePolicy,
-        ),
+        gateBash({
+          command: command,
+          startupCwd: process.cwd(),
+          ctx: nonInteractiveContext(process.cwd()),
+          activePolicy: restrictivePolicy,
+        }),
         command,
       ).resolves.toMatchObject({ block: true });
     }
@@ -769,12 +795,12 @@ describe("default profile bash policy", () => {
       "~/path:name",
     ]) {
       await expect(
-        gateBash(
-          `git show ${operand}`,
-          process.cwd(),
-          nonInteractiveContext(process.cwd()),
-          restrictivePolicy,
-        ),
+        gateBash({
+          command: `git show ${operand}`,
+          startupCwd: process.cwd(),
+          ctx: nonInteractiveContext(process.cwd()),
+          activePolicy: restrictivePolicy,
+        }),
         operand,
       ).resolves.toMatchObject({ block: true });
     }
@@ -787,12 +813,12 @@ describe("default profile bash policy", () => {
     restrictivePolicy.writePaths = [{ pattern: "**", decision: "deny" }];
 
     await expect(
-      gateBash(
-        "git tag --sort version:refname",
-        process.cwd(),
-        nonInteractiveContext(process.cwd()),
-        restrictivePolicy,
-      ),
+      gateBash({
+        command: "git tag --sort version:refname",
+        startupCwd: process.cwd(),
+        ctx: nonInteractiveContext(process.cwd()),
+        activePolicy: restrictivePolicy,
+      }),
     ).resolves.toBeUndefined();
   });
 
@@ -812,39 +838,39 @@ describe("default profile bash policy", () => {
     ];
 
     await expect(
-      gateBash(
-        "cd allowed; cat ./file",
-        process.cwd(),
-        context(process.cwd()),
-        restrictivePolicy,
-      ),
+      gateBash({
+        command: "cd allowed; cat ./file",
+        startupCwd: process.cwd(),
+        ctx: context(process.cwd()),
+        activePolicy: restrictivePolicy,
+      }),
     ).resolves.toBeUndefined();
 
     await expect(
-      gateBash(
-        "(cd allowed; cat ./file); cat ./startup-file",
-        process.cwd(),
-        context(process.cwd()),
-        restrictivePolicy,
-      ),
+      gateBash({
+        command: "(cd allowed; cat ./file); cat ./startup-file",
+        startupCwd: process.cwd(),
+        ctx: context(process.cwd()),
+        activePolicy: restrictivePolicy,
+      }),
     ).resolves.toBeUndefined();
 
     await expect(
-      gateBash(
-        "cd first || cd second; cat ./startup-file",
-        process.cwd(),
-        nonInteractiveContext(process.cwd()),
-        restrictivePolicy,
-      ),
+      gateBash({
+        command: "cd first || cd second; cat ./startup-file",
+        startupCwd: process.cwd(),
+        ctx: nonInteractiveContext(process.cwd()),
+        activePolicy: restrictivePolicy,
+      }),
     ).resolves.toMatchObject({ block: true });
 
     await expect(
-      gateBash(
-        'cd "$TARGET"; cat ./startup-file',
-        process.cwd(),
-        nonInteractiveContext(process.cwd()),
-        restrictivePolicy,
-      ),
+      gateBash({
+        command: 'cd "$TARGET"; cat ./startup-file',
+        startupCwd: process.cwd(),
+        ctx: nonInteractiveContext(process.cwd()),
+        activePolicy: restrictivePolicy,
+      }),
     ).resolves.toMatchObject({ block: true });
   });
 
@@ -872,12 +898,12 @@ describe("default profile bash policy", () => {
       } satisfies ProfilePolicy;
 
       await expect(
-        gateBash(
-          command,
-          process.cwd(),
-          nonInteractiveContext(process.cwd()),
-          restrictivePolicy,
-        ),
+        gateBash({
+          command: command,
+          startupCwd: process.cwd(),
+          ctx: nonInteractiveContext(process.cwd()),
+          activePolicy: restrictivePolicy,
+        }),
       ).resolves.toMatchObject({ block: true });
     },
   );
@@ -893,12 +919,12 @@ describe("default profile bash policy", () => {
     ];
 
     await expect(
-      gateBash(
-        "false && cd allowed; cat ./file",
-        process.cwd(),
-        nonInteractiveContext(process.cwd()),
-        restrictivePolicy,
-      ),
+      gateBash({
+        command: "false && cd allowed; cat ./file",
+        startupCwd: process.cwd(),
+        ctx: nonInteractiveContext(process.cwd()),
+        activePolicy: restrictivePolicy,
+      }),
     ).resolves.toMatchObject({ block: true });
   });
 
@@ -918,12 +944,12 @@ describe("default profile bash policy", () => {
       "echo <(cd allowed); cat ./startup-file",
     ]) {
       await expect(
-        gateBash(
-          command,
-          process.cwd(),
-          context(process.cwd()),
-          restrictivePolicy,
-        ),
+        gateBash({
+          command: command,
+          startupCwd: process.cwd(),
+          ctx: context(process.cwd()),
+          activePolicy: restrictivePolicy,
+        }),
         command,
       ).resolves.toBeUndefined();
     }
@@ -940,12 +966,12 @@ describe("default profile bash policy", () => {
     ];
 
     await expect(
-      gateBash(
-        "{ cd allowed; cat ./file; }; cat ./file",
-        process.cwd(),
-        context(process.cwd()),
-        restrictivePolicy,
-      ),
+      gateBash({
+        command: "{ cd allowed; cat ./file; }; cat ./file",
+        startupCwd: process.cwd(),
+        ctx: context(process.cwd()),
+        activePolicy: restrictivePolicy,
+      }),
     ).resolves.toBeUndefined();
   });
 
@@ -958,7 +984,12 @@ describe("default profile bash policy", () => {
 
     for (const command of ["npm run check:types", "npm test"]) {
       await expect(
-        gateBash(command, process.cwd(), ctx, restrictivePolicy),
+        gateBash({
+          command: command,
+          startupCwd: process.cwd(),
+          ctx: ctx,
+          activePolicy: restrictivePolicy,
+        }),
         command,
       ).resolves.toBeUndefined();
     }
@@ -982,12 +1013,12 @@ describe("default profile bash policy", () => {
     ];
 
     await expect(
-      gateBash(
-        "npm --prefix pkg run test",
-        process.cwd(),
-        context(process.cwd(), false),
-        restrictivePolicy,
-      ),
+      gateBash({
+        command: "npm --prefix pkg run test",
+        startupCwd: process.cwd(),
+        ctx: context(process.cwd(), false),
+        activePolicy: restrictivePolicy,
+      }),
     ).resolves.toBeUndefined();
 
     for (const command of [
@@ -996,12 +1027,12 @@ describe("default profile bash policy", () => {
       "pnpm -C ../blocked test",
     ]) {
       await expect(
-        gateBash(
-          command,
-          process.cwd(),
-          nonInteractiveContext(process.cwd()),
-          restrictivePolicy,
-        ),
+        gateBash({
+          command: command,
+          startupCwd: process.cwd(),
+          ctx: nonInteractiveContext(process.cwd()),
+          activePolicy: restrictivePolicy,
+        }),
         command,
       ).resolves.toMatchObject({ block: true });
     }
@@ -1023,7 +1054,12 @@ describe("default profile bash policy", () => {
       const ctx = context(process.cwd(), false);
 
       await expect(
-        gateBash("cd project", process.cwd(), ctx, policy),
+        gateBash({
+          command: "cd project",
+          startupCwd: process.cwd(),
+          ctx: ctx,
+          activePolicy: policy,
+        }),
       ).resolves.toBeUndefined();
       expect(vi.mocked(ctx.ui.custom)).not.toHaveBeenCalled();
     });
@@ -1035,22 +1071,22 @@ describe("default profile bash policy", () => {
       policy.readPaths = [{ pattern: "**", decision: "deny" }];
 
       await expect(
-        gateBash(
-          "cd project",
-          process.cwd(),
-          nonInteractiveContext(process.cwd()),
-          policy,
-        ),
+        gateBash({
+          command: "cd project",
+          startupCwd: process.cwd(),
+          ctx: nonInteractiveContext(process.cwd()),
+          activePolicy: policy,
+        }),
       ).resolves.toMatchObject({ block: true });
     });
 
     it("still denies cd into protected paths", async () => {
-      const result = await gateBash(
-        "cd .git",
-        process.cwd(),
-        context(process.cwd(), false),
-        policyConfig.profiles["builtin:default"],
-      );
+      const result = await gateBash({
+        command: "cd .git",
+        startupCwd: process.cwd(),
+        ctx: context(process.cwd(), false),
+        activePolicy: policyConfig.profiles["builtin:default"],
+      });
 
       expect(result).toMatchObject({ block: true });
       expect(result?.reason).toContain(
@@ -1072,12 +1108,12 @@ describe("default profile bash policy", () => {
       } satisfies ProfilePolicy;
       const ctx = context(process.cwd());
 
-      const result = await gateBash(
-        "cd docs && cp source blocked",
-        process.cwd(),
-        ctx,
-        policy,
-      );
+      const result = await gateBash({
+        command: "cd docs && cp source blocked",
+        startupCwd: process.cwd(),
+        ctx: ctx,
+        activePolicy: policy,
+      });
 
       expect(result).toMatchObject({ block: true });
       expect(result?.reason).toContain("Bash path reference denied by policy");
@@ -1098,21 +1134,21 @@ describe("default profile bash policy", () => {
       ];
 
       await expect(
-        gateBash(
-          "cd project && cat allowed",
-          process.cwd(),
-          context(process.cwd(), false),
-          restrictivePolicy,
-        ),
+        gateBash({
+          command: "cd project && cat allowed",
+          startupCwd: process.cwd(),
+          ctx: context(process.cwd(), false),
+          activePolicy: restrictivePolicy,
+        }),
       ).resolves.toBeUndefined();
 
       await expect(
-        gateBash(
-          "cd project && cat secret",
-          process.cwd(),
-          nonInteractiveContext(process.cwd()),
-          restrictivePolicy,
-        ),
+        gateBash({
+          command: "cd project && cat secret",
+          startupCwd: process.cwd(),
+          ctx: nonInteractiveContext(process.cwd()),
+          activePolicy: restrictivePolicy,
+        }),
       ).resolves.toMatchObject({ block: true });
     });
   });
@@ -1127,12 +1163,12 @@ describe("default profile bash policy", () => {
     );
 
     await expect(
-      gateBash(
-        `cat ${unrelatedDependency}`,
-        process.cwd(),
-        ctx,
-        policyConfig.profiles["builtin:default"],
-      ),
+      gateBash({
+        command: `cat ${unrelatedDependency}`,
+        startupCwd: process.cwd(),
+        ctx: ctx,
+        activePolicy: policyConfig.profiles["builtin:default"],
+      }),
     ).resolves.toMatchObject({ block: true });
     expect(vi.mocked(ctx.ui.custom)).toHaveBeenCalled();
   });
@@ -1250,12 +1286,12 @@ describe("default profile bash policy", () => {
   });
 
   it("steers denied package manager mutations toward asking the user", async () => {
-    const result = await gateBash(
-      "npm install lodash",
-      process.cwd(),
-      context(process.cwd(), false),
-      policyConfig.profiles["builtin:default"],
-    );
+    const result = await gateBash({
+      command: "npm install lodash",
+      startupCwd: process.cwd(),
+      ctx: context(process.cwd(), false),
+      activePolicy: policyConfig.profiles["builtin:default"],
+    });
 
     expect(result).toMatchObject({ block: true });
     expect(result?.reason).toContain("Ask the user");

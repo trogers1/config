@@ -46,13 +46,13 @@ describe("permissions explain", () => {
       { pattern: "*", decision: "ask" },
     ]);
 
-    const explanation = explainPermission(
+    const explanation = explainPermission({
       policy,
-      "builtin:default",
-      "bash",
-      "git branch --list",
-      startupCwd,
-    );
+      profileName: "builtin:default",
+      tool: "bash",
+      input: "git branch --list",
+      cwd: startupCwd,
+    });
 
     expect(explanation.profile).toBe("builtin:default");
     expect(explanation.decision).toBe("allow");
@@ -71,13 +71,13 @@ describe("permissions explain", () => {
       { pattern: "git commit *", decision: "allow" },
     ]);
 
-    const explanation = explainPermission(
+    const explanation = explainPermission({
       policy,
-      "builtin:default",
-      "bash",
-      "git commit -m test",
-      startupCwd,
-    );
+      profileName: "builtin:default",
+      tool: "bash",
+      input: "git commit -m test",
+      cwd: startupCwd,
+    });
 
     expect(explanation.decision).toBe("allow");
     expect(explanation.winner?.pattern).toBe("git commit *");
@@ -91,13 +91,13 @@ describe("permissions explain", () => {
       { pattern: "git * --short", decision: "deny" },
     ]);
 
-    const explanation = explainPermission(
+    const explanation = explainPermission({
       policy,
-      "builtin:default",
-      "bash",
-      "git status --short",
-      startupCwd,
-    );
+      profileName: "builtin:default",
+      tool: "bash",
+      input: "git status --short",
+      cwd: startupCwd,
+    });
 
     expect(explanation.decision).toBe("deny");
     expect(explanation.winner?.pattern).toBe("git * --short");
@@ -107,13 +107,13 @@ describe("permissions explain", () => {
   it("falls back to ask when no bash rules match", () => {
     const policy = bashProfile([]);
 
-    const explanation = explainPermission(
+    const explanation = explainPermission({
       policy,
-      "builtin:default",
-      "bash",
-      "unknown-command",
-      startupCwd,
-    );
+      profileName: "builtin:default",
+      tool: "bash",
+      input: "unknown-command",
+      cwd: startupCwd,
+    });
 
     expect(explanation.decision).toBe("ask");
     expect(explanation.winner).toBeUndefined();
@@ -127,13 +127,13 @@ describe("permissions explain", () => {
       { pattern: "rm -rf *", decision: "deny" },
     ]);
 
-    const explanation = explainPermission(
+    const explanation = explainPermission({
       policy,
-      "builtin:default",
-      "bash",
-      "git status; rm -rf x",
-      startupCwd,
-    );
+      profileName: "builtin:default",
+      tool: "bash",
+      input: "git status; rm -rf x",
+      cwd: startupCwd,
+    });
 
     expect(explanation.decision).toBe("deny");
     expect(explanation.notes).toEqual(
@@ -147,13 +147,13 @@ describe("permissions explain", () => {
       { pattern: "rm -rf *", decision: "deny" },
     ]);
 
-    const explanation = explainPermission(
+    const explanation = explainPermission({
       policy,
-      "builtin:default",
-      "bash",
-      "git status && rm -rf x",
-      startupCwd,
-    );
+      profileName: "builtin:default",
+      tool: "bash",
+      input: "git status && rm -rf x",
+      cwd: startupCwd,
+    });
 
     expect(explanation.decision).toBe("deny");
   });
@@ -169,13 +169,13 @@ describe("permissions explain", () => {
       ],
     };
 
-    const explanation = explainPermission(
+    const explanation = explainPermission({
       policy,
-      "builtin:default",
-      "bash",
-      "cp source ask/file; cp source denied/file",
-      startupCwd,
-    );
+      profileName: "builtin:default",
+      tool: "bash",
+      input: "cp source ask/file; cp source denied/file",
+      cwd: startupCwd,
+    });
 
     expect(explanation.decision).toBe("deny");
     expect(explanation.notes).toEqual(
@@ -184,13 +184,13 @@ describe("permissions explain", () => {
   });
 
   it("reports the parse-error approval gate before evaluating Bash policy", () => {
-    const explanation = explainPermission(
-      bashProfile([{ pattern: "git status *", decision: "allow" }]),
-      "builtin:default",
-      "bash",
-      "git status 'unterminated",
-      startupCwd,
-    );
+    const explanation = explainPermission({
+      policy: bashProfile([{ pattern: "git status *", decision: "allow" }]),
+      profileName: "builtin:default",
+      tool: "bash",
+      input: "git status 'unterminated",
+      cwd: startupCwd,
+    });
 
     expect(explanation.decision).toBe("ask");
     expect(explanation.notes).toEqual(
@@ -206,13 +206,13 @@ describe("permissions explain", () => {
       protectedPathRules: [{ pattern: "**/.env*", decision: "deny" }],
     };
 
-    const explanation = explainPermission(
+    const explanation = explainPermission({
       policy,
-      "builtin:default",
-      "bash",
-      "cat .env 'unterminated",
-      startupCwd,
-    );
+      profileName: "builtin:default",
+      tool: "bash",
+      input: "cat .env 'unterminated",
+      cwd: startupCwd,
+    });
 
     expect(explanation.decision).toBe("deny");
     expect(explanation.protectedOverride?.pattern).toBe("**/.env*");
@@ -229,13 +229,13 @@ describe("permissions explain", () => {
       protectedPathRules: [{ pattern: "**/.env*", decision: "deny" }],
     };
 
-    const explanation = explainPermission(
+    const explanation = explainPermission({
       policy,
-      "builtin:default",
-      "bash",
-      "git add .env",
-      startupCwd,
-    );
+      profileName: "builtin:default",
+      tool: "bash",
+      input: "git add .env",
+      cwd: startupCwd,
+    });
 
     expect(explanation.decision).toBe("deny");
     expect(explanation.protectedOverride).toBeDefined();
@@ -248,13 +248,13 @@ describe("permissions explain", () => {
       protectedPathRules: [{ pattern: "**/.env*", decision: "deny" }],
     };
 
-    const explanation = explainPermission(
+    const explanation = explainPermission({
       policy,
-      "builtin:default",
-      "bash",
-      "rm -rf .env",
-      startupCwd,
-    );
+      profileName: "builtin:default",
+      tool: "bash",
+      input: "rm -rf .env",
+      cwd: startupCwd,
+    });
 
     expect(explanation.decision).toBe("deny");
     expect(explanation.winner).toBeUndefined();
@@ -267,13 +267,13 @@ describe("permissions explain", () => {
       writePaths: [{ pattern: "src/**", decision: "deny", contexts: ["bash"] }],
     };
 
-    const explanation = explainPermission(
+    const explanation = explainPermission({
       policy,
-      "builtin:default",
-      "bash",
-      "cp a.txt src/b.txt",
-      startupCwd,
-    );
+      profileName: "builtin:default",
+      tool: "bash",
+      input: "cp a.txt src/b.txt",
+      cwd: startupCwd,
+    });
 
     expect(explanation.decision).toBe("deny");
     expect(explanation.notes).toEqual(
@@ -296,13 +296,13 @@ describe("permissions explain", () => {
       ],
     };
 
-    const explanation = explainPermission(
+    const explanation = explainPermission({
       policy,
-      "builtin:default",
-      "bash",
-      "cp .env.template output",
-      startupCwd,
-    );
+      profileName: "builtin:default",
+      tool: "bash",
+      input: "cp .env.template output",
+      cwd: startupCwd,
+    });
 
     expect(explanation.decision).toBe("allow");
     expect(explanation.pathWinner?.pattern).toBe(".env.template");
@@ -320,13 +320,13 @@ describe("permissions explain", () => {
       ],
     };
 
-    const explanation = explainPermission(
+    const explanation = explainPermission({
       policy,
-      "builtin:default",
-      "bash",
-      "cd docs && cp a b",
-      startupCwd,
-    );
+      profileName: "builtin:default",
+      tool: "bash",
+      input: "cd docs && cp a b",
+      cwd: startupCwd,
+    });
 
     expect(explanation.decision).toBe("deny");
     expect(explanation.notes).toEqual(
@@ -345,13 +345,13 @@ describe("permissions explain", () => {
       [{ pattern: "*", decision: "allow" }],
     );
 
-    const explanation = explainPermission(
+    const explanation = explainPermission({
       policy,
-      "builtin:default",
-      "read",
-      "docs/readme.md",
-      startupCwd,
-    );
+      profileName: "builtin:default",
+      tool: "read",
+      input: "docs/readme.md",
+      cwd: startupCwd,
+    });
 
     expect(explanation.decision).toBe("allow");
     expect(explanation.winner?.pattern).toBe("docs/**");
@@ -370,13 +370,13 @@ describe("permissions explain", () => {
       [{ pattern: "*", decision: "allow" }],
     );
 
-    const explanation = explainPermission(
+    const explanation = explainPermission({
       policy,
-      "builtin:default",
-      "grep",
-      "docs/readme.md",
-      startupCwd,
-    );
+      profileName: "builtin:default",
+      tool: "grep",
+      input: "docs/readme.md",
+      cwd: startupCwd,
+    });
 
     expect(explanation.matches.map((m) => m.pattern)).toEqual(["**"]);
   });
@@ -387,13 +387,13 @@ describe("permissions explain", () => {
       [{ pattern: "*", decision: "allow" }],
     );
 
-    const explanation = explainPermission(
+    const explanation = explainPermission({
       policy,
-      "builtin:default",
-      "read",
-      "docs/readme.md",
-      startupCwd,
-    );
+      profileName: "builtin:default",
+      tool: "read",
+      input: "docs/readme.md",
+      cwd: startupCwd,
+    });
 
     expect(explanation.decision).toBe("allow");
     expect(explanation.fallback).toBe("allow");
@@ -408,13 +408,13 @@ describe("permissions explain", () => {
       protectedPathRules: [{ pattern: "**/.env*", decision: "deny" }],
     };
 
-    const explanation = explainPermission(
+    const explanation = explainPermission({
       policy,
-      "builtin:default",
-      "read",
-      ".env",
-      startupCwd,
-    );
+      profileName: "builtin:default",
+      tool: "read",
+      input: ".env",
+      cwd: startupCwd,
+    });
 
     expect(explanation.decision).toBe("deny");
     expect(explanation.protectedOverride).toBeDefined();
@@ -434,13 +434,13 @@ describe("permissions explain", () => {
       ],
     };
 
-    const explanation = explainPermission(
+    const explanation = explainPermission({
       policy,
-      "builtin:default",
-      "read",
-      ".env.template",
-      startupCwd,
-    );
+      profileName: "builtin:default",
+      tool: "read",
+      input: ".env.template",
+      cwd: startupCwd,
+    });
 
     expect(explanation.decision).toBe("allow");
     expect(explanation.protectedOverride).toMatchObject({
@@ -461,14 +461,14 @@ describe("permissions explain", () => {
       [{ pattern: "*", decision: "deny" }],
     );
 
-    const explanation = explainPermission(
+    const explanation = explainPermission({
       policy,
-      "builtin:default",
-      "read",
-      "/workspace/project/src/example.ts",
-      "/workspace/project/subdir",
+      profileName: "builtin:default",
+      tool: "read",
+      input: "/workspace/project/src/example.ts",
+      cwd: "/workspace/project/subdir",
       startupCwd,
-    );
+    });
 
     expect(explanation.decision).toBe("allow");
     expect(explanation.winner?.pattern).toBe("src/**");
@@ -490,13 +490,13 @@ describe("permissions explain", () => {
       writePaths: [{ pattern: "*", decision: "allow" }],
     };
 
-    const explanation = explainPermission(
+    const explanation = explainPermission({
       policy,
-      "builtin:default",
-      "deploy",
-      JSON.stringify({ action: "deploy", environment: "prod" }),
-      startupCwd,
-    );
+      profileName: "builtin:default",
+      tool: "deploy",
+      input: JSON.stringify({ action: "deploy", environment: "prod" }),
+      cwd: startupCwd,
+    });
 
     expect(explanation.decision).toBe("allow");
     expect(explanation.winner?.pattern).toBe(
@@ -516,13 +516,13 @@ describe("permissions explain", () => {
       writePaths: [{ pattern: "*", decision: "allow" }],
     };
 
-    const explanation = explainPermission(
+    const explanation = explainPermission({
       policy,
-      "builtin:default",
-      "deploy",
-      JSON.stringify({ action: "inspect" }),
-      startupCwd,
-    );
+      profileName: "builtin:default",
+      tool: "deploy",
+      input: JSON.stringify({ action: "inspect" }),
+      cwd: startupCwd,
+    });
 
     expect(explanation.decision).toBe("ask");
     expect(explanation.matches).toHaveLength(0);
@@ -535,13 +535,13 @@ describe("permissions explain", () => {
       writePaths: [{ pattern: "*", decision: "allow" }],
     };
 
-    const explanation = explainPermission(
+    const explanation = explainPermission({
       policy,
-      "builtin:default",
-      "unconfigured-tool",
-      "any input",
-      startupCwd,
-    );
+      profileName: "builtin:default",
+      tool: "unconfigured-tool",
+      input: "any input",
+      cwd: startupCwd,
+    });
 
     expect(explanation.decision).toBe("allow");
     expect(explanation.notes).toEqual(
@@ -552,13 +552,13 @@ describe("permissions explain", () => {
   it("formats the explanation with required fields", () => {
     const policy = bashProfile([{ pattern: "git status", decision: "allow" }]);
 
-    const explanation = explainPermission(
+    const explanation = explainPermission({
       policy,
-      "builtin:default",
-      "bash",
-      "git status",
-      startupCwd,
-    );
+      profileName: "builtin:default",
+      tool: "bash",
+      input: "git status",
+      cwd: startupCwd,
+    });
     const formatted = formatExplanation(explanation);
 
     expect(formatted).toContain("Profile: builtin:default");
@@ -570,13 +570,13 @@ describe("permissions explain", () => {
   });
 
   it("shows composition chain for built-in profiles", () => {
-    const explanation = explainPermission(
-      policyConfig.profiles["builtin:default"],
-      "builtin:default",
-      "bash",
-      "git status",
-      startupCwd,
-    );
+    const explanation = explainPermission({
+      policy: policyConfig.profiles["builtin:default"],
+      profileName: "builtin:default",
+      tool: "bash",
+      input: "git status",
+      cwd: startupCwd,
+    });
 
     expect(explanation.compositionChain).toEqual([
       "ruleset:shell",
@@ -598,17 +598,17 @@ describe("permissions explain", () => {
           transforms: ["transform:deny-asks"],
         },
       },
-    };
+    } satisfies RawProfileConfig;
 
-    const explanation = explainPermission(
-      policyConfig.profiles["builtin:default"],
-      "my-profile",
-      "bash",
-      "git status",
+    const explanation = explainPermission({
+      policy: policyConfig.profiles["builtin:default"],
+      profileName: "my-profile",
+      tool: "bash",
+      input: "git status",
+      cwd: startupCwd,
       startupCwd,
-      startupCwd,
-      rawConfig as RawProfileConfig,
-    );
+      rawConfig,
+    });
 
     expect(explanation.compositionChain).toEqual([
       "ruleset:shell",
@@ -629,13 +629,13 @@ describe("permissions explain", () => {
       [{ pattern: "*", decision: "allow" }],
     );
 
-    const explanation = explainPermission(
+    const explanation = explainPermission({
       policy,
-      "builtin:default",
-      "read",
-      "/tmp/file.txt",
-      startupCwd,
-    );
+      profileName: "builtin:default",
+      tool: "read",
+      input: "/tmp/file.txt",
+      cwd: startupCwd,
+    });
 
     expect(explanation.decision).toBe("allow");
     expect(explanation.winner?.pattern).toBe("/tmp/**");
@@ -647,13 +647,13 @@ describe("permissions explain", () => {
       { pattern: "*", decision: "ask" },
     ]);
 
-    const explanation = explainPermission(
+    const explanation = explainPermission({
       policy,
-      "builtin:default",
-      "bash",
-      "  git   status  ",
-      startupCwd,
-    );
+      profileName: "builtin:default",
+      tool: "bash",
+      input: "  git   status  ",
+      cwd: startupCwd,
+    });
 
     expect(explanation.decision).toBe("allow");
     expect(explanation.winner?.pattern).toBe("git status");

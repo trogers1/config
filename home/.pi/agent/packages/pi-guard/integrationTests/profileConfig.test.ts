@@ -2,10 +2,15 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type {
-  ExtensionAPI,
+  BeforeAgentStartEvent,
+  BeforeAgentStartEventResult,
   ExtensionContext,
+  SessionShutdownEvent,
   SessionStartEvent,
   ToolCallEvent,
+  ToolCallEventResult,
+  UserBashEvent,
+  UserBashEventResult,
 } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import permissionsExtension, { decideBash } from "../extensions/guard";
@@ -46,10 +51,10 @@ describe("profile configuration", () => {
       path.join(os.tmpdir(), "pi-guard-missing-"),
     );
     temporaryDirectories.push(directory);
-    const config = loadProfileConfig(
-      genericPolicyConfig,
-      path.join(directory, "does-not-exist.jsonc"),
-    );
+    const config = loadProfileConfig({
+      fallback: genericPolicyConfig,
+      configPath: path.join(directory, "does-not-exist.jsonc"),
+    });
 
     expect(config).toBe(genericPolicyConfig);
   });
@@ -59,9 +64,9 @@ describe("profile configuration", () => {
       .spyOn(console, "warn")
       .mockImplementation(() => undefined);
 
-    loadProfileConfig(
-      genericPolicyConfig,
-      writeConfig(`{
+    loadProfileConfig({
+      fallback: genericPolicyConfig,
+      configPath: writeConfig(`{
         "profiles": {
           "standalone": {
             "description": "Standalone profile for deployment conflict linting and rule diagnostics.",
@@ -76,7 +81,7 @@ describe("profile configuration", () => {
           }
         }
       }`),
-    );
+    });
 
     expect(warnSpy).toHaveBeenCalledWith(
       "Profile 'standalone' has conflicting bash rules for pattern 'deploy *': 'allow' conflicts with later 'deny'.",
@@ -100,12 +105,16 @@ describe("profile configuration", () => {
     );
 
     try {
-      loadProfileConfig(genericPolicyConfig, configPath);
+      loadProfileConfig({
+        fallback: genericPolicyConfig,
+        configPath: configPath,
+      });
       throw new Error("expected loadProfileConfig to throw");
     } catch (error) {
       expect(error).toBeInstanceOf(ProfileConfigLoadError);
-      expect((error as ProfileConfigLoadError).configPath).toBe(configPath);
-      expect((error as ProfileConfigLoadError).details).toBe(
+      if (!(error instanceof ProfileConfigLoadError)) throw error;
+      expect(error.configPath).toBe(configPath);
+      expect(error.details).toBe(
         "/profiles/standalone/transforms: transforms require at least one extends target",
       );
     }
@@ -116,9 +125,9 @@ describe("profile configuration", () => {
       .spyOn(console, "warn")
       .mockImplementation(() => undefined);
 
-    loadProfileConfig(
-      genericPolicyConfig,
-      writeConfig(`{
+    loadProfileConfig({
+      fallback: genericPolicyConfig,
+      configPath: writeConfig(`{
         "profiles": {
           "base": {
             "description": "Base deployment profile for inherited Bash rule conflict testing.",
@@ -137,7 +146,7 @@ describe("profile configuration", () => {
           }
         }
       }`),
-    );
+    });
 
     expect(warnSpy).toHaveBeenCalledWith(
       "Profile 'child' has conflicting bash rules for pattern 'deploy *': 'allow' conflicts with later 'deny'.",
@@ -145,9 +154,9 @@ describe("profile configuration", () => {
   });
 
   it("parses JSONC and extends a shipped profile", () => {
-    const config = loadProfileConfig(
-      genericPolicyConfig,
-      writeConfig(`{
+    const config = loadProfileConfig({
+      fallback: genericPolicyConfig,
+      configPath: writeConfig(`{
         // Editor JSON Schema directives, comments, and trailing commas are supported.
         "$schema": "https://example.test/profiles.schema.json",
         "profiles": {
@@ -168,7 +177,7 @@ describe("profile configuration", () => {
           },
         },
       }`),
-    );
+    });
 
     const clientWork = config.profiles["client-work"];
     expect("directoryGlobs" in clientWork).toBe(false);
@@ -185,9 +194,9 @@ describe("profile configuration", () => {
   });
 
   it("appends non-empty custom tool overrides to inherited rules", () => {
-    const config = loadProfileConfig(
-      genericPolicyConfig,
-      writeConfig(`{
+    const config = loadProfileConfig({
+      fallback: genericPolicyConfig,
+      configPath: writeConfig(`{
         "profiles": {
           "deployment-base": {
             "description": "Base deployment profile for production tool restrictions.",
@@ -210,7 +219,7 @@ describe("profile configuration", () => {
           }
         }
       }`),
-    );
+    });
 
     expect(config.profiles["deployment-child"].tools.deploy).toEqual([
       { decision: "ask" },
@@ -220,9 +229,9 @@ describe("profile configuration", () => {
   });
 
   it("preserves inherited custom tool rules when a child appends an empty list", () => {
-    const config = loadProfileConfig(
-      genericPolicyConfig,
-      writeConfig(`{
+    const config = loadProfileConfig({
+      fallback: genericPolicyConfig,
+      configPath: writeConfig(`{
         "profiles": {
           "deployment-base": {
             "description": "Base deployment profile preserving inherited custom tool rules.",
@@ -242,7 +251,7 @@ describe("profile configuration", () => {
           }
         }
       }`),
-    );
+    });
 
     expect(config.profiles["deployment-child"].tools.deploy).toEqual([
       { decision: "deny", match: { environment: "production" } },
@@ -250,9 +259,9 @@ describe("profile configuration", () => {
   });
 
   it("preserves inherited Bash rules when a child appends an empty list", () => {
-    const config = loadProfileConfig(
-      genericPolicyConfig,
-      writeConfig(
+    const config = loadProfileConfig({
+      fallback: genericPolicyConfig,
+      configPath: writeConfig(
         JSON.stringify({
           profiles: {
             "quiet-bash": {
@@ -264,7 +273,7 @@ describe("profile configuration", () => {
           },
         }),
       ),
-    );
+    });
 
     const quietBash = config.profiles["quiet-bash"];
     expect(quietBash.tools.bash).toEqual(
@@ -288,14 +297,14 @@ describe("profile configuration", () => {
         "Standalone experimental profile for custom configuration loading.",
       emoji: "🧪",
     };
-    const config = loadProfileConfig(
-      genericPolicyConfig,
-      writeConfig(
+    const config = loadProfileConfig({
+      fallback: genericPolicyConfig,
+      configPath: writeConfig(
         JSON.stringify({
           profiles: { standalone: standaloneProfile },
         }),
       ),
-    );
+    });
 
     expect(config.profiles.standalone).toMatchObject({ emoji: "🧪" });
   });
@@ -312,21 +321,24 @@ describe("profile configuration", () => {
       }),
     );
 
-    const raw = loadRawProfileDeclarations(configPath);
+    const raw = loadRawProfileDeclarations({ configPath: configPath });
     expect(raw).toHaveLength(1);
     expect(raw[0]).toMatchObject({
       profile: "standalone",
       definition: { directoryGlobs: ["/workspace/project/**"] },
     });
 
-    const resolved = loadProfileConfig(genericPolicyConfig, configPath);
+    const resolved = loadProfileConfig({
+      fallback: genericPolicyConfig,
+      configPath: configPath,
+    });
     expect("directoryGlobs" in resolved.profiles.standalone).toBe(false);
   });
 
   it("resolves a standalone complete profile with directoryGlobs", () => {
-    const config = loadProfileConfig(
-      genericPolicyConfig,
-      writeConfig(
+    const config = loadProfileConfig({
+      fallback: genericPolicyConfig,
+      configPath: writeConfig(
         JSON.stringify({
           profiles: {
             standalone: {
@@ -338,7 +350,7 @@ describe("profile configuration", () => {
           },
         }),
       ),
-    );
+    });
 
     expect(config.profiles.standalone.description).toContain(
       "directory selection",
@@ -363,7 +375,7 @@ describe("profile configuration", () => {
       }),
     );
 
-    expect(loadDirectoryGlobDeclarations(configPath)).toEqual([
+    expect(loadDirectoryGlobDeclarations({ configPath: configPath })).toEqual([
       ["first", ["/workspace/first/**"]],
       ["second", ["/workspace/second/**", "/workspace/shared/**"]],
     ]);
@@ -378,7 +390,9 @@ describe("profile configuration", () => {
     );
 
     expect(
-      loadRawProfileDeclarations(configPath).map(({ profile }) => profile),
+      loadRawProfileDeclarations({ configPath: configPath }).map(
+        ({ profile }) => profile,
+      ),
     ).toEqual(["2", "1"]);
   });
 
@@ -415,12 +429,14 @@ describe("profile configuration", () => {
     ({ makePath, error, detail }) => {
       const configPath = makePath();
       try {
-        loadRawProfileDeclarations(configPath);
+        loadRawProfileDeclarations({ configPath: configPath });
         throw new Error("expected loadRawProfileDeclarations to throw");
       } catch (caught) {
         expect(caught).toBeInstanceOf(error);
-        expect((caught as { configPath: string }).configPath).toBe(configPath);
-        if (detail) expect((caught as Error).message).toContain(detail);
+        if (!(caught instanceof Error) || !("configPath" in caught))
+          throw caught;
+        expect(caught.configPath).toBe(configPath);
+        if (detail) expect(caught.message).toContain(detail);
       }
     },
   );
@@ -431,7 +447,7 @@ describe("profile configuration", () => {
     );
     temporaryDirectories.push(directory);
 
-    expect(() => loadRawProfileDeclarations(directory)).toThrow(
+    expect(() => loadRawProfileDeclarations({ configPath: directory })).toThrow(
       ProfileConfigUnreadableError,
     );
   });
@@ -448,9 +464,9 @@ describe("profile configuration", () => {
       }),
     );
 
-    expect(() => loadRawProfileDeclarations(configPath)).toThrow(
-      ProfileConfigSchemaInvalidError,
-    );
+    expect(() =>
+      loadRawProfileDeclarations({ configPath: configPath }),
+    ).toThrow(ProfileConfigSchemaInvalidError);
   });
 
   it("rejects a semantically invalid directory glob", () => {
@@ -468,11 +484,14 @@ describe("profile configuration", () => {
       }),
     );
 
-    expect(() => loadRawProfileDeclarations(configPath)).toThrowError(
-      /directoryGlobs.*too-many-wildcards/,
-    );
     expect(() =>
-      loadProfileConfig(genericPolicyConfig, configPath),
+      loadRawProfileDeclarations({ configPath: configPath }),
+    ).toThrowError(/directoryGlobs.*too-many-wildcards/);
+    expect(() =>
+      loadProfileConfig({
+        fallback: genericPolicyConfig,
+        configPath: configPath,
+      }),
     ).toThrowError(/directoryGlobs.*too-many-wildcards/);
   });
 
@@ -488,22 +507,29 @@ describe("profile configuration", () => {
       }),
     );
 
-    expect(() => loadProfileConfig(genericPolicyConfig, configPath)).toThrow(
-      "schema validation failed",
-    );
+    expect(() =>
+      loadProfileConfig({
+        fallback: genericPolicyConfig,
+        configPath: configPath,
+      }),
+    ).toThrow("schema validation failed");
   });
 
   it("throws a typed error for invalid JSONC in an existing file", () => {
     const configPath = writeConfig('{ "profiles": ');
 
     try {
-      loadProfileConfig(genericPolicyConfig, configPath);
+      loadProfileConfig({
+        fallback: genericPolicyConfig,
+        configPath: configPath,
+      });
       throw new Error("expected loadProfileConfig to throw");
     } catch (error) {
       expect(error).toBeInstanceOf(ProfileConfigLoadError);
-      expect((error as ProfileConfigLoadError).configPath).toBe(configPath);
-      expect((error as Error).message).toContain(configPath);
-      expect((error as Error).message).toContain("JSONC parse error");
+      if (!(error instanceof ProfileConfigLoadError)) throw error;
+      expect(error.configPath).toBe(configPath);
+      expect(error.message).toContain(configPath);
+      expect(error.message).toContain("JSONC parse error");
     }
   });
 
@@ -520,13 +546,17 @@ describe("profile configuration", () => {
     );
 
     try {
-      loadProfileConfig(genericPolicyConfig, configPath);
+      loadProfileConfig({
+        fallback: genericPolicyConfig,
+        configPath: configPath,
+      });
       throw new Error("expected loadProfileConfig to throw");
     } catch (error) {
       expect(error).toBeInstanceOf(ProfileConfigLoadError);
-      expect((error as ProfileConfigLoadError).configPath).toBe(configPath);
-      expect((error as Error).message).toContain(configPath);
-      expect((error as Error).message).toContain("schema validation failed");
+      if (!(error instanceof ProfileConfigLoadError)) throw error;
+      expect(error.configPath).toBe(configPath);
+      expect(error.message).toContain(configPath);
+      expect(error.message).toContain("schema validation failed");
     }
   });
 
@@ -567,7 +597,10 @@ describe("profile configuration", () => {
     ({ contents, message }) => {
       const configPath = writeConfig(JSON.stringify(contents));
       expect(() =>
-        loadProfileConfig(genericPolicyConfig, configPath),
+        loadProfileConfig({
+          fallback: genericPolicyConfig,
+          configPath: configPath,
+        }),
       ).toThrowError(message);
     },
   );
@@ -593,14 +626,18 @@ describe("profile configuration", () => {
       );
 
       try {
-        loadProfileConfig(genericPolicyConfig, configPath);
+        loadProfileConfig({
+          fallback: genericPolicyConfig,
+          configPath: configPath,
+        });
         throw new Error("expected loadProfileConfig to throw");
       } catch (error) {
         expect(error).toBeInstanceOf(ProfileConfigLoadError);
-        expect((error as ProfileConfigLoadError).configPath).toBe(configPath);
-        expect((error as Error).message).toContain(configPath);
-        expect((error as Error).message).toContain(name);
-        expect((error as Error).message).toContain(
+        if (!(error instanceof ProfileConfigLoadError)) throw error;
+        expect(error.configPath).toBe(configPath);
+        expect(error.message).toContain(configPath);
+        expect(error.message).toContain(name);
+        expect(error.message).toContain(
           name.startsWith(policyReferencePrefix({ kind: "transform" }))
             ? policyReferencePrefix({ kind: "transform" })
             : policyReferencePrefix({ kind: "builtinProfile" }),
@@ -610,9 +647,9 @@ describe("profile configuration", () => {
   );
 
   it("resolves builtin:* extends to the shipped profile and custom names to user definitions", () => {
-    const config = loadProfileConfig(
-      genericPolicyConfig,
-      writeConfig(
+    const config = loadProfileConfig({
+      fallback: genericPolicyConfig,
+      configPath: writeConfig(
         JSON.stringify({
           profiles: {
             "builtin-extends": {
@@ -633,7 +670,7 @@ describe("profile configuration", () => {
           },
         }),
       ),
-    );
+    });
 
     expect(config.profiles["builtin-extends"].tools.bash).toEqual(
       genericPolicyConfig.profiles["builtin:default"].tools.bash,
@@ -652,7 +689,10 @@ describe("profile configuration", () => {
       }),
     );
     expect(() =>
-      loadProfileConfig(genericPolicyConfig, unknownBuiltinPath),
+      loadProfileConfig({
+        fallback: genericPolicyConfig,
+        configPath: unknownBuiltinPath,
+      }),
     ).toThrowError("unknown built-in profile 'builtin:missing'");
   });
 
@@ -670,7 +710,10 @@ describe("profile configuration", () => {
     );
 
     expect(() =>
-      loadProfileConfig(genericPolicyConfig, configPath),
+      loadProfileConfig({
+        fallback: genericPolicyConfig,
+        configPath: configPath,
+      }),
     ).toThrowError("unknown inherited profile 'default'");
   });
 
@@ -737,22 +780,23 @@ describe("profile configuration", () => {
     const configPath = writeConfig(contents);
 
     try {
-      loadProfileConfig(genericPolicyConfig, configPath);
+      loadProfileConfig({
+        fallback: genericPolicyConfig,
+        configPath: configPath,
+      });
       throw new Error("expected loadProfileConfig to throw");
     } catch (error) {
       expect(error).toBeInstanceOf(ProfileConfigLoadError);
-      expect((error as ProfileConfigLoadError).configPath).toBe(configPath);
-      expect((error as Error).message).toContain(configPath);
-      expect((error as Error).message).toContain(messageFragment);
+      if (!(error instanceof ProfileConfigLoadError)) throw error;
+      expect(error.configPath).toBe(configPath);
+      expect(error.message).toContain(configPath);
+      expect(error.message).toContain(messageFragment);
     }
   });
 });
 
 function createHarness(options: { hasUI: boolean; cwd?: string }) {
-  const handlers = new Map<
-    string,
-    Array<(event: unknown, ctx: ExtensionContext) => unknown>
-  >();
+  const handlers = new Map<string, unknown[]>();
   const commands: string[] = [];
   const statuses: Array<{ key: string; text: string | undefined }> = [];
   const notifications: Array<{
@@ -787,23 +831,23 @@ function createHarness(options: { hasUI: boolean; cwd?: string }) {
     setEditorComponent: () => undefined,
     getEditorComponent: () => undefined,
     get theme() {
-      return undefined as never;
+      return undefined;
     },
     getAllThemes: () => [],
     getTheme: () => undefined,
     setTheme: () => ({ success: true }),
     getToolsExpanded: () => false,
     setToolsExpanded: () => undefined,
-  } as unknown as ExtensionContext["ui"];
+  };
 
-  const ctx: ExtensionContext = {
+  const ctx = {
     ui,
     hasUI: options.hasUI,
     cwd: options.cwd ?? path.join(os.tmpdir(), "pi-guard-cwd"),
     sessionManager: {
       getEntries: () => [],
-    } as unknown as ExtensionContext["sessionManager"],
-    modelRegistry: {} as ExtensionContext["modelRegistry"],
+    },
+    modelRegistry: {},
     model: undefined,
     mode: "tui",
     scopedModels: [],
@@ -818,13 +862,42 @@ function createHarness(options: { hasUI: boolean; cwd?: string }) {
     getSystemPrompt: () => "",
   };
 
-  const api: ExtensionAPI = {
-    on(event: string, handler: unknown) {
-      handlers.set(event, [
-        ...(handlers.get(event) ?? []),
-        handler as (event: unknown, ctx: ExtensionContext) => unknown,
-      ]);
-    },
+  function on(
+    event: "session_start",
+    handler: (event: SessionStartEvent, ctx: ExtensionContext) => unknown,
+  ): void;
+  function on(
+    event: "session_shutdown",
+    handler: (event: SessionShutdownEvent, ctx: ExtensionContext) => unknown,
+  ): void;
+  function on(
+    event: "before_agent_start",
+    handler: (
+      event: BeforeAgentStartEvent,
+      ctx: ExtensionContext,
+    ) =>
+      BeforeAgentStartEventResult | Promise<BeforeAgentStartEventResult> | void,
+  ): void;
+  function on(
+    event: "user_bash",
+    handler: (
+      event: UserBashEvent,
+      ctx: ExtensionContext,
+    ) => UserBashEventResult | Promise<UserBashEventResult> | void,
+  ): void;
+  function on(
+    event: "tool_call",
+    handler: (
+      event: ToolCallEvent,
+      ctx: ExtensionContext,
+    ) => ToolCallEventResult | Promise<ToolCallEventResult> | void,
+  ): void;
+  function on(event: string, handler: unknown): void {
+    handlers.set(event, [...(handlers.get(event) ?? []), handler]);
+  }
+
+  const api = {
+    on,
     registerCommand(name: string) {
       commands.push(name);
     },
@@ -833,6 +906,7 @@ function createHarness(options: { hasUI: boolean; cwd?: string }) {
     getFlag: () => undefined,
     registerMessageRenderer: () => undefined,
     sendMessage: () => undefined,
+    sendUserMessage: () => undefined,
     appendEntry: () => undefined,
     registerTool: () => undefined,
     getActiveTools: () => ["read", "bash", "edit", "write"],
@@ -841,11 +915,32 @@ function createHarness(options: { hasUI: boolean; cwd?: string }) {
         name,
       })),
     setActiveTools: () => undefined,
-  } as unknown as ExtensionAPI;
+  } satisfies Parameters<typeof permissionsExtension>[0];
 
   permissionsExtension(api);
 
   return { handlers, commands, statuses, notifications, ctx };
+}
+
+function isHarnessCallable(argument: { readonly value: unknown }): argument is {
+  readonly value: (event: unknown, ctx: unknown) => unknown;
+} {
+  return typeof argument.value === "function";
+}
+
+function invokeHarnessHandler({
+  handler,
+  event,
+  ctx,
+}: {
+  readonly handler: unknown;
+  readonly event: unknown;
+  readonly ctx: unknown;
+}): unknown {
+  const handlerArgument = { value: handler };
+  if (!isHarnessCallable(handlerArgument))
+    throw new Error("invalid harness handler");
+  return handlerArgument.value(event, ctx);
 }
 
 async function emitSessionStart(
@@ -853,24 +948,29 @@ async function emitSessionStart(
 ): Promise<void> {
   const handler = harness.handlers.get("session_start")?.[0];
   expect(handler).toBeDefined();
-  await handler?.(
-    { type: "session_start", reason: "startup" } satisfies SessionStartEvent,
-    harness.ctx,
-  );
+  await invokeHarnessHandler({
+    handler,
+    event: {
+      type: "session_start",
+      reason: "startup",
+    } satisfies SessionStartEvent,
+    ctx: harness.ctx,
+  });
 }
 
 async function emitToolCall(harness: ReturnType<typeof createHarness>) {
   const handler = harness.handlers.get("tool_call")?.[0];
   expect(handler).toBeDefined();
-  return await handler?.(
-    {
+  return await invokeHarnessHandler({
+    handler,
+    event: {
       type: "tool_call",
       toolCallId: "tool-1",
       toolName: "read",
       input: { path: "README.md" },
     } satisfies ToolCallEvent,
-    harness.ctx,
-  );
+    ctx: harness.ctx,
+  });
 }
 
 const invalidExtensionConfigCases = [

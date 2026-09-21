@@ -107,9 +107,9 @@ describe("protected-path rules", () => {
 
   it("exact-pattern protected conflicts across layers are load errors", () => {
     expect(() =>
-      loadProfileConfig(
-        genericPolicyConfig,
-        writeConfig({
+      loadProfileConfig({
+        fallback: genericPolicyConfig,
+        configPath: writeConfig({
           profiles: {
             conflict: {
               description:
@@ -119,7 +119,7 @@ describe("protected-path rules", () => {
             },
           },
         }),
-      ),
+      }),
     ).toThrow(/Protected/);
   });
 

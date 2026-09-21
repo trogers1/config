@@ -28,6 +28,16 @@ import {
   isToolCallEventType,
   type ExtensionAPI,
   type ExtensionContext,
+  type AgentToolResult,
+  type ExtensionHandler,
+  type BeforeAgentStartEvent,
+  type BeforeAgentStartEventResult,
+  type SessionShutdownEvent,
+  type SessionStartEvent,
+  type ToolCallEvent,
+  type ToolCallEventResult,
+  type UserBashEvent,
+  type UserBashEventResult,
 } from "@earendil-works/pi-coding-agent";
 import { Key, truncateToWidth } from "@earendil-works/pi-tui";
 import {
@@ -76,11 +86,11 @@ import {
   applyProfileAuthoringCommit,
   validateProfileAuthoringCommit,
   validateCustomProfileName,
-  loadProfileConfigSnapshot,
   loadRawProfileConfig,
   ProfileAuthoringValidationError,
   ProfileConfigConflictError,
-  ProfileConfigLoadError,
+  ProfileConfigLockTimeoutError,
+  forceRemoveProfileConfigLock,
   type RawProfileConfig,
   type ProfileMutationTarget,
 } from "../modules/profileConfig";
@@ -88,15 +98,22 @@ import {
   builtinCompositionChains,
   policyConfig as genericPolicyConfig,
 } from "../modules/policy";
+import {
+  createProfileStore,
+  isUsableProfileStoreState,
+  profileStoreSnapshot,
+  profileStoreStatus,
+  refreshProfileStore,
+  type ProfileStore,
+  type ProfileStoreState,
+} from "../modules/profileStore";
 import { formatProfileColor } from "../modules/profileColors";
-import { editProfileGeneral } from "../modules/profileGeneralEditor";
 import {
   editProfileRuleRows,
   type AskRuleCandidate,
   type EditableRuleRow,
 } from "../modules/profileRuleEditor";
 import {
-  generalSectionPresentation,
   metadataConfirmationTitle,
   metadataSectionPresentation,
   postSaveActivationFailureMessage,
@@ -109,9 +126,6 @@ import type { EffectiveSandboxAuthoring } from "../modules/profileAuthoring";
 import {
   createProfileAuthoringDraft,
   createProfileEditDraft,
-  defaultCustomProfileEmoji,
-  suggestedProfileName,
-  type ProfileGeneralDraft,
 } from "../modules/profileAuthoringModel";
 import { runProfileAuthoringWizard } from "../modules/profileAuthoringWizard";
 import type { OrderedSelectionOption } from "../modules/profileOrderedSelectionEditor";
@@ -152,6 +166,35 @@ export type {
 
 // ─── Types ────────────────────────────────────────────────────────────
 
+/** Test-only observation seam for ordering assertions at the guarded boundary. */
+export type GuardOperationObserver = {
+  readonly onRefreshRequested?: ({
+    toolName,
+  }: {
+    readonly toolName: string;
+  }) => void;
+  readonly onRefreshStarted?: ({
+    toolName,
+  }: {
+    readonly toolName: string;
+  }) => void;
+  readonly onEvaluationStarted?: ({
+    toolName,
+  }: {
+    readonly toolName: string;
+  }) => void;
+};
+
+let guardOperationObserver: GuardOperationObserver | undefined;
+
+export function setGuardOperationObserverForTesting({
+  observer,
+}: {
+  readonly observer: GuardOperationObserver | undefined;
+}): void {
+  guardOperationObserver = observer;
+}
+
 type Approval = {
   approved: boolean;
   guidance?: string;
@@ -161,12 +204,19 @@ type Approval = {
   handledRejection?: boolean;
   /** Profile rules were persisted; the caller must re-evaluate the request. */
   profileUpdated?: boolean;
+  /** A policy refresh after a UI await invalidated this prompt's answer. */
+  stale?: boolean;
+  refreshFailed?: boolean;
 };
 
-type RememberDecision = (
-  patterns?: readonly string[],
-  pathTraces?: readonly BashPathReferenceTrace[],
-) => Promise<Approval>;
+type RememberDecision = ({
+  patterns,
+  pathTraces,
+}: {
+  readonly patterns?: readonly string[];
+  readonly pathTraces?: readonly BashPathReferenceTrace[];
+}) => Promise<Approval>;
+type RefreshAfterUiAwait = () => Promise<"unchanged" | "changed" | "failed">;
 
 type PolicyDecision = {
   decision: Decision;
@@ -210,13 +260,17 @@ const writeToolNameSet: ReadonlySet<string> = new Set(writeToolNames);
 
 type PathToolName = (typeof pathToolNames)[number];
 
-function typedKeys<T extends object>(value: T): Array<keyof T & string> {
-  return Object.keys(value) as Array<keyof T & string>;
+function typedKeys(value: object): string[] {
+  return Object.keys(value);
+}
+
+function readProperty(value: object, key: string): unknown {
+  return Object.getOwnPropertyDescriptor(value, key)?.value;
 }
 
 function readStringProperty(value: unknown, key: string): string | undefined {
   if (typeof value !== "object" || value === null) return undefined;
-  const property: unknown = Reflect.get(value, key);
+  const property = readProperty(value, key);
   return typeof property === "string" ? property : undefined;
 }
 
@@ -227,6 +281,23 @@ function isSandboxOverride(value: string): value is SandboxOverride {
 }
 
 const PERMISSION_BLOCK_PREFIX = "[⛔️ by pi-guard] " as const;
+/** A changing policy must not create an unbounded chain of stale prompts. */
+const maxOperationEvaluationAttempts = 4;
+type RestartOperation = {
+  readonly restart: true;
+  readonly block?: false;
+  readonly reason?: undefined;
+};
+function restartOperation(): RestartOperation {
+  return { restart: true };
+}
+function isRestartOperation(value: unknown): value is RestartOperation {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    Reflect.get(value, "restart") === true
+  );
+}
 
 /** Mark every tool-call denial with a machine-readable, stable prefix. */
 function markPermissionBlock<
@@ -245,7 +316,50 @@ function markPermissionBlock<
   return result;
 }
 
-export default function (pi: ExtensionAPI) {
+type GuardExtensionAPI = Omit<
+  Pick<
+    ExtensionAPI,
+    | "registerCommand"
+    | "registerShortcut"
+    | "registerTool"
+    | "appendEntry"
+    | "getActiveTools"
+    | "setActiveTools"
+    | "sendUserMessage"
+    | "registerFlag"
+    | "getFlag"
+    | "registerMessageRenderer"
+    | "sendMessage"
+  >,
+  never
+> & {
+  on(
+    event: "session_start",
+    handler: ExtensionHandler<SessionStartEvent>,
+  ): void;
+  on(
+    event: "session_shutdown",
+    handler: ExtensionHandler<SessionShutdownEvent>,
+  ): void;
+  on(
+    event: "before_agent_start",
+    handler: ExtensionHandler<
+      BeforeAgentStartEvent,
+      BeforeAgentStartEventResult
+    >,
+  ): void;
+  on(
+    event: "user_bash",
+    handler: ExtensionHandler<UserBashEvent, UserBashEventResult>,
+  ): void;
+  on(
+    event: "tool_call",
+    handler: ExtensionHandler<ToolCallEvent, ToolCallEventResult>,
+  ): void;
+  getAllTools(): Array<{ name: string; description?: string }>;
+};
+
+export default function (pi: GuardExtensionAPI) {
   const profileConfigPath =
     process.env.PI_GUARD_PROFILE_CONFIG?.trim() || undefined;
 
@@ -254,45 +368,63 @@ export default function (pi: ExtensionAPI) {
   let directoryGlobDeclarations: readonly DirectoryGlobDeclaration[] = [];
   let policyConfig: PolicyConfig = genericPolicyConfig;
   let profileConfigErrorReason: string | undefined;
+  const profileStore: ProfileStore = createProfileStore({
+    fallback: genericPolicyConfig,
+    configPath: profileConfigPath,
+  });
 
-  /** Refresh the in-memory policy only after a complete, valid config load. */
-  function reloadPolicyConfig(): void {
-    try {
-      // Policy, raw declarations, and source-order directory metadata must
-      // come from one file read so a concurrent write cannot mix revisions.
-      const snapshot = loadProfileConfigSnapshot(
-        genericPolicyConfig,
-        profileConfigPath,
-      );
-      policyConfig = snapshot.config;
-      rawProfileConfig = snapshot.raw;
-      profileConfigRevision = snapshot.sourceRevision;
-      directoryGlobDeclarations = snapshot.directoryGlobDeclarations;
-      profileConfigErrorReason = undefined;
-    } catch (error) {
-      if (!(error instanceof ProfileConfigLoadError)) throw error;
-      policyConfig = genericPolicyConfig;
-      rawProfileConfig = undefined;
-      profileConfigRevision = undefined;
-      directoryGlobDeclarations = [];
-      profileConfigErrorReason = error.message;
-    }
+  function adoptProfileSnapshot({
+    state,
+  }: {
+    readonly state: ProfileStoreState;
+  }): void {
+    const snapshot = profileStoreSnapshot({ state });
+    if (!snapshot) return;
+    // Policy, raw declarations, revision, and directory metadata are adopted
+    // together from the store's single complete file snapshot.
+    policyConfig = snapshot.config;
+    rawProfileConfig = snapshot.raw;
+    profileConfigRevision = snapshot.sourceRevision;
+    directoryGlobDeclarations = snapshot.directoryGlobDeclarations;
+    profileConfigErrorReason = undefined;
   }
-  reloadPolicyConfig();
+
+  function profileStoreFailureReason({
+    state,
+  }: {
+    readonly state: ProfileStoreState;
+  }): string {
+    if (state.status === profileStoreStatus.missing)
+      return "pi-guard profile configuration is missing; permissions fail closed until it is restored.";
+    if (state.status === profileStoreStatus.invalid)
+      return `pi-guard profile configuration is invalid; permissions fail closed until it is fixed. ${state.error?.message ?? ""}`.trim();
+    return "pi-guard profile configuration is unavailable; permissions fail closed.";
+  }
+
+  const initialProfileStoreState = refreshProfileStore({ store: profileStore });
+  adoptProfileSnapshot({ state: initialProfileStoreState });
+  if (!isUsableProfileStoreState({ state: initialProfileStoreState })) {
+    profileConfigErrorReason = profileStoreFailureReason({
+      state: initialProfileStoreState,
+    });
+  }
 
   type ProfileName = string;
 
   const profileNames = () => typedKeys(policyConfig.profiles);
 
-  function profileForDirectory(cwd: string): ProfileName | undefined {
-    return matchDirectoryGlobs(cwd, directoryGlobDeclarations)?.profile;
+  // Pi's completion callback is synchronous. Refreshing this independent
+  // snapshot is synchronous too, so completions never advertise names from a
+  // stale adopted policy; failures deliberately expose no config-derived names.
+  function freshProfileNames(): readonly string[] {
+    const snapshot = profileStoreSnapshot({
+      state: refreshProfileStore({ store: profileStore }),
+    });
+    return snapshot ? typedKeys(snapshot.config.profiles) : [];
   }
 
-  /** One authority ordering for all post-mutation activation paths. */
-  function finalActivationProfile(intended: ProfileName): ProfileName {
-    return subagentProfile && isProfileName(subagentProfile)
-      ? subagentProfile
-      : (profileForDirectory(startupCwd) ?? intended);
+  function profileForDirectory(cwd: string): ProfileName | undefined {
+    return matchDirectoryGlobs(cwd, directoryGlobDeclarations)?.profile;
   }
 
   function isProfileName(value: string): boolean {
@@ -303,7 +435,11 @@ export default function (pi: ExtensionAPI) {
     return policyConfig.profiles[profile];
   }
 
-  async function showProfilePicker(ctx: ExtensionContext): Promise<void> {
+  async function showProfilePicker({
+    ctx,
+  }: {
+    readonly ctx: ExtensionContext;
+  }): Promise<void> {
     const items: ProfilePickerItem[] = profileNames().map((name) => {
       const profile = activePolicy(name);
       return {
@@ -334,7 +470,16 @@ export default function (pi: ExtensionAPI) {
     );
 
     if (selected) {
-      await activateProfile(selected, ctx, `Switched to profile: ${selected}`);
+      if (!(await refreshOrPreserveConfiguration({ ctx }))) return;
+      if (!isProfileName(selected)) {
+        ctx.ui.notify(`Profile '${selected}' no longer exists.`, "error");
+        return;
+      }
+      await activateProfile({
+        profile: selected,
+        ctx,
+        message: `Switched to profile: ${selected}`,
+      });
     }
   }
 
@@ -387,9 +532,9 @@ export default function (pi: ExtensionAPI) {
   // marker survives those rebuilds and identifies this registered wrapper.
   const packageBashOwnershipMarker = "\n[pi-guard sandbox wrapper]";
   const subagentProfile = process.env.PI_SUBAGENT_PROFILE?.trim();
-  const subagentPermissibleRules = parseSubagentPermissibleRules(
-    process.env.PI_SUBAGENT_PERMISSIBLE_GLOBS,
-  );
+  const subagentPermissibleRules = parseSubagentPermissibleRules({
+    value: process.env.PI_SUBAGENT_PERMISSIBLE_GLOBS,
+  });
   // Establish the immutable subagent profile before lifecycle callbacks run.
   // This keeps startup fail-closed even if Pi can begin processing an initial
   // prompt before the asynchronous session_start listener has completed.
@@ -402,7 +547,17 @@ export default function (pi: ExtensionAPI) {
       ? subagentProfile
       : policyConfig.defaultProfile;
   let sandboxOverride: SandboxOverride = "inherit";
+  // A refresh publishes a coherent policy/profile pair before it awaits
+  // sandbox lifecycle work. Serialize refreshes so another guarded operation
+  // cannot evaluate while that lifecycle transition is in progress.
   let profileActivationQueue: Promise<void> = Promise.resolve();
+  let profileRefreshQueue: Promise<void> = Promise.resolve();
+  let profileRefreshesInFlight = 0;
+  // A failed lifecycle disposal can leave the process-level sandbox manager
+  // indeterminate. Keep this explicit rather than treating an unchanged
+  // source revision as safe to reuse.
+  let pendingSandboxTransition:
+    { readonly revision: string; readonly profile: ProfileName } | undefined;
   const configurationErrorReason = () =>
     profileConfigErrorReason ?? subagentProfileErrorReason;
 
@@ -425,14 +580,6 @@ export default function (pi: ExtensionAPI) {
       subagentScopes: subagentPermissibleRules,
       configurationError: configurationErrorReason(),
     });
-  }
-
-  function preserveConfigurationErrorStatus(ctx: ExtensionContext): boolean {
-    const errorReason = configurationErrorReason();
-    if (!errorReason) return false;
-    ctx.ui.setStatus("permissions", "invalid-permissions");
-    if (ctx.hasUI) ctx.ui.notify(errorReason, "error");
-    return true;
   }
 
   async function refreshSandboxStatus(ctx: ExtensionContext): Promise<void> {
@@ -473,20 +620,49 @@ export default function (pi: ExtensionAPI) {
     };
   }
 
-  async function executeBashWithExitCode<T>(
-    execute: () => Promise<T>,
-  ): Promise<T> {
+  type BashToolResult = AgentToolResult<Record<string, unknown>>;
+  type BashExecutionResult = AgentToolResult<
+    Record<string, unknown> & { exitCode: number }
+  >;
+
+  function isBashToolResult(value: unknown): value is BashToolResult {
+    if (typeof value !== "object" || value === null || Array.isArray(value))
+      return false;
+    const content = readProperty(value, "content");
+    const details = readProperty(value, "details");
+    return (
+      Array.isArray(content) &&
+      content.every(
+        (item: unknown) =>
+          typeof item === "object" &&
+          item !== null &&
+          readProperty(item, "type") === "text" &&
+          typeof readProperty(item, "text") === "string",
+      ) &&
+      (details === undefined ||
+        (typeof details === "object" &&
+          details !== null &&
+          !Array.isArray(details)))
+    );
+  }
+
+  async function executeBashWithExitCode({
+    execute,
+  }: {
+    readonly execute: () => Promise<unknown>;
+  }): Promise<BashExecutionResult> {
     try {
-      const result = (await execute()) as Record<string, unknown>;
-      const details =
-        (result.details as Record<string, unknown> | undefined) ?? {};
+      const result = await execute();
+      if (!isBashToolResult(result))
+        throw new Error("Bash tool returned an invalid execution result");
+      const details = result.details ?? {};
       return {
         ...result,
         details: {
           ...details,
-          ...(typeof details.exitCode === "number" ? {} : { exitCode: 0 }),
+          exitCode: typeof details.exitCode === "number" ? details.exitCode : 0,
         },
-      } as T;
+      };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const match = message.match(/Command exited with code (\d+)/);
@@ -497,9 +673,9 @@ export default function (pi: ExtensionAPI) {
           : undefined;
       if (exitCode === undefined) throw error;
       return {
-        content: [{ type: "text" as const, text: message }],
+        content: [{ type: "text", text: message }],
         details: { exitCode },
-      } as T;
+      };
     }
   }
 
@@ -516,11 +692,15 @@ export default function (pi: ExtensionAPI) {
     }
   }
 
-  function activateProfile(
-    profile: ProfileName,
-    ctx: ExtensionContext,
-    message?: string,
-  ): Promise<void> {
+  function activateProfile({
+    profile,
+    ctx,
+    message,
+  }: {
+    readonly profile: ProfileName;
+    readonly ctx: ExtensionContext;
+    readonly message?: string;
+  }): Promise<void> {
     const activation = profileActivationQueue.then(async () => {
       activeProfile = profile;
       // Subagent launchers inherit this process environment; update it with
@@ -541,6 +721,21 @@ export default function (pi: ExtensionAPI) {
     return `Invalid PI_SUBAGENT_PROFILE '${profile}'. Available: ${profileNames().join(", ")}
 
 The permissions gate remains loaded and will fail closed until the profile is corrected.`;
+  }
+
+  function persistedSessionProfile({
+    ctx,
+  }: {
+    readonly ctx: ExtensionContext;
+  }): ProfileName | undefined {
+    let persisted: ProfileName | undefined;
+    for (const entry of ctx.sessionManager.getEntries()) {
+      if (entry.type !== "custom" || entry.customType !== profileEntryType)
+        continue;
+      const profile = readStringProperty(entry.data, "profile");
+      if (profile) persisted = profile;
+    }
+    return persisted;
   }
 
   function restoreActiveProfile(ctx: ExtensionContext): void {
@@ -585,6 +780,282 @@ The permissions gate remains loaded and will fail closed until the profile is co
     }
   }
 
+  function enterFailedConfiguration({
+    ctx,
+    reason,
+    pendingTransition,
+    notify = true,
+  }: {
+    readonly ctx: ExtensionContext;
+    readonly reason: string;
+    readonly pendingTransition?: {
+      readonly revision: string;
+      readonly profile: ProfileName;
+    };
+    readonly notify?: boolean;
+  }): void {
+    // Publish fail-closed state before any best-effort cleanup can await or
+    // reject. No guarded caller may observe a newly adopted policy paired with
+    // a lifecycle whose disposal/initialization did not complete.
+    policyConfig = genericPolicyConfig;
+    rawProfileConfig = undefined;
+    profileConfigRevision = undefined;
+    directoryGlobDeclarations = [];
+    activeProfile = genericPolicyConfig.defaultProfile;
+    delete process.env[activeProfileEnvKey];
+    profileConfigErrorReason = reason;
+    pendingSandboxTransition = pendingTransition;
+    ctx.ui.setStatus("sandbox", "sandbox: blocked (invalid permissions)");
+    ctx.ui.setStatus("permissions", "invalid-permissions");
+    if (notify && ctx.hasUI) ctx.ui.notify(reason, "error");
+  }
+
+  async function adoptFailedConfiguration({
+    ctx,
+    state,
+  }: {
+    readonly ctx: ExtensionContext;
+    readonly state: ProfileStoreState;
+  }): Promise<void> {
+    enterFailedConfiguration({
+      ctx,
+      reason: profileStoreFailureReason({ state }),
+    });
+    // Validation failures must not turn the typed fail-closed result into a
+    // rejected handler merely because stale sandbox cleanup also failed.
+    try {
+      await clearSandboxCaches();
+    } catch {
+      // The configuration state above is already fail closed.
+    }
+  }
+
+  type RefreshSelectionIntent =
+    | { readonly kind: "preserve-current" }
+    | {
+        readonly kind: "post-save";
+        readonly intended: ProfileName;
+        readonly message: (profile: ProfileName) => string;
+      };
+  type RefreshProfileResult =
+    | {
+        readonly kind: "adopted";
+        readonly profile: ProfileName;
+        readonly changed: boolean;
+      }
+    | { readonly kind: "failed" };
+
+  /**
+   * Queue a refresh so adoption and its sandbox-cache transition are one
+   * coherent operation from the perspective of guarded callers.
+   */
+  function refreshProfileIfChanged({
+    ctx,
+    selectionIntent,
+  }: {
+    readonly ctx: ExtensionContext;
+    readonly selectionIntent: RefreshSelectionIntent;
+  }): Promise<RefreshProfileResult> {
+    // Calls that were already waiting behind a failed transition fail with it;
+    // only an operation that begins after that queue drains may attempt the
+    // explicit recovery transition.
+    const allowPendingRecovery = profileRefreshesInFlight === 0;
+    profileRefreshesInFlight++;
+    const refresh = profileRefreshQueue.then(
+      () =>
+        refreshProfileIfChangedLocked({
+          ctx,
+          selectionIntent,
+          allowPendingRecovery,
+        }),
+      () =>
+        refreshProfileIfChangedLocked({
+          ctx,
+          selectionIntent,
+          allowPendingRecovery,
+        }),
+    );
+    profileRefreshQueue = refresh.then(
+      () => undefined,
+      () => undefined,
+    );
+    void refresh.then(
+      () => {
+        profileRefreshesInFlight--;
+      },
+      () => {
+        profileRefreshesInFlight--;
+      },
+    );
+    return refresh;
+  }
+
+  /** Refresh and atomically adopt one complete persisted policy snapshot. */
+  async function refreshProfileIfChangedLocked({
+    ctx,
+    selectionIntent,
+    allowPendingRecovery,
+  }: {
+    readonly ctx: ExtensionContext;
+    readonly selectionIntent: RefreshSelectionIntent;
+    readonly allowPendingRecovery: boolean;
+  }): Promise<RefreshProfileResult> {
+    guardOperationObserver?.onRefreshStarted?.({ toolName: "profile-refresh" });
+    if (pendingSandboxTransition && !allowPendingRecovery)
+      return { kind: "failed" };
+    const previousRevision = profileConfigRevision;
+    const previousProfile = activeProfile;
+    const state = refreshProfileStore({ store: profileStore });
+    const snapshot = profileStoreSnapshot({ state });
+    if (!snapshot) {
+      await adoptFailedConfiguration({ ctx, state });
+      return { kind: "failed" };
+    }
+
+    // Resolve and validate authority using exactly this snapshot. No second
+    // load occurs between selection and adoption, so revision N's selection
+    // can never be combined with revision N+1's policy or declarations.
+    if (
+      subagentProfile &&
+      !Object.hasOwn(snapshot.config.profiles, subagentProfile)
+    ) {
+      subagentProfileErrorReason =
+        formatInvalidSubagentProfileReason(subagentProfile);
+      await adoptFailedConfiguration({
+        ctx,
+        state: {
+          status: profileStoreStatus.invalid,
+          error: new Error(subagentProfileErrorReason),
+        },
+      });
+      return { kind: "failed" };
+    }
+    // A durable save's selected user-owned profile takes precedence over
+    // directory/session selection in precisely the snapshot it wrote. The
+    // only stronger authority is a valid immutable subagent declaration.
+    // Ordinary unchanged refreshes continue to preserve explicit selection.
+    const selected =
+      selectionIntent.kind === "post-save"
+        ? (subagentProfile ?? selectionIntent.intended)
+        : pendingSandboxTransition?.revision === snapshot.sourceRevision &&
+            Object.hasOwn(
+              snapshot.config.profiles,
+              pendingSandboxTransition.profile,
+            )
+          ? pendingSandboxTransition.profile
+          : state.status === profileStoreStatus.unchanged
+            ? activeProfile
+            : (subagentProfile ??
+              matchDirectoryGlobs(
+                startupCwd,
+                snapshot.directoryGlobDeclarations,
+              )?.profile ??
+              persistedSessionProfile({ ctx }) ??
+              snapshot.config.defaultProfile);
+    if (!Object.hasOwn(snapshot.config.profiles, selected)) {
+      await adoptFailedConfiguration({
+        ctx,
+        state: {
+          status: profileStoreStatus.invalid,
+          error: new Error(
+            `Selected pi-guard profile '${selected}' no longer exists.`,
+          ),
+        },
+      });
+      return { kind: "failed" };
+    }
+
+    // Commit all configuration-derived state from the same snapshot before
+    // publishing the selected profile to child-process environment.
+    policyConfig = snapshot.config;
+    rawProfileConfig = snapshot.raw;
+    profileConfigRevision = snapshot.sourceRevision;
+    directoryGlobDeclarations = snapshot.directoryGlobDeclarations;
+    activeProfile = selected;
+    process.env[activeProfileEnvKey] = activeProfile;
+    profileConfigErrorReason = undefined;
+    subagentProfileErrorReason = undefined;
+
+    const changed =
+      previousProfile !== activeProfile ||
+      previousRevision !== profileConfigRevision;
+    const needsLifecycleTransition =
+      changed || pendingSandboxTransition !== undefined;
+    try {
+      if (
+        selectionIntent.kind === "post-save" ||
+        pendingSandboxTransition !== undefined
+      )
+        ensureReadToolsActive();
+      if (needsLifecycleTransition) {
+        await clearSandboxCaches();
+        await refreshSandboxStatus(ctx);
+        ctx.ui.setStatus("permissions", formatProfileStatus(activeProfile));
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      enterFailedConfiguration({
+        ctx,
+        reason: message,
+        pendingTransition: {
+          revision: snapshot.sourceRevision,
+          profile: selected,
+        },
+        notify: false,
+      });
+      return { kind: "failed" };
+    }
+    pendingSandboxTransition = undefined;
+    if (selectionIntent.kind === "post-save") {
+      pi.appendEntry(profileEntryType, {
+        profile: activeProfile,
+        timestamp: Date.now(),
+      });
+      ctx.ui.notify(selectionIntent.message(activeProfile), "info");
+    }
+    return { kind: "adopted", profile: activeProfile, changed };
+  }
+
+  async function refreshOrPreserveConfiguration({
+    ctx,
+    selectionIntent,
+  }: {
+    readonly ctx: ExtensionContext;
+    readonly selectionIntent?: RefreshSelectionIntent;
+  }): Promise<boolean> {
+    const intent: RefreshSelectionIntent = selectionIntent ?? {
+      kind: "preserve-current",
+    };
+    const result = await refreshProfileIfChanged({
+      ctx,
+      selectionIntent: intent,
+    });
+    return result.kind === "adopted";
+  }
+
+  async function refreshAfterPolicyUi({
+    ctx,
+    revision,
+    profile,
+  }: {
+    readonly ctx: ExtensionContext;
+    readonly revision: string | undefined;
+    readonly profile: ProfileName;
+  }): Promise<"unchanged" | "changed" | "failed"> {
+    if (
+      (
+        await refreshProfileIfChanged({
+          ctx,
+          selectionIntent: { kind: "preserve-current" },
+        })
+      ).kind === "failed"
+    )
+      return "failed";
+    return revision === profileConfigRevision && profile === activeProfile
+      ? "unchanged"
+      : "changed";
+  }
+
   /**
    * Policy guidance steers agents to the read, grep, find, and ls tools, so
    * the gate assumes they are callable. Pi registers every built-in tool but
@@ -617,7 +1088,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
   pi.on("session_start", async (_event, ctx) => {
     ensureReadToolsActive();
     restoreActiveProfile(ctx);
-    process.env[activeProfileEnvKey] = activeProfile;
+    if (!(await refreshOrPreserveConfiguration({ ctx }))) return;
 
     const errorReason = configurationErrorReason();
     if (errorReason) {
@@ -715,16 +1186,6 @@ The permissions gate remains loaded and will fail closed until the profile is co
     return sandbox;
   }
 
-  function explicitSaveActivationProfile({
-    intended,
-  }: {
-    readonly intended: ProfileName;
-  }): ProfileName {
-    return subagentProfile && isProfileName(subagentProfile)
-      ? subagentProfile
-      : intended;
-  }
-
   async function runProfileAuthoringCommand({
     mode,
     ctx,
@@ -732,6 +1193,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
     readonly mode: "create" | "edit";
     readonly ctx: ExtensionContext;
   }): Promise<void> {
+    if (!(await refreshOrPreserveConfiguration({ ctx }))) return;
     if (!ctx.hasUI) {
       ctx.ui.notify(
         `/profile-${mode === "create" ? "add" : "edit"} requires an interactive UI`,
@@ -762,7 +1224,11 @@ The permissions gate remains loaded and will fail closed until the profile is co
             ),
           });
     const existingDirectories = editableDefinition?.directoryGlobs ?? [];
-    const authoringRevision = profileConfigRevision;
+    // This revision is advanced after a conflict. The next explicit submit
+    // therefore validates and commits the retained draft against the snapshot
+    // the user is reviewing, rather than being permanently doomed by the
+    // revision that opened the wizard.
+    let authoringRevision = profileConfigRevision;
     const flow = createProfileAuthoringFlow({ ctx });
     try {
       await runProfileAuthoringWizard({
@@ -854,26 +1320,57 @@ The permissions gate remains loaded and will fail closed until the profile is co
               if (!confirmed) return { status: "retry" };
             }
             if (flow.signal.aborted) return { status: "retry" };
-            applyProfileAuthoringCommit({
-              fallback: genericPolicyConfig,
-              configPath: profileConfigPath,
-              expectedRevision: authoringRevision,
-              draft,
-            });
             try {
-              reloadPolicyConfig();
-              if (!isProfileName(draft.name))
-                throw new Error(
-                  `Profile '${draft.name}' was saved but could not be loaded.`,
-                );
-              const activated = explicitSaveActivationProfile({
-                intended: draft.name,
+              applyProfileAuthoringCommit({
+                fallback: genericPolicyConfig,
+                configPath: profileConfigPath,
+                expectedRevision: authoringRevision,
+                draft,
               });
-              await activateProfile(
-                activated,
-                ctx,
-                `${draft.mode === "create" ? "Created and activated" : "Updated"} profile: ${activated}`,
-              );
+            } catch (error) {
+              if (!(error instanceof ProfileConfigLockTimeoutError))
+                throw error;
+              const confirmed = await flow.confirm({
+                title: "Force write profile?",
+                message: `The profile save is blocked by ${error.lockPath}. Force write compares the timed-out lock first, but a concurrent release and replacement can still cause it to delete a successor lock. A live save may still commit after this action and may later release a successor lock. Force write is an emergency destructive action, not safe serialization. The save will reload and revalidate the revision you reviewed, so it will not overwrite a revision conflict.`,
+              });
+              if (isProfileAuthoringAbort(confirmed) || !confirmed)
+                return { status: "retry" };
+              const result = forceRemoveProfileConfigLock({
+                configPath: error.configPath,
+                observedLockIdentity: error.observedLockIdentity,
+              });
+              if (result !== "removed") {
+                ctx.ui.notify(
+                  result === "already-released"
+                    ? "The blocking lock was already released; retry the save normally."
+                    : "The blocking lock changed; it was not removed. Retry normally.",
+                  "info",
+                );
+                return { status: "retry" };
+              }
+              // Reacquire normally and prepare from a fresh source. In particular,
+              // retain the reviewed revision rather than bypassing conflict checks.
+              applyProfileAuthoringCommit({
+                fallback: genericPolicyConfig,
+                configPath: profileConfigPath,
+                expectedRevision: authoringRevision,
+                draft,
+              });
+            }
+            try {
+              if (
+                !(await refreshOrPreserveConfiguration({
+                  ctx,
+                  selectionIntent: {
+                    kind: "post-save",
+                    intended: draft.name,
+                    message: (profile) =>
+                      `${draft.mode === "create" ? "Created and activated" : "Updated"} profile: ${profile}`,
+                  },
+                }))
+              )
+                throw new Error(configurationErrorReason());
             } catch (error) {
               ctx.ui.notify(
                 postSaveActivationFailureMessage({
@@ -886,7 +1383,11 @@ The permissions gate remains loaded and will fail closed until the profile is co
             return { status: "saved" };
           } catch (error) {
             if (error instanceof ProfileConfigConflictError) {
-              reloadPolicyConfig();
+              if (await refreshOrPreserveConfiguration({ ctx })) {
+                // Keep the user's draft, but make the next overview/submit a
+                // review of the newly adopted source generation.
+                authoringRevision = profileConfigRevision;
+              }
               return { status: "retry" };
             }
             if (error instanceof ProfileAuthoringValidationError)
@@ -920,45 +1421,37 @@ The permissions gate remains loaded and will fail closed until the profile is co
         matchedPattern?: string;
       };
 
-  async function rememberDecisions(
-    drafts: ReadonlyArray<{
-      draft: PendingRuleChangeDraft;
-      decision: "allow" | "deny";
-      guidance?: string;
-    }>,
-    ctx: ExtensionContext,
-    childGeneral?: Extract<ProfileGeneralDraft, { readonly mode: "create" }>,
-  ): Promise<boolean> {
-    let profile = activeProfile;
+  async function rememberDecisions({
+    drafts,
+    ctx,
+  }: {
+    readonly drafts: ReadonlyArray<{
+      readonly draft: PendingRuleChangeDraft;
+      readonly decision: "allow" | "deny";
+      readonly guidance?: string;
+    }>;
+    readonly ctx: ExtensionContext;
+  }): Promise<boolean> {
+    const profile = activeProfile;
     try {
-      // Only definitions in the user-owned source are safely mutable. Shipped
-      // profiles (and an active profile supplied by another composition) get a
-      // small custom child that preserves their complete policy.
+      // Persistent decisions may change only the active user-owned source
+      // profile. Authoritative built-ins and composed profiles cannot create
+      // ineffective children which would immediately lose profile selection.
       const userOwned = Object.hasOwn(
         rawProfileConfig?.profiles ?? {},
         profile,
       );
-      let target: ProfileMutationTarget;
-      if (userOwned) {
-        target = { mode: "update", profile };
-      } else {
-        // The collision-free suggestion is the inline editor's default target;
-        // accepting the save screen must not open a separate naming dialog.
-        // (Callers may still provide a preselected suggested profile.)
-        if (!childGeneral) return false;
-        profile = childGeneral.name;
-        target = {
-          mode: "create-child",
-          profile,
-          description: childGeneral.description,
-          emoji: childGeneral.emoji || undefined,
-          color: childGeneral.color,
-          extends: [activeProfile],
-        };
+      if (!userOwned) {
+        ctx.ui.notify(
+          `Cannot save a permission decision: active profile '${profile}' is not user-owned. Switch to or edit a user-owned profile first.`,
+          "error",
+        );
+        return false;
       }
+      const target: ProfileMutationTarget = { mode: "update", profile };
 
-      // The profile target and rule are one mutation. In particular, never
-      // leave an empty child profile behind when the rule write fails.
+      // The active user-owned profile and its rules are one mutation, so a
+      // failed write cannot leave a partial durable permission update behind.
       applyProfileRuleChanges({
         fallback: genericPolicyConfig,
         configPath: profileConfigPath,
@@ -983,12 +1476,6 @@ The permissions gate remains loaded and will fail closed until the profile is co
               },
         ),
       });
-      reloadPolicyConfig();
-      if (!isProfileName(profile)) {
-        throw new Error(
-          `Profile '${profile}' was saved but could not be loaded.`,
-        );
-      }
       const effectCounts = new Map<string, number>();
       for (const { draft, decision } of drafts) {
         const layer =
@@ -1003,15 +1490,22 @@ The permissions gate remains loaded and will fail closed until the profile is co
       const effects = [...effectCounts]
         .map(([effect, count]) => `${count} ${effect}`)
         .join(", ");
-      const finalProfile = finalActivationProfile(profile);
-      await activateProfile(
-        finalProfile,
-        ctx,
-        `Saved ${effects} to ${finalProfile}.`,
-      );
+      if (
+        !(await refreshOrPreserveConfiguration({
+          ctx,
+          selectionIntent: {
+            kind: "post-save",
+            intended: profile,
+            message: (selectedProfile) =>
+              `Saved ${effects} to ${selectedProfile}.`,
+          },
+        }))
+      )
+        return false;
       return true;
     } catch (error) {
-      if (error instanceof ProfileConfigConflictError) reloadPolicyConfig();
+      if (error instanceof ProfileConfigConflictError)
+        await refreshOrPreserveConfiguration({ ctx });
       ctx.ui.notify(
         error instanceof Error ? error.message : String(error),
         "error",
@@ -1020,16 +1514,25 @@ The permissions gate remains loaded and will fail closed until the profile is co
     }
   }
 
-  function rememberRule(
-    draft: PendingRuleChangeDraft,
-    ctx: ExtensionContext,
-    pathTraces: readonly BashPathReferenceTrace[] = [],
-  ): RememberDecision {
+  function rememberRule({
+    draft,
+    ctx,
+    pathTraces = [],
+  }: {
+    readonly draft: PendingRuleChangeDraft;
+    readonly ctx: ExtensionContext;
+    readonly pathTraces?: readonly BashPathReferenceTrace[];
+  }): RememberDecision {
     let retainedRows: EditableRuleRow[] | undefined;
     let pruneRetainedOnNextInvocation = false;
-    let childGeneral:
-      Extract<ProfileGeneralDraft, { readonly mode: "create" }> | undefined;
-    return async (patterns, suppliedPathTraces) => {
+    return async ({ patterns, pathTraces: suppliedPathTraces }) => {
+      if (!Object.hasOwn(rawProfileConfig?.profiles ?? {}, activeProfile)) {
+        ctx.ui.notify(
+          `Cannot save a permission decision: active profile '${activeProfile}' is not user-owned. Switch to a user-owned profile first.`,
+          "error",
+        );
+        return { approved: false, handledRejection: true };
+      }
       const traces = suppliedPathTraces ?? pathTraces;
       const candidates: AskRuleCandidate[] = [];
       const seen = new Set<string>();
@@ -1094,29 +1597,12 @@ The permissions gate remains loaded and will fail closed until the profile is co
         rawProfileConfig?.profiles ?? {},
         activeProfile,
       );
-      const target: ProfileMutationTarget = userOwned
-        ? { mode: "update", profile: activeProfile }
-        : {
-            mode: "create-child",
-            profile: suggestedProfileName({
-              profile: activeProfile,
-              cwd: startupCwd,
-              existingNames: new Set(
-                Object.keys(rawProfileConfig?.profiles ?? {}),
-              ),
-            }),
-            extends: [activeProfile],
-            description: `Custom extension of ${activeProfile}.`,
-            emoji: defaultCustomProfileEmoji,
-          };
-      if (target.mode === "create-child" && childGeneral === undefined) {
-        childGeneral = {
-          mode: "create",
-          name: target.profile,
-          description: target.description,
-          emoji: defaultCustomProfileEmoji,
-          color: undefined,
-        };
+      if (!userOwned) {
+        ctx.ui.notify(
+          `Cannot save a permission decision: active profile '${activeProfile}' is not user-owned. Switch to a user-owned profile first.`,
+          "error",
+        );
+        return { approved: false };
       }
       const candidateIdentity = (candidate: AskRuleCandidate): string =>
         `${candidate.kind}\0${candidate.kind === "bash" ? "" : candidate.context}\0${candidate.requestedValue}`;
@@ -1143,7 +1629,16 @@ The permissions gate remains loaded and will fail closed until the profile is co
         pruneRetainedOnNextInvocation = false;
       }
       while (true) {
-        const currentTarget: ProfileMutationTarget = target;
+        const editorRevision = profileConfigRevision;
+        const editorProfile = activeProfile;
+        if (
+          (await refreshAfterPolicyUi({
+            ctx,
+            revision: editorRevision,
+            profile: editorProfile,
+          })) !== "unchanged"
+        )
+          return { approved: false, stale: true };
         const edited = await editProfileRuleRows({
           ctx,
           options: {
@@ -1156,6 +1651,27 @@ The permissions gate remains loaded and will fail closed until the profile is co
           },
         });
         retainedRows = edited.rows;
+        const editorRefresh = await refreshAfterPolicyUi({
+          ctx,
+          revision: editorRevision,
+          profile: editorProfile,
+        });
+        if (editorRefresh !== "unchanged") {
+          // This callback can survive the outer operation restart. Do not let
+          // an edit derived from the old revision reappear if the replacement
+          // policy also evaluates this operation to ASK.
+          retainedRows = undefined;
+          pruneRetainedOnNextInvocation = false;
+          ctx.ui.notify(
+            "Profile was updated while the rule editor was open; stale edits were discarded.",
+            "warning",
+          );
+          return {
+            approved: false,
+            stale: true,
+            refreshFailed: editorRefresh === "failed",
+          };
+        }
         if (edited.action === "back") return { approved: false, back: true };
         const selected = edited.rows.filter(
           (row) =>
@@ -1164,114 +1680,15 @@ The permissions gate remains loaded and will fail closed until the profile is co
             row.pattern.trim().length > 0,
         );
         if (selected.length === 0) return { approved: false, back: true };
-        if (currentTarget.mode === "create-child") {
-          while (true) {
-            const generalResult = await editProfileGeneral({
-              ctx,
-              initial: childGeneral ?? {
-                mode: "create",
-                name: currentTarget.profile,
-                description: currentTarget.description,
-                emoji: currentTarget.emoji ?? defaultCustomProfileEmoji,
-                color: currentTarget.color,
-              },
-              title: `${generalSectionPresentation.label} for new custom profile`,
-              validateName: ({ name }) => {
-                try {
-                  validateCustomProfileName({
-                    name,
-                    existingNames: new Set(
-                      Object.keys(rawProfileConfig?.profiles ?? {}),
-                    ),
-                  });
-                } catch (error) {
-                  return error instanceof Error ? error.message : String(error);
-                }
-                return undefined;
-              },
-            });
-            if (generalResult === null || generalResult.action === "cancel")
-              return { approved: false, back: true };
-            if (generalResult.draft.mode === "create")
-              childGeneral = generalResult.draft;
-            if (generalResult.action === "back") break;
-            const saved = await rememberDecisions(
-              selected.map((row) => ({
-                draft:
-                  row.kind === "bash"
-                    ? {
-                        kind: "bash" as const,
-                        pattern: row.pattern,
-                        replacePattern:
-                          row.origin === "request"
-                            ? (row.request?.matchedPattern ??
-                              row.request?.initialPattern)
-                            : undefined,
-                      }
-                    : {
-                        kind:
-                          row.kind === "read"
-                            ? ("read" as const)
-                            : ("write" as const),
-                        pattern: row.pattern,
-                        contexts: row.contexts,
-                        replacePattern:
-                          row.origin === "request"
-                            ? (row.request?.matchedPattern ??
-                              row.request?.initialPattern)
-                            : undefined,
-                      },
-                decision:
-                  row.decision === "deny"
-                    ? ("deny" as const)
-                    : ("allow" as const),
-                guidance: row.decision === "deny" ? row.guidance : undefined,
-              })),
-              ctx,
-              childGeneral,
-            );
-            if (!saved) continue;
-            retainedRows = edited.rows.filter(
-              (row) => row.request && row.decision === "skip",
-            );
-            pruneRetainedOnNextInvocation = true;
-            return {
-              approved: selected.every((row) => row.decision === "allow"),
-              profileUpdated: true,
-              handledRejection: selected.some((row) => row.decision === "deny"),
-            };
-          }
-          continue;
-        }
-        const saved = await rememberDecisions(
-          selected.map((row) => ({
-            draft:
-              row.kind === "bash"
-                ? ({
-                    kind: "bash",
-                    pattern: row.pattern,
-                    replacePattern:
-                      row.origin === "request"
-                        ? (row.request?.matchedPattern ??
-                          row.request?.initialPattern)
-                        : undefined,
-                  } as const)
-                : ({
-                    kind: row.kind === "read" ? "read" : "write",
-                    pattern: row.pattern,
-                    contexts: row.contexts,
-                    replacePattern:
-                      row.origin === "request"
-                        ? (row.request?.matchedPattern ??
-                          row.request?.initialPattern)
-                        : undefined,
-                  } as const),
+        const saved = await rememberDecisions({
+          drafts: selected.map((row) => ({
+            draft: pendingDraftFromEditableRow({ row }),
             decision: row.decision === "deny" ? "deny" : "allow",
             guidance: row.decision === "deny" ? row.guidance : undefined,
           })),
           ctx,
-        );
-        if (!saved) continue;
+        });
+        if (!saved) return { approved: false, stale: true };
         // A post-save re-check must rebuild from enforcement's remaining ASK
         // candidates. Preserve edits only for request rows explicitly skipped;
         // resolved and additional rows must not leak into the next prompt.
@@ -1288,6 +1705,28 @@ The permissions gate remains loaded and will fail closed until the profile is co
     };
   }
 
+  function pendingDraftFromEditableRow({
+    row,
+  }: {
+    readonly row: EditableRuleRow;
+  }): PendingRuleChangeDraft {
+    const replacePattern =
+      row.origin === "request"
+        ? (row.request?.matchedPattern ?? row.request?.initialPattern)
+        : undefined;
+    if (row.kind === "bash")
+      return { kind: "bash", pattern: row.pattern, replacePattern };
+    if (row.kind === "read" || row.kind === "write") {
+      return {
+        kind: row.kind,
+        pattern: row.pattern,
+        contexts: row.contexts,
+        replacePattern,
+      };
+    }
+    throw new Error("A protected path rule cannot be persisted from an ASK.");
+  }
+
   pi.registerCommand("profile-add", {
     description: "Create and activate a custom permissions profile",
     handler: async (_args, ctx) =>
@@ -1301,21 +1740,20 @@ The permissions gate remains loaded and will fail closed until the profile is co
 
   pi.registerCommand("profile", {
     description: "Show or switch the active permissions profile",
-    getArgumentCompletions: (prefix) => {
-      return profileNames()
+    getArgumentCompletions: (prefix) =>
+      freshProfileNames()
         .filter((profile) => profile.startsWith(prefix))
         .map((profile) => ({
           value: profile,
           label: profile,
           description: profile === activeProfile ? "active" : undefined,
-        }));
-    },
+        })),
     handler: async (args, ctx) => {
-      if (preserveConfigurationErrorStatus(ctx)) return;
+      if (!(await refreshOrPreserveConfiguration({ ctx }))) return;
       const requested = args.trim();
 
       if (!requested) {
-        await showProfilePicker(ctx);
+        await showProfilePicker({ ctx });
         return;
       }
 
@@ -1327,11 +1765,11 @@ The permissions gate remains loaded and will fail closed until the profile is co
         return;
       }
 
-      await activateProfile(
-        requested,
+      await activateProfile({
+        profile: requested,
         ctx,
-        `Switched to profile: ${requested}`,
-      );
+        message: `Switched to profile: ${requested}`,
+      });
     },
   });
 
@@ -1340,8 +1778,8 @@ The permissions gate remains loaded and will fail closed until the profile is co
   // available where the terminal reports Option as Meta; Ctrl+Shift+I is the
   // macOS-safe fallback that leaves Pi's defaults intact.
   const showProfiles = async (ctx: ExtensionContext): Promise<void> => {
-    if (preserveConfigurationErrorStatus(ctx)) return;
-    await showProfilePicker(ctx);
+    if (!(await refreshOrPreserveConfiguration({ ctx }))) return;
+    await showProfilePicker({ ctx });
   };
   for (const shortcut of [Key.alt("g"), "ctrl+shift+i"] as const) {
     pi.registerShortcut(shortcut, {
@@ -1363,14 +1801,18 @@ The permissions gate remains loaded and will fail closed until the profile is co
   pi.registerCommand("read-only", {
     description: "Switch to the read-only permissions profile",
     handler: async (_args, ctx) => {
-      if (preserveConfigurationErrorStatus(ctx)) return;
+      if (!(await refreshOrPreserveConfiguration({ ctx }))) return;
       const readOnlyName = "builtin:read-only";
       if (!policyConfig.profiles[readOnlyName]) {
         ctx.ui.notify("No 'builtin:read-only' profile is configured", "error");
         return;
       }
 
-      await activateProfile(readOnlyName, ctx, "Read-only profile enabled");
+      await activateProfile({
+        profile: readOnlyName,
+        ctx,
+        message: "Read-only profile enabled",
+      });
     },
   });
 
@@ -1389,7 +1831,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
   pi.registerCommand("sandbox-on", {
     description: "Use the active profile's Bash sandbox configuration",
     handler: async (_args, ctx) => {
-      if (preserveConfigurationErrorStatus(ctx)) return;
+      if (!(await refreshOrPreserveConfiguration({ ctx }))) return;
       await setSandboxOverride(
         "inherit",
         ctx,
@@ -1401,7 +1843,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
   pi.registerCommand("sandbox-off", {
     description: "Disable Bash sandboxing for this session",
     handler: async (_args, ctx) => {
-      if (preserveConfigurationErrorStatus(ctx)) return;
+      if (!(await refreshOrPreserveConfiguration({ ctx }))) return;
       await setSandboxOverride("disabled", ctx, "Bash sandboxing disabled ❌");
     },
   });
@@ -1409,7 +1851,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
   pi.registerCommand("sandbox-on-force", {
     description: "Force a no-network Bash sandbox for this session",
     handler: async (_args, ctx) => {
-      if (preserveConfigurationErrorStatus(ctx)) return;
+      if (!(await refreshOrPreserveConfiguration({ ctx }))) return;
       await setSandboxOverride(
         "enabled",
         ctx,
@@ -1421,7 +1863,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
   pi.registerCommand("sandbox", {
     description: "Show the active sandbox posture",
     handler: async (_args, ctx) => {
-      if (preserveConfigurationErrorStatus(ctx)) return;
+      if (!(await refreshOrPreserveConfiguration({ ctx }))) return;
       const resolution = await resolveActiveSandbox(ctx.cwd ?? startupCwd);
 
       if (resolution.kind === "none") {
@@ -1445,17 +1887,23 @@ The permissions gate remains loaded and will fail closed until the profile is co
     ...packageBashTool,
     description: `${packageBashTool.description}${packageBashOwnershipMarker}`,
     async execute(toolCallId, params, signal, onUpdate, ctx) {
+      if (!(await refreshOrPreserveConfiguration({ ctx }))) {
+        return sandboxUnavailableResult(
+          configurationErrorReason() ?? "Invalid permissions",
+        );
+      }
       const resolution = await resolveActiveSandbox(ctx.cwd ?? startupCwd);
 
       if (resolution.kind === "none") {
-        return await executeBashWithExitCode(() =>
-          createBashTool(ctx.cwd ?? startupCwd).execute(
-            toolCallId,
-            params,
-            signal,
-            onUpdate,
-          ),
-        );
+        return await executeBashWithExitCode({
+          execute: () =>
+            createBashTool(ctx.cwd ?? startupCwd).execute(
+              toolCallId,
+              params,
+              signal,
+              onUpdate,
+            ),
+        });
       }
 
       if (resolution.kind === "unavailable") {
@@ -1463,14 +1911,15 @@ The permissions gate remains loaded and will fail closed until the profile is co
           if (ctx.hasUI) {
             ctx.ui.notify(resolution.reason, "warning");
           }
-          return await executeBashWithExitCode(() =>
-            createBashTool(ctx.cwd ?? startupCwd).execute(
-              toolCallId,
-              params,
-              signal,
-              onUpdate,
-            ),
-          );
+          return await executeBashWithExitCode({
+            execute: () =>
+              createBashTool(ctx.cwd ?? startupCwd).execute(
+                toolCallId,
+                params,
+                signal,
+                onUpdate,
+              ),
+          });
         }
 
         return sandboxUnavailableResult(resolution.reason);
@@ -1480,9 +1929,10 @@ The permissions gate remains loaded and will fail closed until the profile is co
       const sandboxedBash = createBashTool(ctx.cwd ?? startupCwd, {
         operations: resolution.prepared.operations,
       });
-      return await executeBashWithExitCode(() =>
-        sandboxedBash.execute(toolCallId, params, signal, onUpdate),
-      );
+      return await executeBashWithExitCode({
+        execute: () =>
+          sandboxedBash.execute(toolCallId, params, signal, onUpdate),
+      });
     },
   });
   pi.registerShortcut("ctrl+shift+b", {
@@ -1529,7 +1979,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
       return [];
     },
     handler: async (args, ctx) => {
-      if (preserveConfigurationErrorStatus(ctx)) return;
+      if (!(await refreshOrPreserveConfiguration({ ctx }))) return;
 
       const trimmed = args.trim();
       if (!trimmed.startsWith("explain ")) {
@@ -1570,15 +2020,15 @@ The permissions gate remains loaded and will fail closed until the profile is co
               policy.protectedPathRules ?? [],
             )
           : input;
-      const explanation = explainPermission(
+      const explanation = explainPermission({
         policy,
-        activeProfile,
+        profileName: activeProfile,
         tool,
-        evaluatedInput,
+        input: evaluatedInput,
         cwd,
         startupCwd,
-        rawProfileConfig,
-      );
+        rawConfig: rawProfileConfig,
+      });
       ctx.ui.notify(formatExplanation(explanation), "info");
     },
   });
@@ -1597,25 +2047,29 @@ The permissions gate remains loaded and will fail closed until the profile is co
   pi.registerCommand("socrates", {
     description: "Switch to the Socrates coaching profile",
     handler: async (_args, ctx) => {
-      if (preserveConfigurationErrorStatus(ctx)) return;
+      if (!(await refreshOrPreserveConfiguration({ ctx }))) return;
       if (!policyConfig.profiles.socrates) {
         ctx.ui.notify("No 'socrates' profile is configured", "error");
         return;
       }
 
-      await activateProfile("socrates", ctx, "Socrates profile enabled");
+      await activateProfile({
+        profile: "socrates",
+        ctx,
+        message: "Socrates profile enabled",
+      });
     },
   });
 
   pi.registerCommand("socrates-off", {
     description: "Switch back to the configured default permissions profile",
     handler: async (_args, ctx) => {
-      if (preserveConfigurationErrorStatus(ctx)) return;
-      await activateProfile(
-        policyConfig.defaultProfile,
+      if (!(await refreshOrPreserveConfiguration({ ctx }))) return;
+      await activateProfile({
+        profile: policyConfig.defaultProfile,
         ctx,
-        `Socrates profile disabled; active profile: ${policyConfig.defaultProfile}`,
-      );
+        message: `Socrates profile disabled; active profile: ${policyConfig.defaultProfile}`,
+      });
     },
   });
 
@@ -1633,6 +2087,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
   });
 
   pi.on("before_agent_start", async (event, ctx) => {
+    if (!(await refreshOrPreserveConfiguration({ ctx }))) return undefined;
     const policy = activePolicy(activeProfile);
     const promptSections = [`# Active profile: ${activeProfile}`];
     const resolution = await resolveActiveSandbox(ctx.cwd ?? startupCwd);
@@ -1669,6 +2124,17 @@ The permissions gate remains loaded and will fail closed until the profile is co
   });
 
   pi.on("user_bash", async (_event, ctx) => {
+    if (!(await refreshOrPreserveConfiguration({ ctx }))) {
+      const errorReason = configurationErrorReason() ?? "Invalid permissions";
+      return {
+        result: {
+          output: errorReason,
+          exitCode: 126,
+          cancelled: false,
+          truncated: false,
+        },
+      };
+    }
     const errorReason = configurationErrorReason();
     if (errorReason) {
       return {
@@ -1709,13 +2175,38 @@ The permissions gate remains loaded and will fail closed until the profile is co
   });
 
   pi.on("tool_call", async (event, ctx) => {
-    return markPermissionBlock(
-      await (async () => {
+    // Never re-evaluate a rewritten command. Each stale result restarts the
+    // complete boundary from the immutable tool input, including scope and
+    // protected-search rewriting.
+    const originalInput = structuredClone(event.input);
+    // A current local save may intentionally leave another request row as ASK.
+    // Preserve only that operation's local callback across its top-level retry;
+    // external changes return stale before a callback result is accepted.
+    let rememberedBashRule: RememberDecision | undefined;
+    let rememberedPathRule: RememberDecision | undefined;
+    for (let attempt = 0; attempt < maxOperationEvaluationAttempts; attempt++) {
+      // Preserve Pi's original event input identity on the first evaluation;
+      // only restarted attempts replace the rewritten value from our immutable
+      // snapshot.
+      if (attempt > 0) event.input = structuredClone(originalInput);
+      const result = await (async () => {
+        guardOperationObserver?.onRefreshRequested?.({
+          toolName: event.toolName,
+        });
+        if (!(await refreshOrPreserveConfiguration({ ctx }))) {
+          return {
+            block: true,
+            reason: configurationErrorReason() ?? "Invalid permissions",
+          };
+        }
         const errorReason = configurationErrorReason();
         if (errorReason) {
           return { block: true, reason: errorReason };
         }
 
+        guardOperationObserver?.onEvaluationStarted?.({
+          toolName: event.toolName,
+        });
         const policy = activePolicy(activeProfile);
 
         if (isToolCallEventType("bash", event)) {
@@ -1734,14 +2225,25 @@ The permissions gate remains loaded and will fail closed until the profile is co
             command,
             policy.protectedPathRules ?? [],
           );
-          const gateResult = await gateBash(
-            event.input.command,
-            effectiveCwd,
+          const evaluatedRevision = profileConfigRevision;
+          const evaluatedProfile = activeProfile;
+          const gateResult = await gateBash({
+            command: event.input.command,
+            startupCwd: effectiveCwd,
             ctx,
-            policy,
-            rememberRule({ kind: "bash", pattern: event.input.command }, ctx),
-            () => activePolicy(activeProfile),
-          );
+            activePolicy: policy,
+            remember: (rememberedBashRule ??= rememberRule({
+              draft: { kind: "bash", pattern: event.input.command },
+              ctx,
+            })),
+            refreshAfterUiAwait: () =>
+              refreshAfterPolicyUi({
+                ctx,
+                revision: evaluatedRevision,
+                profile: evaluatedProfile,
+              }),
+          });
+          if (isRestartOperation(gateResult)) return gateResult;
           if (gateResult) return gateResult;
 
           const sandboxResolution = await resolveActiveSandbox(effectiveCwd);
@@ -1782,12 +2284,20 @@ The permissions gate remains loaded and will fail closed until the profile is co
         if (!isPathToolName(event.toolName)) {
           const customRules = policy.tools[event.toolName];
           if (!customRules) return undefined;
-          return await gateCustomTool(
-            event.toolName,
-            event.input,
-            customRules,
+          const evaluatedRevision = profileConfigRevision;
+          const evaluatedProfile = activeProfile;
+          return await gateCustomTool({
+            toolName: event.toolName,
+            input: event.input,
+            rules: customRules,
             ctx,
-          );
+            refreshAfterUiAwait: () =>
+              refreshAfterPolicyUi({
+                ctx,
+                revision: evaluatedRevision,
+                profile: evaluatedProfile,
+              }),
+          });
         }
 
         const rules = isReadToolName(event.toolName)
@@ -1847,8 +2357,8 @@ The permissions gate remains loaded and will fail closed until the profile is co
         if (policyDecision.decision === "ask") {
           // Keep one editor callback for the complete pending request so Back,
           // failed writes, and partial-save rechecks share the same draft state.
-          const rememberPathRule = rememberRule(
-            {
+          const pathRule = (rememberedPathRule ??= rememberRule({
+            draft: {
               kind: isReadToolName(event.toolName) ? "read" : "write",
               pattern: displayPath(absolutePath, startupCwd),
               contexts: [event.toolName],
@@ -1861,55 +2371,30 @@ The permissions gate remains loaded and will fail closed until the profile is co
                 policyDecision.trace?.pathMatches[0]?.item.pattern,
             },
             ctx,
-          );
-          const approval = await confirmOrBlock(
+          }));
+          const evaluatedRevision = profileConfigRevision;
+          const evaluatedProfile = activeProfile;
+          const refreshPathPrompt = () =>
+            refreshAfterPolicyUi({
+              ctx,
+              revision: evaluatedRevision,
+              profile: evaluatedProfile,
+            });
+          const approval = await confirmOrBlock({
             ctx,
-            `${isReadToolName(event.toolName) ? "Read" : "Write"} path permission request`,
-            `${event.toolName} wants to access:\n${absolutePath}\n\nMatched policy path:\n${matchPath}`,
-            rememberPathRule,
-          );
-          if (approval.profileUpdated) {
-            // Re-evaluate after every save. An edited pattern may deliberately
-            // remain ineffective, in which case the operation must not slip
-            // through merely because the editor was submitted.
-            while (true) {
-              const freshPolicy = activePolicy(activeProfile);
-              const rechecked = evaluatePathByPattern(
-                absolutePath,
-                startupCwd,
-                isReadToolName(event.toolName)
-                  ? freshPolicy.readPaths
-                  : freshPolicy.writePaths,
-                "allow",
-                event.toolName,
-                freshPolicy.protectedPathRules ?? [],
-              );
-              if (rechecked.decision === "allow") return undefined;
-              if (rechecked.decision === "deny")
-                return {
-                  block: true,
-                  reason: appendPolicySteering(
-                    `${event.toolName} denied by the saved profile for path: ${displayPath(absolutePath, startupCwd)}`,
-                    [rechecked.rule],
-                  ),
-                };
-              const retry = await confirmOrBlock(
-                ctx,
-                `${isReadToolName(event.toolName) ? "Read" : "Write"} path permission request`,
-                `${event.toolName} still requires permission for:\n${absolutePath}\n\nMatched policy path:\n${rechecked.matchPath}`,
-                rememberPathRule,
-              );
-              if (retry.profileUpdated) continue;
-              if (retry.approved) return undefined;
-              return {
-                block: true,
-                reason: appendUserGuidance(
-                  `${event.toolName} was not approved: ${absolutePath}`,
-                  retry.guidance,
-                ),
-              };
-            }
-          }
+            title: `${isReadToolName(event.toolName) ? "Read" : "Write"} path permission request`,
+            message: `${event.toolName} wants to access:\n${absolutePath}\n\nMatched policy path:\n${matchPath}`,
+            remember: pathRule,
+            refreshAfterUiAwait: refreshPathPrompt,
+          });
+          if (approval.refreshFailed)
+            return {
+              block: true,
+              reason: configurationErrorReason() ?? "Invalid permissions",
+            };
+          if (approval.stale) rememberedPathRule = undefined;
+          if (approval.profileUpdated || approval.stale)
+            return restartOperation();
           if (!approval.approved)
             return {
               block: true,
@@ -1921,8 +2406,15 @@ The permissions gate remains loaded and will fail closed until the profile is co
         }
 
         return undefined;
-      })(),
-    );
+      })();
+      if (isRestartOperation(result)) continue;
+      return markPermissionBlock(result);
+    }
+    return markPermissionBlock({
+      block: true,
+      reason:
+        "pi-guard policy changed repeatedly while evaluating this operation; permission was not approved.",
+    });
   });
 }
 
@@ -2016,8 +2508,8 @@ function explainSubagentScope(
   if (tool === "bash") {
     const scopedPolicy = {
       ...policy,
-      readPaths: subagentPermissibleRules as [Rule, ...Rule[]],
-      writePaths: subagentPermissibleRules as [Rule, ...Rule[]],
+      readPaths: subagentPermissibleRules,
+      writePaths: subagentPermissibleRules,
     };
     const decision = decideBashPathReferences(
       effectivePathAnalysisSegments(input),
@@ -2080,8 +2572,8 @@ function decideSubagentBashScope(
   // replace both so navigation cannot escape the declared scope either.
   const scopedPolicy = {
     ...policy,
-    readPaths: subagentPermissibleRules as [Rule, ...Rule[]],
-    writePaths: subagentPermissibleRules as [Rule, ...Rule[]],
+    readPaths: subagentPermissibleRules,
+    writePaths: subagentPermissibleRules,
   };
   const decision = decideBashPathReferences(
     effectivePathAnalysisSegments(command),
@@ -2204,14 +2696,21 @@ function evaluateBashGate(
   };
 }
 
-export async function gateBash(
-  command: string,
-  startupCwd: string,
-  ctx: ExtensionContext,
+export async function gateBash({
+  command,
+  startupCwd,
+  ctx,
   activePolicy = defaultPolicy,
-  remember?: RememberDecision,
-  reloadForRecheck?: () => ProfilePolicy,
-) {
+  remember,
+  refreshAfterUiAwait,
+}: {
+  readonly command: string;
+  readonly startupCwd: string;
+  readonly ctx: ExtensionContext;
+  readonly activePolicy?: ProfilePolicy;
+  readonly remember?: RememberDecision;
+  readonly refreshAfterUiAwait?: RefreshAfterUiAwait;
+}) {
   if (isOpaqueInterpreterCommand(command) && hasShellControlSyntax(command)) {
     return {
       block: true,
@@ -2281,12 +2780,19 @@ export async function gateBash(
     const details = parseErrors
       .map((error) => `- offset ${error.pos}: ${error.message}`)
       .join("\n");
-    const approval = await confirmOrBlock(
+    const approval = await confirmOrBlock({
       ctx,
-      "Allow Bash command with parse errors?",
-      `The command could not be classified completely.\n\n${details}\n\nRaw command:\n${command}`,
-      undefined,
-    );
+      title: "Allow Bash command with parse errors?",
+      message: `The command could not be classified completely.\n\n${details}\n\nRaw command:\n${command}`,
+      refreshAfterUiAwait,
+    });
+    if (approval.refreshFailed)
+      return {
+        block: true,
+        reason:
+          "pi-guard profile configuration became invalid while awaiting approval.",
+      };
+    if (approval.stale) return restartOperation();
     if (approval.approved) return undefined;
     return {
       block: true,
@@ -2305,10 +2811,10 @@ export async function gateBash(
       (trace) => trace.decision === "ask",
     );
     const hasNonAuthorableAsk = evaluation.nonAuthorableAsks.length > 0;
-    const approval = await confirmOrBlock(
+    const approval = await confirmOrBlock({
       ctx,
-      "Bash permission request",
-      `Raw command:\n${command}\n\nParsed command segments:\n${formatParsedCommands(command, activePolicy)}${
+      title: "Bash permission request",
+      message: `Raw command:\n${command}\n\nParsed command segments:\n${formatParsedCommands(command, activePolicy)}${
         askPaths.length > 0
           ? `\n\nGated paths:\n${askPaths
               .map(
@@ -2322,31 +2828,31 @@ export async function gateBash(
           ? `\n\nNon-authorable path uncertainty:\n${evaluation.nonAuthorableAsks.join("\n")}`
           : ""
       }`,
-      parseErrors.length === 0 &&
+      remember:
+        parseErrors.length === 0 &&
         remember &&
         // Any unresolved opaque/dynamic path is required for this request but
         // cannot be represented truthfully as a durable rule.
         !hasNonAuthorableAsk &&
         (decisions.some(({ decision }) => decision === "ask") ||
           askPaths.length > 0)
-        ? () =>
-            remember(
-              commands.filter(
-                (_item, index) => decisions[index]?.decision === "ask",
-              ),
-              askPaths,
-            )
-        : undefined,
-    );
-    if (approval.profileUpdated)
-      return await gateBash(
-        command,
-        startupCwd,
-        ctx,
-        reloadForRecheck?.() ?? activePolicy,
-        remember,
-        reloadForRecheck,
-      );
+          ? () =>
+              remember({
+                patterns: commands.filter(
+                  (_item, index) => decisions[index]?.decision === "ask",
+                ),
+                pathTraces: askPaths,
+              })
+          : undefined,
+      refreshAfterUiAwait,
+    });
+    if (approval.refreshFailed)
+      return {
+        block: true,
+        reason:
+          "pi-guard profile configuration became invalid while awaiting approval.",
+      };
+    if (approval.profileUpdated || approval.stale) return restartOperation();
     if (!approval.approved)
       return {
         block: true,
@@ -2373,29 +2879,29 @@ export async function gateBash(
   }
 
   if (decisions.some(({ decision }) => decision === "ask")) {
-    const approval = await confirmOrBlock(
+    const approval = await confirmOrBlock({
       ctx,
-      "Allow bash command?",
-      `Raw command:\n${command}\n\nParsed command segments:\n${formatParsedCommands(command, activePolicy)}`,
-      parseErrors.length === 0 && remember
-        ? () =>
-            remember(
-              commands.filter(
-                (_item, index) => decisions[index]?.decision === "ask",
-              ),
-              evaluation.pathTraces,
-            )
-        : undefined,
-    );
-    if (approval.profileUpdated)
-      return await gateBash(
-        command,
-        startupCwd,
-        ctx,
-        reloadForRecheck?.() ?? activePolicy,
-        remember,
-        reloadForRecheck,
-      );
+      title: "Allow bash command?",
+      message: `Raw command:\n${command}\n\nParsed command segments:\n${formatParsedCommands(command, activePolicy)}`,
+      remember:
+        parseErrors.length === 0 && remember
+          ? () =>
+              remember({
+                patterns: commands.filter(
+                  (_item, index) => decisions[index]?.decision === "ask",
+                ),
+                pathTraces: evaluation.pathTraces,
+              })
+          : undefined,
+      refreshAfterUiAwait,
+    });
+    if (approval.refreshFailed)
+      return {
+        block: true,
+        reason:
+          "pi-guard profile configuration became invalid while awaiting approval.",
+      };
+    if (approval.profileUpdated || approval.stale) return restartOperation();
     if (!approval.approved)
       return {
         block: true,
@@ -2462,15 +2968,23 @@ function evaluateBash(
   );
 }
 
-export function explainPermission(
-  policy: ProfilePolicy,
-  profileName: string,
-  tool: string,
-  input: string,
-  cwd: string = process.cwd(),
-  startupCwd: string = cwd,
-  rawConfig?: RawProfileConfig,
-): PermissionExplanation {
+export function explainPermission({
+  policy,
+  profileName,
+  tool,
+  input,
+  cwd = process.cwd(),
+  startupCwd = cwd,
+  rawConfig,
+}: {
+  readonly policy: ProfilePolicy;
+  readonly profileName: string;
+  readonly tool: string;
+  readonly input: string;
+  readonly cwd?: string;
+  readonly startupCwd?: string;
+  readonly rawConfig?: RawProfileConfig;
+}): PermissionExplanation {
   const compositionChain = resolveCompositionChain(profileName, rawConfig);
 
   if (tool === "bash") {
@@ -2490,7 +3004,7 @@ export function explainPermission(
       : isWriteToolName(tool)
         ? policy.writePaths
         : [];
-    const context = tool as PathContext;
+    const context: PathContext = isReadToolName(tool) ? tool : tool;
     const fallback: Decision = "allow";
     const requestedPath = toolPath(tool, { path: input }) ?? input;
     const absolutePath = resolveRequestedPath(requestedPath, cwd);
@@ -2741,7 +3255,7 @@ function resolveCompositionChain(
   profileName: string,
   rawConfig?: RawProfileConfig,
 ): string[] {
-  const definitions = rawConfig?.profiles ?? loadRawProfileConfig()?.profiles;
+  const definitions = rawConfig?.profiles ?? loadRawProfileConfig({})?.profiles;
   const resolving = new Set<string>();
 
   const resolve = (name: string): string[] => {
@@ -2930,12 +3444,19 @@ function formatDecision(decision: Decision): string {
   return ansi.red("deny");
 }
 
-async function gateCustomTool(
-  toolName: string,
-  input: unknown,
-  rules: CustomToolRule[],
-  ctx: ExtensionContext,
-) {
+async function gateCustomTool({
+  toolName,
+  input,
+  rules,
+  ctx,
+  refreshAfterUiAwait,
+}: {
+  readonly toolName: string;
+  readonly input: unknown;
+  readonly rules: CustomToolRule[];
+  readonly ctx: ExtensionContext;
+  readonly refreshAfterUiAwait?: RefreshAfterUiAwait;
+}) {
   const { decision, rule: matchedRule } = decideCustomTool(input, rules);
 
   if (decision === "deny") {
@@ -2948,11 +3469,20 @@ async function gateCustomTool(
     };
   }
   if (decision === "ask") {
-    const approval = await confirmOrBlock(
+    const approval = await confirmOrBlock({
       ctx,
-      `Allow ${toolName}?`,
-      `${toolName} matched a custom tool policy requiring confirmation.`,
-    );
+      title: `Allow ${toolName}?`,
+      message: `${toolName} matched a custom tool policy requiring confirmation.`,
+      refreshAfterUiAwait,
+    });
+    if (approval.refreshFailed) {
+      return {
+        block: true,
+        reason:
+          "pi-guard profile configuration became invalid while awaiting approval.",
+      };
+    }
+    if (approval.stale) return restartOperation();
     if (!approval.approved) {
       return {
         block: true,
@@ -3104,13 +3634,28 @@ function toolPath(toolName: string, input: unknown): string | undefined {
     : undefined;
 }
 
-async function confirmOrBlock(
-  ctx: ExtensionContext,
-  title: string,
-  _message: string,
-  remember?: RememberDecision,
-): Promise<Approval> {
+async function confirmOrBlock({
+  ctx,
+  title,
+  message: _message,
+  remember,
+  refreshAfterUiAwait,
+}: {
+  readonly ctx: ExtensionContext;
+  readonly title: string;
+  readonly message: string;
+  readonly remember?: RememberDecision;
+  readonly refreshAfterUiAwait?: RefreshAfterUiAwait;
+}): Promise<Approval> {
   if (!ctx.hasUI) return { approved: false };
+  // A refresh immediately before display closes the gap between evaluation and
+  // modal creation. The same baseline is checked again after every await.
+  const beforeDisplay = refreshAfterUiAwait
+    ? await refreshAfterUiAwait()
+    : "unchanged";
+  if (beforeDisplay === "failed")
+    return { approved: false, stale: true, refreshFailed: true };
+  if (beforeDisplay === "changed") return { approved: false, stale: true };
 
   // Permission prompts are shown while the agent is otherwise "working".
   // For large ask messages, the animated Working row can force repeated
@@ -3191,45 +3736,96 @@ async function confirmOrBlock(
         };
       },
     );
+    const refreshResult = refreshAfterUiAwait
+      ? await refreshAfterUiAwait()
+      : "unchanged";
+    if (refreshResult === "failed")
+      return { approved: false, stale: true, refreshFailed: true };
+    if (refreshResult === "changed") {
+      ctx.ui.notify(
+        "Profile was updated while this permission request was open; its rule took precedence. Re-evaluating the request.",
+        "warning",
+      );
+      return { approved: false, stale: true };
+    }
     if (choice === yesChoice) return { approved: true };
     if (choice === updateProfileChoice && remember) {
-      const result = await remember();
+      const result = await remember({});
       if (result.back)
-        return await confirmOrBlock(ctx, title, _message, remember);
+        return await confirmOrBlock({
+          ctx,
+          title,
+          message: _message,
+          remember,
+          refreshAfterUiAwait,
+        });
       if (result.approved || result.handledRejection || result.profileUpdated)
         return result;
-      const guidance = await collectDenialGuidance(ctx);
-      return { ...result, guidance };
+      const guidance = await collectDenialGuidance({
+        ctx,
+        refreshAfterUiAwait,
+      });
+      if (guidance.stale || guidance.refreshFailed) return guidance;
+      return { ...result, guidance: guidance.guidance };
     }
 
-    const guidance = await collectDenialGuidance(ctx);
-    return guidance ? { approved: false, guidance } : { approved: false };
+    const guidance = await collectDenialGuidance({
+      ctx,
+      refreshAfterUiAwait,
+    });
+    if (guidance.stale || guidance.refreshFailed) return guidance;
+    return guidance.guidance
+      ? { approved: false, guidance: guidance.guidance }
+      : { approved: false };
   } finally {
     setWorkingVisible?.(true);
   }
 }
 
-async function collectDenialGuidance(
-  ctx: ExtensionContext,
-): Promise<string | undefined> {
-  return await collectGuidance(
+async function collectDenialGuidance({
+  ctx,
+  refreshAfterUiAwait,
+}: {
+  readonly ctx: ExtensionContext;
+  readonly refreshAfterUiAwait?: RefreshAfterUiAwait;
+}): Promise<Approval> {
+  return await collectGuidance({
     ctx,
-    "Denied permission request — optional steering for the agent. Leave blank or press Esc to skip.",
-  );
+    prompt:
+      "Denied permission request — optional steering for the agent. Leave blank or press Esc to skip.",
+    refreshAfterUiAwait,
+  });
 }
 
-async function collectGuidance(
-  ctx: ExtensionContext,
-  prompt: string,
-): Promise<string | undefined> {
+async function collectGuidance({
+  ctx,
+  prompt,
+  refreshAfterUiAwait,
+}: {
+  readonly ctx: ExtensionContext;
+  readonly prompt: string;
+  readonly refreshAfterUiAwait?: RefreshAfterUiAwait;
+}): Promise<Approval> {
+  const beforeDisplay = refreshAfterUiAwait
+    ? await refreshAfterUiAwait()
+    : "unchanged";
+  if (beforeDisplay === "failed")
+    return { approved: false, stale: true, refreshFailed: true };
+  if (beforeDisplay === "changed") return { approved: false, stale: true };
   const input =
     typeof ctx.ui.editor === "function"
       ? await ctx.ui.editor(prompt, "")
       : typeof ctx.ui.input === "function"
         ? await ctx.ui.input(prompt, "")
         : undefined;
-  const trimmed = input?.trim();
-  return trimmed || undefined;
+  const afterInput = refreshAfterUiAwait
+    ? await refreshAfterUiAwait()
+    : "unchanged";
+  if (afterInput === "failed")
+    return { approved: false, stale: true, refreshFailed: true };
+  if (afterInput === "changed") return { approved: false, stale: true };
+  const guidance = input?.trim();
+  return guidance ? { approved: false, guidance } : { approved: false };
 }
 
 function appendUserGuidance(
