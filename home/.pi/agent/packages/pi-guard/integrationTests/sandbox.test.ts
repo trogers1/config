@@ -1135,6 +1135,35 @@ func main() {
       ).toBe("ok");
     });
 
+    it("permits Go's declared toolchain cache outside a narrow workspace scope", async () => {
+      const root = scopedFixture();
+      const cacheDirectory = fs.mkdtempSync(
+        path.join(
+          os.homedir(),
+          "go",
+          "pkg",
+          "mod",
+          "cache",
+          "download",
+          "pi-guard-subagent-scope-",
+        ),
+      );
+      const output = path.join(cacheDirectory, "lock");
+      try {
+        expect(
+          await runThroughPi({
+            root,
+            command: node({
+              source: `require('fs').writeFileSync(${JSON.stringify(output)}, 'ok')`,
+            }),
+          }),
+        ).toBe(0);
+        expect(fs.readFileSync(output, "utf8")).toBe("ok");
+      } finally {
+        fs.rmSync(cacheDirectory, { force: true, recursive: true });
+      }
+    });
+
     it.each([
       ["a sibling", "allowed/sibling/created"],
       ["the scope parent", "allowed/parent-created"],

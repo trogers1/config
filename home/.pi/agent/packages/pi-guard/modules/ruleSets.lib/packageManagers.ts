@@ -42,6 +42,11 @@ const dependencyMutationSubcommands: Record<string, readonly string[]> = {
   bundle: ["install", "update", "add"],
   composer: ["install", "update", "require", "remove"],
   go: ["install", "get"],
+  "*/bin/go": ["install", "get"],
+  "mise exec -- go": ["install", "get"],
+  "mise exec go": ["install", "get"],
+  "mise x -- go": ["install", "get"],
+  "mise x go": ["install", "get"],
 };
 
 const npmCredentialMutations = [
@@ -125,6 +130,22 @@ export const testRunRules: Rule[] = [
   { pattern: "go build *", decision: "allow" },
   { pattern: "go test", decision: "allow" },
   { pattern: "go test *", decision: "allow" },
+  { pattern: "mise exec -- go build", decision: "allow" },
+  { pattern: "mise exec -- go build *", decision: "allow" },
+  { pattern: "mise exec -- go test", decision: "allow" },
+  { pattern: "mise exec -- go test *", decision: "allow" },
+  { pattern: "mise exec go build", decision: "allow" },
+  { pattern: "mise exec go build *", decision: "allow" },
+  { pattern: "mise exec go test", decision: "allow" },
+  { pattern: "mise exec go test *", decision: "allow" },
+  { pattern: "mise x -- go build", decision: "allow" },
+  { pattern: "mise x -- go build *", decision: "allow" },
+  { pattern: "mise x -- go test", decision: "allow" },
+  { pattern: "mise x -- go test *", decision: "allow" },
+  { pattern: "mise x go build", decision: "allow" },
+  { pattern: "mise x go build *", decision: "allow" },
+  { pattern: "mise x go test", decision: "allow" },
+  { pattern: "mise x go test *", decision: "allow" },
   // Keep the existing broad Go posture; explicit build/test rules above also
   // declare the subcommands the path evaluator can recognize as syntax.
   { pattern: "go *", decision: "allow" },
@@ -288,4 +309,12 @@ export const packageManagerRules: Rule[] = [
     ],
   },
   { pattern: "go *", decision: "allow" },
+  { pattern: "*/bin/go *", decision: "allow" },
+  { pattern: "mise --version", decision: "allow" },
+  { pattern: "mise version", decision: "allow" },
+  { pattern: "mise where *", decision: "allow" },
+  { pattern: "mise exec -- go *", decision: "allow" },
+  { pattern: "mise exec go *", decision: "allow" },
+  { pattern: "mise x -- go *", decision: "allow" },
+  { pattern: "mise x go *", decision: "allow" },
 ];

@@ -1096,6 +1096,60 @@ describe("permissions extension", () => {
     expect(unspecified?.reason).toContain("non-interactive worker");
   });
 
+  it("does not mistake Go and mise arguments for paths under a narrow subagent scope", async () => {
+    vi.stubEnv("PI_SUBAGENT_PROFILE", "builtin:worker");
+    vi.stubEnv("PI_SUBAGENT_PERMISSIBLE_GLOBS", "modules/allowed.ts");
+    const harness = createExtensionHarness({ hasUI: false });
+    await harness.start();
+
+    for (const command of [
+      "mise --version",
+      "go version",
+      'GOCACHE="$PWD/.tmp/gocache" GOMODCACHE="$PWD/.tmp/gomodcache" /Users/example/.local/share/mise/installs/go/1.27.1/bin/go version',
+      "/Users/example/.local/share/mise/installs/go/1.27.1/bin/go test ./...",
+      "go test ./...",
+      "mise where go",
+      "mise exec -- go version",
+      "mise exec go version",
+      "mise x -- go test ./...",
+      "mise x go test ./...",
+    ]) {
+      await expect(
+        harness.callToolWithoutPrompt({
+          toolName: "bash",
+          input: { command },
+        }),
+        command,
+      ).resolves.toBeUndefined();
+    }
+
+    for (const command of ["go -C ../outside test", "go build -o ../app"]) {
+      const denied = await harness.callTool({
+        toolName: "bash",
+        input: { command },
+      });
+      expect(denied, command).toMatchObject({ block: true });
+      expect(denied?.reason).toContain("PI_SUBAGENT_PERMISSIBLE_GLOBS");
+    }
+
+    for (const command of [
+      "go get github.com/santhosh-tekuri/jsonschema/v6@v6.0.1",
+      "/Users/example/.local/share/mise/installs/go/1.27.1/bin/go get github.com/santhosh-tekuri/jsonschema/v6@v6.0.1",
+      "mise exec -- go get github.com/santhosh-tekuri/jsonschema/v6@v6.0.1",
+      "mise exec go get github.com/santhosh-tekuri/jsonschema/v6@v6.0.1",
+      "mise x -- go get github.com/santhosh-tekuri/jsonschema/v6@v6.0.1",
+      "mise x go get github.com/santhosh-tekuri/jsonschema/v6@v6.0.1",
+    ]) {
+      const denied = await harness.callTool({
+        toolName: "bash",
+        input: { command },
+      });
+      expect(denied, command).toMatchObject({ block: true });
+      expect(denied?.reason).toContain("Command denied by explicit rule");
+      expect(denied?.reason).not.toContain("PI_SUBAGENT_PERMISSIBLE_GLOBS");
+    }
+  });
+
   it("enforces subagent permissible scopes for tools and Bash paths", async () => {
     vi.stubEnv("PI_SUBAGENT_PROFILE", "builtin:worker");
     vi.stubEnv(

@@ -1,3 +1,4 @@
+import path from "node:path";
 import {
   parse,
   type Command,
@@ -129,6 +130,10 @@ export function classifyCommandTokens(
   if (commandName && packageManagerCommands.has(commandName)) {
     classifyPackageManagerArguments(commandName, command.suffix, tokens);
   }
+  if (commandName && path.basename(commandName) === "go") {
+    classifyGoArguments(command.suffix, tokens);
+  }
+  if (commandName === "mise") classifyMiseArguments(command.suffix, tokens);
   classifyPolicySubcommand(command.suffix, tokens, subcommands);
   if (commandName === "find") classifyFindArguments(command.suffix, tokens);
 
@@ -678,6 +683,92 @@ function classifyPackageManagerArguments(
  * operand remains conservatively path-checked unless a dedicated adapter
  * understands it.
  */
+// Go package and module arguments name packages/modules, not filesystem
+// operands. In particular, `./...` is a Go package pattern, while
+// `example.com/module@version` is a module query. Keep the small set of Go
+// flags that explicitly name filesystem locations subject to path policy.
+function classifyGoArguments(
+  words: Word[],
+  tokens: ClassifiedShellToken[],
+  start = 0,
+): void {
+  let subcommandSeen = false;
+  for (let index = start; index < words.length; index++) {
+    const value = staticWordValue(words[index]);
+    const token = tokens[index];
+    if (!value || !token) continue;
+
+    if (value === "-C" || value === "-o") {
+      token.kind = "proven-non-path";
+      const operand = tokens[index + 1];
+      if (operand) {
+        if (operand.kind === "dynamic") {
+          operand.dynamicRole = "filesystem-reference";
+        } else {
+          operand.kind = "filesystem-reference";
+        }
+      }
+      index++;
+      continue;
+    }
+    if (value.startsWith("-C=") || value.startsWith("-o=")) {
+      const separator = value.indexOf("=");
+      tokens[index] = {
+        ...token,
+        kind: "filesystem-reference",
+        value: value.slice(separator + 1),
+      };
+      continue;
+    }
+
+    if (!subcommandSeen && !value.startsWith("-")) {
+      subcommandSeen = true;
+    }
+    if (token.kind === "dynamic") token.dynamicRole = "argument";
+    else token.kind = "proven-non-path";
+  }
+}
+
+// `mise where <tool>` queries mise's tool registry; its tool name is not a
+// filesystem operand. `mise exec -- go …` passes argv to Go rather than mise,
+// so apply the Go adapter to the trailing words. Other mise subcommands remain
+// conservatively classified.
+function classifyMiseArguments(
+  words: Word[],
+  tokens: ClassifiedShellToken[],
+): void {
+  const subcommandIndex = words.findIndex((word) => {
+    const value = staticWordValue(word);
+    return value !== undefined && !value.startsWith("-");
+  });
+  if (subcommandIndex < 0) return;
+
+  const subcommand = staticWordValue(words[subcommandIndex]);
+  if (subcommand === "where") {
+    for (let index = subcommandIndex; index < tokens.length; index++) {
+      const token = tokens[index];
+      if (token.kind === "dynamic") token.dynamicRole = "argument";
+      else token.kind = "proven-non-path";
+    }
+    return;
+  }
+  if (subcommand !== "exec" && subcommand !== "x") return;
+
+  const nextIndex = subcommandIndex + 1;
+  const executableIndex =
+    staticWordValue(words[nextIndex]) === "--" ? nextIndex + 1 : nextIndex;
+  if (
+    staticWordValue(words[executableIndex]) !== "go" ||
+    !tokens[executableIndex]
+  ) {
+    return;
+  }
+
+  tokens[subcommandIndex].kind = "proven-non-path";
+  tokens[executableIndex].kind = "proven-non-path";
+  classifyGoArguments(words, tokens, executableIndex + 1);
+}
+
 function classifyPolicySubcommand(
   words: Word[],
   tokens: ClassifiedShellToken[],

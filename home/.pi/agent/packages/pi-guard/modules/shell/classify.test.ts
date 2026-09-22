@@ -382,6 +382,40 @@ describe("unbash shell classification", () => {
     },
   );
 
+  it("recognizes Go package arguments and mise's Go wrapper as non-path arguments", () => {
+    for (const command of [
+      "go version",
+      "/Users/example/.local/share/mise/installs/go/1.27.1/bin/go version",
+      "go get github.com/santhosh-tekuri/jsonschema/v6@v6.0.1",
+      "go test ./...",
+      "mise where go",
+      "mise exec -- go version",
+      "mise exec go version",
+      "mise x -- go test ./...",
+      "mise x go test ./...",
+    ]) {
+      const result = classifyShell(command);
+      expect(result.errors, command).toEqual([]);
+      expect(
+        result.tokens.every((token) => token.kind === "proven-non-path"),
+        command,
+      ).toBe(true);
+    }
+  });
+
+  it("keeps explicit Go directory and output paths gated", () => {
+    for (const [command, path] of [
+      ["go -C ../other test", "../other"],
+      ["go build -o ../bin/app", "../bin/app"],
+    ]) {
+      const result = classifyShell(command);
+      expect(
+        result.tokens.find((token) => token.value === path)?.kind,
+        command,
+      ).toBe("filesystem-reference");
+    }
+  });
+
   it("leaves operands after a policy-derived subcommand conservatively ambiguous", () => {
     const result = classifyShell("cargo test --package demo", {
       subcommands: ["test"],

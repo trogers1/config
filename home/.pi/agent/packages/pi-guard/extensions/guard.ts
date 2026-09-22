@@ -135,6 +135,7 @@ import {
 } from "../modules/directoryGlobs";
 import { ruleSetRegistry } from "../modules/ruleSets.lib";
 import { parseSubagentPermissibleRules } from "../modules/subagentScopes";
+import { goToolchainCacheSandboxWritePaths } from "../modules/dependencyCaches";
 import { readRuntimePromptFile } from "../modules/profilePromptFile";
 import {
   clearSandboxCaches,
@@ -593,11 +594,25 @@ export default function (pi: GuardExtensionAPI) {
             },
           }
         : policy;
+    // A subagent's declared scope constrains workspace writes, but Go's
+    // compiler/module caches are an explicitly granted runtime capability of
+    // the built-in policy. Keep those cache roots available to the kernel
+    // sandbox so `go test` can acquire its toolchain lock without granting
+    // arbitrary configured extra-write roots outside the subagent scope.
+    const subagentSandboxScopes = subagentPermissibleRules
+      ? [
+          ...subagentPermissibleRules,
+          ...goToolchainCacheSandboxWritePaths.map((pattern) => ({
+            pattern,
+            decision: "allow" as const,
+          })),
+        ]
+      : undefined;
     return await resolveSandbox({
       profile: activeProfile,
       policy: sandboxedPolicy,
       startupCwd: cwd,
-      subagentScopes: subagentPermissibleRules,
+      subagentScopes: subagentSandboxScopes,
       configurationError: configurationErrorReason(),
     });
   }
