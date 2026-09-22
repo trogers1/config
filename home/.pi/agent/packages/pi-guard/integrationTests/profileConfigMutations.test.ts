@@ -191,6 +191,39 @@ describe("profile config mutations", () => {
     });
   });
 
+  it("updates a symlink target without replacing the profile config symlink", () => {
+    const directory = fs.mkdtempSync(
+      path.join(tmpdir(), "pi-guard-profile-symlink-"),
+    );
+    directories.push(directory);
+    const sourceDirectory = path.join(directory, "source");
+    const linkDirectory = path.join(directory, "config");
+    fs.mkdirSync(sourceDirectory);
+    fs.mkdirSync(linkDirectory);
+    const sourcePath = path.join(sourceDirectory, "profiles.jsonc");
+    const configPath = path.join(linkDirectory, "profiles.jsonc");
+    fs.writeFileSync(sourcePath, storeFixture.source);
+    fs.symlinkSync(sourcePath, configPath);
+
+    const draft = editDraft({ configPath, name: storeFixture.profile });
+    commitEdit({
+      configPath,
+      draft: {
+        ...draft,
+        definition: {
+          ...draft.definition,
+          description: "Updated through the managed link",
+        },
+      },
+    });
+
+    expect(fs.lstatSync(configPath).isSymbolicLink()).toBe(true);
+    expect(fs.realpathSync(configPath)).toBe(fs.realpathSync(sourcePath));
+    expect(fs.readFileSync(sourcePath, "utf8")).toContain(
+      "Updated through the managed link",
+    );
+  });
+
   it("leaves omitted declarations byte-untouched, including ASK alternatives and contexts", () => {
     const configPath = tempConfig();
     const before = `// retain\n{

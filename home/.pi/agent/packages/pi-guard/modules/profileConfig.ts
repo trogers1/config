@@ -1105,11 +1105,24 @@ function atomicallyWriteProfileConfig({
   readonly expectedRevision?: string;
   readonly lock: ProfileConfigLock;
 }): void {
-  const directory = path.dirname(configPath);
+  // Renaming onto a symlink replaces the link itself. Resolve an existing
+  // symlink before creating its sibling temporary file so profile authoring
+  // atomically replaces the managed source while preserving the link.
+  let writePath = configPath;
+  let configStat: fs.Stats | undefined;
+  try {
+    configStat = fs.lstatSync(configPath);
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT"))
+      throw error;
+  }
+  // A broken link must fail rather than being silently replaced.
+  if (configStat?.isSymbolicLink()) writePath = fs.realpathSync(configPath);
+  const directory = path.dirname(writePath);
   fs.mkdirSync(directory, { recursive: true });
   const temporaryPath = path.join(
     directory,
-    `.${path.basename(configPath)}.${randomUUID()}.tmp`,
+    `.${path.basename(writePath)}.${randomUUID()}.tmp`,
   );
   try {
     assertProfileConfigLockOwnership({ lock, configPath });
@@ -1127,7 +1140,7 @@ function atomicallyWriteProfileConfig({
     )
       throw new ProfileConfigConflictError(configPath);
     assertProfileConfigLockOwnership({ lock, configPath });
-    fs.renameSync(temporaryPath, configPath);
+    fs.renameSync(temporaryPath, writePath);
   } finally {
     try {
       fs.unlinkSync(temporaryPath);
