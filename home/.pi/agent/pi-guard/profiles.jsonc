@@ -289,6 +289,20 @@
             "read"
           ]
         },
+        {
+          "pattern": "/Users/taylor.rogers/Code/sidecar-comments/**",
+          "decision": "allow",
+          "contexts": [
+            "read"
+          ]
+        },
+        {
+          "pattern": "/Users/taylor.rogers/Code/sidecar-comments",
+          "decision": "allow",
+          "contexts": [
+            "ls"
+          ]
+        },
       ],
       "writePaths": [
         {
@@ -322,6 +336,13 @@
           "decision": "allow",
           "contexts": [
             "bash"
+          ]
+        },
+        {
+          "pattern": "/Users/taylor.rogers/Code/sidecar-comments/**",
+          "decision": "allow",
+          "contexts": [
+            "write"
           ]
         },
       ],
@@ -430,6 +451,34 @@
             "pattern": "prettier --write *",
             "decision": "deny",
             "guidance": "Just use `npm run fix:prettier`"
+          },
+          {
+            "pattern": "* CI=1 *",
+            "decision": "deny",
+            "guidance": "You're not in CI, do not set that env var"
+          },
+          {
+            "pattern": "home/.pi/agent/packages/pi-guard/node_modules/.bin/vitest *",
+            "decision": "deny",
+            "guidance": "Just use `npm test` or `npm test -- <file>`"
+          },
+          {
+            "pattern": "CI=1 *",
+            "decision": "deny",
+            "guidance": "You're not in CI, so don't set that env var"
+          },
+          {
+            "pattern": "**/node_modules/.bin/prettier *",
+            "decision": "deny",
+            "guidance": "Just use `npm run fix:prettier`"
+          },
+          {
+            "pattern": "npm --prefix home/.pi/agent/packages/* run fix:prettier",
+            "decision": "allow"
+          },
+          {
+            "pattern": "npm --prefix home/.pi/agent/packages/* run *",
+            "decision": "allow"
           }
         ]
       },
@@ -486,7 +535,7 @@
     },
     "gitlab-skills": {
       "description": "GitLab skill scripts with network access and gate-only .git access for merge-request workflows.",
-      "extends": ["personal"],
+      "extends": ["builtin:default-with-net"],
       "tools": {
         "bash": [
           {
@@ -540,7 +589,11 @@
     },
     "personal": {
       "description": "Personal default profile with local coding workflow guardrails.",
-      "extends": ["builtin:default", "customruleset:infra-mutation-deny"],
+      "extends": [
+        "builtin:default",
+        "customruleset:infra-mutation-deny",
+        "gitlab-skills"
+      ],
       "sandbox": {
         "network": "allow",
         "allowAppleEvents": true,
@@ -619,6 +672,10 @@
             "pattern": "docker context *",
             "decision": "allow"
           },
+          {
+            "pattern": "printf *",
+            "decision": "allow"
+          },
         ],
       },
       "readPaths": [
@@ -627,6 +684,22 @@
           "decision": "allow",
           "contexts": [
             "grep"
+          ]
+        },
+        {
+          "pattern": "/Users/taylor.rogers/.pi/agent/packages/pi-guard",
+          "decision": "deny",
+          "guidance": "Just update local files within this project (they should be symlinked in the setup scripts)",
+          "contexts": [
+            "ls"
+          ]
+        },
+        {
+          "pattern": "/Users/taylor.rogers/.pi/agent/packages/pi-guard-subagents",
+          "decision": "deny",
+          "guidance": "Just update local files within this project (they should be symlinked in the setup scripts)",
+          "contexts": [
+            "ls"
           ]
         }
       ],
@@ -671,6 +744,101 @@
       "promptFile": "~/.pi/agent/pi-guard/prompts/socrates.md",
       "color": "cyan",
       "emoji": "🧠",
+    },
+    "personal-sidecar-comments": {
+      "description": "Sidecar-specific profile (can see config repo)",
+      "emoji": "🛵",
+      "extends": [
+        "personal"
+      ],
+      "directoryGlobs": [
+        "/Users/taylor.rogers/Code/sidecar-comments"
+      ],
+      "color": "yellow",
+      "readPaths": [
+        {
+          "pattern": "~/Code/config",
+          "decision": "allow"
+        },
+        {
+          "pattern": "~/Code/config/**",
+          "decision": "allow"
+        },
+        {
+          "pattern": "/Users/taylor.rogers/Code/config/xdg/nvim/*",
+          "decision": "allow",
+          "contexts": [
+            "read"
+          ]
+        },
+        {
+          "pattern": "/Users/taylor.rogers/Code/config/xdg/nvim",
+          "decision": "allow",
+          "contexts": [
+            "read"
+          ]
+        },
+        {
+          "pattern": "/usr/local/go/src/**",
+          "decision": "allow",
+          "contexts": [
+            "read"
+          ]
+        },
+        {
+          "pattern": "/usr/local/go/src",
+          "decision": "allow",
+          "contexts": [
+            "grep"
+          ]
+        }
+      ],
+      "tools": {
+        "bash": [
+          {
+            "pattern": "gofmt *",
+            "decision": "allow"
+          },
+          {
+            "pattern": "git reflog *",
+            "decision": "allow"
+          },
+          {
+            "pattern": "make *",
+            "decision": "allow"
+          },
+          {
+            "pattern": "mkdir *",
+            "decision": "allow"
+          },
+          {
+            "pattern": "GOTOOLCHAIN=local go test *",
+            "decision": "allow"
+          }
+        ]
+      }
+    },
+    "personal-sidecar-comments-allow-asks": {
+      "description": "Sidecar-comments Golang profile for auto-pilot that allows asks",
+      "emoji": "🤖",
+      "extends": [
+        "personal-sidecar-comments"
+      ],
+      "color": "orange",
+      "transforms": [
+        "transform:allow-asks"
+      ]
+    },
+    "personal-sidecar-comments-deny-asks": {
+      "description": "Auto-pilot extension to the golang sidecar profile that denies asks",
+      "emoji": "🚅",
+      "extends": [
+        "personal-sidecar-comments-allow-asks"
+      ],
+      "color": "green",
+      "transforms": [
+        "transform:deny-asks"
+      ]
     },
   },
 }
