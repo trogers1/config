@@ -33,7 +33,6 @@ export type RawSandboxAuthoring =
       readonly network: ScalarAuthoring<SandboxConfigOverride["network"]>;
       readonly allowLocalBinding: ScalarAuthoring<boolean>;
       readonly allowAppleEvents: ScalarAuthoring<boolean>;
-      readonly enableWeakerNetworkIsolation: ScalarAuthoring<boolean>;
       readonly onUnavailable: ScalarAuthoring<
         SandboxConfigOverride["onUnavailable"]
       >;
@@ -55,9 +54,6 @@ function putScalars(
     target.allowLocalBinding = value.allowLocalBinding.value;
   if (value.allowAppleEvents.mode === "local")
     target.allowAppleEvents = value.allowAppleEvents.value;
-  if (value.enableWeakerNetworkIsolation.mode === "local")
-    target.enableWeakerNetworkIsolation =
-      value.enableWeakerNetworkIsolation.value;
   if (value.onUnavailable.mode === "local")
     target.onUnavailable = value.onUnavailable.value;
 }
@@ -117,7 +113,6 @@ export function decodeSandboxAuthoring({
     network: scalar("network"),
     allowLocalBinding: scalar("allowLocalBinding"),
     allowAppleEvents: scalar("allowAppleEvents"),
-    enableWeakerNetworkIsolation: scalar("enableWeakerNetworkIsolation"),
     onUnavailable: scalar("onUnavailable"),
     extraWritePaths: paths("extraWritePaths"),
     extraDenyReadPaths: paths("extraDenyReadPaths"),

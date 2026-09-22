@@ -45,12 +45,10 @@ describe("sandbox profile composition", () => {
       }),
     });
 
-    expect(config.profiles.child.sandbox).toEqual(
-      expect.objectContaining({
-        network: "deny",
-        extraWritePaths: ["/tmp"],
-      }),
-    );
+    const sandbox = config.profiles.child.sandbox;
+    if (!sandbox) throw new Error("Expected an active sandbox");
+    expect(sandbox.network).toBe("deny");
+    expect(sandbox.extraWritePaths).toContain("/tmp");
   });
 
   it("allows a child profile to disable an inherited sandbox explicitly", () => {
@@ -102,22 +100,18 @@ describe("sandbox profile composition", () => {
             extends: ["base"],
             sandbox: {
               network: "allow",
-              enableWeakerNetworkIsolation: true,
             },
           },
         },
       }),
     });
 
-    expect(config.profiles.child.sandbox).toEqual(
-      expect.objectContaining({
-        network: "allow",
-        extraWritePaths: ["/tmp"],
-        extraDenyReadPaths: ["~/.ssh"],
-        allowAppleEvents: true,
-        enableWeakerNetworkIsolation: true,
-      }),
-    );
+    const sandbox = config.profiles.child.sandbox;
+    if (!sandbox) throw new Error("Expected an active sandbox");
+    expect(sandbox.network).toBe("allow");
+    expect(sandbox.extraWritePaths).toContain("/tmp");
+    expect(sandbox.extraDenyReadPaths).toEqual(["~/.ssh"]);
+    expect(sandbox.allowAppleEvents).toBe(true);
   });
 
   it("composes sandbox path arrays and permits partial sandbox overrides", () => {
@@ -144,12 +138,11 @@ describe("sandbox profile composition", () => {
       }),
     });
 
-    expect(config.profiles.child.sandbox).toEqual(
-      expect.objectContaining({
-        network: "deny",
-        extraWritePaths: ["/tmp", "/var/tmp"],
-      }),
-    );
+    const sandbox = config.profiles.child.sandbox;
+    if (!sandbox) throw new Error("Expected an active sandbox");
+    expect(sandbox.network).toBe("deny");
+    expect(sandbox.extraWritePaths).toContain("/tmp");
+    expect(sandbox.extraWritePaths).toContain("/var/tmp");
   });
 
   it.each([

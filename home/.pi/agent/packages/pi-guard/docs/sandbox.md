@@ -52,7 +52,6 @@ Set `sandbox` on a custom profile to choose its posture:
         "extraWritePaths": ["build-cache"],
         "extraDenyReadPaths": ["~/Library/Keychains"],
         "extraDenyWritePaths": ["secrets/output"],
-        "enableWeakerNetworkIsolation": true,
         "allowLocalBinding": true,
         "allowAppleEvents": true,
         "onUnavailable": "block",
@@ -75,23 +74,18 @@ Set `sandbox` on a custom profile to choose its posture:
 
 The optional path arrays are additive:
 
-| Field                          | Effect                                                                        |
-| ------------------------------ | ----------------------------------------------------------------------------- |
-| `extraWritePaths`              | Additional writable roots when policy-derived writes are too narrow.          |
-| `extraDenyReadPaths`           | Additional kernel-enforced read denials.                                      |
-| `extraDenyWritePaths`          | Additional kernel-enforced write denials.                                     |
-| `enableWeakerNetworkIsolation` | On macOS, permits sandbox-runtime's trustd IPC relaxation.                    |
-| `allowLocalBinding`            | Permits local Unix-domain and loopback listeners without external networking. |
-| `allowAppleEvents`             | On macOS, permits Apple Events and LaunchServices handoffs such as `open`.    |
+| Field                 | Effect                                                                        |
+| --------------------- | ----------------------------------------------------------------------------- |
+| `extraWritePaths`     | Additional writable roots when policy-derived writes are too narrow.          |
+| `extraDenyReadPaths`  | Additional kernel-enforced read denials.                                      |
+| `extraDenyWritePaths` | Additional kernel-enforced write denials.                                     |
+| `allowLocalBinding`   | Permits local Unix-domain and loopback listeners without external networking. |
+| `allowAppleEvents`    | On macOS, permits Apple Events and LaunchServices handoffs such as `open`.    |
 
-`enableWeakerNetworkIsolation` defaults to `false`. It is a sandbox-runtime
-option whose current macOS effect is permitting the `com.apple.trustd.agent`
-service. Enable it when a sandboxed Go-based TLS client—such as `glab`, a Go
-HTTP client, or another Go CLI—must validate a server certificate through
-macOS's trust service. This weakens network isolation by admitting that system
-IPC service and can create a data-exfiltration vector, but it does not disable
-certificate verification. Do not enable it merely to bypass an untrusted or
-invalid certificate.
+When `network` is `"allow"`, pi-guard permits sandbox-runtime's macOS
+`com.apple.trustd.agent` service so Go-based TLS clients can validate server
+certificates through macOS's trust service. `network: "deny"` does not permit
+that service. This does not disable certificate verification.
 
 `allowAppleEvents` defaults to `false`. It is a macOS-only opt-in that permits
 Apple Events, the LaunchServices `lsopen` operation, and the small set of

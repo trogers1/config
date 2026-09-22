@@ -72,14 +72,13 @@ describe("sandbox policy translation", () => {
     });
   });
 
-  it("carries sandbox network opt-ins into the sandbox specification", () => {
+  it("enables macOS trustd access when networking is allowed", () => {
     const result = translatePolicy(
       {
         ...policyConfig.profiles["builtin:default"],
         protectedPathRules: [],
         sandbox: {
-          network: "deny",
-          enableWeakerNetworkIsolation: true,
+          network: "allow",
           allowLocalBinding: true,
           allowAppleEvents: true,
         },
@@ -95,7 +94,7 @@ describe("sandbox policy translation", () => {
     expect(result.spec.allowAppleEvents).toBe(true);
   });
 
-  it("defaults local binding and Apple Events to denied", () => {
+  it("keeps trustd unavailable with denied networking", () => {
     const result = translatePolicy(
       {
         ...policyConfig.profiles["builtin:default"],
@@ -108,6 +107,7 @@ describe("sandbox policy translation", () => {
 
     expect(result.kind).toBe("active");
     if (result.kind !== "active") return;
+    expect(result.spec.enableWeakerNetworkIsolation).toBe(false);
     expect(result.spec.allowLocalBinding).toBe(false);
     expect(result.spec.allowAppleEvents).toBe(false);
   });

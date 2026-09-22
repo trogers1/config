@@ -487,9 +487,6 @@
     "gitlab-skills": {
       "description": "GitLab skill scripts with network access and gate-only .git access for merge-request workflows.",
       "extends": ["personal"],
-      "sandbox": {
-        "enableWeakerNetworkIsolation": true,
-      },
       "tools": {
         "bash": [
           {
@@ -648,7 +645,6 @@
       "extends": ["builtin:default", "customruleset:infra-mutation-deny"],
       "sandbox": {
         "network": "allow",
-        "enableWeakerNetworkIsolation": true,
       },
       "color": "red",
       "emoji": "📋",

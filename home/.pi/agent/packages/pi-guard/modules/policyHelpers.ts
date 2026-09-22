@@ -167,13 +167,6 @@ const sandboxConfigSchema = Type.Object(
     kernelUnenforcedProtectedPaths: Type.Optional(
       Type.Array(Type.String({ minLength: 1 })),
     ),
-    // See https://github.com/anthropic-experimental/sandbox-runtime#security-limitations
-    enableWeakerNetworkIsolation: Type.Optional(
-      Type.Boolean({
-        description:
-          "Permits macOS trustd IPC for Go TLS verification. This weakens network isolation and can permit data exfiltration; see https://github.com/anthropic-experimental/sandbox-runtime#security-limitations.",
-      }),
-    ),
     // Lets sandboxed tools create local Unix-domain or loopback listeners
     // (for example tsx's IPC socket) without enabling external networking.
     allowLocalBinding: Type.Optional(

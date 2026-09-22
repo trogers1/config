@@ -233,9 +233,8 @@ function writeComposedProfileConfig(): void {
         },
         inherited: {
           description:
-            "Inherited profile adding a TLS setting without replacing sandbox capabilities",
+            "Inherited profile retaining its base sandbox capabilities",
           extends: ["base"],
-          sandbox: { enableWeakerNetworkIsolation: true },
         },
         replacement: {
           description:
@@ -446,7 +445,7 @@ describe("sandbox full-harness OS acceptance", () => {
     }
   });
 
-  it("retains inherited writable paths when a child adds a sandbox setting", async () => {
+  it("retains inherited writable paths when a child inherits the sandbox", async () => {
     const root = fixture();
     writeComposedProfileConfig();
     const harness = createExtensionHarness({ contextCwd: root, hasUI: false });

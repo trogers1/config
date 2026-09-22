@@ -225,7 +225,6 @@ const scalarNames = [
   "network",
   "allowLocalBinding",
   "allowAppleEvents",
-  "enableWeakerNetworkIsolation",
   "onUnavailable",
 ] as const;
 type ScalarName = (typeof scalarNames)[number];
@@ -235,7 +234,6 @@ const scalarLabels: Record<ScalarName, string> = {
   network: "Network",
   allowLocalBinding: "Local listeners",
   allowAppleEvents: "Apple Events",
-  enableWeakerNetworkIsolation: "Weaker network isolation",
   onUnavailable: "When unavailable",
 };
 
@@ -251,7 +249,6 @@ function blankCustomize(): Customize {
     network: { mode: "omitted" },
     allowLocalBinding: { mode: "omitted" },
     allowAppleEvents: { mode: "omitted" },
-    enableWeakerNetworkIsolation: { mode: "omitted" },
     onUnavailable: { mode: "omitted" },
     extraWritePaths: { mode: "inherit" },
     extraDenyReadPaths: { mode: "inherit" },
@@ -317,14 +314,6 @@ function nextScalar(value: Customize, name: ScalarName): Customize {
             ? { mode: "local", value: false }
             : { mode: "omitted" },
       };
-    case "enableWeakerNetworkIsolation":
-      return {
-        ...value,
-        enableWeakerNetworkIsolation:
-          value.enableWeakerNetworkIsolation.mode === "omitted"
-            ? { mode: "local", value: false }
-            : { mode: "omitted" },
-      };
     case "onUnavailable":
       return {
         ...value,
@@ -365,16 +354,6 @@ function toggleScalar(value: Customize, name: ScalarName): Customize {
             allowAppleEvents: {
               mode: "local",
               value: !value.allowAppleEvents.value,
-            },
-          }
-        : value;
-    case "enableWeakerNetworkIsolation":
-      return value.enableWeakerNetworkIsolation.mode === "local"
-        ? {
-            ...value,
-            enableWeakerNetworkIsolation: {
-              mode: "local",
-              value: !value.enableWeakerNetworkIsolation.value,
             },
           }
         : value;
@@ -687,11 +666,6 @@ export function summarizeSandboxSecurityExpansion({
     warnings.push("Adds local socket or loopback listeners.");
   if (after.allowAppleEvents && !before.allowAppleEvents)
     warnings.push("Adds Apple Events or LaunchServices access.");
-  if (
-    after.enableWeakerNetworkIsolation &&
-    !before.enableWeakerNetworkIsolation
-  )
-    warnings.push("Enables weaker network isolation.");
   if (after.onUnavailable === "warn" && before.onUnavailable !== "warn")
     warnings.push("Adds warn-and-continue sandbox fallback.");
   for (const name of overwritePathArrayNames) {

@@ -405,8 +405,9 @@ export function translatePolicy(
     spec: {
       profile: profileName,
       network: sandbox.network,
-      enableWeakerNetworkIsolation:
-        sandbox.enableWeakerNetworkIsolation ?? false,
+      // Sandboxed macOS Go clients require trustd to validate TLS. Network
+      // access is therefore the single policy control for this relaxation.
+      enableWeakerNetworkIsolation: sandbox.network === "allow",
       allowLocalBinding: sandbox.allowLocalBinding ?? false,
       allowAppleEvents: sandbox.allowAppleEvents ?? false,
       filesystem: {

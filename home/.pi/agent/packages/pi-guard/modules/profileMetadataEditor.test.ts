@@ -254,7 +254,7 @@ describe("profile metadata section editors", () => {
     expect(lines[mode - 1]).toBe("");
     expect(lines[controls - 1]).toBe("");
     appendModal.press("Tab");
-    for (let index = 0; index < 6; index++) appendModal.press("ArrowDown");
+    for (let index = 0; index < 5; index++) appendModal.press("ArrowDown");
     appendModal.press("Tab");
     appendModal.press("Enter");
     await expect(appendPending).resolves.toMatchObject({
@@ -271,7 +271,7 @@ describe("profile metadata section editors", () => {
     });
     const overwriteModal = await overwriteHarness.ui.waitForCustomModal();
     overwriteModal.press("Tab");
-    for (let index = 0; index < 6; index++) overwriteModal.press("ArrowDown");
+    for (let index = 0; index < 5; index++) overwriteModal.press("ArrowDown");
     overwriteModal.press("Tab");
     overwriteModal.press("Tab");
     overwriteModal.press("Enter");
@@ -298,7 +298,7 @@ describe("profile metadata section editors", () => {
     const modal = await harness.ui.waitForCustomModal();
 
     modal.press("Tab");
-    for (let index = 0; index < 6; index++) modal.press("ArrowDown");
+    for (let index = 0; index < 5; index++) modal.press("ArrowDown");
     modal.press("Tab");
     modal.press("CtrlN");
     const inputRow = modal.render().find((line) => line.startsWith("    → "));

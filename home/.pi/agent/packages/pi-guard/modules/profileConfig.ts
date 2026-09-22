@@ -1299,7 +1299,6 @@ function prepareAuthoringDeclarationCandidate({
       "network",
       "allowLocalBinding",
       "allowAppleEvents",
-      "enableWeakerNetworkIsolation",
       "onUnavailable",
       "extraWritePaths",
       "extraDenyReadPaths",

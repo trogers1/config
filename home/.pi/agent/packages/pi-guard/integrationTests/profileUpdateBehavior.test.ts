@@ -1468,7 +1468,6 @@ describe("profile updates through the public extension surface", () => {
       network: { mode: "local", value: "allow" },
       allowLocalBinding: { mode: "omitted" },
       allowAppleEvents: { mode: "omitted" },
-      enableWeakerNetworkIsolation: { mode: "omitted" },
       onUnavailable: { mode: "omitted" },
       extraWritePaths: { mode: "overwrite", value: ["/tmp/local"] },
       extraDenyReadPaths: { mode: "inherit" },
