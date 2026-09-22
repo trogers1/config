@@ -39,6 +39,7 @@ export const defaultShellRules: Rule[] = [
   { pattern: "tail *", decision: "allow" },
   { pattern: "rg *", decision: "allow" },
   { pattern: "ripgrep *", decision: "allow" },
+  { pattern: "rm *", decision: "allow" },
 
   { pattern: "true", decision: "allow" },
   { pattern: "terraform fmt *", decision: "allow" },
@@ -204,6 +205,11 @@ export const readOnlyShellRules: Rule[] = [
   { pattern: "wc *", decision: "allow" },
   { pattern: "file", decision: "allow" },
   { pattern: "file *", decision: "allow" },
+  {
+    pattern: "rm *",
+    decision: "deny",
+    guidance: "File deletion is not allowed in the read-only profile.",
+  },
   ...readOnlyGitRules,
   ...readOnlyGuardRules,
   // Compose the shared guard set last so its specificity-tie winners remain

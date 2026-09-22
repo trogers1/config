@@ -65,6 +65,26 @@ describe("rule-set namespace", () => {
     ).toBe(true);
   });
 
+  it("ruleset:shell allows file deletion", () => {
+    const config = loadProfileConfig({
+      fallback: genericPolicyConfig,
+      configPath: writeConfig({
+        profiles: {
+          deletion: {
+            description:
+              "Default shell ruleset permits requested file deletion.",
+            extends: ["ruleset:shell"],
+            ...minimalPaths,
+          },
+        },
+      }),
+    });
+
+    expect(decideBash("rm generated-file", config.profiles.deletion)).toBe(
+      "allow",
+    );
+  });
+
   it("ruleset:read-only-shell and ruleset:read-only-path resolve through JSONC", () => {
     const config = loadProfileConfig({
       fallback: genericPolicyConfig,
@@ -88,6 +108,7 @@ describe("rule-set namespace", () => {
     expect(resolved.protectedPathRules).toEqual(
       pathPosture.protectedPathRules ?? [],
     );
+    expect(decideBash("rm generated-file", resolved)).toBe("deny");
   });
 
   it("builtin:read-only reuses the shipped read-only rule-set arrays", () => {

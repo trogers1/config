@@ -299,9 +299,25 @@ describe("shipped profile catalog", () => {
     expect(profiles["builtin:tests-disallowed"]).toBeUndefined();
   });
 
+  it("non-destructive built-ins deny file deletion", async () => {
+    for (const profile of [
+      "builtin:read-only",
+      "builtin:reviewer",
+      "builtin:no-shell",
+    ]) {
+      const harness = await harnessFor(profile);
+      const result = await harness.callTool({
+        toolName: "bash",
+        input: { command: "rm generated-file" },
+      });
+      expect(result, profile).toMatchObject({ block: true });
+    }
+  });
+
   it("builtin:read-only blocks destructive find, grep, and git guards", async () => {
     const harness = await harnessFor("builtin:read-only");
     for (const command of [
+      "rm generated-file",
       "find /tmp -delete",
       "find -delete",
       "find -exec rm -f {} \\;",
