@@ -2,6 +2,7 @@
 name: planner
 description: Creates implementation plans from context and requirements (no model pinned — inherits the default model)
 tools: read, grep, find, ls
+model: openai/gpt-5.6-sol
 profile: builtin:read-only
 ---
 
