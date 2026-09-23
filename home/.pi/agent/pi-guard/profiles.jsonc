@@ -676,6 +676,10 @@
             "pattern": "printf *",
             "decision": "allow"
           },
+          {
+            "pattern": "nvm use",
+            "decision": "allow"
+          },
         ],
       },
       "readPaths": [
@@ -791,6 +795,10 @@
           "contexts": [
             "grep"
           ]
+        },
+        {
+          "pattern": ".temp",
+          "decision": "allow"
         }
       ],
       "tools": {
@@ -816,7 +824,13 @@
             "decision": "allow"
           }
         ]
-      }
+      },
+      "writePaths": [
+        {
+          "pattern": ".temp",
+          "decision": "allow"
+        }
+      ]
     },
     "personal-sidecar-comments-allow-asks": {
       "description": "Sidecar-comments Golang profile for auto-pilot that allows asks",
@@ -838,6 +852,28 @@
       "color": "green",
       "transforms": [
         "transform:deny-asks"
+      ]
+    },
+    "personal-deny-asks": {
+      "description": "The conservative auto-pilot for the personal  profile.",
+      "emoji": "👨‍✈️",
+      "extends": [
+        "personal"
+      ],
+      "color": "green",
+      "transforms": [
+        "transform:deny-asks"
+      ]
+    },
+    "personal-allow-asks": {
+      "description": "Dangerous auto-pilot for the personal profile",
+      "emoji": "🔥",
+      "extends": [
+        "personal"
+      ],
+      "color": "red",
+      "transforms": [
+        "transform:allow-asks"
       ]
     },
   },
