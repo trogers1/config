@@ -21,7 +21,7 @@ export function parseSubagentPermissibleRules({
     )
     .filter(Boolean);
   const guidance =
-    "This subagent may only access paths in its declared permissible scope.";
+    "This subagent may only access paths in its declared permissible scope. END YOUR TURN AND ASK THE ORCHESTRATOR TO RESTART YOU WITH A NEW PERMISSIBLE SCOPE IF NECESSARY FOR YOUR TASK.";
   const rules: [Rule, ...Rule[]] = [
     { pattern: "**", decision: "deny", guidance },
   ];

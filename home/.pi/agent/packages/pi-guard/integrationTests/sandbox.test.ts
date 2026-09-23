@@ -1134,6 +1134,19 @@ func main() {
       ).toBe("ok");
     });
 
+    it("permits its private TMPDIR outside a narrow workspace scope", async () => {
+      const root = scopedFixture();
+      expect(
+        await runThroughPi({
+          root,
+          command: node({
+            source:
+              "const fs = require('fs'); const path = require('path'); const directory = fs.mkdtempSync(path.join(process.env.TMPDIR, 'pi-guard-subagent-temp-')); fs.writeFileSync(path.join(directory, 'created'), 'ok'); fs.rmSync(directory, { recursive: true });",
+          }),
+        }),
+      ).toBe(0);
+    });
+
     it("permits Go's declared toolchain cache outside a narrow workspace scope", async () => {
       const root = scopedFixture();
       const cacheDirectory = fs.mkdtempSync(

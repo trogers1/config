@@ -594,14 +594,28 @@ export default function (pi: GuardExtensionAPI) {
             },
           }
         : policy;
-    // A subagent's declared scope constrains workspace writes, but Go's
-    // compiler/module caches are an explicitly granted runtime capability of
-    // the built-in policy. Keep those cache roots available to the kernel
-    // sandbox so `go test` can acquire its toolchain lock without granting
-    // arbitrary configured extra-write roots outside the subagent scope.
+    // ensureSandboxTemporaryDirectory() is process-local and idempotent, so
+    // this is the same directory added to the policy above.
+    const sandboxTemporaryDirectory =
+      typeof sandbox === "object" && sandbox !== null
+        ? ensureSandboxTemporaryDirectory()
+        : undefined;
+    // A subagent's declared scope constrains workspace writes, but runtime
+    // directories granted by pi-guard itself remain available. In particular,
+    // the private TMPDIR is needed by Node tooling (for example tsx's IPC
+    // socket) before tests can start. Go's compiler/module caches are likewise
+    // explicit runtime capabilities, not workspace write access.
     const subagentSandboxScopes = subagentPermissibleRules
       ? [
           ...subagentPermissibleRules,
+          ...(sandboxTemporaryDirectory
+            ? [
+                {
+                  pattern: sandboxTemporaryDirectory,
+                  decision: "allow" as const,
+                },
+              ]
+            : []),
           ...goToolchainCacheSandboxWritePaths.map((pattern) => ({
             pattern,
             decision: "allow" as const,
