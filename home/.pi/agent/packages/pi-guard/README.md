@@ -239,8 +239,9 @@ others:
 
 Shipped profiles are composed from reusable **rule sets** in
 `modules/ruleSets.lib/`. Rule sets are partial policies: they add `tools`,
-`readPaths`, `writePaths`, and `protectedPathRules`, but no scalars
-(color/emoji/promptFile) and no transforms.
+`readPaths`, `writePaths`, `protectedPathRules`, and (for shipped sets only)
+audited runtime requirements, but no scalars (color/emoji/promptFile) and no
+transforms.
 
 Shipped rule sets are addressable from JSONC through the reserved `ruleset:`
 namespace, interchangeably with profiles in `extends`:
@@ -251,7 +252,9 @@ namespace, interchangeably with profiles in `extends`:
     "custom": {
       "extends": [
         "builtin:read-only",
-        "ruleset:test-run",
+        "ruleset:typescript-node-test",
+        "ruleset:rust-test",
+        "ruleset:go-runtime-commands",
         "ruleset:shell-guards",
       ],
     },
@@ -280,8 +283,12 @@ fsck --lost-found`, etc.).
   mutation denies.
 - `ruleset:read-only-path` — read-only path posture with writes limited to
   tmp/handoff/progress and the standard protected-path layer.
-- `ruleset:test-run` — npm/pnpm/yarn test and run, cargo build/test/check/
-  clippy, go.
+- `ruleset:typescript-node-test` — npm/pnpm/yarn test and run commands.
+- `ruleset:rust-test` — cargo build/test/check/clippy commands.
+- `ruleset:go-runtime-commands` — Go build/test commands plus the audited Go
+  toolchain-cache runtime requirement.
+- `ruleset:vitest` — supported Vitest/package test commands plus the internal,
+  exact `node_modules/.vite-temp` runtime requirement required by Vitest/Vite.
 - `ruleset:docs-write` — writes gated to Markdown, docs/, and /tmp.
 - `ruleset:test-write-protection` — test-file write denies.
 
@@ -294,7 +301,9 @@ decision twins generated from one subcommand table.
 `rulesets` declares user-owned partial policy fragments. They may contain
 only `tools`, `readPaths`, `writePaths`, and `protectedPathRules`; they cannot
 select directories, configure a sandbox, carry profile metadata, extend another
-policy, or apply transforms. Their map keys are unprefixed, nonempty names, and
+policy, or apply transforms. Runtime requirements are workflow-owned internal
+metadata: raw profiles and custom rule sets cannot declare or select them.
+Their map keys are unprefixed, nonempty names, and
 profiles reference them through `customruleset:<name>`:
 
 ```jsonc
@@ -508,8 +517,12 @@ The package consumes the environment variables exported by
 The permissible-scope layer only narrows the selected profile, so
 protected-path and command restrictions still apply inside an allowed scope.
 For sandboxed Bash, the same scopes also narrow kernel writable roots, covering
-implicit child-process writes that do not appear as command operands. Pi's
-dedicated read tools retain the profile's normal read access.
+implicit child-process writes that do not appear as command operands. Audited
+runtime requirements selected by shipped rule sets (such as Go's toolchain
+caches and Vitest/Vite's exact `node_modules/.vite-temp` directory), plus
+pi-guard's private TMPDIR, remain available as operational roots; they do not
+expand workspace access. Pi's dedicated read tools retain the profile's normal
+read access.
 
 Profile status metadata is configured per profile:
 

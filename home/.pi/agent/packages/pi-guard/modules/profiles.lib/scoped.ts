@@ -15,7 +15,10 @@ import { readOnlyCompositionChain, readOnlyProfile } from "./core";
 
 export const reviewerCompositionChain = [
   ...readOnlyCompositionChain,
-  "ruleset:test-run",
+  "ruleset:typescript-node-test",
+  "ruleset:rust-test",
+  "ruleset:go-runtime-commands",
+  "ruleset:vitest",
   "builtin:reviewer",
 ] as const;
 
@@ -32,6 +35,7 @@ export const depsMutatorCompositionChain = [
   "ruleset:deps-mutations-allow",
   "ruleset:shell-guards",
   "ruleset:path-guards",
+  "ruleset:go-runtime-commands",
   "builtin:deps-mutator",
 ] as const;
 
@@ -43,17 +47,29 @@ export const noShellCompositionChain = [
 ] as const;
 
 /** Read code and run tests/builds; writes stay tmp + handoff + progress. */
-export const reviewerProfile = extendProfile(readOnlyProfile, {
-  ...ruleSetRegistry["ruleset:test-run"],
-  description:
-    "Reviewer profile: read-only review with test and build commands.",
-  color: "cyan",
-  emoji: "🧐",
-});
+export const reviewerProfile = extendProfile(
+  extendProfile(
+    extendProfile(
+      extendProfile(
+        readOnlyProfile,
+        ruleSetRegistry["ruleset:typescript-node-test"].policy,
+      ),
+      ruleSetRegistry["ruleset:rust-test"].policy,
+    ),
+    ruleSetRegistry["ruleset:go-runtime-commands"].policy,
+  ),
+  {
+    ...ruleSetRegistry["ruleset:vitest"].policy,
+    description:
+      "Reviewer profile: read-only review with test and build commands.",
+    color: "cyan",
+    emoji: "🧐",
+  },
+);
 
 /** Writes gated to Markdown documentation, docs/, and /tmp scratch. */
 export const scribeOnlyProfile = extendProfile(baseProfile, {
-  ...ruleSetRegistry["ruleset:docs-write"],
+  ...ruleSetRegistry["ruleset:docs-write"].policy,
   description:
     "Docs scribe profile: writes restricted to Markdown, docs, and /tmp.",
   color: "white",
@@ -76,13 +92,16 @@ export const depsMutatorProfile: ProfilePolicy = {
   // Same composition as builtin:default with the dependency-mutation guard
   // rule set swapped for its allow twin.
   tools: {
-    bash: bashRules(
-      "ruleset:shell",
-      "ruleset:git",
-      "ruleset:packageManagers",
-      "ruleset:deps-mutations-allow",
-      "ruleset:shell-guards",
-    ),
+    bash: bashRules({
+      names: [
+        "ruleset:shell",
+        "ruleset:git",
+        "ruleset:packageManagers",
+        "ruleset:deps-mutations-allow",
+        "ruleset:shell-guards",
+        "ruleset:go-runtime-commands",
+      ],
+    }),
   },
 };
 

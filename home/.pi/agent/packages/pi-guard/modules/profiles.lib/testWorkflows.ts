@@ -54,7 +54,8 @@ export const testsHiddenProfile = extendProfile(baseProfile, {
       "You are implementing only. Do not inspect test files; adjust the system from production code and test results instead.",
   })),
   writePaths: [
-    ...(ruleSetRegistry["ruleset:test-write-protection"].writePaths ?? []),
+    ...(ruleSetRegistry["ruleset:test-write-protection"].policy.writePaths ??
+      []),
   ],
 });
 
@@ -97,7 +98,7 @@ export const testsOnlyProfile = extendProfile(baseProfile, {
 
 /** Tests stay readable as the specification; only writes to them deny. */
 export const implementationOnlyProfile = extendProfile(baseProfile, {
-  ...ruleSetRegistry["ruleset:test-write-protection"],
+  ...ruleSetRegistry["ruleset:test-write-protection"].policy,
   description: "Implementation-only profile: test-file writes are denied.",
   color: "orange",
   emoji: "🏗️",

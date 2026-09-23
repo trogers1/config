@@ -1,5 +1,10 @@
 import { dependencyCacheKernelWaiver } from "./dependencyCaches";
 import type { ProtectedPathRule } from "./policyHelpers";
+import { runtimeRequirementDefinition } from "./runtimeRequirements";
+
+const goRuntimeProtectedPaths = runtimeRequirementDefinition({
+  name: "go-toolchain-cache",
+}).protectedPathPatterns;
 
 /** Default secret and repository-metadata paths configured by standard profiles. */
 export const defaultProtectedPathRules: ProtectedPathRule[] = [
@@ -74,6 +79,12 @@ export const defaultProtectedPathRules: ProtectedPathRule[] = [
     decision: "deny" as const,
     guidance:
       "Package-manager cache paths are protected from direct disclosure and mutation by the active profile.",
+  })),
+  ...goRuntimeProtectedPaths.map((pattern) => ({
+    pattern,
+    decision: "deny" as const,
+    guidance:
+      "Go toolchain cache paths are protected from direct disclosure and mutation by the active profile.",
   })),
   {
     pattern: "**/.npmrc",

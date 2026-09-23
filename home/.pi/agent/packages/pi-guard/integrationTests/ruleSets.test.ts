@@ -9,10 +9,14 @@ import {
 } from "../modules/policy";
 import {
   defaultGuardRules,
+  ruleSetDefinition,
   ruleSetNames,
   ruleSetRegistry,
 } from "../modules/ruleSets.lib/index";
-import type { ProfilePolicy } from "../modules/policyHelpers";
+import {
+  parsePolicyConfig,
+  type ProfilePolicy,
+} from "../modules/policyHelpers";
 import { loadProfileConfig } from "../modules/profileConfig";
 import { createExtensionHarness } from "./support/extensionHarness";
 
@@ -59,7 +63,7 @@ describe("rule-set namespace", () => {
     });
 
     expect(
-      config.profiles.guarded.tools.bash?.some(
+      config.profiles.guarded.policy.tools.bash?.some(
         (rule) => rule.pattern === "find * -delete*",
       ),
     ).toBe(true);
@@ -80,9 +84,9 @@ describe("rule-set namespace", () => {
       }),
     });
 
-    expect(decideBash("rm generated-file", config.profiles.deletion)).toBe(
-      "allow",
-    );
+    expect(
+      decideBash("rm generated-file", config.profiles.deletion.policy),
+    ).toBe("allow");
   });
 
   it("ruleset:read-only-shell and ruleset:read-only-path resolve through JSONC", () => {
@@ -98,28 +102,30 @@ describe("rule-set namespace", () => {
       }),
     });
 
-    const resolved = config.profiles.comparison;
+    const resolved = config.profiles.comparison.policy;
     const shell = ruleSetRegistry["ruleset:read-only-shell"];
     const pathPosture = ruleSetRegistry["ruleset:read-only-path"];
 
-    expect(resolved.tools.bash).toEqual(shell.tools?.bash ?? []);
-    expect(resolved.readPaths).toEqual(pathPosture.readPaths ?? []);
-    expect(resolved.writePaths).toEqual(pathPosture.writePaths ?? []);
+    expect(resolved.tools.bash).toEqual(shell.policy.tools?.bash ?? []);
+    expect(resolved.readPaths).toEqual(pathPosture.policy.readPaths ?? []);
+    expect(resolved.writePaths).toEqual(pathPosture.policy.writePaths ?? []);
     expect(resolved.protectedPathRules).toEqual(
-      pathPosture.protectedPathRules ?? [],
+      pathPosture.policy.protectedPathRules ?? [],
     );
     expect(decideBash("rm generated-file", resolved)).toBe("deny");
   });
 
   it("builtin:read-only reuses the shipped read-only rule-set arrays", () => {
-    const builtin = genericPolicyConfig.profiles["builtin:read-only"];
+    const builtin = genericPolicyConfig.profiles["builtin:read-only"].policy;
     const shell = ruleSetRegistry["ruleset:read-only-shell"];
     const pathPosture = ruleSetRegistry["ruleset:read-only-path"];
 
-    expect(builtin.tools.bash).toBe(shell.tools?.bash);
-    expect(builtin.readPaths).toBe(pathPosture.readPaths);
-    expect(builtin.writePaths).toBe(pathPosture.writePaths);
-    expect(builtin.protectedPathRules).toBe(pathPosture.protectedPathRules);
+    expect(builtin.tools.bash).toBe(shell.policy.tools?.bash);
+    expect(builtin.readPaths).toBe(pathPosture.policy.readPaths);
+    expect(builtin.writePaths).toBe(pathPosture.policy.writePaths);
+    expect(builtin.protectedPathRules).toBe(
+      pathPosture.policy.protectedPathRules,
+    );
     expect(builtinCompositionChains["builtin:read-only"]).toEqual([
       "ruleset:read-only-path",
       "ruleset:read-only-shell",
@@ -176,7 +182,9 @@ describe("rule-set namespace", () => {
       }),
     });
 
-    expect(decideBash("terraform apply", config.profiles.guarded)).toBe("deny");
+    expect(decideBash("terraform apply", config.profiles.guarded.policy)).toBe(
+      "deny",
+    );
     expect(config.profiles["infra-mutation-deny"]).toBeUndefined();
   });
 
@@ -199,13 +207,215 @@ describe("rule-set namespace", () => {
     }
   });
 
+  it("records exact runtime requirements and provenance from composition", () => {
+    const profile = genericPolicyConfig.profiles["builtin:default"];
+    expect(profile.runtime.requirements).toEqual(["go-toolchain-cache"]);
+    expect(profile.runtime.provenance).toEqual({
+      "go-toolchain-cache": ["ruleset:go-runtime-commands"],
+    });
+  });
+
+  it("keeps runtime metadata explicit and serializable", () => {
+    const profile = genericPolicyConfig.profiles["builtin:default"];
+    expect(profile.runtime).toEqual({
+      requirements: ["go-toolchain-cache"],
+      provenance: {
+        "go-toolchain-cache": ["ruleset:go-runtime-commands"],
+      },
+    });
+    expect(JSON.parse(JSON.stringify(profile))).toHaveProperty("runtime");
+  });
+
+  it("carries audited runtime requirements through shipped rule-set composition", () => {
+    const config = loadProfileConfig({
+      fallback: genericPolicyConfig,
+      configPath: writeConfig({
+        profiles: {
+          reviewer: {
+            description:
+              "Reviewer profile with explicit shipped runtime requirement sets.",
+            extends: [
+              "builtin:read-only",
+              "ruleset:go-runtime-commands",
+              "ruleset:vitest",
+            ],
+          },
+        },
+      }),
+    });
+
+    expect(config.profiles.reviewer.runtime.requirements).toEqual(
+      expect.arrayContaining(["go-toolchain-cache", "vitest-vite-temp"]),
+    );
+  });
+
+  it("preserves inherited requirements through transforms and unions duplicate provenance", () => {
+    const config = loadProfileConfig({
+      fallback: genericPolicyConfig,
+      configPath: writeConfig({
+        profiles: {
+          first: {
+            description: "First Vitest workflow parent.",
+            extends: ["ruleset:vitest"],
+            ...minimalPaths,
+          },
+          second: {
+            description: "Second Vitest workflow parent.",
+            extends: ["ruleset:vitest"],
+            ...minimalPaths,
+          },
+          transformed: {
+            description: "Transformed child retains workflow requirements.",
+            extends: ["first", "second"],
+            transforms: ["transform:deny-asks"],
+          },
+        },
+      }),
+    });
+
+    expect(config.profiles.transformed.runtime.requirements).toEqual([
+      "vitest-vite-temp",
+    ]);
+    expect(config.profiles.transformed.runtime.provenance).toEqual({
+      "vitest-vite-temp": ["ruleset:vitest"],
+    });
+  });
+
+  it("preserves hidden built-in workflow requirements through transforms", () => {
+    const config = loadProfileConfig({
+      fallback: genericPolicyConfig,
+      configPath: writeConfig({
+        profiles: {
+          transformed: {
+            description: "Transformed default workflow profile.",
+            extends: ["builtin:default"],
+            transforms: ["transform:allow-asks"],
+          },
+        },
+      }),
+    });
+
+    expect(config.profiles.transformed.runtime.requirements).toEqual([
+      "go-toolchain-cache",
+    ]);
+    expect(config.profiles.transformed.runtime.provenance).toEqual({
+      "go-toolchain-cache": ["ruleset:go-runtime-commands"],
+    });
+  });
+
+  it("rejects invalid programmatic runtime requirements", () => {
+    const invalid = {
+      defaultProfile: "invalid",
+      profiles: {
+        invalid: {
+          ...genericPolicyConfig.profiles["builtin:read-only"],
+          runtime: { requirements: ["not-a-capability"], provenance: {} },
+        },
+      },
+    };
+    expect(() => parsePolicyConfig({ unverifiedConfig: invalid })).toThrow(
+      "/profiles/invalid/runtime/requirements",
+    );
+  });
+
+  it.each([
+    {
+      name: "missing runtime metadata",
+      profile: {
+        policy: genericPolicyConfig.profiles["builtin:read-only"].policy,
+      },
+    },
+    {
+      name: "missing selected-requirement provenance",
+      profile: {
+        policy: genericPolicyConfig.profiles["builtin:read-only"].policy,
+        runtime: {
+          requirements: ["vitest-vite-temp"],
+          provenance: {},
+        },
+      },
+    },
+    {
+      name: "provenance for an unselected requirement",
+      profile: {
+        policy: genericPolicyConfig.profiles["builtin:read-only"].policy,
+        runtime: {
+          requirements: [],
+          provenance: { "vitest-vite-temp": ["ruleset:vitest"] },
+        },
+      },
+    },
+    {
+      name: "an empty provenance selector",
+      profile: {
+        policy: genericPolicyConfig.profiles["builtin:read-only"].policy,
+        runtime: {
+          requirements: ["vitest-vite-temp"],
+          provenance: { "vitest-vite-temp": [] },
+        },
+      },
+    },
+    {
+      name: "an unknown resolved-profile property",
+      profile: {
+        ...genericPolicyConfig.profiles["builtin:read-only"],
+        unexpected: true,
+      },
+    },
+  ])("rejects $name", ({ profile }) => {
+    expect(() =>
+      parsePolicyConfig({
+        unverifiedConfig: {
+          defaultProfile: "invalid",
+          profiles: { invalid: profile },
+        },
+      }),
+    ).toThrow();
+  });
+
+  it("rejects runtime requirements from raw profiles and custom rule sets", () => {
+    for (const document of [
+      {
+        profiles: {
+          guarded: {
+            description: "A profile must not select internal requirements.",
+            extends: ["builtin:default"],
+            runtimeRequirements: ["vitest-vite-temp"],
+          },
+        },
+      },
+      {
+        rulesets: {
+          invalid: { runtimeRequirements: ["vitest-vite-temp"] },
+        },
+        profiles: {
+          guarded: {
+            description:
+              "A custom rule set must not select internal requirements.",
+            extends: ["builtin:default"],
+          },
+        },
+      },
+    ]) {
+      expect(() =>
+        loadProfileConfig({
+          fallback: genericPolicyConfig,
+          configPath: writeConfig(document),
+        }),
+      ).toThrow(/schema validation failed/);
+    }
+  });
+
   it("custom rule sets reject profile fields and unknown references fail loudly", () => {
     expect(() =>
       loadProfileConfig({
         fallback: genericPolicyConfig,
         configPath: writeConfig({
           rulesets: {
-            invalid: { description: "Rule sets are not profiles." },
+            invalid: {
+              description: "Rule sets are not profiles.",
+              runtimeRequirements: ["vitest-vite-temp"],
+            },
           },
           profiles: {
             guarded: {
@@ -283,14 +493,16 @@ describe("rule-set namespace", () => {
       }),
     });
 
-    expect(decideBash("find . -delete", config.profiles.mixed)).toBe("deny");
+    expect(decideBash("find . -delete", config.profiles.mixed.policy)).toBe(
+      "deny",
+    );
   });
 
   it("deps-mutations rule sets are decision twins generated from one table", () => {
     const deny =
-      ruleSetRegistry["ruleset:deps-mutations-guard"].tools?.bash ?? [];
+      ruleSetRegistry["ruleset:deps-mutations-guard"].policy.tools?.bash ?? [];
     const allow =
-      ruleSetRegistry["ruleset:deps-mutations-allow"].tools?.bash ?? [];
+      ruleSetRegistry["ruleset:deps-mutations-allow"].policy.tools?.bash ?? [];
 
     expect(deny.length).toBeGreaterThan(0);
     expect(allow.map((rule) => rule.pattern)).toEqual(
@@ -318,10 +530,10 @@ describe("rule-set namespace", () => {
       }),
     });
 
-    expect(decideBash("npm install lodash", config.profiles["deps-work"])).toBe(
-      "allow",
-    );
-    expect(decideBash("npm publish", config.profiles["deps-work"])).toBe(
+    expect(
+      decideBash("npm install lodash", config.profiles["deps-work"].policy),
+    ).toBe("allow");
+    expect(decideBash("npm publish", config.profiles["deps-work"].policy)).toBe(
       "deny",
     );
   });
@@ -344,9 +556,9 @@ describe("rule-set namespace", () => {
       }),
     });
 
-    expect(decideBash("npm install lodash", config.profiles.guarded)).toBe(
-      "deny",
-    );
+    expect(
+      decideBash("npm install lodash", config.profiles.guarded.policy),
+    ).toBe("deny");
   });
 
   it("git-write composes commit permissions onto any base", () => {
@@ -364,12 +576,12 @@ describe("rule-set namespace", () => {
       }),
     });
 
-    expect(decideBash("git commit -m test", config.profiles.committer)).toBe(
-      "allow",
-    );
-    expect(decideBash("git push origin main", config.profiles.committer)).toBe(
-      "ask",
-    );
+    expect(
+      decideBash("git commit -m test", config.profiles.committer.policy),
+    ).toBe("allow");
+    expect(
+      decideBash("git push origin main", config.profiles.committer.policy),
+    ).toBe("ask");
   });
 
   it("the TypeScript rule-set registry is the same registry JSONC resolves against", () => {
@@ -389,20 +601,22 @@ describe("rule-set namespace", () => {
           },
         }),
       });
-      const resolved = config.profiles.comparison;
-      const registered = ruleSetRegistry[name];
+      const resolved = config.profiles.comparison.policy;
+      const registered = ruleSetDefinition({ name });
 
-      expect(resolved.tools.bash ?? []).toEqual(registered.tools?.bash ?? []);
+      expect(resolved.tools.bash ?? []).toEqual(
+        registered.policy.tools?.bash ?? [],
+      );
 
-      if (registered.readPaths) {
+      if (registered.policy.readPaths) {
         expect(
-          resolved.readPaths.slice(0, registered.readPaths.length),
-        ).toEqual(registered.readPaths);
+          resolved.readPaths.slice(0, registered.policy.readPaths.length),
+        ).toEqual(registered.policy.readPaths);
       }
-      if (registered.writePaths) {
+      if (registered.policy.writePaths) {
         expect(
-          resolved.writePaths.slice(0, registered.writePaths.length),
-        ).toEqual(registered.writePaths);
+          resolved.writePaths.slice(0, registered.policy.writePaths.length),
+        ).toEqual(registered.policy.writePaths);
       }
     }
   });

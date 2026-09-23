@@ -487,7 +487,7 @@ describe("permissions extension", () => {
     });
 
     expect(lastCallArgument({ mock: harness.ui.notify, index: 0 })).toContain(
-      "Composition: ruleset:shell → ruleset:git → ruleset:packageManagers → ruleset:deps-mutations-guard → ruleset:shell-guards → ruleset:path-guards → builtin:default",
+      "Composition: ruleset:shell → ruleset:git → ruleset:packageManagers → ruleset:deps-mutations-guard → ruleset:shell-guards → ruleset:path-guards → ruleset:go-runtime-commands → builtin:default",
     );
   });
 
@@ -625,11 +625,11 @@ describe("permissions extension", () => {
     ],
     [
       "builtin:reviewer",
-      "ruleset:read-only-path → ruleset:read-only-shell → builtin:read-only → ruleset:test-run → builtin:reviewer",
+      "ruleset:read-only-path → ruleset:read-only-shell → builtin:read-only → ruleset:typescript-node-test → ruleset:rust-test → ruleset:go-runtime-commands → ruleset:vitest → builtin:reviewer",
     ],
     [
       "builtin:tests-hidden",
-      "ruleset:shell → ruleset:git → ruleset:packageManagers → ruleset:deps-mutations-guard → ruleset:shell-guards → ruleset:path-guards → builtin:default → ruleset:test-write-protection → builtin:tests-hidden",
+      "ruleset:shell → ruleset:git → ruleset:packageManagers → ruleset:deps-mutations-guard → ruleset:shell-guards → ruleset:path-guards → ruleset:go-runtime-commands → builtin:default → ruleset:test-write-protection → builtin:tests-hidden",
     ],
   ])(
     "explains the exact non-default composition chain for %s through the registered command",
@@ -659,7 +659,12 @@ describe("permissions extension", () => {
             parent: {
               description:
                 "Parent profile composing committer permissions and test execution rules.",
-              extends: ["builtin:committer", "ruleset:test-run"],
+              extends: [
+                "builtin:committer",
+                "ruleset:typescript-node-test",
+                "ruleset:rust-test",
+                "ruleset:go-runtime-commands",
+              ],
             },
             child: {
               description:
@@ -680,7 +685,7 @@ describe("permissions extension", () => {
     });
 
     expect(lastCallArgument({ mock: harness.ui.notify, index: 0 })).toContain(
-      "Composition: ruleset:shell → ruleset:git → ruleset:packageManagers → ruleset:deps-mutations-guard → ruleset:shell-guards → ruleset:path-guards → builtin:default → ruleset:git-commit → builtin:committer → ruleset:test-run → custom profile: parent → transform:deny-asks → custom profile: child",
+      "Composition: ruleset:shell → ruleset:git → ruleset:packageManagers → ruleset:deps-mutations-guard → ruleset:shell-guards → ruleset:path-guards → ruleset:go-runtime-commands → builtin:default → ruleset:git-commit → builtin:committer → ruleset:typescript-node-test → ruleset:rust-test → ruleset:go-runtime-commands → custom profile: parent → transform:deny-asks → custom profile: child",
     );
   });
 

@@ -179,16 +179,17 @@ describe("profile configuration", () => {
       }`),
     });
 
-    const clientWork = config.profiles["client-work"];
+    const clientWork = config.profiles["client-work"].policy;
     expect("directoryGlobs" in clientWork).toBe(false);
     expect(clientWork.tools.bash).toEqual(
       expect.arrayContaining([{ pattern: "client-cli *", decision: "allow" }]),
     );
     expect(clientWork.tools.bash?.length).toBeGreaterThan(
-      genericPolicyConfig.profiles["builtin:default"].tools.bash?.length ?? 0,
+      genericPolicyConfig.profiles["builtin:default"].policy.tools.bash
+        ?.length ?? 0,
     );
     expect(clientWork.readPaths).toEqual([
-      ...genericPolicyConfig.profiles["builtin:default"].readPaths,
+      ...genericPolicyConfig.profiles["builtin:default"].policy.readPaths,
       { pattern: "vendor/**", decision: "deny", contexts: ["grep"] },
     ]);
   });
@@ -221,7 +222,7 @@ describe("profile configuration", () => {
       }`),
     });
 
-    expect(config.profiles["deployment-child"].tools.deploy).toEqual([
+    expect(config.profiles["deployment-child"].policy.tools.deploy).toEqual([
       { decision: "ask" },
       { decision: "deny", match: { environment: "production" } },
       { decision: "allow", match: { environment: "staging" } },
@@ -253,7 +254,7 @@ describe("profile configuration", () => {
       }`),
     });
 
-    expect(config.profiles["deployment-child"].tools.deploy).toEqual([
+    expect(config.profiles["deployment-child"].policy.tools.deploy).toEqual([
       { decision: "deny", match: { environment: "production" } },
     ]);
   });
@@ -275,24 +276,27 @@ describe("profile configuration", () => {
       ),
     });
 
-    const quietBash = config.profiles["quiet-bash"];
+    const quietBash = config.profiles["quiet-bash"].policy;
     expect(quietBash.tools.bash).toEqual(
-      genericPolicyConfig.profiles["builtin:default"].tools.bash,
+      genericPolicyConfig.profiles["builtin:default"].policy.tools.bash,
     );
     expect(decideBash("git status --short", quietBash)).toBe(
       decideBash(
         "git status --short",
-        genericPolicyConfig.profiles["builtin:default"],
+        genericPolicyConfig.profiles["builtin:default"].policy,
       ),
     );
     expect(decideBash("npm test", quietBash)).toBe(
-      decideBash("npm test", genericPolicyConfig.profiles["builtin:default"]),
+      decideBash(
+        "npm test",
+        genericPolicyConfig.profiles["builtin:default"].policy,
+      ),
     );
   });
 
   it("accepts a fully custom profile without extends", () => {
     const standaloneProfile = {
-      ...genericPolicyConfig.profiles["builtin:default"],
+      ...genericPolicyConfig.profiles["builtin:default"].policy,
       description:
         "Standalone experimental profile for custom configuration loading.",
       emoji: "🧪",
@@ -306,7 +310,7 @@ describe("profile configuration", () => {
       ),
     });
 
-    expect(config.profiles.standalone).toMatchObject({ emoji: "🧪" });
+    expect(config.profiles.standalone.policy).toMatchObject({ emoji: "🧪" });
   });
 
   it("retains directoryGlobs in raw declarations but strips them from resolved policy", () => {
@@ -314,7 +318,7 @@ describe("profile configuration", () => {
       JSON.stringify({
         profiles: {
           standalone: {
-            ...genericPolicyConfig.profiles["builtin:default"],
+            ...genericPolicyConfig.profiles["builtin:default"].policy,
             directoryGlobs: ["/workspace/project/**"],
           },
         },
@@ -342,7 +346,7 @@ describe("profile configuration", () => {
         JSON.stringify({
           profiles: {
             standalone: {
-              ...genericPolicyConfig.profiles["builtin:default"],
+              ...genericPolicyConfig.profiles["builtin:default"].policy,
               description:
                 "Standalone complete profile with directory selection metadata.",
               directoryGlobs: ["~/workspace/**"],
@@ -352,7 +356,7 @@ describe("profile configuration", () => {
       ),
     });
 
-    expect(config.profiles.standalone.description).toContain(
+    expect(config.profiles.standalone.policy.description).toContain(
       "directory selection",
     );
     expect("directoryGlobs" in config.profiles.standalone).toBe(false);
@@ -363,14 +367,14 @@ describe("profile configuration", () => {
       JSON.stringify({
         profiles: {
           first: {
-            ...genericPolicyConfig.profiles["builtin:default"],
+            ...genericPolicyConfig.profiles["builtin:default"].policy,
             directoryGlobs: ["/workspace/first/**"],
           },
           second: {
-            ...genericPolicyConfig.profiles["builtin:default"],
+            ...genericPolicyConfig.profiles["builtin:default"].policy,
             directoryGlobs: ["/workspace/second/**", "/workspace/shared/**"],
           },
-          omitted: genericPolicyConfig.profiles["builtin:default"],
+          omitted: genericPolicyConfig.profiles["builtin:default"].policy,
         },
       }),
     );
@@ -383,7 +387,7 @@ describe("profile configuration", () => {
 
   it("preserves JSONC source order for integer-like profile names", () => {
     const complete = JSON.stringify(
-      genericPolicyConfig.profiles["builtin:default"],
+      genericPolicyConfig.profiles["builtin:default"].policy,
     );
     const configPath = writeConfig(
       `{"profiles":{"2":${complete},"1":${complete}}}`,
@@ -457,7 +461,7 @@ describe("profile configuration", () => {
       JSON.stringify({
         profiles: {
           standalone: {
-            ...genericPolicyConfig.profiles["builtin:default"],
+            ...genericPolicyConfig.profiles["builtin:default"].policy,
             directories: ["/workspace/project"],
           },
         },
@@ -477,7 +481,7 @@ describe("profile configuration", () => {
       JSON.stringify({
         profiles: {
           standalone: {
-            ...genericPolicyConfig.profiles["builtin:default"],
+            ...genericPolicyConfig.profiles["builtin:default"].policy,
             directoryGlobs: [semanticInvalidGlob],
           },
         },
@@ -500,7 +504,7 @@ describe("profile configuration", () => {
       JSON.stringify({
         profiles: {
           standalone: {
-            ...genericPolicyConfig.profiles["builtin:default"],
+            ...genericPolicyConfig.profiles["builtin:default"].policy,
             description: undefined,
           },
         },
@@ -538,7 +542,7 @@ describe("profile configuration", () => {
       JSON.stringify({
         profiles: {
           default: {
-            ...genericPolicyConfig.profiles["builtin:default"],
+            ...genericPolicyConfig.profiles["builtin:default"].policy,
             bashPathReferences: [],
           },
         },
@@ -672,10 +676,10 @@ describe("profile configuration", () => {
       ),
     });
 
-    expect(config.profiles["builtin-extends"].tools.bash).toEqual(
-      genericPolicyConfig.profiles["builtin:default"].tools.bash,
+    expect(config.profiles["builtin-extends"].policy.tools.bash).toEqual(
+      genericPolicyConfig.profiles["builtin:default"].policy.tools.bash,
     );
-    expect(config.profiles["custom-extends"].tools.bash).toEqual([]);
+    expect(config.profiles["custom-extends"].policy.tools.bash).toEqual([]);
 
     const unknownBuiltinPath = writeConfig(
       JSON.stringify({
@@ -724,7 +728,7 @@ describe("profile configuration", () => {
         defaultProfile: "client-work",
         profiles: {
           "client-work": {
-            ...genericPolicyConfig.profiles["builtin:default"],
+            ...genericPolicyConfig.profiles["builtin:default"].policy,
             extends: ["missing"],
           },
         },
@@ -737,11 +741,11 @@ describe("profile configuration", () => {
         defaultProfile: "first",
         profiles: {
           first: {
-            ...genericPolicyConfig.profiles["builtin:default"],
+            ...genericPolicyConfig.profiles["builtin:default"].policy,
             extends: ["second"],
           },
           second: {
-            ...genericPolicyConfig.profiles["builtin:default"],
+            ...genericPolicyConfig.profiles["builtin:default"].policy,
             extends: ["first"],
           },
         },
@@ -753,7 +757,7 @@ describe("profile configuration", () => {
       contents: JSON.stringify({
         defaultProfile: "missing",
         profiles: {
-          default: genericPolicyConfig.profiles["builtin:default"],
+          default: genericPolicyConfig.profiles["builtin:default"].policy,
         },
       }),
       messageFragment: "profile 'missing' is not configured",
@@ -984,7 +988,7 @@ const invalidExtensionConfigCases = [
     contents: JSON.stringify({
       profiles: {
         default: {
-          ...genericPolicyConfig.profiles["builtin:default"],
+          ...genericPolicyConfig.profiles["builtin:default"].policy,
           bashPathReferences: [],
         },
       },
@@ -997,7 +1001,7 @@ const invalidExtensionConfigCases = [
       defaultProfile: "default",
       profiles: {
         "client-work": {
-          ...genericPolicyConfig.profiles["builtin:default"],
+          ...genericPolicyConfig.profiles["builtin:default"].policy,
           extends: ["missing"],
         },
       },
@@ -1024,11 +1028,11 @@ const invalidExtensionConfigCases = [
       defaultProfile: "first",
       profiles: {
         first: {
-          ...genericPolicyConfig.profiles["builtin:default"],
+          ...genericPolicyConfig.profiles["builtin:default"].policy,
           extends: ["second"],
         },
         second: {
-          ...genericPolicyConfig.profiles["builtin:default"],
+          ...genericPolicyConfig.profiles["builtin:default"].policy,
           extends: ["first"],
         },
       },
@@ -1040,7 +1044,7 @@ const invalidExtensionConfigCases = [
     contents: JSON.stringify({
       defaultProfile: "missing",
       profiles: {
-        default: genericPolicyConfig.profiles["builtin:default"],
+        default: genericPolicyConfig.profiles["builtin:default"].policy,
       },
     }),
     messageFragment: "profile 'missing' is not configured",

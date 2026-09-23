@@ -5,9 +5,11 @@ import type { TSchema } from "typebox";
 import { Value } from "typebox/value";
 import { policyConfig } from "../modules/policy";
 import {
-  assertPolicyConfig,
+  parsePolicyConfig,
   builtinProfileNames,
+  emptyResolvedRuntime,
   extendProfile,
+  finalizeResolvedProfile,
   withProtectedPathRules,
   type ProfilePolicy,
 } from "../modules/policyHelpers";
@@ -64,6 +66,10 @@ const baseProfile = {
   writePaths: [{ pattern: "*", decision: "allow" }],
 } satisfies ProfilePolicy;
 
+function unresolvedProfile({ policy }: { readonly policy: unknown }) {
+  return { policy, runtime: emptyResolvedRuntime };
+}
+
 function evaluateReadProtectedPath(
   policy: ProfilePolicy,
   context: "read" | "grep" | "find" | "ls",
@@ -96,7 +102,9 @@ function evaluateWriteProtectedPath(
 
 describe("policy configuration contract", () => {
   it("accepts the production policy", () => {
-    expect(() => assertPolicyConfig(policyConfig)).not.toThrow();
+    expect(() =>
+      parsePolicyConfig({ unverifiedConfig: policyConfig }),
+    ).not.toThrow();
   });
 
   it("keeps the exported built-in name list in sync with the shipped registry", () => {
@@ -105,14 +113,18 @@ describe("policy configuration contract", () => {
 
   it("rejects empty custom matcher property names at runtime", () => {
     expect(() =>
-      assertPolicyConfig({
-        defaultProfile: "default",
-        profiles: {
-          default: {
-            ...baseProfile,
-            tools: {
-              deploy: [{ decision: "deny", match: { "": "value" } }],
-            },
+      parsePolicyConfig({
+        unverifiedConfig: {
+          defaultProfile: "default",
+          profiles: {
+            default: unresolvedProfile({
+              policy: {
+                ...baseProfile,
+                tools: {
+                  deploy: [{ decision: "deny", match: { "": "value" } }],
+                },
+              },
+            }),
           },
         },
       }),
@@ -394,15 +406,19 @@ describe("policy configuration contract", () => {
 
   it("reports the path of an invalid decision", () => {
     expect(() =>
-      assertPolicyConfig({
-        defaultProfile: "default",
-        profiles: {
-          default: {
-            tools: {
-              bash: [{ pattern: "*", decision: "sometimes" }],
-            },
-            readPaths: [{ pattern: "*", decision: "allow" }],
-            writePaths: [{ pattern: "*", decision: "allow" }],
+      parsePolicyConfig({
+        unverifiedConfig: {
+          defaultProfile: "default",
+          profiles: {
+            default: unresolvedProfile({
+              policy: {
+                tools: {
+                  bash: [{ pattern: "*", decision: "sometimes" }],
+                },
+                readPaths: [{ pattern: "*", decision: "allow" }],
+                writePaths: [{ pattern: "*", decision: "allow" }],
+              },
+            }),
           },
         },
       }),
@@ -411,15 +427,19 @@ describe("policy configuration contract", () => {
 
   it("rejects legacy per-tool path rules", () => {
     expect(() =>
-      assertPolicyConfig({
-        defaultProfile: "default",
-        profiles: {
-          default: {
-            ...baseProfile,
-            tools: {
-              ...baseProfile.tools,
-              read: [{ pattern: "**", decision: "allow" }],
-            },
+      parsePolicyConfig({
+        unverifiedConfig: {
+          defaultProfile: "default",
+          profiles: {
+            default: unresolvedProfile({
+              policy: {
+                ...baseProfile,
+                tools: {
+                  ...baseProfile.tools,
+                  read: [{ pattern: "**", decision: "allow" }],
+                },
+              },
+            }),
           },
         },
       }),
@@ -428,18 +448,22 @@ describe("policy configuration contract", () => {
 
   it("accepts only contexts that consume the corresponding path array", () => {
     expect(() =>
-      assertPolicyConfig({
-        defaultProfile: "default",
-        profiles: {
-          default: {
-            ...baseProfile,
-            readPaths: [
-              {
-                pattern: "**",
-                decision: "allow",
-                contexts: ["bash"],
+      parsePolicyConfig({
+        unverifiedConfig: {
+          defaultProfile: "default",
+          profiles: {
+            default: unresolvedProfile({
+              policy: {
+                ...baseProfile,
+                readPaths: [
+                  {
+                    pattern: "**",
+                    decision: "allow",
+                    contexts: ["bash"],
+                  },
+                ],
               },
-            ],
+            }),
           },
         },
       }),
@@ -448,22 +472,33 @@ describe("policy configuration contract", () => {
 
   it("requires the default profile to exist", () => {
     expect(() =>
-      assertPolicyConfig({
-        defaultProfile: "missing",
-        profiles: { default: baseProfile },
+      parsePolicyConfig({
+        unverifiedConfig: {
+          defaultProfile: "missing",
+          profiles: {
+            default: finalizeResolvedProfile({
+              policy: baseProfile,
+              runtime: emptyResolvedRuntime,
+            }),
+          },
+        },
       }),
     ).toThrowError(/defaultProfile.*missing.*not configured/);
   });
 
   it("requires at least one read and write path rule", () => {
     expect(() =>
-      assertPolicyConfig({
-        defaultProfile: "default",
-        profiles: {
-          default: {
-            tools: {},
-            readPaths: [],
-            writePaths: [],
+      parsePolicyConfig({
+        unverifiedConfig: {
+          defaultProfile: "default",
+          profiles: {
+            default: unresolvedProfile({
+              policy: {
+                tools: {},
+                readPaths: [],
+                writePaths: [],
+              },
+            }),
           },
         },
       }),

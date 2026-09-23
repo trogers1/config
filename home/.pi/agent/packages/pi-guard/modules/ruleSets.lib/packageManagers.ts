@@ -104,54 +104,6 @@ export const dependencyMutationAllowRules: Rule[] =
   dependencyMutationRules("allow");
 
 /**
- * Test and build invocation allows (`ruleset:test-run`) for read-mostly
- * profiles (`builtin:reviewer`): run the project's checks without opening
- * writes.
- */
-export const testRunRules: Rule[] = [
-  { pattern: "npm run *", decision: "allow" },
-  { pattern: "npm test", decision: "allow" },
-  { pattern: "npm test *", decision: "allow" },
-  { pattern: "pnpm run *", decision: "allow" },
-  { pattern: "pnpm test", decision: "allow" },
-  { pattern: "pnpm test *", decision: "allow" },
-  { pattern: "yarn run *", decision: "allow" },
-  { pattern: "yarn test", decision: "allow" },
-  { pattern: "yarn test *", decision: "allow" },
-  { pattern: "cargo build", decision: "allow" },
-  { pattern: "cargo build *", decision: "allow" },
-  { pattern: "cargo test", decision: "allow" },
-  { pattern: "cargo test *", decision: "allow" },
-  { pattern: "cargo check", decision: "allow" },
-  { pattern: "cargo check *", decision: "allow" },
-  { pattern: "cargo clippy", decision: "allow" },
-  { pattern: "cargo clippy *", decision: "allow" },
-  { pattern: "go build", decision: "allow" },
-  { pattern: "go build *", decision: "allow" },
-  { pattern: "go test", decision: "allow" },
-  { pattern: "go test *", decision: "allow" },
-  { pattern: "mise exec -- go build", decision: "allow" },
-  { pattern: "mise exec -- go build *", decision: "allow" },
-  { pattern: "mise exec -- go test", decision: "allow" },
-  { pattern: "mise exec -- go test *", decision: "allow" },
-  { pattern: "mise exec go build", decision: "allow" },
-  { pattern: "mise exec go build *", decision: "allow" },
-  { pattern: "mise exec go test", decision: "allow" },
-  { pattern: "mise exec go test *", decision: "allow" },
-  { pattern: "mise x -- go build", decision: "allow" },
-  { pattern: "mise x -- go build *", decision: "allow" },
-  { pattern: "mise x -- go test", decision: "allow" },
-  { pattern: "mise x -- go test *", decision: "allow" },
-  { pattern: "mise x go build", decision: "allow" },
-  { pattern: "mise x go build *", decision: "allow" },
-  { pattern: "mise x go test", decision: "allow" },
-  { pattern: "mise x go test *", decision: "allow" },
-  // Keep the existing broad Go posture; explicit build/test rules above also
-  // declare the subcommands the path evaluator can recognize as syntax.
-  { pattern: "go *", decision: "allow" },
-];
-
-/**
  * Base package-manager policy (`ruleset:packageManagers`): unknown commands
  * ask, read-only queries allow, and credential/publishing mutations deny.
  * Contains no dependency-mutation rules; compose it with

@@ -4,7 +4,6 @@ import { policyConfig } from "../modules/policy";
 import {
   builtinProfileNames,
   type BuiltinProfileName,
-  type ProfilePolicy,
 } from "../modules/policyHelpers";
 import { createExtensionHarness } from "./support/extensionHarness";
 
@@ -60,7 +59,7 @@ describe("shipped profile catalog", () => {
     };
 
     for (const profile of builtinProfileNames) {
-      const description = policyConfig.profiles[profile].description;
+      const description = policyConfig.profiles[profile].policy.description;
       expect(description, profile).toMatch(/\S/);
       const keyword = requiredKeywords[profile];
       if (keyword) expect(description?.toLowerCase()).toContain(keyword);
@@ -216,7 +215,7 @@ describe("shipped profile catalog", () => {
     ];
 
     for (const name of gitCapableProfiles) {
-      const sandbox = policyConfig.profiles[name].sandbox;
+      const sandbox = policyConfig.profiles[name].policy.sandbox;
       expect(typeof sandbox === "object" && sandbox !== null, name).toBe(true);
       expect(sandbox && sandbox.kernelUnenforcedProtectedPaths, name).toEqual(
         expect.arrayContaining(["**/.git", "**/.git/**"]),
@@ -224,7 +223,7 @@ describe("shipped profile catalog", () => {
     }
   });
 
-  it("permits Go's compiler and module caches for built-in Go build/test profiles", () => {
+  it("selects Go's compiler and module-cache runtime requirement for built-in Go build/test profiles", () => {
     const goBuildProfiles: BuiltinProfileName[] = [
       "builtin:default",
       "builtin:default-with-net",
@@ -235,26 +234,28 @@ describe("shipped profile catalog", () => {
       "builtin:deps-mutator",
       "builtin:implementation-only",
       "builtin:git-full",
+      "builtin:scribe-only",
+      "builtin:committer",
     ];
 
     for (const name of goBuildProfiles) {
-      const sandbox = policyConfig.profiles[name].sandbox;
-      expect(typeof sandbox === "object" && sandbox !== null, name).toBe(true);
-      expect(sandbox && sandbox.extraWritePaths, name).toEqual(
-        expect.arrayContaining([
-          "~/Library/Caches/go-build",
-          "~/Library/Caches/go-build/**",
-          "~/go/pkg/mod",
-          "~/go/pkg/mod/**",
-          "~/go/pkg/sumdb",
-          "~/go/pkg/sumdb/**",
-        ]),
+      expect(policyConfig.profiles[name].runtime.requirements, name).toContain(
+        "go-toolchain-cache",
       );
+    }
+    for (const name of Object.keys(policyConfig.profiles)) {
+      if (goBuildProfiles.includes(name as BuiltinProfileName)) continue;
+      expect(
+        policyConfig.profiles[name as BuiltinProfileName].runtime
+          .requirements ?? [],
+        name,
+      ).not.toContain("go-toolchain-cache");
     }
   });
 
   it("leaves hidden test paths kernel-readable so test runners can execute them", () => {
-    const sandbox = policyConfig.profiles["builtin:tests-hidden"].sandbox;
+    const sandbox =
+      policyConfig.profiles["builtin:tests-hidden"].policy.sandbox;
     expect(typeof sandbox === "object" && sandbox !== null).toBe(true);
     expect(sandbox && sandbox.kernelUnenforcedProtectedPaths).toEqual(
       expect.arrayContaining(hiddenTestPathPatterns),
@@ -277,13 +278,10 @@ describe("shipped profile catalog", () => {
       "builtin:implementation-only": "deny",
       "builtin:git-full": "allow",
     } as const satisfies Record<BuiltinProfileName, "allow" | "deny">;
-    const profiles = policyConfig.profiles as Record<string, ProfilePolicy>;
-
     expect(Object.keys(expectedNetworkPostures)).toEqual(builtinProfileNames);
-    for (const [name, expectedNetwork] of Object.entries(
-      expectedNetworkPostures,
-    )) {
-      const sandbox = profiles[name].sandbox;
+    for (const name of builtinProfileNames) {
+      const expectedNetwork = expectedNetworkPostures[name];
+      const sandbox = policyConfig.profiles[name].policy.sandbox;
       expect(
         typeof sandbox === "object" && sandbox !== null
           ? sandbox.network
@@ -294,9 +292,10 @@ describe("shipped profile catalog", () => {
   });
 
   it("tests-hidden is renamed from tests-disallowed", () => {
-    const profiles = policyConfig.profiles as Record<string, ProfilePolicy>;
-    expect(profiles["builtin:tests-hidden"]).toBeDefined();
-    expect(profiles["builtin:tests-disallowed"]).toBeUndefined();
+    expect(policyConfig.profiles["builtin:tests-hidden"]).toBeDefined();
+    expect(
+      Object.hasOwn(policyConfig.profiles, "builtin:tests-disallowed"),
+    ).toBe(false);
   });
 
   it("non-destructive built-ins deny file deletion", async () => {

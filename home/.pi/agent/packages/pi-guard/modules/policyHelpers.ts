@@ -1,6 +1,11 @@
 import { Type, type Static, type TSchema } from "typebox";
 import { Value } from "typebox/value";
 import { directoryGlobsSchema, type DirectoryGlobs } from "./directoryGlobs";
+import {
+  isRuntimeRequirementName,
+  runtimeRequirementNames,
+  type RuntimeRequirementName,
+} from "./runtimeRequirements";
 
 const policyReferencePrefixSchemas = {
   builtinProfile: Type.Literal("builtin:"),
@@ -319,14 +324,6 @@ const profileSchema = Type.Object(profileProperties, {
   additionalProperties: false,
 });
 
-const policyConfigSchema = Type.Object(
-  {
-    defaultProfile: Type.String(),
-    profiles: Type.Record(Type.String(), profileSchema),
-  },
-  { additionalProperties: false },
-);
-
 const profileExtendsSchema = Type.Array(Type.String(), { minItems: 1 });
 
 const profileTransformsSchema = Type.Array(profileTransformNameSchema);
@@ -385,13 +382,52 @@ export type SandboxConfigOverride = Static<typeof sandboxConfigOverrideSchema>;
 type SandboxPathArrayName = Static<typeof sandboxPathArrayNameSchema>;
 export type ProfilePolicy = Static<typeof profileSchema>;
 export type CustomRuleSetPolicy = Static<typeof customRuleSetPolicySchema>;
-type PolicyConfigShape = Static<typeof policyConfigSchema>;
-export type PolicyConfig<Names extends string = string> = Omit<
-  PolicyConfigShape,
-  "defaultProfile" | "profiles"
-> & {
+
+const runtimeRequirementSchema = Type.String({
+  enum: runtimeRequirementNames,
+});
+const runtimeMetadataSchema = Type.Object(
+  {
+    requirements: Type.Array(runtimeRequirementSchema, { uniqueItems: true }),
+    provenance: Type.Record(
+      Type.String(),
+      Type.Array(Type.String({ minLength: 1 }), {
+        minItems: 1,
+        uniqueItems: true,
+      }),
+    ),
+  },
+  { additionalProperties: false },
+);
+export const resolvedProfileSchema = Type.Object(
+  { policy: profileSchema, runtime: runtimeMetadataSchema },
+  { additionalProperties: false },
+);
+export type RuntimeRequirementProvenance = Readonly<
+  Partial<Record<RuntimeRequirementName, readonly string[]>>
+>;
+/** Explicit, serializable state consumed by sandbox and extension boundaries. */
+export type ResolvedProfile = {
+  readonly policy: ProfilePolicy;
+  readonly runtime: {
+    readonly requirements: readonly RuntimeRequirementName[];
+    readonly provenance: RuntimeRequirementProvenance;
+  };
+};
+export const emptyResolvedRuntime = {
+  requirements: [],
+  provenance: {},
+} as const satisfies ResolvedProfile["runtime"];
+export const policyConfigSchema = Type.Object(
+  {
+    defaultProfile: Type.String(),
+    profiles: Type.Record(Type.String(), resolvedProfileSchema),
+  },
+  { additionalProperties: false },
+);
+export type PolicyConfig<Names extends string = string> = {
   defaultProfile: Names;
-  profiles: Record<Names, ProfilePolicy>;
+  profiles: Record<Names, ResolvedProfile>;
 };
 type ProfileConfigProfileShape = Static<typeof profileConfigProfileSchema>;
 export type ProfileConfigProfile = Omit<
@@ -471,61 +507,198 @@ export function parseOrThrow<Schema extends TSchema>({
   return unverifiedData;
 }
 
-export function assertProfilePolicy(
-  policy: unknown,
-): asserts policy is ProfilePolicy {
-  const validationError = Value.Errors(profileSchema, policy)[0];
-  if (validationError) {
-    throw new Error(
-      `Invalid pi-guard profile at ${validationError.instancePath || "/"}: ${validationError.message}`,
-    );
-  }
+/** Validate an ordinary policy before it enters resolved state. */
+export function parseProfilePolicy({
+  unverifiedPolicy,
+}: {
+  readonly unverifiedPolicy: unknown;
+}): ProfilePolicy {
+  const policy = parseOrThrow({
+    unverifiedData: unverifiedPolicy,
+    schema: profileSchema,
+    message: "Invalid pi-guard profile",
+  });
+  assertNoProtectedPathRuleConflicts(policy.protectedPathRules ?? []);
+  assertSandboxConfig(policy);
+  return policy;
+}
 
-  if (isProfilePolicyShape(policy)) {
-    assertNoProtectedPathRuleConflicts(policy.protectedPathRules ?? []);
-    assertSandboxConfig(policy);
+function assertResolvedProfileSemantics({
+  resolved,
+}: {
+  readonly resolved: {
+    readonly runtime: {
+      readonly requirements: readonly string[];
+      readonly provenance: Readonly<Record<string, readonly string[]>>;
+    };
+  };
+}): void {
+  const selected = new Set(resolved.runtime.requirements);
+  for (const requirement of selected) {
+    if (!isRuntimeRequirementName({ value: requirement })) {
+      throw new Error(
+        `Invalid pi-guard resolved profile: unknown runtime requirement '${requirement}'`,
+      );
+    }
+    if (!resolved.runtime.provenance[requirement]?.length) {
+      throw new Error(
+        `Invalid pi-guard resolved profile: '${requirement}' has no provenance`,
+      );
+    }
+  }
+  for (const [requirement, selectors] of Object.entries(
+    resolved.runtime.provenance,
+  )) {
+    if (
+      !isRuntimeRequirementName({ value: requirement }) ||
+      !selected.has(requirement) ||
+      selectors.length === 0
+    ) {
+      throw new Error(
+        `Invalid pi-guard resolved profile runtime provenance for '${requirement}'`,
+      );
+    }
   }
 }
 
-export function assertPolicyConfig(
-  config: unknown,
-): asserts config is PolicyConfig {
-  const validationError = Value.Errors(policyConfigSchema, config)[0];
-  if (validationError) {
+export function parseResolvedProfile({
+  unverifiedProfile,
+}: {
+  readonly unverifiedProfile: unknown;
+}): ResolvedProfile {
+  const parsed = parseOrThrow({
+    unverifiedData: unverifiedProfile,
+    schema: resolvedProfileSchema,
+    message: "Invalid pi-guard resolved profile",
+  });
+  assertResolvedProfileSemantics({ resolved: parsed });
+  const requirements = runtimeRequirementNames.filter((requirement) =>
+    parsed.runtime.requirements.includes(requirement),
+  );
+  return {
+    policy: parseProfilePolicy({ unverifiedPolicy: parsed.policy }),
+    runtime: {
+      requirements,
+      provenance: runtimeRequirementProvenanceFor({
+        requirements,
+        provenance: parsed.runtime.provenance,
+      }),
+    },
+  };
+}
+
+export function parsePolicyConfig({
+  unverifiedConfig,
+}: {
+  readonly unverifiedConfig: unknown;
+}): PolicyConfig {
+  const parsed = parseOrThrow({
+    unverifiedData: unverifiedConfig,
+    schema: policyConfigSchema,
+    message: "Invalid pi-guard policy",
+  });
+  const profiles: Record<string, ResolvedProfile> = {};
+  for (const [name, profile] of Object.entries(parsed.profiles)) {
+    profiles[name] = parseResolvedProfile({ unverifiedProfile: profile });
+  }
+  if (!Object.hasOwn(profiles, parsed.defaultProfile)) {
     throw new Error(
-      `Invalid pi-guard policy at ${validationError.instancePath || "/"}: ${validationError.message}`,
+      `Invalid pi-guard policy at /defaultProfile: profile '${parsed.defaultProfile}' is not configured`,
     );
   }
+  return { defaultProfile: parsed.defaultProfile, profiles };
+}
 
-  if (!isPolicyConfigShape(config)) {
-    throw new Error("Invalid pi-guard policy: schema validation failed");
+export function finalizeResolvedProfile({
+  policy,
+  runtime,
+}: {
+  readonly policy: ProfilePolicy;
+  readonly runtime: ResolvedProfile["runtime"];
+}): ResolvedProfile {
+  const resolved = parseResolvedProfile({
+    unverifiedProfile: { policy, runtime },
+  });
+  const frozenProvenance: Partial<
+    Record<RuntimeRequirementName, readonly string[]>
+  > = {};
+  for (const requirement of resolved.runtime.requirements) {
+    const selectors = resolved.runtime.provenance[requirement];
+    if (!selectors) {
+      throw new Error(
+        `Invalid pi-guard runtime provenance for '${requirement}'`,
+      );
+    }
+    frozenProvenance[requirement] = Object.freeze([...selectors]);
   }
+  return Object.freeze({
+    policy: Object.freeze(resolved.policy),
+    runtime: Object.freeze({
+      requirements: Object.freeze([...resolved.runtime.requirements]),
+      provenance: Object.freeze(frozenProvenance),
+    }),
+  });
+}
 
-  for (const profile of Object.values(config.profiles)) {
-    assertNoProtectedPathRuleConflicts(profile.protectedPathRules ?? []);
-    assertSandboxConfig(profile);
+/** Build validated provenance without turning unchecked object keys into requirements. */
+export function runtimeRequirementProvenanceFor({
+  requirements,
+  provenance,
+}: {
+  readonly requirements: readonly RuntimeRequirementName[];
+  readonly provenance: Readonly<
+    Partial<Record<RuntimeRequirementName, readonly string[]>>
+  >;
+}): Partial<Record<RuntimeRequirementName, readonly string[]>> {
+  const selected = new Set<string>(requirements);
+  const result: Partial<Record<RuntimeRequirementName, readonly string[]>> = {};
+  for (const requirement of runtimeRequirementNames) {
+    const selectors = provenance[requirement];
+    if (!selected.has(requirement)) {
+      if (selectors !== undefined)
+        throw new Error(
+          `Invalid pi-guard runtime provenance for '${requirement}'`,
+        );
+    } else {
+      if (!selectors) {
+        throw new Error(
+          `Invalid pi-guard runtime provenance for '${requirement}'`,
+        );
+      }
+      const uniqueSelectors = [...new Set(selectors)];
+      if (
+        uniqueSelectors.length === 0 ||
+        !uniqueSelectors.every(
+          (value) => typeof value === "string" && value.length > 0,
+        )
+      )
+        throw new Error(
+          `Invalid pi-guard runtime provenance for '${requirement}'`,
+        );
+      result[requirement] = uniqueSelectors;
+    }
   }
-
-  if (!Object.hasOwn(config.profiles, config.defaultProfile)) {
-    throw new Error(
-      `Invalid pi-guard policy at /defaultProfile: profile '${config.defaultProfile}' is not configured`,
-    );
+  for (const requirement of Object.keys(provenance)) {
+    if (
+      !isRuntimeRequirementName({ value: requirement }) ||
+      !selected.has(requirement)
+    )
+      throw new Error(
+        `Invalid pi-guard runtime provenance for '${requirement}'`,
+      );
   }
+  return result;
 }
 
 export function definePolicyConfig<
-  Profiles extends Record<string, ProfilePolicy>,
+  Profiles extends Record<string, ResolvedProfile>,
 >(config: {
   defaultProfile: keyof Profiles & string;
   profiles: Profiles;
 }): PolicyConfig<keyof Profiles & string> {
-  assertPolicyConfig(config);
+  parsePolicyConfig({ unverifiedConfig: config });
   warnOnPolicyRuleConflicts(config);
   return config;
-}
-
-function isProfilePolicyShape(policy: unknown): policy is ProfilePolicy {
-  return Value.Check(profileSchema, policy);
 }
 
 function isSandboxConfig(value: unknown): value is SandboxConfig {
@@ -795,7 +968,7 @@ export function warnOnPolicyRuleConflicts(
 ): void {
   for (const [profileName, profile] of Object.entries(policyConfig.profiles)) {
     if (shouldWarnForProfileRuleConflicts(profileName)) {
-      warnOnProfileRuleConflicts(profileName, profile);
+      warnOnProfileRuleConflicts(profileName, profile.policy);
     }
   }
 }
@@ -909,10 +1082,6 @@ function assertCustomToolRuleArray(
       `Invalid custom-tool rules for '${toolName}' at ${validationError.instancePath || "/"}: ${validationError.message}`,
     );
   }
-}
-
-function isPolicyConfigShape(config: unknown): config is PolicyConfigShape {
-  return Value.Check(policyConfigSchema, config);
 }
 
 function pathRuleContextsOverlap(

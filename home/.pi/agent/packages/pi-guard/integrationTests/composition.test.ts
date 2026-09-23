@@ -60,7 +60,7 @@ describe("profile composition", () => {
       }),
     });
 
-    expect(decideBash("demo", config.profiles.composed)).toBe("deny");
+    expect(decideBash("demo", config.profiles.composed.policy)).toBe("deny");
   });
 
   it("fold-is-concatenation: extending read-only then default re-opens bash to ask", () => {
@@ -78,7 +78,7 @@ describe("profile composition", () => {
     });
 
     expect(
-      decideBash("python scripts/build.py", config.profiles.reopened),
+      decideBash("python scripts/build.py", config.profiles.reopened.policy),
     ).toBe("ask");
   });
 
@@ -98,7 +98,10 @@ describe("profile composition", () => {
     });
 
     expect(
-      decideBash("python scripts/build.py", config.profiles["worker-like"]),
+      decideBash(
+        "python scripts/build.py",
+        config.profiles["worker-like"].policy,
+      ),
     ).toBe("deny");
   });
 
@@ -118,7 +121,10 @@ describe("profile composition", () => {
     });
 
     expect(
-      decideBash("python scripts/build.py", config.profiles["auto-approve"]),
+      decideBash(
+        "python scripts/build.py",
+        config.profiles["auto-approve"].policy,
+      ),
     ).toBe("allow");
   });
 
@@ -137,9 +143,9 @@ describe("profile composition", () => {
       }),
     });
 
-    expect(decideBash("git status --short", config.profiles.paranoid)).toBe(
-      "ask",
-    );
+    expect(
+      decideBash("git status --short", config.profiles.paranoid.policy),
+    ).toBe("ask");
   });
 
   it("transform:deny-all converts every ordinary decision to deny", () => {
@@ -157,12 +163,12 @@ describe("profile composition", () => {
       }),
     });
 
-    expect(decideBash("ls", config.profiles.paranoid)).toBe("deny");
-    expect(decideBash("git status --short", config.profiles.paranoid)).toBe(
-      "deny",
-    );
+    expect(decideBash("ls", config.profiles.paranoid.policy)).toBe("deny");
     expect(
-      decideBash("python scripts/build.py", config.profiles.paranoid),
+      decideBash("git status --short", config.profiles.paranoid.policy),
+    ).toBe("deny");
+    expect(
+      decideBash("python scripts/build.py", config.profiles.paranoid.policy),
     ).toBe("deny");
   });
 
@@ -197,7 +203,7 @@ describe("profile composition", () => {
       }),
     });
 
-    expect(config.profiles.child.protectedPathRules).toEqual(
+    expect(config.profiles.child.policy.protectedPathRules).toEqual(
       protectedPathRules,
     );
   });
@@ -218,7 +224,7 @@ describe("profile composition", () => {
     });
 
     expect(
-      decideBash("python scripts/build.py", config.profiles.unchanged),
+      decideBash("python scripts/build.py", config.profiles.unchanged.policy),
     ).toBe("ask");
   });
 
@@ -243,7 +249,7 @@ describe("profile composition", () => {
       }),
     });
 
-    const policy = config.profiles["worker-like"];
+    const policy = config.profiles["worker-like"].policy;
     // The inherited default policy is transformed.
     expect(decideBash("python scripts/build.py", policy)).toBe("deny");
 
@@ -273,9 +279,9 @@ describe("profile composition", () => {
       }),
     });
 
-    expect(decideBash("python scripts/build.py", config.profiles.ordered)).toBe(
-      "allow",
-    );
+    expect(
+      decideBash("python scripts/build.py", config.profiles.ordered.policy),
+    ).toBe("allow");
   });
 
   it("unknown transform names fail loudly with a path to the bad entry", () => {

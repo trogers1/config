@@ -2,7 +2,12 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { decideBash, decideCustomTool } from "../extensions/guard";
 import { decideBashPathReferences } from "../modules/shell/pathPolicy";
-import { definePolicyConfig, extendProfile } from "../modules/policyHelpers";
+import {
+  definePolicyConfig,
+  emptyResolvedRuntime,
+  extendProfile,
+  finalizeResolvedProfile,
+} from "../modules/policyHelpers";
 import type {
   CustomToolRule,
   ProfilePolicy,
@@ -31,6 +36,13 @@ function pathProfile(
     readPaths,
     writePaths,
   };
+}
+
+function resolvedProfile(policy: ProfilePolicy) {
+  return finalizeResolvedProfile({
+    policy,
+    runtime: emptyResolvedRuntime,
+  });
 }
 
 describe("specificity-first rule resolution", () => {
@@ -287,7 +299,7 @@ describe("specificity-first rule resolution", () => {
     ]);
     const config = {
       defaultProfile: "builtin:default" as const,
-      profiles: { "builtin:default": conflicted },
+      profiles: { "builtin:default": resolvedProfile(conflicted) },
     };
 
     definePolicyConfig(config);
@@ -315,7 +327,7 @@ describe("specificity-first rule resolution", () => {
 
     definePolicyConfig({
       defaultProfile: "path-conflicted",
-      profiles: { "path-conflicted": conflicted },
+      profiles: { "path-conflicted": resolvedProfile(conflicted) },
     });
 
     expect(warnSpy).toHaveBeenCalledWith(
@@ -337,7 +349,7 @@ describe("specificity-first rule resolution", () => {
 
     definePolicyConfig({
       defaultProfile: "disjoint-contexts",
-      profiles: { "disjoint-contexts": profile },
+      profiles: { "disjoint-contexts": resolvedProfile(profile) },
     });
 
     expect(warnSpy).not.toHaveBeenCalled();
@@ -366,7 +378,7 @@ describe("specificity-first rule resolution", () => {
 
     definePolicyConfig({
       defaultProfile: "deploy-conflicted",
-      profiles: { "deploy-conflicted": conflicted },
+      profiles: { "deploy-conflicted": resolvedProfile(conflicted) },
     });
 
     expect(warnSpy).toHaveBeenCalledWith(

@@ -1,10 +1,15 @@
 import type { ProfilePolicy, Rule } from "../policyHelpers";
-import { goToolchainCacheSandboxWritePaths } from "../dependencyCaches";
-import { ruleSetRegistry, type RuleSetName } from "../ruleSets.lib/index";
+import { ruleSetDefinition, type RuleSetName } from "../ruleSets.lib/index";
 
 /** Bash rules composed from the named rule sets, in composition order. */
-export function bashRules(...names: RuleSetName[]): Rule[] {
-  return names.flatMap((name) => ruleSetRegistry[name].tools?.bash ?? []);
+export function bashRules({
+  names,
+}: {
+  readonly names: readonly RuleSetName[];
+}): Rule[] {
+  return names.flatMap(
+    (name) => ruleSetDefinition({ name }).policy.tools?.bash ?? [],
+  );
 }
 
 // This is both the construction recipe and the provenance source for the
@@ -16,6 +21,7 @@ const baseRuleSetNames = [
   "ruleset:deps-mutations-guard",
   "ruleset:shell-guards",
   "ruleset:path-guards",
+  "ruleset:go-runtime-commands",
 ] as const;
 
 export const baseCompositionChain = [
@@ -54,7 +60,6 @@ export const baseProfile: ProfilePolicy = {
   sandbox: {
     network: "deny",
     allowLocalBinding: true,
-    extraWritePaths: [...goToolchainCacheSandboxWritePaths],
     kernelUnenforcedProtectedPaths: gitMetadataKernelWaiver,
   },
   // No promptFile means: keep Pi's normal system prompt unchanged.
@@ -63,12 +68,19 @@ export const baseProfile: ProfilePolicy = {
   // For path-based tools, patterns match paths relative to pi's startup directory.
   // Outside paths appear as ../..., so use ../** to gate external access.
   tools: {
-    bash: bashRules(...baseRuleSetNames),
+    bash: bashRules({ names: baseRuleSetNames }),
   },
-  readPaths: [...(ruleSetRegistry["ruleset:path-guards"].readPaths ?? [])],
-  writePaths: [...(ruleSetRegistry["ruleset:path-guards"].writePaths ?? [])],
+  readPaths: [
+    ...(ruleSetDefinition({ name: "ruleset:path-guards" }).policy.readPaths ??
+      []),
+  ],
+  writePaths: [
+    ...(ruleSetDefinition({ name: "ruleset:path-guards" }).policy.writePaths ??
+      []),
+  ],
   protectedPathRules: [
-    ...(ruleSetRegistry["ruleset:path-guards"].protectedPathRules ?? []),
+    ...(ruleSetDefinition({ name: "ruleset:path-guards" }).policy
+      .protectedPathRules ?? []),
   ],
 };
 

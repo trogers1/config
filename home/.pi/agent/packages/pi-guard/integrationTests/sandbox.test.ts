@@ -4,6 +4,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import type { RuleSetName } from "../modules/ruleSets.lib/index";
 import { createExtensionHarness } from "./support/extensionHarness";
 
 const tempDirectories: string[] = [];
@@ -11,6 +12,13 @@ const tempDirectories: string[] = [];
 // These are OS-acceptance tests, so they must be able to initialize a real
 // Seatbelt boundary. macOS rejects nested sandbox-exec invocations.
 beforeAll(() => {
+  if (process.platform !== "darwin" && process.platform !== "linux") {
+    throw new Error(
+      `sandbox.test.ts requires a supported macOS or Linux backend; received '${process.platform}'.`,
+    );
+  }
+  if (process.platform !== "darwin") return;
+
   const probe = spawnSync(
     "/usr/bin/sandbox-exec",
     ["-p", "(version 1) (allow default)", "/usr/bin/true"],
@@ -109,9 +117,11 @@ function linkedWorktreeFixture(): { main: string; worktree: string } {
 function writeProfileConfig({
   sandboxOverrides = {},
   sandboxEnabled = true,
+  runtimeRuleSets = [],
 }: {
   sandboxOverrides?: Record<string, unknown>;
   sandboxEnabled?: boolean;
+  runtimeRuleSets?: readonly RuleSetName[];
 }): void {
   const configDirectory = fs.mkdtempSync(
     path.join(os.tmpdir(), `pi-sandbox-profile-${crypto.randomUUID()}`),
@@ -129,7 +139,7 @@ function writeProfileConfig({
           // Unparsed interpreter expressions remain ordinary `ask` decisions;
           // this transform intentionally auto-approves them so these tests
           // prove the registered Bash override supplies the OS boundary.
-          extends: ["builtin:default"],
+          extends: ["builtin:default", ...runtimeRuleSets],
           transforms: ["transform:allow-asks"],
           readPaths: [{ pattern: "*", decision: "allow" }],
           writePaths: [{ pattern: "*", decision: "allow" }],
@@ -277,6 +287,7 @@ async function runThroughPi({
   timeout = 10,
   signal,
   profile,
+  runtimeRuleSets,
 }: {
   root: string;
   command: string;
@@ -285,8 +296,13 @@ async function runThroughPi({
   timeout?: number;
   signal?: AbortSignal;
   profile?: string;
+  runtimeRuleSets?: readonly RuleSetName[];
 }): Promise<number> {
-  writeProfileConfig({ sandboxOverrides, sandboxEnabled });
+  writeProfileConfig({
+    sandboxOverrides,
+    sandboxEnabled,
+    runtimeRuleSets,
+  });
   if (profile) process.env.PI_SUBAGENT_PROFILE = profile;
   const harness = createExtensionHarness({ contextCwd: root, hasUI: false });
   await harness.start();
@@ -572,6 +588,50 @@ describe("sandbox full-harness OS acceptance", () => {
     expect(fs.statSync(temporaryDirectory).mode & 0o777).toBe(0o700);
   });
 
+  it("runs a project Vitest script with only the exact Vite temporary root", async () => {
+    // Keep the fixture beneath this package so npm resolves the real installed
+    // Vitest binary from the ancestor node_modules, while Vite still creates
+    // its runtime directory beneath the fixture's own startup root.
+    const root = path.resolve(import.meta.dirname, "fixtures/vitest-runtime");
+    const fixtureNodeModules = path.join(root, "node_modules");
+    fs.rmSync(fixtureNodeModules, { recursive: true, force: true });
+    fs.mkdirSync(fixtureNodeModules);
+    process.env.PI_SUBAGENT_PERMISSIBLE_GLOBS = "runtime.fixture.ts";
+    const runtimeRuleSets = [
+      "ruleset:go-runtime-commands",
+      "ruleset:vitest",
+    ] as const satisfies readonly RuleSetName[];
+
+    try {
+      expect(
+        await runThroughPi({
+          root,
+          command: "npm test",
+          timeout: 120,
+          runtimeRuleSets,
+        }),
+      ).toBe(0);
+
+      for (const relativePath of [
+        "node_modules/.vite-temp-sibling/marker",
+        "node_modules/broad-marker",
+      ]) {
+        expect(
+          await runThroughPi({
+            root,
+            command: node({
+              source: `const fs = require('fs'); const path = require('path'); const target = ${JSON.stringify(relativePath)}; fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, 'blocked');`,
+            }),
+            runtimeRuleSets,
+          }),
+        ).not.toBe(0);
+        expect(fs.existsSync(path.join(root, relativePath))).toBe(false);
+      }
+    } finally {
+      fs.rmSync(fixtureNodeModules, { recursive: true, force: true });
+    }
+  });
+
   it("permits Go's module-cache metadata through the complete sandboxed Pi path", async () => {
     const root = fixture();
     const cacheParent = path.join(
@@ -594,6 +654,7 @@ describe("sandbox full-harness OS acceptance", () => {
           source:
             "const fs = require('fs'); const path = require('path'); const directory = fs.mkdtempSync(path.join(process.env.HOME, 'go/pkg/mod/cache/download/pi-guard-sandbox-')); fs.rmSync(directory, { recursive: true });",
         }),
+        runtimeRuleSets: ["ruleset:go-runtime-commands"],
       }),
     ).toBe(0);
   });
@@ -633,6 +694,7 @@ func main() {
         root,
         command: "go run ./allowed/go-temp-check",
         timeout: 120,
+        runtimeRuleSets: ["ruleset:go-runtime-commands"],
       }),
     ).toBe(0);
   });

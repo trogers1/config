@@ -184,7 +184,7 @@ describe("profile config mutations", () => {
     expect(fs.readFileSync(configPath, "utf8")).toContain("// retained");
     expect(
       loadProfileConfig({ fallback: policyConfig, configPath: configPath })
-        .profiles["local-work"].tools.bash,
+        .profiles["local-work"].policy.tools.bash,
     ).toContainEqual({
       pattern: "echo profile-rule",
       decision: "allow",
@@ -623,7 +623,7 @@ describe("profile config mutations", () => {
     );
     expect(
       loadProfileConfig({ fallback: policyConfig, configPath: configPath })
-        .profiles.standalone.sandbox,
+        .profiles.standalone.policy.sandbox,
     ).toEqual({ network: "deny", extraWritePaths: [] });
   });
 
@@ -653,7 +653,7 @@ describe("profile config mutations", () => {
     if (!isUsableProfileStoreState(changed))
       throw new Error("changed snapshot was not usable");
     expect(
-      changed.state.snapshot.config.profiles.existing.tools.bash,
+      changed.state.snapshot.config.profiles.existing.policy.tools.bash,
     ).toContainEqual({
       pattern: "echo changed",
       decision: "allow",
@@ -730,7 +730,7 @@ describe("profile config mutations", () => {
     expect(snapshot.declarations.map(({ profile }) => profile)).toEqual([
       "first",
     ]);
-    expect(snapshot.config.profiles.first.tools.bash).toContainEqual({
+    expect(snapshot.config.profiles.first.policy.tools.bash).toContainEqual({
       pattern: "echo coherent",
       decision: "allow",
     });
@@ -860,15 +860,15 @@ describe("profile config mutations", () => {
     const store = profileStore({ configPath });
     const initial = refreshProfileStore({ store });
     if (!("snapshot" in initial)) throw new Error("initial store state");
-    expect(initial.snapshot.config.profiles.existing.tools.bash).toContainEqual(
-      { pattern: "echo first", decision: "allow" },
-    );
+    expect(
+      initial.snapshot.config.profiles.existing.policy.tools.bash,
+    ).toContainEqual({ pattern: "echo first", decision: "allow" });
     fs.writeFileSync(configPath, source({ parentRule: "echo refreshed" }));
     const refreshed = refreshProfileStore({ store });
     expect(refreshed.status).toBe(profileStoreStatus.refreshed);
     if (!("snapshot" in refreshed)) throw new Error("refreshed store state");
     expect(
-      refreshed.snapshot.config.profiles.existing.tools.bash,
+      refreshed.snapshot.config.profiles.existing.policy.tools.bash,
     ).toContainEqual({ pattern: "echo refreshed", decision: "allow" });
   });
 

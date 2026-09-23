@@ -45,7 +45,7 @@ describe("sandbox profile composition", () => {
       }),
     });
 
-    const sandbox = config.profiles.child.sandbox;
+    const sandbox = config.profiles.child.policy.sandbox;
     if (!sandbox) throw new Error("Expected an active sandbox");
     expect(sandbox.network).toBe("deny");
     expect(sandbox.extraWritePaths).toContain("/tmp");
@@ -75,7 +75,7 @@ describe("sandbox profile composition", () => {
       }),
     });
 
-    expect(config.profiles.child.sandbox).toBe(false);
+    expect(config.profiles.child.policy.sandbox).toBe(false);
   });
 
   it("composes sandbox configuration through profile extension", () => {
@@ -106,7 +106,7 @@ describe("sandbox profile composition", () => {
       }),
     });
 
-    const sandbox = config.profiles.child.sandbox;
+    const sandbox = config.profiles.child.policy.sandbox;
     if (!sandbox) throw new Error("Expected an active sandbox");
     expect(sandbox.network).toBe("allow");
     expect(sandbox.extraWritePaths).toContain("/tmp");
@@ -138,7 +138,7 @@ describe("sandbox profile composition", () => {
       }),
     });
 
-    const sandbox = config.profiles.child.sandbox;
+    const sandbox = config.profiles.child.policy.sandbox;
     if (!sandbox) throw new Error("Expected an active sandbox");
     expect(sandbox.network).toBe("deny");
     expect(sandbox.extraWritePaths).toContain("/tmp");
@@ -195,9 +195,9 @@ describe("sandbox profile composition", () => {
           },
         }),
       });
-      const appended = config.profiles.appended.sandbox;
-      const overwritten = config.profiles.overwritten.sandbox;
-      const cleared = config.profiles.cleared.sandbox;
+      const appended = config.profiles.appended.policy.sandbox;
+      const overwritten = config.profiles.overwritten.policy.sandbox;
+      const cleared = config.profiles.cleared.policy.sandbox;
       if (!appended || !overwritten || !cleared)
         throw new Error("Expected enabled sandbox declarations");
       expect(appended[arrayName]).toEqual(
@@ -237,7 +237,7 @@ describe("sandbox profile composition", () => {
       }),
     });
 
-    expect(config.profiles.child.sandbox).toEqual(
+    expect(config.profiles.child.policy.sandbox).toEqual(
       expect.objectContaining({
         extraWritePaths: ["/var/tmp"],
         kernelUnenforcedProtectedPaths: [],
@@ -286,7 +286,7 @@ describe("sandbox profile composition", () => {
       }),
     });
 
-    expect(config.profiles.base.sandbox).toEqual(
+    expect(config.profiles.base.policy.sandbox).toEqual(
       expect.objectContaining({
         network: "allow",
         extraDenyReadPaths: ["~/.aws"],

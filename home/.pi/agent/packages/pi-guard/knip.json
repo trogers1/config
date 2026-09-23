@@ -2,9 +2,10 @@
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "entry": [
     "extensions/guard.ts",
-    "modules/policy.ts",
     "modules/profileConfig.ts",
-    "integrationTests/*.test.ts"
+    "integrationTests/*.test.ts",
+    "integrationTests/fixtures/**/vitest.config.ts",
+    "integrationTests/fixtures/**/*.fixture.ts"
   ],
   "project": [
     "extensions/**/*.ts",

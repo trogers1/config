@@ -1,4 +1,7 @@
+import { parseResolvedProfile } from "../policyHelpers";
+import { resolveRuntimeRequirementWritePaths } from "../runtimeRequirements";
 import { getSandboxBackend } from "./backend";
+import { ensureSandboxTemporaryDirectory } from "./temporaryDirectory";
 import { translatePolicy } from "./translate";
 import type {
   CoverageReport,
@@ -7,7 +10,6 @@ import type {
   SandboxState,
 } from "./types";
 
-export { ensureSandboxTemporaryDirectory } from "./temporaryDirectory";
 export { translatePolicy } from "./translate";
 export type {
   CoverageItem,
@@ -59,16 +61,47 @@ async function resolveSandboxLocked(
     };
   }
 
-  const sandbox = state.policy.sandbox;
+  const { policy: resolvedPolicy, runtime } = parseResolvedProfile({
+    unverifiedProfile: state.resolvedProfile,
+  });
+  const sandbox = resolvedPolicy.sandbox;
   if (typeof sandbox !== "object" || sandbox === null) {
     return { kind: "none" };
   }
 
+  // SRT overwrites TMPDIR for filesystem-sandboxed children. Its private
+  // directory and selected audited requirements are operational roots, not
+  // workspace access, so preserve them when a subagent scope narrows writes.
+  const runtimeWritePaths = [
+    ...resolveRuntimeRequirementWritePaths({
+      requirements: runtime.requirements,
+    }),
+    ensureSandboxTemporaryDirectory(),
+  ];
+  const policy = {
+    ...resolvedPolicy,
+    sandbox: {
+      ...sandbox,
+      extraWritePaths: [
+        ...(sandbox.extraWritePaths ?? []),
+        ...runtimeWritePaths,
+      ],
+    },
+  };
+  const subagentScopes = state.subagentScopes?.length
+    ? [
+        ...state.subagentScopes,
+        ...runtimeWritePaths.map((pattern) => ({
+          pattern,
+          decision: "allow" as const,
+        })),
+      ]
+    : [];
   const cacheKey = JSON.stringify({
     profile: state.profile,
-    policy: state.policy,
+    policy,
     startupCwd: state.startupCwd,
-    subagentScopes: state.subagentScopes ?? [],
+    subagentScopes,
   });
   const cached = sandboxCache.get(cacheKey);
   if (cached) return cached;
@@ -77,10 +110,10 @@ async function resolveSandboxLocked(
   const probe = await safeProbe(backend);
   if (!probe.supported) {
     const translated = translatePolicy(
-      state.policy,
+      policy,
       state.profile,
       state.startupCwd,
-      state.subagentScopes ?? [],
+      subagentScopes,
     );
     const resolution = unavailableResolution(
       probe.reason ?? "Sandbox backend unavailable.",
@@ -92,10 +125,10 @@ async function resolveSandboxLocked(
   }
 
   const translated = translatePolicy(
-    state.policy,
+    policy,
     state.profile,
     state.startupCwd,
-    state.subagentScopes ?? [],
+    subagentScopes,
   );
   if (translated.kind === "unavailable") {
     const resolution: SandboxResolution = {

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { parseSubagentPermissibleRules } from "./subagentScopes";
+import {
+  parseSubagentPermissibleRules,
+  subagentScopeGuidance,
+} from "./subagentScopes";
 
 describe("parseSubagentPermissibleRules", () => {
   it("parses the declared scope through its object argument", () => {
@@ -7,8 +10,7 @@ describe("parseSubagentPermissibleRules", () => {
       {
         pattern: "**",
         decision: "deny",
-        guidance:
-          "This subagent may only access paths in its declared permissible scope.",
+        guidance: subagentScopeGuidance,
       },
       { pattern: "src", decision: "allow" },
       { pattern: "src/**", decision: "allow" },

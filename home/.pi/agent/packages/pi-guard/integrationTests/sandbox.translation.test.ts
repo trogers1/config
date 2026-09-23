@@ -19,7 +19,7 @@ describe("sandbox policy translation", () => {
     try {
       const result = translatePolicy(
         {
-          ...policyConfig.profiles["builtin:default"],
+          ...policyConfig.profiles["builtin:default"].policy,
           protectedPathRules: [{ pattern: "**/.git/**", decision: "deny" }],
           sandbox: { network: "deny" },
         },
@@ -36,7 +36,7 @@ describe("sandbox policy translation", () => {
   it("fails closed when a protected deny is nested inside an allow exception", () => {
     const result = translatePolicy(
       {
-        ...policyConfig.profiles["builtin:default"],
+        ...policyConfig.profiles["builtin:default"].policy,
         protectedPathRules: [
           { pattern: "**/.env*", decision: "deny" },
           { pattern: "**/.env.template", decision: "allow" },
@@ -54,7 +54,7 @@ describe("sandbox policy translation", () => {
   it("preserves whitespace in literal sandbox paths", () => {
     const result = translatePolicy(
       {
-        ...policyConfig.profiles["builtin:default"],
+        ...policyConfig.profiles["builtin:default"].policy,
         protectedPathRules: [],
         sandbox: { network: "deny", extraDenyReadPaths: [" secret "] },
       },
@@ -75,7 +75,7 @@ describe("sandbox policy translation", () => {
   it("enables macOS trustd access when networking is allowed", () => {
     const result = translatePolicy(
       {
-        ...policyConfig.profiles["builtin:default"],
+        ...policyConfig.profiles["builtin:default"].policy,
         protectedPathRules: [],
         sandbox: {
           network: "allow",
@@ -97,7 +97,7 @@ describe("sandbox policy translation", () => {
   it("keeps trustd unavailable with denied networking", () => {
     const result = translatePolicy(
       {
-        ...policyConfig.profiles["builtin:default"],
+        ...policyConfig.profiles["builtin:default"].policy,
         protectedPathRules: [],
         sandbox: { network: "deny" },
       },
@@ -114,7 +114,7 @@ describe("sandbox policy translation", () => {
 
   it("enables local binding for the built-in default profile", () => {
     const result = translatePolicy(
-      policyConfig.profiles["builtin:default"],
+      policyConfig.profiles["builtin:default"].policy,
       "builtin:default",
       process.cwd(),
     );
@@ -129,7 +129,7 @@ describe("sandbox policy translation", () => {
     () => {
       const result = translatePolicy(
         {
-          ...policyConfig.profiles["builtin:default"],
+          ...policyConfig.profiles["builtin:default"].policy,
           protectedPathRules: [{ pattern: "**/.git/**", decision: "deny" }],
           writePaths: [{ pattern: "allowed/**", decision: "allow" }],
           sandbox: { network: "deny" },

@@ -5,9 +5,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import { policyConfig as genericPolicyConfig } from "../modules/policy";
 import { defaultProtectedPathRules } from "../modules/protectedPaths";
 import {
-  assertPolicyConfig,
+  parsePolicyConfig,
   definePolicyConfig,
+  emptyResolvedRuntime,
   extendProfile,
+  finalizeResolvedProfile,
   type ProfilePolicy,
   type ProfilePolicyOverride,
 } from "../modules/policyHelpers";
@@ -37,6 +39,18 @@ const minimalPaths = {
 } satisfies Pick<ProfilePolicy, "tools" | "readPaths" | "writePaths">;
 
 describe("protected-path rules", () => {
+  it.each([
+    "../../../Users/example/go/pkg/mod/example.com/module/file.go",
+    "../../../Users/example/Library/Caches/go-build/cache-entry",
+  ])("keeps direct Go-cache access protected at %s", (candidate) => {
+    expect(
+      pathPolicy.evaluateProtectedPath(
+        candidate,
+        genericPolicyConfig.profiles["builtin:default"].policy,
+      ).decision,
+    ).toBe("deny");
+  });
+
   it("schema accepts protectedPathRules with allow and deny decisions", () => {
     const policy = {
       description: "Protected rules schema profile for environment-file denial",
@@ -45,9 +59,16 @@ describe("protected-path rules", () => {
     } satisfies ProfilePolicy;
 
     expect(() =>
-      assertPolicyConfig({
-        defaultProfile: "p",
-        profiles: { p: policy },
+      parsePolicyConfig({
+        unverifiedConfig: {
+          defaultProfile: "p",
+          profiles: {
+            p: finalizeResolvedProfile({
+              policy,
+              runtime: emptyResolvedRuntime,
+            }),
+          },
+        },
       }),
     ).not.toThrow();
   });
@@ -64,9 +85,13 @@ describe("protected-path rules", () => {
     };
 
     expect(() =>
-      assertPolicyConfig({
-        defaultProfile: "p",
-        profiles: { p: policy },
+      parsePolicyConfig({
+        unverifiedConfig: {
+          defaultProfile: "p",
+          profiles: {
+            p: { policy, runtime: emptyResolvedRuntime },
+          },
+        },
       }),
     ).toThrow(/protected/);
   });
@@ -135,16 +160,25 @@ describe("protected-path rules", () => {
     } satisfies ProfilePolicy;
 
     expect(() =>
-      assertPolicyConfig({
-        defaultProfile: "p",
-        profiles: { p: conflictedProfile },
+      parsePolicyConfig({
+        unverifiedConfig: {
+          defaultProfile: "p",
+          profiles: {
+            p: { policy: conflictedProfile, runtime: emptyResolvedRuntime },
+          },
+        },
       }),
     ).toThrow(/Protected/);
 
     expect(() =>
       definePolicyConfig({
         defaultProfile: "p",
-        profiles: { p: conflictedProfile },
+        profiles: {
+          p: finalizeResolvedProfile({
+            policy: conflictedProfile,
+            runtime: emptyResolvedRuntime,
+          }),
+        },
       }),
     ).toThrow(/Protected/);
   });
@@ -205,7 +239,7 @@ describe("protected-path rules", () => {
   );
 
   it("former protectedPathExceptions become ordinary allow rules", () => {
-    const policy = genericPolicyConfig.profiles["builtin:default"];
+    const policy = genericPolicyConfig.profiles["builtin:default"].policy;
 
     expect(policy.protectedPathRules).toEqual(
       expect.arrayContaining([

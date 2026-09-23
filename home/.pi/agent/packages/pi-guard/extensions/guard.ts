@@ -49,8 +49,8 @@ import {
   type ProfilePickerItem,
 } from "../modules/profilePicker.lib";
 import {
-  assertPolicyConfig,
-  assertProfilePolicy,
+  parsePolicyConfig,
+  parseProfilePolicy,
   definePolicyConfig,
   extendProfile,
   composeSandboxDeclarations,
@@ -63,6 +63,7 @@ import {
   type ProfileColor,
   type PolicyConfig,
   type ProfilePolicy,
+  type ResolvedProfile,
   profileTransformNames,
   type ProfilePolicyOverride,
   type ProfileTransformName,
@@ -95,7 +96,7 @@ import {
   type ProfileMutationTarget,
 } from "../modules/profileConfig";
 import {
-  builtinCompositionChains,
+  builtinCompositionChain,
   policyConfig as genericPolicyConfig,
 } from "../modules/policy";
 import {
@@ -133,20 +134,18 @@ import {
   matchDirectoryGlobs,
   type DirectoryGlobDeclaration,
 } from "../modules/directoryGlobs";
-import { ruleSetRegistry } from "../modules/ruleSets.lib";
+import { ruleSetRegistry, type RuleSetName } from "../modules/ruleSets.lib";
 import { parseSubagentPermissibleRules } from "../modules/subagentScopes";
-import { goToolchainCacheSandboxWritePaths } from "../modules/dependencyCaches";
 import { readRuntimePromptFile } from "../modules/profilePromptFile";
 import {
   clearSandboxCaches,
-  ensureSandboxTemporaryDirectory,
   resolveSandbox,
   type SandboxResolution,
 } from "../modules/sandbox.lib";
 
 export {
-  assertPolicyConfig,
-  assertProfilePolicy,
+  parsePolicyConfig,
+  parseProfilePolicy,
   definePolicyConfig,
   extendProfile,
   withProtectedPathRules,
@@ -434,7 +433,7 @@ export default function (pi: GuardExtensionAPI) {
   }
 
   function activePolicy(profile: ProfileName): ProfilePolicy {
-    return policyConfig.profiles[profile];
+    return policyConfig.profiles[profile].policy;
   }
 
   async function showProfilePicker({
@@ -563,70 +562,36 @@ export default function (pi: GuardExtensionAPI) {
   const configurationErrorReason = () =>
     profileConfigErrorReason ?? subagentProfileErrorReason;
 
-  function effectiveSandboxPolicy(profile: ProfileName): ProfilePolicy {
-    const policy = activePolicy(profile);
-    if (sandboxOverride !== "enabled" || typeof policy.sandbox === "object") {
-      return policy;
+  function effectiveSandboxProfile({
+    profile,
+  }: {
+    readonly profile: ProfileName;
+  }): ResolvedProfile {
+    const resolvedProfile = policyConfig.profiles[profile];
+    if (
+      sandboxOverride !== "enabled" ||
+      typeof resolvedProfile.policy.sandbox === "object"
+    ) {
+      return resolvedProfile;
     }
-    // Forced sandboxing retains the profile's resolved filesystem policy but
-    // supplies the narrowest network posture when it opted out entirely.
-    return { ...policy, sandbox: { network: "deny" } };
+    // Forced sandboxing retains the resolved runtime metadata and supplies the
+    // narrowest network posture when the ordinary policy opted out entirely.
+    return {
+      ...resolvedProfile,
+      policy: {
+        ...resolvedProfile.policy,
+        sandbox: { network: "deny" },
+      },
+    };
   }
 
   async function resolveActiveSandbox(cwd: string): Promise<SandboxResolution> {
     if (sandboxOverride === "disabled") return { kind: "none" };
-    const policy = effectiveSandboxPolicy(activeProfile);
-    // SRT otherwise forces TMPDIR=/tmp/claude for every filesystem-sandboxed
-    // child, without guaranteeing that directory exists. Give each Pi process
-    // its own existing root and grant it only at the kernel sandbox layer;
-    // ordinary agent read/write path rules intentionally remain unchanged.
-    const sandbox = policy.sandbox;
-    const sandboxedPolicy =
-      typeof sandbox === "object" && sandbox !== null
-        ? {
-            ...policy,
-            sandbox: {
-              ...sandbox,
-              extraWritePaths: [
-                ...(sandbox.extraWritePaths ?? []),
-                ensureSandboxTemporaryDirectory(),
-              ],
-            },
-          }
-        : policy;
-    // ensureSandboxTemporaryDirectory() is process-local and idempotent, so
-    // this is the same directory added to the policy above.
-    const sandboxTemporaryDirectory =
-      typeof sandbox === "object" && sandbox !== null
-        ? ensureSandboxTemporaryDirectory()
-        : undefined;
-    // A subagent's declared scope constrains workspace writes, but runtime
-    // directories granted by pi-guard itself remain available. In particular,
-    // the private TMPDIR is needed by Node tooling (for example tsx's IPC
-    // socket) before tests can start. Go's compiler/module caches are likewise
-    // explicit runtime capabilities, not workspace write access.
-    const subagentSandboxScopes = subagentPermissibleRules
-      ? [
-          ...subagentPermissibleRules,
-          ...(sandboxTemporaryDirectory
-            ? [
-                {
-                  pattern: sandboxTemporaryDirectory,
-                  decision: "allow" as const,
-                },
-              ]
-            : []),
-          ...goToolchainCacheSandboxWritePaths.map((pattern) => ({
-            pattern,
-            decision: "allow" as const,
-          })),
-        ]
-      : undefined;
     return await resolveSandbox({
       profile: activeProfile,
-      policy: sandboxedPolicy,
+      resolvedProfile: effectiveSandboxProfile({ profile: activeProfile }),
       startupCwd: cwd,
-      subagentScopes: subagentSandboxScopes,
+      subagentScopes: subagentPermissibleRules,
       configurationError: configurationErrorReason(),
     });
   }
@@ -642,7 +607,9 @@ export default function (pi: GuardExtensionAPI) {
     if (resolution.kind === "unavailable") {
       ctx.ui.setStatus(
         "sandbox",
-        formatSandboxStatus(effectiveSandboxPolicy(activeProfile)),
+        formatSandboxStatus(
+          effectiveSandboxProfile({ profile: activeProfile }).policy,
+        ),
       );
       if (ctx.hasUI) {
         ctx.ui.notify(
@@ -1158,7 +1125,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
     await clearSandboxCaches();
   });
 
-  const shippedRuleSetDescriptions: Readonly<Record<string, string>> = {
+  const shippedRuleSetDescriptions: Readonly<Record<RuleSetName, string>> = {
     "ruleset:shell": "Standard shell command policy.",
     "ruleset:git": "Git inspection and mutation policy.",
     "ruleset:packageManagers": "Package manager command policy.",
@@ -1170,7 +1137,13 @@ The permissions gate remains loaded and will fail closed until the profile is co
     "ruleset:read-only-path": "Read-only filesystem paths.",
     "ruleset:git-commit": "Permit Git commits.",
     "ruleset:git-refs": "Permit Git reference changes.",
-    "ruleset:test-run": "Permit test and build commands.",
+    "ruleset:go-runtime-commands":
+      "Permit Go test/build commands and Go toolchain runtime state.",
+    "ruleset:typescript-node-test":
+      "Permit TypeScript and Node package-script test commands.",
+    "ruleset:rust-test": "Permit Rust build and test commands.",
+    "ruleset:vitest":
+      "Permit exact Vitest commands and its scoped Vite runtime directory.",
     "ruleset:docs-write": "Permit documentation writes.",
     "ruleset:test-write-protection": "Protect test files from writes.",
   };
@@ -1197,11 +1170,13 @@ The permissions gate remains loaded and will fail closed until the profile is co
           emoji: profile.emoji ?? "🧩",
         };
       });
-    const shipped = Object.keys(ruleSetRegistry).map((name) => ({
-      value: name,
-      description: shippedRuleSetDescriptions[name] ?? "Shipped rule set.",
-      emoji: "🧩",
-    }));
+    const shipped = (Object.keys(ruleSetRegistry) as RuleSetName[]).map(
+      (name) => ({
+        value: name,
+        description: shippedRuleSetDescriptions[name],
+        emoji: "🧩",
+      }),
+    );
     const custom = Object.keys(rawProfileConfig?.rulesets ?? {}).map(
       (name) => ({
         value: `customruleset:${name}`,
@@ -1335,7 +1310,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
               );
             const security = summarizeSandboxSecurityExpansion({
               current: activePolicy(activeProfile).sandbox,
-              candidate: candidate.sandbox,
+              candidate: candidate.policy.sandbox,
             });
             if (security.unsafe) {
               const confirmed = await flow.confirm({
@@ -3308,7 +3283,7 @@ function resolveCompositionChain(
   const resolving = new Set<string>();
 
   const resolve = (name: string): string[] => {
-    const builtinChain = builtinCompositionChains[name];
+    const builtinChain = builtinCompositionChain({ name });
     if (builtinChain) return [...builtinChain];
     if (isCompositionFragmentName({ name })) {
       return [name];

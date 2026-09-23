@@ -1,6 +1,6 @@
 {
   "$schema": "../../packages/pi-guard/schemas/profiles.schema.json",
-  "defaultProfile": "personal",
+  "defaultProfile": "mcp",
   "rulesets": {
     "infra-mutation-deny": {
       "tools": {
@@ -185,6 +185,7 @@
       "description": "Configuration maintenance profile for the Pi setup repository.",
       "extends": [
         "builtin:default",
+        "ruleset:vitest",
         "customruleset:infra-mutation-deny",
         "customruleset:config-symlink-boundaries",
       ],
@@ -479,6 +480,14 @@
           {
             "pattern": "npm --prefix home/.pi/agent/packages/* run *",
             "decision": "allow"
+          },
+          {
+            "pattern": "cp *",
+            "decision": "allow"
+          },
+          {
+            "pattern": "mv *",
+            "decision": "allow"
           }
         ]
       },
@@ -487,6 +496,7 @@
       "description": "Configuration maintenance with tests hidden from the agent.",
       "extends": [
         "builtin:tests-hidden",
+        "ruleset:vitest",
         "customruleset:infra-mutation-deny",
         "customruleset:config-symlink-boundaries",
       ],
@@ -520,6 +530,7 @@
       "description": "Configuration maintenance restricted to test-file changes.",
       "extends": [
         "builtin:tests-only",
+        "ruleset:vitest",
         "customruleset:infra-mutation-deny",
         "customruleset:config-symlink-boundaries",
       ],
@@ -587,10 +598,11 @@
         },
       ],
     },
-    "personal": {
-      "description": "Personal default profile with local coding workflow guardrails.",
+    "mcp": {
+      "description": "MCP default profile with local coding workflow guardrails.",
       "extends": [
         "builtin:default",
+        "ruleset:vitest",
         "customruleset:infra-mutation-deny",
         "gitlab-skills"
       ],
@@ -753,7 +765,8 @@
       "description": "Sidecar-specific profile (can see config repo)",
       "emoji": "🛵",
       "extends": [
-        "personal"
+        "mcp",
+        "ruleset:go-runtime-commands"
       ],
       "directoryGlobs": [
         "/Users/taylor.rogers/Code/sidecar-comments"
@@ -855,10 +868,10 @@
       ]
     },
     "personal-deny-asks": {
-      "description": "The conservative auto-pilot for the personal  profile.",
+      "description": "The conservative auto-pilot for the MCP profile.",
       "emoji": "👨‍✈️",
       "extends": [
-        "personal"
+        "mcp"
       ],
       "color": "green",
       "transforms": [
@@ -866,14 +879,36 @@
       ]
     },
     "personal-allow-asks": {
-      "description": "Dangerous auto-pilot for the personal profile",
+      "description": "Dangerous auto-pilot for the MCP profile",
       "emoji": "🔥",
       "extends": [
-        "personal"
+        "mcp"
       ],
       "color": "red",
       "transforms": [
         "transform:allow-asks"
+      ]
+    },
+    "config-maintenance-allow-asks": {
+      "description": "Auto-pilot",
+      "emoji": "🔥",
+      "extends": [
+        "config-maintenance"
+      ],
+      "transforms": [
+        "transform:allow-asks"
+      ],
+      "color": "red"
+    },
+    "config-maintenance-deny-asks": {
+      "description": "Safer auto-pilot",
+      "emoji": "🚅",
+      "extends": [
+        "config-maintenance"
+      ],
+      "color": "green",
+      "transforms": [
+        "transform:deny-asks"
       ]
     },
   },

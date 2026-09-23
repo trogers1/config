@@ -21,7 +21,7 @@ export const gitFullCompositionChain = [
 
 /** Local git mutation tier: stage, commit, and rewrite local history. */
 export const committerProfile = extendProfile(baseProfile, {
-  ...ruleSetRegistry["ruleset:git-commit"],
+  ...ruleSetRegistry["ruleset:git-commit"].policy,
   description:
     "Git committer profile: stage, commit, and rewrite local history.",
   color: "red",
@@ -36,7 +36,7 @@ export const committerProfile = extendProfile(baseProfile, {
 
 /** Full git control: the committer tier plus ref and remote mutation. */
 export const gitFullProfile = extendProfile(committerProfile, {
-  ...ruleSetRegistry["ruleset:git-refs"],
+  ...ruleSetRegistry["ruleset:git-refs"].policy,
   description: "Full Git profile: commit, push, branches, tags, and switching.",
   color: "red",
   sandbox: {

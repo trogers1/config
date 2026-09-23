@@ -13,9 +13,11 @@ import {
 import { Value } from "typebox/value";
 import {
   applyPolicyTransforms,
-  assertPolicyConfig,
-  assertProfilePolicy,
+  parsePolicyConfig,
+  parseProfilePolicy,
   extendProfile,
+  finalizeResolvedProfile,
+  runtimeRequirementProvenanceFor,
   hasPolicyReferencePrefix,
   isBuiltinProfileName,
   parseOrThrow,
@@ -28,11 +30,16 @@ import {
   type PolicyConfig,
   type ProfileConfigFile,
   type ProfileConfigProfile,
-  type ProfilePolicy,
   type ProfilePolicyFragment,
+  type ResolvedProfile,
   type ProfileTransformName,
 } from "./policyHelpers";
-import { ruleSetRegistry } from "./ruleSets.lib/index";
+import {
+  ruleSetDefinition,
+  ruleSetNames,
+  type RuleSetName,
+} from "./ruleSets.lib/index";
+import type { RuntimeRequirementName } from "./runtimeRequirements";
 import {
   validateDirectoryGlobs,
   type DirectoryGlobDeclaration,
@@ -164,10 +171,12 @@ function isProfileConfigFile(value: unknown): value is ProfileConfigFile {
   return Value.Check(profileConfigFileSchema, value);
 }
 
-function isShippedRuleSetName(
-  name: string,
-): name is keyof typeof ruleSetRegistry {
-  return Object.hasOwn(ruleSetRegistry, name);
+function isShippedRuleSetName({
+  value,
+}: {
+  readonly value: string;
+}): RuleSetName | undefined {
+  return ruleSetNames().find((name) => name === value);
 }
 
 /**
@@ -530,21 +539,81 @@ function loadProfileConfigSource({
     const userDefinitions = profileFile.profiles;
     const customRulesets = profileFile.rulesets ?? {};
 
-    const resolvedUsers = new Map<string, ProfilePolicy>();
-    const resolving = new Set<string>();
-
-    const applyTransforms = <T extends ProfilePolicyFragment>(
-      policy: T,
-      transforms: readonly ProfileTransformName[] | undefined,
-    ): T => {
-      if (!transforms || transforms.length === 0) return policy;
-      return applyPolicyTransforms(policy, transforms);
+    type ResolvedFragment = {
+      readonly policy: ProfilePolicyFragment;
+      readonly requirements: readonly RuntimeRequirementName[];
+      readonly provenance: Readonly<
+        Partial<Record<RuntimeRequirementName, readonly string[]>>
+      >;
     };
 
-    const resolveProfile = (
-      target: string,
-      referrer: string = target,
-    ): ProfilePolicyFragment => {
+    const emptyRuntime = {
+      requirements: [],
+      provenance: {},
+    } as const satisfies Omit<ResolvedFragment, "policy">;
+    const resolvedUsers = new Map<string, ResolvedProfile>();
+    const resolving = new Set<string>();
+
+    const fragmentFromResolved = ({
+      resolved,
+    }: {
+      readonly resolved: ResolvedProfile;
+    }): ResolvedFragment => ({
+      policy: resolved.policy,
+      requirements: resolved.runtime.requirements,
+      provenance: resolved.runtime.provenance,
+    });
+
+    const mergeFragments = ({
+      base,
+      override,
+    }: {
+      readonly base: ResolvedFragment;
+      readonly override: ResolvedFragment;
+    }): ResolvedFragment => {
+      const requirements = [
+        ...new Set([...base.requirements, ...override.requirements]),
+      ];
+      const provenance = runtimeRequirementProvenanceFor({
+        requirements,
+        provenance: Object.fromEntries(
+          requirements.map((requirement) => [
+            requirement,
+            [
+              ...(base.provenance[requirement] ?? []),
+              ...(override.provenance[requirement] ?? []),
+            ],
+          ]),
+        ),
+      });
+      return {
+        policy: extendProfile(base.policy, override.policy),
+        requirements,
+        provenance,
+      };
+    };
+
+    const applyTransforms = ({
+      fragment,
+      transforms,
+    }: {
+      readonly fragment: ResolvedFragment;
+      readonly transforms: readonly ProfileTransformName[] | undefined;
+    }): ResolvedFragment => ({
+      ...fragment,
+      policy:
+        transforms && transforms.length > 0
+          ? applyPolicyTransforms(fragment.policy, transforms)
+          : fragment.policy,
+    });
+
+    const resolveProfile = ({
+      target,
+      referrer = target,
+    }: {
+      readonly target: string;
+      readonly referrer?: string;
+    }): ResolvedFragment => {
       if (hasPolicyReferencePrefix({ name: target, kind: "transform" })) {
         throwProfileConfigError(
           configPath,
@@ -561,10 +630,24 @@ function loadProfileConfigSource({
             `/profiles/${referrer}/extends`,
           );
         }
-        return builtin;
+        return fragmentFromResolved({ resolved: builtin });
       }
-      if (isShippedRuleSetName(target)) {
-        return ruleSetRegistry[target];
+      const shippedName = isShippedRuleSetName({ value: target });
+      if (shippedName) {
+        const definition = ruleSetDefinition({ name: shippedName });
+        return {
+          policy: definition.policy,
+          requirements: definition.runtimeRequirements,
+          provenance: runtimeRequirementProvenanceFor({
+            requirements: definition.runtimeRequirements,
+            provenance: Object.fromEntries(
+              definition.runtimeRequirements.map((requirement) => [
+                requirement,
+                [shippedName],
+              ]),
+            ),
+          }),
+        };
       }
       if (hasPolicyReferencePrefix({ name: target, kind: "shippedRuleset" })) {
         throwProfileConfigError(
@@ -587,11 +670,12 @@ function loadProfileConfigSource({
             `/profiles/${referrer}/extends`,
           );
         }
-        return customRuleSet;
+        return { policy: customRuleSet, ...emptyRuntime };
       }
 
       const cachedProfile = resolvedUsers.get(target);
-      if (cachedProfile) return cachedProfile;
+      if (cachedProfile)
+        return fragmentFromResolved({ resolved: cachedProfile });
 
       const definition = Object.hasOwn(userDefinitions, target)
         ? userDefinitions[target]
@@ -599,7 +683,7 @@ function loadProfileConfigSource({
       if (!definition) {
         const available = [
           ...Object.keys(builtins),
-          ...Object.keys(ruleSetRegistry),
+          ...ruleSetNames(),
           ...Object.keys(userDefinitions),
         ].join(", ");
         const suggestion = isBuiltinProfileName({ name: referrer })
@@ -627,33 +711,45 @@ function loadProfileConfigSource({
         ...override
       } = definition;
       void rawDirectoryGlobs;
-      let resolved: ProfilePolicyFragment;
-      if (parents.length === 0) {
-        // Compose even standalone declarations so authoring-only
-        // overwritePathArrays never reaches the runtime policy assertion.
-        resolved = extendProfile({}, override);
-      } else {
-        resolved = resolveProfile(parents[0], target);
-        for (const parent of parents.slice(1)) {
-          resolved = extendProfile(resolved, resolveProfile(parent, target));
-        }
-        // Transforms normalize the fully composed inherited policy. The
-        // declaring profile's own rules are final, explicit overrides.
-        resolved = applyTransforms(resolved, transforms);
-        resolved = extendProfile(resolved, override);
+      let resolved: ResolvedFragment = {
+        policy: {},
+        ...emptyRuntime,
+      };
+      for (const parent of parents) {
+        resolved = mergeFragments({
+          base: resolved,
+          override: resolveProfile({ target: parent, referrer: target }),
+        });
       }
-      // Rule sets may be partial while they are folded, but every named user
-      // profile must be complete before it enters the resolved profile map.
-      assertProfilePolicy(resolved);
-      resolvedUsers.set(target, resolved);
+      resolved = applyTransforms({ fragment: resolved, transforms });
+      resolved = mergeFragments({
+        base: resolved,
+        override: { policy: override, ...emptyRuntime },
+      });
+
+      const policy = parseProfilePolicy({
+        unverifiedPolicy: resolved.policy,
+      });
+      const finalized = finalizeResolvedProfile({
+        policy,
+        runtime: {
+          requirements: resolved.requirements,
+          provenance: resolved.provenance,
+        },
+      });
+      resolvedUsers.set(target, finalized);
       resolving.delete(target);
-      return resolved;
+      return fragmentFromResolved({ resolved: finalized });
     };
 
-    for (const name of Object.keys(userDefinitions)) resolveProfile(name);
+    for (const name of Object.keys(userDefinitions)) {
+      resolveProfile({ target: name });
+    }
 
-    const resolvedUserProfiles = Object.fromEntries(resolvedUsers);
-    const profiles: Record<string, ProfilePolicy> = {
+    const resolvedUserProfiles: Record<string, ResolvedProfile> = {};
+    for (const [name, profile] of resolvedUsers)
+      resolvedUserProfiles[name] = profile;
+    const profiles: Record<string, ResolvedProfile> = {
       ...builtins,
       ...resolvedUserProfiles,
     };
@@ -663,7 +759,7 @@ function loadProfileConfigSource({
       profiles,
     };
     try {
-      assertPolicyConfig(config);
+      parsePolicyConfig({ unverifiedConfig: config });
     } catch (error) {
       throwProfileConfigError(
         configPath,

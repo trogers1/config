@@ -571,7 +571,7 @@ describe("permissions explain", () => {
 
   it("shows composition chain for built-in profiles", () => {
     const explanation = explainPermission({
-      policy: policyConfig.profiles["builtin:default"],
+      policy: policyConfig.profiles["builtin:default"].policy,
       profileName: "builtin:default",
       tool: "bash",
       input: "git status",
@@ -585,6 +585,7 @@ describe("permissions explain", () => {
       "ruleset:deps-mutations-guard",
       "ruleset:shell-guards",
       "ruleset:path-guards",
+      "ruleset:go-runtime-commands",
       "builtin:default",
     ]);
   });
@@ -601,7 +602,7 @@ describe("permissions explain", () => {
     } satisfies RawProfileConfig;
 
     const explanation = explainPermission({
-      policy: policyConfig.profiles["builtin:default"],
+      policy: policyConfig.profiles["builtin:default"].policy,
       profileName: "my-profile",
       tool: "bash",
       input: "git status",
@@ -617,6 +618,7 @@ describe("permissions explain", () => {
       "ruleset:deps-mutations-guard",
       "ruleset:shell-guards",
       "ruleset:path-guards",
+      "ruleset:go-runtime-commands",
       "builtin:default",
       "transform:deny-asks",
       "custom profile: my-profile",

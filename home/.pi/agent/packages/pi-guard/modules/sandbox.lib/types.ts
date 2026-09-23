@@ -1,5 +1,5 @@
 import type { BashOperations } from "@earendil-works/pi-coding-agent";
-import type { PathContext, ProfilePolicy, Rule } from "../policyHelpers";
+import type { PathContext, ResolvedProfile, Rule } from "../policyHelpers";
 
 export type SandboxRuleSource =
   "profile" | "protected" | "subagent" | "sandbox";
@@ -50,7 +50,8 @@ export type CoverageReport = {
 
 export type SandboxState = {
   profile: string;
-  policy: ProfilePolicy;
+  /** Policy and internal runtime metadata travel as one validated value. */
+  resolvedProfile: ResolvedProfile;
   startupCwd: string;
   subagentScopes?: Rule[];
   configurationError?: string;
