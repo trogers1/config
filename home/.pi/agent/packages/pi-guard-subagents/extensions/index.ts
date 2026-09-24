@@ -24,7 +24,6 @@ import {
 } from "./interactive/launcher.ts";
 import { hasTmux, paneExists } from "./interactive/tmux.ts";
 import { watchRegistry } from "./interactive/recovery.ts";
-import { formatStatus } from "./interactive/status.ts";
 import {
 	atomicJsonWrite,
 	parseOrThrow,
@@ -123,7 +122,11 @@ const Params = Type.Object({
 type ParamsType = Static<typeof Params>;
 
 type Details = { mode: "single" | "parallel" | "chain"; registry?: string; children: ChildRecord[] };
-type ParentContext = Pick<ExtensionContext, "hasUI" | "mode" | "cwd" | "sessionManager" | "ui">;
+type ParentContext = Pick<ExtensionContext, "hasUI" | "cwd"> & {
+	readonly sessionManager: Pick<ExtensionContext["sessionManager"], "getSessionId">;
+	readonly ui: Pick<ExtensionContext["ui"], "notify">;
+};
+type ParentWatcher = { stop(): void };
 function profile(agent: AgentConfig): string | null {
 	return process.env[PARENT_PROFILE]?.trim() || agent.profile || null;
 }
@@ -287,16 +290,24 @@ function sharedChainCompletion(
 	return { notifyParent: false };
 }
 
-export default function (pi: ExtensionAPI) {
-	const watchers = new Set<{ stop(): void }>();
-	function isMissingFile(error: unknown): boolean {
-		return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
-	}
-	const notify = (ctx: ParentContext, child: ChildRecord, signal: TerminalSignal) => {
+export function attachParentRegistry({
+	file,
+	ctx,
+	sendMessage,
+	watchers,
+}: {
+	readonly file: string;
+	readonly ctx: ParentContext;
+	readonly sendMessage: ExtensionAPI["sendMessage"];
+	readonly watchers: Set<ParentWatcher>;
+}): void {
+	const registry = loadRegistry(file);
+	if (registry.parentSession !== ctx.sessionManager.getSessionId()) return;
+	const notify = (child: ChildRecord, signal: TerminalSignal): void => {
 		// This is the required parent delivery. Let sendMessage throw so the
 		// registry watcher can retain its claim and retry instead of silently
 		// acknowledging a result that never reached the parent.
-		pi.sendMessage(
+		sendMessage(
 			{
 				customType: "subagent_result",
 				content: `${child.name}: ${signal.status}\n${signal.result || signal.failure || "(no output)"}\nsession: ${child.sessionId}\nhandoff: ${child.handoffPath ?? "(pending)"}\nobserved paths: ${signal.observedPaths?.join(", ") || "none"}\npermission blocks: ${signal.permissionBlocks?.length ?? 0}`,
@@ -323,86 +334,57 @@ export default function (pi: ExtensionAPI) {
 			}
 		}
 	};
-	const attach = (file: string, ctx: ParentContext) => {
-		const registry = loadRegistry(file);
-		if (registry.parentSession !== ctx.sessionManager.getSessionId()) return;
-		if (ctx.hasUI && ctx.mode === "tui") {
-			if (registry.children.some((child) => ["starting", "active", "waiting"].includes(child.state)))
-				ctx.ui.setWidget("pi-guard-subagents", [formatStatus(registry.children)]);
-			else ctx.ui.setWidget("pi-guard-subagents", []);
-		}
-		const watcher = watchRegistry(
-			file,
-			(child, signal) => {
-				// Persist chain advancement before fallible notification/UI work.
-				let decision: ChainDeliveryDecision;
-				try {
-					decision = sharedChainCompletion(file, child, signal, ctx);
-				} catch (error) {
-					decision = {
-						notifyParent: true,
-						failure: `Chain processing failed at step ${(child.chainStep ?? 0) + 1}: ${String(error)}`,
-					};
-				}
-				if (decision.notifyParent) {
-					const deliveredChild = decision.failure ? { ...child, result: decision.failure } : child;
-					const deliveredSignal = decision.failure
-						? ({
-								...signal,
-								status: "failed",
-								result: decision.failure,
-								failure: decision.failure,
-							} satisfies TerminalSignal)
-						: signal;
-					notify(ctx, deliveredChild, deliveredSignal);
-				}
-				try {
-					if (ctx.hasUI && ctx.mode === "tui") {
-						const current = loadRegistry(file).children;
-						ctx.ui.setWidget(
-							"pi-guard-subagents",
-							current.some((entry) => ["starting", "active", "waiting"].includes(entry.state))
-								? [formatStatus(current)]
-								: [],
-						);
-					}
-				} catch {
-					/* Status refresh is best effort. */
-				}
-			},
-			(child, question) => {
-				pi.sendMessage(
-					{
-						customType: "subagent_question",
-						content: `${child.name} asks: ${question}`,
-						display: true,
-						details: { name: child.name, question },
-					},
-					{ deliverAs: "followUp", triggerTurn: true },
-				);
-			},
-		);
-		const refresh = setInterval(() => {
+	const watcher = watchRegistry(
+		file,
+		(child, signal) => {
+			// Persist chain advancement before fallible notification/UI work.
+			let decision: ChainDeliveryDecision;
 			try {
-				const current = loadRegistry(file).children;
-				if (ctx.hasUI && ctx.mode === "tui")
-					ctx.ui.setWidget(
-						"pi-guard-subagents",
-						current.some((entry) => ["starting", "active", "waiting"].includes(entry.state))
-							? [formatStatus(current)]
-							: [],
-					);
-			} catch {
-				/* registry may be mid-atomic-write */
+				decision = sharedChainCompletion(file, child, signal, ctx);
+			} catch (error) {
+				decision = {
+					notifyParent: true,
+					failure: `Chain processing failed at step ${(child.chainStep ?? 0) + 1}: ${String(error)}`,
+				};
 			}
-		}, 1000);
-		watchers.add({
-			stop: () => {
-				watcher.stop();
-				clearInterval(refresh);
-			},
-		});
-	};
+			if (decision.notifyParent) {
+				const deliveredChild = decision.failure ? { ...child, result: decision.failure } : child;
+				const deliveredSignal = decision.failure
+					? ({
+							...signal,
+							status: "failed",
+							result: decision.failure,
+							failure: decision.failure,
+						} satisfies TerminalSignal)
+					: signal;
+				notify(deliveredChild, deliveredSignal);
+			}
+		},
+		(child, question) => {
+			sendMessage(
+				{
+					customType: "subagent_question",
+					content: `${child.name} asks: ${question}`,
+					display: true,
+					details: { name: child.name, question },
+				},
+				{ deliverAs: "followUp", triggerTurn: true },
+			);
+		},
+	);
+	watchers.add(watcher);
+}
+
+export function stopParentRegistryWatchers({ watchers }: { readonly watchers: Set<ParentWatcher> }): void {
+	for (const watcher of watchers) watcher.stop();
+	watchers.clear();
+}
+
+export default function (pi: ExtensionAPI) {
+	const watchers = new Set<ParentWatcher>();
+	function isMissingFile(error: unknown): boolean {
+		return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+	}
 
 	// Agent definitions are discovered at invocation time, so publish the same
 	// resolved catalog to the parent prompt on every turn. This makes builtin
@@ -415,8 +397,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("session_shutdown", () => {
-		for (const watcher of watchers) watcher.stop();
-		watchers.clear();
+		stopParentRegistryWatchers({ watchers });
 	});
 
 	pi.registerTool({
@@ -628,7 +609,7 @@ export default function (pi: ExtensionAPI) {
 				);
 			// Attach before launching so an earlier child remains monitored if a
 			// later parallel pane fails to start.
-			attach(file, ctx);
+			attachParentRegistry({ file, ctx, sendMessage: pi.sendMessage, watchers });
 			const children: ChildRecord[] = [];
 			for (const [i, request] of req.entries()) {
 				const agent = requireItem(resolvedAgents, i, "resolved agent");

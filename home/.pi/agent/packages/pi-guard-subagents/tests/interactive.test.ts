@@ -157,7 +157,7 @@ describe("interactive persistence primitives", () => {
 		expect(formatStatus([{ ...child, name: "waiting", state: "waiting" }])).toContain("waiting/worker waiting");
 	});
 
-	it("renders only live children in the parent status widget", () => {
+	it("formats only live child records", () => {
 		const now = Date.parse("2026-01-01T00:00:10.000Z");
 		expect(
 			formatStatus(
