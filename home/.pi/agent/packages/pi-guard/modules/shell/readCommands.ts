@@ -1,4 +1,11 @@
-import { shellCommandWords } from "./parse";
+import {
+  shellCommandWords,
+  shellComposition,
+  shellExecutable,
+  type ShellComposition,
+  type ShellExecutable,
+  type ShellWords,
+} from "./parse";
 import { isProtectedPathExpression } from "./pathPolicy";
 import type { ProtectedPathRule } from "../policyHelpers";
 
@@ -7,7 +14,7 @@ export type ParsedReadCommand =
   | { status: "stdin-only" }
   | { status: "unknown"; reason: string };
 
-const readers = new Set([
+const readerNames = [
   "cat",
   "head",
   "tail",
@@ -16,37 +23,231 @@ const readers = new Set([
   "sort",
   "wc",
   "file",
-]);
+] as const;
 
-function isReadCommand(command: string): boolean {
-  return readers.has(executable(command));
+type Reader = (typeof readerNames)[number];
+
+export const readCommandDenialReasons = {
+  forwarding: "eval and xargs can forward unvalidated filenames",
+  interpreter: "shell interpreter execution cannot be statically validated",
+  loop: "shell loops can forward computed filenames",
+  pipeline: "piped input is not an approved read source",
+} as const;
+
+const forwardingCommands = new Set(["eval", "xargs"]);
+const shellInterpreters = new Set(["bash", "sh", "zsh", "dash"]);
+
+function readerFor({ executable }: { executable: string }): Reader | undefined {
+  return readerNames.find((reader) => reader === executable);
+}
+
+function isReadCommand({ command }: { command: string }): boolean {
+  const resolved = shellExecutable({ words: shellCommandWords(command) });
+  return (
+    resolved.status === "resolved" &&
+    readerFor({ executable: resolved.executable }) !== undefined
+  );
+}
+
+function hasReader({
+  composition,
+}: {
+  composition: ShellComposition;
+}): boolean {
+  return composition.commands.some((words) =>
+    executionHasReader({ execution: shellExecutable({ words }) }),
+  );
+}
+
+function hasUnknownExecutable({
+  composition,
+}: {
+  composition: ShellComposition;
+}): boolean {
+  return composition.commands.some(
+    (words) => shellExecutable({ words }).status === "unknown-executable",
+  );
+}
+
+function executionHasReader({
+  execution,
+}: {
+  execution: ShellExecutable;
+}): boolean {
+  if (execution.status === "unknown") return false;
+  if (execution.status === "unknown-executable") return true;
+  if (execution.status === "not-executable") return false;
+  if (readerFor({ executable: execution.executable }) !== undefined)
+    return true;
+
+  if (execution.executable === "xargs")
+    return xargsTargetHasReader({ arguments_: execution.arguments_ });
+  if (execution.executable === "eval")
+    return (
+      execution.arguments_.some((argument) => argument === undefined) ||
+      scriptHasReader({ script: execution.arguments_.join(" ") })
+    );
+  if (!shellInterpreters.has(execution.executable)) return false;
+
+  const script = interpreterScript({ arguments_: execution.arguments_ });
+  // A literal -c option whose source is dynamic can be an arbitrary reader.
+  return script === undefined
+    ? hasUnvalidatedInterpreterExecution({ arguments_: execution.arguments_ })
+    : scriptHasReader({ script });
+}
+
+function scriptHasReader({ script }: { script: string }): boolean {
+  return hasReader({ composition: shellComposition({ command: script }) });
+}
+
+function xargsTargetHasReader({
+  arguments_,
+}: {
+  arguments_: ShellWords;
+}): boolean {
+  const target = xargsTarget({ arguments_ });
+  // An unrecognized xargs invocation or dynamic target could invoke a reader.
+  // Treat it as read-relevant rather than letting forwarding evade the gate.
+  if (target === undefined || target.status === "unknown") return true;
+  return executionHasReader({ execution: target });
+}
+
+function xargsTarget({
+  arguments_,
+}: {
+  arguments_: ShellWords;
+}): ShellExecutable | undefined {
+  let index = 0;
+  while (true) {
+    const argument = arguments_[index];
+    if (argument === undefined)
+      return index === arguments_.length
+        ? { status: "resolved", executable: "echo", arguments_: [] }
+        : undefined;
+    if (argument === "--")
+      return shellExecutable({ words: arguments_.slice(index + 1) });
+    if (["-0", "-r", "-t", "-p", "-x"].includes(argument)) {
+      index++;
+      continue;
+    }
+    if (
+      ["-E", "-e", "-I", "-i", "-L", "-l", "-n", "-P", "-s", "-d"].includes(
+        argument,
+      )
+    ) {
+      if (arguments_[index + 1] === undefined) return undefined;
+      index += 2;
+      continue;
+    }
+    if (argument.startsWith("-")) return undefined;
+    return shellExecutable({ words: arguments_.slice(index) });
+  }
+}
+
+function hasForwardingCommand({
+  composition,
+}: {
+  composition: ShellComposition;
+}): boolean {
+  return composition.commands.some((words) => {
+    const execution = shellExecutable({ words });
+    return (
+      execution.status === "resolved" &&
+      forwardingCommands.has(execution.executable)
+    );
+  });
+}
+
+function hasShellInterpreterExecution({
+  composition,
+}: {
+  composition: ShellComposition;
+}): boolean {
+  return composition.commands.some((words) => {
+    const execution = shellExecutable({ words });
+    return (
+      execution.status === "resolved" &&
+      shellInterpreters.has(execution.executable) &&
+      hasUnvalidatedInterpreterExecution({ arguments_: execution.arguments_ })
+    );
+  });
+}
+
+function hasUnvalidatedInterpreterExecution({
+  arguments_,
+}: {
+  arguments_: ShellWords;
+}): boolean {
+  return (
+    arguments_.some((argument) => argument === undefined) ||
+    interpreterCommandOptionIndex({ arguments_ }) !== undefined
+  );
+}
+
+function interpreterScript({
+  arguments_,
+}: {
+  arguments_: ShellWords;
+}): string | undefined {
+  const commandOption = interpreterCommandOptionIndex({ arguments_ });
+  return commandOption === undefined
+    ? undefined
+    : arguments_[commandOption + 1];
+}
+
+function interpreterCommandOptionIndex({
+  arguments_,
+}: {
+  arguments_: ShellWords;
+}): number | undefined {
+  const optionsWithSeparateValues = new Set([
+    "-O",
+    "-o",
+    "--init-file",
+    "--rcfile",
+  ]);
+
+  for (let index = 0; index < arguments_.length; index++) {
+    const argument = arguments_[index];
+    if (argument === undefined || argument === "--") return undefined;
+    if (!argument.startsWith("-")) return undefined;
+    if (/^-[^-]*c/.test(argument)) return index;
+    if (optionsWithSeparateValues.has(argument)) {
+      if (arguments_[index + 1] === undefined) return undefined;
+      index++;
+    }
+  }
+  return undefined;
 }
 
 /** Validates shell-level composition around supported read commands. */
-export function validateReadCommands(
-  command: string,
-  commandSegments: string[],
-  protectedPathRules: readonly ProtectedPathRule[] = [],
-): string | undefined {
-  const hasReader =
-    commandSegments.some(isReadCommand) ||
-    /\b(?:cat|head|tail|sed|nl|sort|wc|file)\b/.test(command);
-  if (!hasReader) return undefined;
+export function validateReadCommands({
+  command,
+  commandSegments,
+  protectedPathRules = [],
+}: {
+  command: string;
+  commandSegments: readonly string[];
+  protectedPathRules?: readonly ProtectedPathRule[];
+}): string | undefined {
+  const composition = shellComposition({ command });
 
   // Do not attempt data-flow analysis across pipelines, loops, interpreters,
-  // eval, or xargs: their eventual file inputs cannot be proven statically.
-  if (/(^|[^|])\|(?!\|)/.test(command))
-    return "piped input is not an approved read source";
-  if (/\b(?:eval|xargs)\b/.test(command))
-    return "eval and xargs can forward unvalidated filenames";
-  if (/\b(?:bash|sh|zsh|dash)\s+-[^\n]*c\b/.test(command))
-    return "shell interpreter execution cannot be statically validated";
-  if (/\b(?:for|while|until)\b/.test(command))
-    return "shell loops can forward computed filenames";
+  // eval, or xargs when they can execute a reader. Unknown executable-producing
+  // wrappers are read-relevant by definition and therefore fail closed.
+  const unknownExecutable = hasUnknownExecutable({ composition });
+  if (!unknownExecutable && !hasReader({ composition })) return undefined;
+  if (hasForwardingCommand({ composition }))
+    return readCommandDenialReasons.forwarding;
+  if (unknownExecutable || hasShellInterpreterExecution({ composition }))
+    return readCommandDenialReasons.interpreter;
+
+  if (composition.hasPipeline) return readCommandDenialReasons.pipeline;
+  if (composition.hasLoop) return readCommandDenialReasons.loop;
 
   for (const segment of commandSegments) {
-    if (!isReadCommand(segment)) continue;
-    const parsed = parseReadCommand(segment, protectedPathRules);
+    if (!isReadCommand({ command: segment })) continue;
+    const parsed = parseReadCommand({ command: segment, protectedPathRules });
     if (parsed.status === "unknown") return parsed.reason;
   }
   return undefined;
@@ -57,17 +258,36 @@ export function validateReadCommands(
  * surface we permit. Unbash supplies the shell words; anything whose command
  * semantics cannot be established from literal arguments is rejected.
  */
-export function parseReadCommand(
-  command: string,
-  protectedPathRules: readonly ProtectedPathRule[] = [],
-): ParsedReadCommand {
-  const tokens = shellCommandWords(command);
-  while (tokens[0] === "command") tokens.shift();
-  const program = tokens.shift();
-  if (!program || !readers.has(program))
+export function parseReadCommand({
+  command,
+  protectedPathRules = [],
+}: {
+  command: string;
+  protectedPathRules?: readonly ProtectedPathRule[];
+}): ParsedReadCommand {
+  const resolved = shellExecutable({ words: shellCommandWords(command) });
+  if (resolved.status !== "resolved")
     return unknown("not a supported read command");
+  const reader = readerFor({ executable: resolved.executable });
+  if (reader === undefined) return unknown("not a supported read command");
 
-  switch (program) {
+  return parseReader({
+    reader,
+    tokens: [...resolved.arguments_].filter(isDefined),
+    protectedPathRules,
+  });
+}
+
+function parseReader({
+  reader,
+  tokens,
+  protectedPathRules,
+}: {
+  reader: Reader;
+  tokens: string[];
+  protectedPathRules: readonly ProtectedPathRule[];
+}): ParsedReadCommand {
+  switch (reader) {
     case "cat":
       return parseOperands(tokens, new Set(), protectedPathRules);
     case "head":
@@ -89,8 +309,17 @@ export function parseReadCommand(
     case "sed":
       return parseSed(tokens, protectedPathRules);
     default:
-      return unknown("unsupported read command");
+      return assertNever({ value: reader });
   }
+}
+
+function isDefined<T>(value: T | undefined): value is T {
+  return value !== undefined;
+}
+
+function assertNever({ value }: { value: never }): never {
+  void value;
+  throw new Error("Unsupported reader reached exhaustive dispatch");
 }
 
 function parseCountReader(
@@ -271,12 +500,6 @@ function result(
   return paths.length === 0
     ? { status: "stdin-only" }
     : { status: "safe", paths };
-}
-
-function executable(command: string): string {
-  const tokens = shellCommandWords(command);
-  while (tokens[0] === "command") tokens.shift();
-  return tokens[0] ?? "";
 }
 
 function unknown(reason: string): ParsedReadCommand {

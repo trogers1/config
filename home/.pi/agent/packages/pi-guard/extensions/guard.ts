@@ -2664,11 +2664,11 @@ function evaluateBashGate(
   // contains it. Mixed shell composition is rejected before this evaluation.
   const readValidationError = isOpaqueInterpreterCommand(command)
     ? undefined
-    : validateReadCommands(
+    : validateReadCommands({
         command,
-        commands,
-        activePolicy.protectedPathRules ?? [],
-      );
+        commandSegments: commands,
+        protectedPathRules: activePolicy.protectedPathRules ?? [],
+      });
   // A path-level deny must win over an earlier ask.
   const deniedPathAnalysis = analyzeBashPathReferences(
     pathSegments,

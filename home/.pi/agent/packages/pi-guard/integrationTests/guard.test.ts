@@ -19,6 +19,7 @@ import { askPermissionChoices } from "../modules/profileUpdate";
 import type { CustomToolRule, ProfilePolicy } from "../modules/policyHelpers";
 import { loadProfileConfig } from "../modules/profileConfig";
 import { defaultProtectedPathRules } from "../modules/protectedPaths";
+import { readCommandDenialReasons } from "../modules/shell/readCommands";
 import { createExtensionHarness as createInteractiveExtensionHarness } from "./support/extensionHarness";
 
 const defaultProtectedRipgrepArguments = defaultProtectedPathRules
@@ -201,6 +202,87 @@ describe("shell policy parser", () => {
         (command) => command === "git checkout inert",
       ),
     ).toEqual([]);
+  });
+
+  it("enforces AST read-composition denials before normal command approval", async () => {
+    const ctx = nonInteractiveContext(process.cwd());
+    const policy = {
+      ...parserPolicy,
+      tools: { bash: [{ pattern: "*", decision: "allow" }] },
+    } satisfies ProfilePolicy;
+
+    for (const [command, reason] of [
+      ["printf README.md | cat README.md", readCommandDenialReasons.pipeline],
+      ["printf README.md |& cat README.md", readCommandDenialReasons.pipeline],
+      [
+        "xargs sh -c 'cat README.md' placeholder",
+        readCommandDenialReasons.forwarding,
+      ],
+      ['eval "$script"', readCommandDenialReasons.forwarding],
+      [
+        "for file in README.md; do cat README.md; done",
+        readCommandDenialReasons.loop,
+      ],
+    ] as const) {
+      const result = await gateBash({
+        command,
+        startupCwd: process.cwd(),
+        ctx,
+        activePolicy: policy,
+      });
+      expect(result, command).toMatchObject({ block: true });
+      expect(result?.reason, command).toContain(reason);
+    }
+  });
+
+  it("blocks shell interpreter composition through direct and env split forms", async () => {
+    const policy = {
+      ...parserPolicy,
+      tools: { bash: [{ pattern: "*", decision: "allow" }] },
+    } satisfies ProfilePolicy;
+
+    for (const command of [
+      "bash --norc -c 'cat README.md'",
+      'sh -c "$script"',
+      'command -p sh -c "$script"',
+      '/bin/sh -c "$script"',
+      "bash -O extglob -c 'cat README.md'",
+      'bash -o posix -c "$script"',
+      "bash --rcfile custom.bashrc -c 'cat README.md'",
+      `env -S "cat README.md"`,
+      `env --split-string "cat README.md"`,
+      `/usr/bin/env -S "cat README.md"`,
+      'env -S "$splitCommand"',
+      'env --split-string "$splitCommand"',
+    ]) {
+      const result = await gateBash({
+        command,
+        startupCwd: process.cwd(),
+        ctx: nonInteractiveContext(process.cwd()),
+        activePolicy: policy,
+      });
+
+      expect(result, command).toMatchObject({ block: true });
+      expect(result?.reason, command).toContain(
+        readCommandDenialReasons.interpreter,
+      );
+    }
+  });
+
+  it("allows the quoted multi-message commit under builtin:committer", async () => {
+    const command = [
+      "git commit",
+      '-m "Document file behavior"',
+      '-m "Ready for integration"',
+    ].join(" ");
+    const result = await gateBash({
+      command,
+      startupCwd: process.cwd(),
+      ctx: nonInteractiveContext(process.cwd()),
+      activePolicy: policyConfig.profiles["builtin:committer"].policy,
+    });
+
+    expect(result).toBeUndefined();
   });
 
   it("fails closed when unbash reports a parse error", async () => {

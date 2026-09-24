@@ -11,6 +11,16 @@ const missingProfileConfigPath = path.resolve(
   "integrationTests/fixtures/does-not-exist.jsonc",
 );
 
+const committerProfile = "builtin:committer";
+const quotedCommitMessages = [
+  "Document file-level behavior",
+  "Prepare for the release",
+] as const;
+const multiMessageCommit = [
+  "git commit",
+  ...quotedCommitMessages.map((message) => `-m "${message}"`),
+].join(" ");
+
 const hiddenTestPathPatterns = [
   "**/test",
   "**/test/**",
@@ -67,9 +77,10 @@ describe("shipped profile catalog", () => {
   });
 
   it("builtin:committer allows commit and reflog operations", async () => {
-    const harness = await harnessFor("builtin:committer");
+    const harness = await harnessFor(committerProfile);
     for (const command of [
       "git commit -m test",
+      multiMessageCommit,
       "git reflog --oneline -8",
       "git reflog expire --all",
     ]) {
