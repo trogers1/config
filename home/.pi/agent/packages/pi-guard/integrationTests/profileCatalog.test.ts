@@ -66,14 +66,20 @@ describe("shipped profile catalog", () => {
     }
   });
 
-  it("builtin:committer allows git commit", async () => {
+  it("builtin:committer allows commit and reflog operations", async () => {
     const harness = await harnessFor("builtin:committer");
-    await expect(
-      harness.callToolWithoutPrompt({
-        toolName: "bash",
-        input: { command: "git commit -m test" },
-      }),
-    ).resolves.toBeUndefined();
+    for (const command of [
+      "git commit -m test",
+      "git reflog --oneline -8",
+      "git reflog expire --all",
+    ]) {
+      await expect(
+        harness.callToolWithoutPrompt({
+          toolName: "bash",
+          input: { command },
+        }),
+      ).resolves.toBeUndefined();
+    }
   });
 
   it("builtin:reviewer denies edit but allows npm test", async () => {

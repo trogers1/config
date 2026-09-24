@@ -120,6 +120,7 @@ export const defaultGitRules: Rule[] = [
  * patterns tie on specificity and resolve by composition order.
  */
 export const gitCommitRules: Rule[] = [
+  { pattern: "git reflog *", decision: "allow" },
   { pattern: "git add *", decision: "allow" },
   { pattern: "git commit", decision: "allow" },
   { pattern: "git commit *", decision: "allow" },
