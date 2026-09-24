@@ -911,5 +911,14 @@
         "transform:deny-asks"
       ]
     },
+    "config-maintenance-committer": {
+      "description": "Git-capable config-maintence profile",
+      "emoji": "⚠️",
+      "extends": [
+        "config-maintenance",
+        "builtin:committer"
+      ],
+      "color": "yellow"
+    },
   },
 }
