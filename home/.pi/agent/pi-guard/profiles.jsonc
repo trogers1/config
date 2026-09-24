@@ -920,5 +920,16 @@
       ],
       "color": "yellow"
     },
+    "config-maintenance-committer-deny-asks": {
+      "description": "GIT safe auto-pilot for config-maintenance git profile",
+      "emoji": "🚅",
+      "extends": [
+        "config-maintenance-committer"
+      ],
+      "color": "green",
+      "transforms": [
+        "transform:deny-asks"
+      ]
+    },
   },
 }
