@@ -12,6 +12,7 @@ import {
 } from "jsonc-parser";
 import { Value } from "typebox/value";
 import {
+  applyImplicitAskTransforms,
   applyPolicyTransforms,
   parsePolicyConfig,
   parseProfilePolicy,
@@ -541,6 +542,7 @@ function loadProfileConfigSource({
 
     type ResolvedFragment = {
       readonly policy: ProfilePolicyFragment;
+      readonly implicitAskDecision: ResolvedProfile["runtime"]["implicitAskDecision"];
       readonly requirements: readonly RuntimeRequirementName[];
       readonly provenance: Readonly<
         Partial<Record<RuntimeRequirementName, readonly string[]>>
@@ -548,6 +550,7 @@ function loadProfileConfigSource({
     };
 
     const emptyRuntime = {
+      implicitAskDecision: "ask",
       requirements: [],
       provenance: {},
     } as const satisfies Omit<ResolvedFragment, "policy">;
@@ -560,6 +563,7 @@ function loadProfileConfigSource({
       readonly resolved: ResolvedProfile;
     }): ResolvedFragment => ({
       policy: resolved.policy,
+      implicitAskDecision: resolved.runtime.implicitAskDecision,
       requirements: resolved.runtime.requirements,
       provenance: resolved.runtime.provenance,
     });
@@ -588,6 +592,13 @@ function loadProfileConfigSource({
       });
       return {
         policy: extendProfile(base.policy, override.policy),
+        // Rule/profile fragments with the default ASK posture do not erase an
+        // inherited transform. A transformed parent does propagate its
+        // non-default synthesized-ASK posture through composition.
+        implicitAskDecision:
+          override.implicitAskDecision === "ask"
+            ? base.implicitAskDecision
+            : override.implicitAskDecision,
         requirements,
         provenance,
       };
@@ -601,6 +612,13 @@ function loadProfileConfigSource({
       readonly transforms: readonly ProfileTransformName[] | undefined;
     }): ResolvedFragment => ({
       ...fragment,
+      implicitAskDecision:
+        transforms && transforms.length > 0
+          ? applyImplicitAskTransforms({
+              decision: fragment.implicitAskDecision,
+              transforms,
+            })
+          : fragment.implicitAskDecision,
       policy:
         transforms && transforms.length > 0
           ? applyPolicyTransforms(fragment.policy, transforms)
@@ -637,6 +655,7 @@ function loadProfileConfigSource({
         const definition = ruleSetDefinition({ name: shippedName });
         return {
           policy: definition.policy,
+          implicitAskDecision: "ask",
           requirements: definition.runtimeRequirements,
           provenance: runtimeRequirementProvenanceFor({
             requirements: definition.runtimeRequirements,
@@ -733,6 +752,7 @@ function loadProfileConfigSource({
       const finalized = finalizeResolvedProfile({
         policy,
         runtime: {
+          implicitAskDecision: resolved.implicitAskDecision,
           requirements: resolved.requirements,
           provenance: resolved.provenance,
         },

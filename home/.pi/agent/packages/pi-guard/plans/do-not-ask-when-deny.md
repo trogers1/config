@@ -1,1 +1,0 @@
-When there is a DENY at any point within an agentic 'request' that we already know, it should not ASK the user for any of the commands that were parsed as 'ASK's. There's no reason to if the whole things will be denied right afterward.

@@ -89,6 +89,9 @@ describe("sandbox unavailable-backend lifecycle", () => {
           description:
             "Unavailable sandbox backend fail-closed profile with denied network.",
           extends: ["builtin:default"],
+          tools: {
+            bash: [{ pattern: "echo must-not-run", decision: "ask" }],
+          },
           sandbox: { network: "deny" },
         },
       },
@@ -96,6 +99,13 @@ describe("sandbox unavailable-backend lifecycle", () => {
 
     const harness = createExtensionHarness();
     await harness.start();
+    const toolCallResult = await harness.callTool({
+      toolName: "bash",
+      input: { command: "echo must-not-run" },
+    });
+    expect(toolCallResult).toMatchObject({ block: true });
+    expect(toolCallResult?.reason).toContain("Bash sandbox unavailable");
+    expect(harness.ui.custom).not.toHaveBeenCalled();
     expect(
       (await harness.executeTool({
         name: "bash",
@@ -125,24 +135,35 @@ describe("sandbox unavailable-backend lifecycle", () => {
           sandboxed: {
             description: "Sandbox lifecycle profile denying network access.",
             extends: ["builtin:default"],
+            tools: {
+              bash: [
+                {
+                  pattern: "node -e 'process.exit(0)'",
+                  decision: "ask",
+                },
+              ],
+            },
             sandbox: { network: "deny" },
           },
         },
       });
 
-      const harness = createExtensionHarness({ hasUI: false });
+      const harness = createExtensionHarness();
       if (timing === "before") harness.replaceToolSource("bash", "competing");
       await harness.start();
       try {
         if (timing === "after") {
           harness.replaceToolSource("bash", "competing");
         }
-        await expect(
-          harness.callTool({
-            toolName: "bash",
-            input: { command: "node -e 'process.exit(0)'", timeout: 5 },
-          }),
-        ).resolves.toMatchObject({ block: true });
+        const result = await harness.callTool({
+          toolName: "bash",
+          input: { command: "node -e 'process.exit(0)'", timeout: 5 },
+        });
+        expect(result).toMatchObject({ block: true });
+        expect(result?.reason).toContain(
+          "bash override no longer owns the effective bash tool",
+        );
+        expect(harness.ui.custom).not.toHaveBeenCalled();
       } finally {
         await harness.shutdown();
       }
@@ -158,6 +179,9 @@ describe("sandbox unavailable-backend lifecycle", () => {
           description:
             "Sandbox lifecycle profile warning and falling back when unavailable.",
           extends: ["builtin:default"],
+          tools: {
+            bash: [{ pattern: "echo policy-ask", decision: "ask" }],
+          },
           sandbox: { network: "deny", onUnavailable: "warn" },
         },
       },
@@ -165,6 +189,13 @@ describe("sandbox unavailable-backend lifecycle", () => {
 
     const harness = createExtensionHarness();
     await harness.start();
+    await expect(
+      harness.callTool({
+        toolName: "bash",
+        input: { command: "echo policy-ask" },
+      }),
+    ).resolves.toMatchObject({ block: true });
+    expect(harness.ui.custom).toHaveBeenCalledOnce();
     await harness.executeTool({
       name: "bash",
       params: { command: "echo local-fallback" },

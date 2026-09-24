@@ -1480,6 +1480,7 @@ export function createExtensionHarness(
     replaceToolSource(name: string, source: string) {
       const tool = tools.get(name);
       if (!tool) throw new Error(`Tool not registered: ${name}`);
+      tool.description = `${source} replacement for ${name}`;
       tool.sourceInfo = createSyntheticSourceInfo(`./extensions/${name}.ts`, {
         source,
         scope: "project",

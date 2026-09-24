@@ -388,6 +388,9 @@ const runtimeRequirementSchema = Type.String({
 });
 const runtimeMetadataSchema = Type.Object(
   {
+    // Decision for permission states synthesized by enforcement rather than an
+    // authorable policy rule (for example opaque Bash paths or parse errors).
+    implicitAskDecision: decisionSchema,
     requirements: Type.Array(runtimeRequirementSchema, { uniqueItems: true }),
     provenance: Type.Record(
       Type.String(),
@@ -406,15 +409,18 @@ export const resolvedProfileSchema = Type.Object(
 export type RuntimeRequirementProvenance = Readonly<
   Partial<Record<RuntimeRequirementName, readonly string[]>>
 >;
+export type ImplicitAskDecision = Decision;
 /** Explicit, serializable state consumed by sandbox and extension boundaries. */
 export type ResolvedProfile = {
   readonly policy: ProfilePolicy;
   readonly runtime: {
+    readonly implicitAskDecision: ImplicitAskDecision;
     readonly requirements: readonly RuntimeRequirementName[];
     readonly provenance: RuntimeRequirementProvenance;
   };
 };
 export const emptyResolvedRuntime = {
+  implicitAskDecision: "ask",
   requirements: [],
   provenance: {},
 } as const satisfies ResolvedProfile["runtime"];
@@ -578,6 +584,7 @@ export function parseResolvedProfile({
   return {
     policy: parseProfilePolicy({ unverifiedPolicy: parsed.policy }),
     runtime: {
+      implicitAskDecision: parsed.runtime.implicitAskDecision,
       requirements,
       provenance: runtimeRequirementProvenanceFor({
         requirements,
@@ -634,6 +641,7 @@ export function finalizeResolvedProfile({
   return Object.freeze({
     policy: Object.freeze(resolved.policy),
     runtime: Object.freeze({
+      implicitAskDecision: resolved.runtime.implicitAskDecision,
       requirements: Object.freeze([...resolved.runtime.requirements]),
       provenance: Object.freeze(frozenProvenance),
     }),
@@ -803,6 +811,24 @@ function denyAllTransform(
   policy: ProfilePolicyFragment,
 ): ProfilePolicyFragment {
   return mapProfileRules(policy, (rule) => ({ ...rule, decision: "deny" }));
+}
+
+/** Apply profile transforms to synthesized, non-authorable ASK states. */
+export function applyImplicitAskTransforms({
+  decision = "ask",
+  transforms,
+}: {
+  readonly decision?: ImplicitAskDecision;
+  readonly transforms: readonly ProfileTransformName[];
+}): ImplicitAskDecision {
+  return transforms.reduce((current, transformName) => {
+    if (transformName === "transform:deny-asks")
+      return current === "ask" ? "deny" : current;
+    if (transformName === "transform:allow-asks")
+      return current === "ask" ? "allow" : current;
+    if (transformName === "transform:ask-all") return "ask";
+    return "deny";
+  }, decision);
 }
 
 export function applyPolicyTransforms<T extends ProfilePolicyFragment>(

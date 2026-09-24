@@ -245,12 +245,18 @@ describe("profile composition", () => {
             readPaths: [{ pattern: "docs/**", decision: "ask" }],
             writePaths: [{ pattern: "docs/**", decision: "ask" }],
           },
+          child: {
+            description: "Child inheriting synthesized ASK posture.",
+            extends: ["worker-like"],
+          },
         },
       }),
     });
 
-    const policy = config.profiles["worker-like"].policy;
-    // The inherited default policy is transformed.
+    const resolved = config.profiles["worker-like"];
+    const policy = resolved.policy;
+    // The inherited default policy and synthesized ASK posture are transformed.
+    expect(resolved.runtime.implicitAskDecision).toBe("deny");
     expect(decideBash("python scripts/build.py", policy)).toBe("deny");
 
     // Rules declared by this profile are deliberate final overrides.
@@ -262,6 +268,7 @@ describe("profile composition", () => {
       policy.writePaths.find((rule) => rule.pattern === "docs/**")?.decision,
     ).toBe("ask");
     expect(policy.tools.deploy?.[0].decision).toBe("ask");
+    expect(config.profiles.child.runtime.implicitAskDecision).toBe("deny");
   });
 
   it("transform order is applied left-to-right", () => {
@@ -282,6 +289,7 @@ describe("profile composition", () => {
     expect(
       decideBash("python scripts/build.py", config.profiles.ordered.policy),
     ).toBe("allow");
+    expect(config.profiles.ordered.runtime.implicitAskDecision).toBe("allow");
   });
 
   it("unknown transform names fail loudly with a path to the bad entry", () => {

@@ -218,6 +218,7 @@ describe("rule-set namespace", () => {
   it("keeps runtime metadata explicit and serializable", () => {
     const profile = genericPolicyConfig.profiles["builtin:default"];
     expect(profile.runtime).toEqual({
+      implicitAskDecision: "ask",
       requirements: ["go-toolchain-cache"],
       provenance: {
         "go-toolchain-cache": ["ruleset:go-runtime-commands"],
@@ -309,7 +310,11 @@ describe("rule-set namespace", () => {
       profiles: {
         invalid: {
           ...genericPolicyConfig.profiles["builtin:read-only"],
-          runtime: { requirements: ["not-a-capability"], provenance: {} },
+          runtime: {
+            ...genericPolicyConfig.profiles["builtin:read-only"].runtime,
+            requirements: ["not-a-capability"],
+            provenance: {},
+          },
         },
       },
     };

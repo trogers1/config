@@ -67,6 +67,7 @@ import {
   profileTransformNames,
   type ProfilePolicyOverride,
   type ProfileTransformName,
+  type ImplicitAskDecision,
   type SandboxConfigOverride,
   type ReadPathContext,
   type Rule,
@@ -282,6 +283,10 @@ function isSandboxOverride(value: string): value is SandboxOverride {
 }
 
 const PERMISSION_BLOCK_PREFIX = "[⛔️ by pi-guard] " as const;
+/** Titles shown for Bash approval prompts. */
+export const explicitBashPermissionTitle = "Bash permission request" as const;
+export const parseErrorBashPermissionTitle =
+  "Allow Bash command with parse errors?" as const;
 /** A changing policy must not create an unbounded chain of stale prompts. */
 const maxOperationEvaluationAttempts = 4;
 type RestartOperation = {
@@ -2232,6 +2237,8 @@ The permissions gate remains loaded and will fail closed until the profile is co
           toolName: event.toolName,
         });
         const policy = activePolicy(activeProfile);
+        const implicitAskDecision =
+          policyConfig.profiles[activeProfile].runtime.implicitAskDecision;
 
         if (isToolCallEventType("bash", event)) {
           const command = event.input.command ?? "";
@@ -2249,27 +2256,6 @@ The permissions gate remains loaded and will fail closed until the profile is co
             command,
             policy.protectedPathRules ?? [],
           );
-          const evaluatedRevision = profileConfigRevision;
-          const evaluatedProfile = activeProfile;
-          const gateResult = await gateBash({
-            command: event.input.command,
-            startupCwd: effectiveCwd,
-            ctx,
-            activePolicy: policy,
-            remember: (rememberedBashRule ??= rememberRule({
-              draft: { kind: "bash", pattern: event.input.command },
-              ctx,
-            })),
-            refreshAfterUiAwait: () =>
-              refreshAfterPolicyUi({
-                ctx,
-                revision: evaluatedRevision,
-                profile: evaluatedProfile,
-              }),
-          });
-          if (isRestartOperation(gateResult)) return gateResult;
-          if (gateResult) return gateResult;
-
           const sandboxResolution = await resolveActiveSandbox(effectiveCwd);
 
           if (sandboxResolution.kind === "active" && !isBashToolOwned()) {
@@ -2285,14 +2271,35 @@ The permissions gate remains loaded and will fail closed until the profile is co
               if (ctx.hasUI) {
                 ctx.ui.notify(sandboxResolution.reason, "warning");
               }
-              return undefined;
+            } else {
+              return {
+                block: true,
+                reason: `Bash sandbox unavailable: ${sandboxResolution.reason}`,
+              };
             }
-
-            return {
-              block: true,
-              reason: `Bash sandbox unavailable: ${sandboxResolution.reason}`,
-            };
           }
+
+          const evaluatedRevision = profileConfigRevision;
+          const evaluatedProfile = activeProfile;
+          const gateResult = await gateBash({
+            command: event.input.command,
+            startupCwd: effectiveCwd,
+            ctx,
+            activePolicy: policy,
+            implicitAskDecision,
+            remember: (rememberedBashRule ??= rememberRule({
+              draft: { kind: "bash", pattern: event.input.command },
+              ctx,
+            })),
+            refreshAfterUiAwait: () =>
+              refreshAfterPolicyUi({
+                ctx,
+                revision: evaluatedRevision,
+                profile: evaluatedProfile,
+              }),
+          });
+          if (isRestartOperation(gateResult)) return gateResult;
+          if (gateResult) return gateResult;
 
           return undefined;
         }
@@ -2314,6 +2321,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
             toolName: event.toolName,
             input: event.input,
             rules: customRules,
+            implicitAskDecision,
             ctx,
             refreshAfterUiAwait: () =>
               refreshAfterPolicyUi({
@@ -2725,6 +2733,7 @@ export async function gateBash({
   startupCwd,
   ctx,
   activePolicy = defaultPolicy,
+  implicitAskDecision = "ask",
   remember,
   refreshAfterUiAwait,
 }: {
@@ -2732,6 +2741,8 @@ export async function gateBash({
   readonly startupCwd: string;
   readonly ctx: ExtensionContext;
   readonly activePolicy?: ProfilePolicy;
+  /** Runtime decision for ASK states not represented by an authorable rule. */
+  readonly implicitAskDecision?: ImplicitAskDecision;
   readonly remember?: RememberDecision;
   readonly refreshAfterUiAwait?: RefreshAfterUiAwait;
 }) {
@@ -2797,16 +2808,24 @@ export async function gateBash({
     };
   }
 
-  // Deterministic protected/ordinary/command denies above still win. Once
-  // parse uncertainty remains, however, resolve the request exactly once as
-  // non-authorable allow-once/deny instead of opening a second ASK prompt.
-  if (parseErrors.length > 0) {
+  // Deterministic protected/ordinary/command denies above still win. Parse
+  // uncertainty is a synthesized, non-authorable ASK, so profile transforms
+  // can resolve it without opening a UI. An implicit allow resolves only that
+  // synthesized ASK; continue below to enforce any explicit ASK rules.
+  if (parseErrors.length > 0 && implicitAskDecision !== "allow") {
+    if (implicitAskDecision === "deny") {
+      return {
+        block: true,
+        reason:
+          "Bash command denied: it could not be classified completely and this profile denies implicit permission requests.",
+      };
+    }
     const details = parseErrors
       .map((error) => `- offset ${error.pos}: ${error.message}`)
       .join("\n");
     const approval = await confirmOrBlock({
       ctx,
-      title: "Allow Bash command with parse errors?",
+      title: parseErrorBashPermissionTitle,
       message: `The command could not be classified completely.\n\n${details}\n\nRaw command:\n${command}`,
       refreshAfterUiAwait,
     });
@@ -2827,17 +2846,30 @@ export async function gateBash({
     };
   }
 
+  const hasNonAuthorableAsk = evaluation.nonAuthorableAsks.length > 0;
+  if (hasNonAuthorableAsk && implicitAskDecision === "deny") {
+    return {
+      block: true,
+      reason: `Bash command denied: it has dynamic or opaque path references and this profile denies implicit permission requests.\n\nNon-authorable path uncertainty:\n${evaluation.nonAuthorableAsks.join("\n")}`,
+    };
+  }
+  // An implicit allow resolves only the synthesized path ASK. Explicit path
+  // and command ASK rules still require their normal approval.
+  const implicitPathAsk =
+    pathDecision?.decision === "ask" &&
+    evaluation.nonAuthorableAsks.includes(pathDecision.path);
+  const askPaths = evaluation.pathTraces.filter(
+    (trace) => trace.decision === "ask",
+  );
   if (
-    pathDecision?.decision === "ask" ||
+    (pathDecision?.decision === "ask" &&
+      !(implicitPathAsk && implicitAskDecision === "allow")) ||
+    askPaths.length > 0 ||
     decisions.some(({ decision }) => decision === "ask")
   ) {
-    const askPaths = evaluation.pathTraces.filter(
-      (trace) => trace.decision === "ask",
-    );
-    const hasNonAuthorableAsk = evaluation.nonAuthorableAsks.length > 0;
     const approval = await confirmOrBlock({
       ctx,
-      title: "Bash permission request",
+      title: explicitBashPermissionTitle,
       message: `Raw command:\n${command}\n\nParsed command segments:\n${formatParsedCommands(command, activePolicy)}${
         askPaths.length > 0
           ? `\n\nGated paths:\n${askPaths
@@ -3472,12 +3504,14 @@ async function gateCustomTool({
   toolName,
   input,
   rules,
+  implicitAskDecision = "ask",
   ctx,
   refreshAfterUiAwait,
 }: {
   readonly toolName: string;
   readonly input: unknown;
   readonly rules: CustomToolRule[];
+  readonly implicitAskDecision?: ImplicitAskDecision;
   readonly ctx: ExtensionContext;
   readonly refreshAfterUiAwait?: RefreshAfterUiAwait;
 }) {
@@ -3493,6 +3527,15 @@ async function gateCustomTool({
     };
   }
   if (decision === "ask") {
+    // A missing match falls back to ASK, but no durable rule can truthfully
+    // represent that fallback. Resolve it through runtime metadata instead.
+    if (!matchedRule && implicitAskDecision === "deny") {
+      return {
+        block: true,
+        reason: `${toolName} denied: no custom tool policy matched and this profile denies implicit permission requests.`,
+      };
+    }
+    if (!matchedRule && implicitAskDecision === "allow") return undefined;
     const approval = await confirmOrBlock({
       ctx,
       title: `Allow ${toolName}?`,

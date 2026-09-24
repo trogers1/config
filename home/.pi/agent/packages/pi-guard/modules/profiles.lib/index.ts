@@ -1,9 +1,12 @@
 import {
+  applyImplicitAskTransforms,
   definePolicyConfig,
   finalizeResolvedProfile,
+  profileTransformNames,
   runtimeRequirementProvenanceFor,
   type BuiltinProfileName,
   type ProfilePolicy,
+  type ProfileTransformName,
 } from "../policyHelpers";
 import {
   ruleSetDefinition,
@@ -85,6 +88,10 @@ function selectorsInComposition({
   return knownSelectors.filter((selector) => chain.includes(selector));
 }
 
+function isProfileTransformName(name: string): name is ProfileTransformName {
+  return profileTransformNames.some((transform) => transform === name);
+}
+
 function resolveCompositionRuntime({
   chain,
 }: {
@@ -111,7 +118,13 @@ function resolveCompositionRuntime({
       return result;
     }, {}),
   });
-  return { requirements, provenance };
+  return {
+    implicitAskDecision: applyImplicitAskTransforms({
+      transforms: chain.filter(isProfileTransformName),
+    }),
+    requirements,
+    provenance,
+  };
 }
 
 /** A runtime-bearing workflow must contribute its declared policy. */

@@ -7,15 +7,19 @@ import { isFocusable, type Component } from "@earendil-works/pi-tui";
 import permissionsExtension, {
   decideBash,
   decideCustomTool,
+  explicitBashPermissionTitle,
   extractShellCommands,
   gateBash,
   matchesGlobPattern,
+  parseErrorBashPermissionTitle,
   splitShellCommands,
 } from "../extensions/guard";
 import { policyConfig } from "../modules/policy";
 import { askPermissionChoices } from "../modules/profileUpdate";
 import type { CustomToolRule, ProfilePolicy } from "../modules/policyHelpers";
+import { loadProfileConfig } from "../modules/profileConfig";
 import { defaultProtectedPathRules } from "../modules/protectedPaths";
+import { createExtensionHarness as createInteractiveExtensionHarness } from "./support/extensionHarness";
 
 const defaultProtectedRipgrepArguments = defaultProtectedPathRules
   .filter((rule) => rule.decision === "deny")
@@ -226,6 +230,104 @@ describe("shell policy parser", () => {
     expect(vi.mocked(ctx.ui.custom)).toHaveBeenCalledTimes(1);
   });
 
+  it("preserves a local command ASK when allow-asks resolves parse uncertainty", async () => {
+    const directory = fs.mkdtempSync(path.join(tmpdir(), "pi-guard-"));
+    const configPath = path.join(directory, "profiles.jsonc");
+    const previousConfigPath = process.env.PI_GUARD_PROFILE_CONFIG;
+    let harness:
+      ReturnType<typeof createInteractiveExtensionHarness> | undefined;
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        defaultProfile: "local-ask",
+        profiles: {
+          "local-ask": {
+            description: "Preserves a local Bash approval rule.",
+            extends: ["builtin:default"],
+            transforms: ["transform:allow-asks"],
+            sandbox: false,
+            tools: {
+              bash: [{ pattern: "git status *", decision: "ask" }],
+            },
+          },
+        },
+      }),
+    );
+    try {
+      const resolved = loadProfileConfig({
+        fallback: policyConfig,
+        configPath,
+      }).profiles["local-ask"];
+      const command = "git status --short; 'unterminated";
+
+      expect(resolved.runtime.implicitAskDecision).toBe("allow");
+      expect(decideBash(command, resolved.policy)).toBe("ask");
+      process.env.PI_GUARD_PROFILE_CONFIG = configPath;
+      harness = createInteractiveExtensionHarness({ interactiveUi: true });
+      await harness.start();
+
+      const pending = harness.callTool({
+        toolName: "bash",
+        input: { command },
+      });
+      const modal = await harness.ui.waitForCustomModal();
+      const displayed = modal.render().join("\n");
+      expect(displayed).toContain(explicitBashPermissionTitle);
+      expect(displayed).not.toContain(parseErrorBashPermissionTitle);
+      modal.type(askPermissionChoices[1]);
+      modal.press("Enter");
+      await expect(pending).resolves.toBeUndefined();
+    } finally {
+      await harness?.dispose();
+      if (previousConfigPath === undefined)
+        delete process.env.PI_GUARD_PROFILE_CONFIG;
+      else process.env.PI_GUARD_PROFILE_CONFIG = previousConfigPath;
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves a local command ASK when deny-asks sets implicit denial", async () => {
+    const directory = fs.mkdtempSync(path.join(tmpdir(), "pi-guard-"));
+    const configPath = path.join(directory, "profiles.jsonc");
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        profiles: {
+          "local-ask": {
+            description: "Preserves a local Bash approval rule.",
+            extends: ["builtin:default"],
+            transforms: ["transform:deny-asks"],
+            tools: {
+              bash: [{ pattern: "git status *", decision: "ask" }],
+            },
+          },
+        },
+      }),
+    );
+    try {
+      const resolved = loadProfileConfig({
+        fallback: policyConfig,
+        configPath,
+      }).profiles["local-ask"];
+      const ctx = context(process.cwd(), true);
+
+      expect(resolved.runtime.implicitAskDecision).toBe("deny");
+      expect(decideBash("git status --short", resolved.policy)).toBe("ask");
+      await expect(
+        gateBash({
+          command: "git status --short",
+          startupCwd: process.cwd(),
+          ctx,
+          activePolicy: resolved.policy,
+          implicitAskDecision: resolved.runtime.implicitAskDecision,
+        }),
+      ).resolves.toBeUndefined();
+      expect(vi.mocked(ctx.ui.custom)).toHaveBeenCalledOnce();
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("denies a definite protected path before prompting for parse errors", async () => {
     const policy = {
       ...parserPolicy,
@@ -259,16 +361,21 @@ describe("shell policy parser", () => {
     expect(vi.mocked(ctx.ui.custom)).not.toHaveBeenCalled();
   });
 
-  it("denies a compound command when any parsed segment is denied", async () => {
+  it("denies a later compound segment without prompting for an earlier ask", async () => {
+    const ctx = context(process.cwd());
     const result = await gateBash({
-      command: "git status --short && git checkout main",
+      command: "git fetch origin && git checkout main",
       startupCwd: process.cwd(),
-      ctx: context(process.cwd()),
+      ctx,
       activePolicy: parserPolicy,
     });
 
     expect(result).toMatchObject({ block: true });
-    expect(result?.reason).toContain("git checkout main");
+    expect(result?.reason).toContain("Command denied by explicit rule");
+    expect(result?.reason).toContain(
+      "[\u001b[31mdeny\u001b[0m] git checkout main",
+    );
+    expect(vi.mocked(ctx.ui.custom)).not.toHaveBeenCalled();
   });
 
   it("combines and deduplicates steering from every denied segment", async () => {
@@ -714,6 +821,23 @@ describe("default profile bash policy", () => {
       expect(vi.mocked(ctx.ui.custom)).not.toHaveBeenCalled();
     },
   );
+
+  it("applies deny-asks runtime metadata to non-authorable path uncertainty", async () => {
+    const ctx = context(process.cwd());
+    const worker = policyConfig.profiles["builtin:worker"];
+
+    const result = await gateBash({
+      command: "git show --format=fuller --stat --summary $c",
+      startupCwd: process.cwd(),
+      ctx,
+      activePolicy: worker.policy,
+      implicitAskDecision: worker.runtime.implicitAskDecision,
+    });
+
+    expect(result).toMatchObject({ block: true });
+    expect(result?.reason).toContain("denies implicit permission requests");
+    expect(vi.mocked(ctx.ui.custom)).not.toHaveBeenCalled();
+  });
 
   it("blocks unresolved dynamic Git diff operands under restrictive writePaths", async () => {
     const restrictivePolicy = structuredClone(
