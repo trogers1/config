@@ -353,10 +353,13 @@ export function loadProfileConfigSnapshot({
   fallback,
   configPath: suppliedConfigPath,
   runtime,
+  lintConflicts = true,
 }: {
   readonly fallback: PolicyConfig;
   readonly configPath?: string;
   readonly runtime?: ProfileConfigSnapshotRuntime;
+  /** Runtime stores can defer lint emission until they deduplicate a revision. */
+  readonly lintConflicts?: boolean;
 }): ProfileConfigSnapshot {
   const configPath = resolveProfileConfigPath({
     configPath: suppliedConfigPath,
@@ -394,6 +397,7 @@ export function loadProfileConfigSnapshot({
     configPath,
     source,
     parsedSource: parsed,
+    lintConflicts,
   });
   if (errors.length > 0 || !isProfileConfigFile(parsed))
     throw new ProfileConfigMalformedError(
@@ -416,6 +420,19 @@ export function loadProfileConfigSnapshot({
           : [directoryDeclaration(profile, definition.directoryGlobs)],
     ),
   };
+}
+
+/** Emit conflict diagnostics for the custom profiles resolved in a snapshot. */
+export function warnOnProfileConfigSnapshotRuleConflicts({
+  snapshot,
+}: {
+  readonly snapshot: ProfileConfigSnapshot;
+}): void {
+  if (snapshot.raw === undefined) return;
+  const profiles: Record<string, ResolvedProfile> = {};
+  for (const profileName of Object.keys(snapshot.raw.profiles))
+    profiles[profileName] = snapshot.config.profiles[profileName];
+  warnOnPolicyRuleConflicts({ profiles });
 }
 
 /**
@@ -455,11 +472,13 @@ function loadProfileConfigSource({
   configPath,
   source,
   parsedSource,
+  lintConflicts = true,
 }: {
   readonly fallback: PolicyConfig;
   readonly configPath: string;
   readonly source: string;
   readonly parsedSource?: unknown;
+  readonly lintConflicts?: boolean;
 }): PolicyConfig {
   try {
     const errors: ParseError[] = [];
@@ -786,7 +805,8 @@ function loadProfileConfigSource({
         error instanceof Error ? error.message : String(error),
       );
     }
-    warnOnPolicyRuleConflicts({ profiles: resolvedUserProfiles });
+    if (lintConflicts)
+      warnOnPolicyRuleConflicts({ profiles: resolvedUserProfiles });
     return config;
   } catch (error) {
     if (error instanceof ProfileConfigLoadError) throw error;

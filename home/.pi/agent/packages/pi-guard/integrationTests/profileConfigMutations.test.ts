@@ -687,6 +687,70 @@ describe("profile config mutations", () => {
     expect(restored.status).toBe(profileStoreStatus.refreshed);
   });
 
+  it("emits custom-profile conflict warnings once per store source revision", () => {
+    const configPath = tempConfig();
+    const conflictingSource = ({
+      pattern,
+    }: {
+      readonly pattern: string;
+    }): string =>
+      JSON.stringify({
+        profiles: {
+          existing: {
+            ...baseDefinition,
+            tools: {
+              bash: [
+                { pattern, decision: "allow" },
+                { pattern, decision: "deny" },
+              ],
+            },
+          },
+        },
+      });
+    fs.writeFileSync(configPath, conflictingSource({ pattern: "deploy *" }));
+    const warnSpy = vi
+      .spyOn(console, "warn")
+      .mockImplementation(() => undefined);
+    try {
+      const store = profileStore({ configPath });
+      expect(refreshProfileStore({ store }).status).toBe(
+        profileStoreStatus.refreshed,
+      );
+      expect(refreshProfileStore({ store }).status).toBe(
+        profileStoreStatus.unchanged,
+      );
+      expect(refreshProfileStore({ store }).status).toBe(
+        profileStoreStatus.unchanged,
+      );
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+
+      // A session has its own store-local diagnostic history.
+      const freshStore = profileStore({ configPath });
+      expect(refreshProfileStore({ store: freshStore }).status).toBe(
+        profileStoreStatus.refreshed,
+      );
+      expect(warnSpy).toHaveBeenCalledTimes(2);
+
+      const changedPattern = "release *";
+      fs.writeFileSync(
+        configPath,
+        conflictingSource({ pattern: changedPattern }),
+      );
+      expect(refreshProfileStore({ store }).status).toBe(
+        profileStoreStatus.refreshed,
+      );
+      expect(refreshProfileStore({ store }).status).toBe(
+        profileStoreStatus.unchanged,
+      );
+      expect(warnSpy).toHaveBeenCalledTimes(3);
+      expect(warnSpy).toHaveBeenLastCalledWith(
+        expect.stringContaining(changedPattern),
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
   it("keeps selection authority and policy on one revision across an explicit source interleaving", () => {
     const configPath = tempConfig();
     const firstSource = JSON.stringify({

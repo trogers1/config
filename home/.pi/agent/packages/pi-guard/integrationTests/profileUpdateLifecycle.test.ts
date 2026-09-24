@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   loadRawProfileConfig,
   resolveProfileConfigPath,
@@ -27,6 +27,79 @@ import {
 installProfileUpdateFixture({});
 
 describe("profile updates through the public extension surface", () => {
+  it("deduplicates conflicting-profile warnings by source revision and runtime", async () => {
+    const fixturePattern = "echo fixture-conflict-warning";
+    const conflictingConfig = (pattern: string) =>
+      ({
+        defaultProfile: "conflict-warning-fixture",
+        profiles: {
+          "conflict-warning-fixture": {
+            description: "Conflicting profile warning fixture.",
+            extends: ["builtin:default"],
+            tools: {
+              bash: [
+                { pattern, decision: "allow" as const },
+                { pattern, decision: "deny" as const },
+              ],
+            },
+          },
+        },
+      }) satisfies ProfileConfigFile;
+    const configPath = writeConfig({
+      config: conflictingConfig(fixturePattern),
+    });
+    process.env.PI_GUARD_PROFILE_CONFIG = configPath;
+
+    // The extension loads its first profile snapshot during registration, so
+    // install the spy before constructing the production harness/runtime.
+    const warnSpy = vi
+      .spyOn(console, "warn")
+      .mockImplementation(() => undefined);
+    try {
+      const running = createExtensionHarness({ hasUI: false });
+      await running.start();
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+
+      // Unchanged session lifecycle and guarded tool calls share the adopted
+      // source revision and must not repeat its conflict diagnostic.
+      await running.start({ reason: "reload" });
+      await running.callTool({
+        toolName: "bash",
+        input: { command: fixturePattern },
+      });
+      await running.callTool({
+        toolName: "bash",
+        input: { command: fixturePattern },
+      });
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+
+      const revisedPattern = `${fixturePattern}-revised`;
+      replaceConfig({
+        configPath,
+        config: conflictingConfig(revisedPattern),
+      });
+      await running.callTool({
+        toolName: "bash",
+        input: { command: revisedPattern },
+      });
+      expect(warnSpy).toHaveBeenCalledTimes(2);
+      expect(warnSpy).toHaveBeenLastCalledWith(
+        expect.stringContaining(revisedPattern),
+      );
+
+      // Deduplication is runtime-local: a new extension registration warns
+      // once for the same current persisted source.
+      const freshRuntime = createExtensionHarness({ hasUI: false });
+      await freshRuntime.start();
+      expect(warnSpy).toHaveBeenCalledTimes(3);
+      expect(warnSpy).toHaveBeenLastCalledWith(
+        expect.stringContaining(revisedPattern),
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
   it("discards a stale picker answer when a newer allow makes the operation effective", async () => {
     const configPath = writeConfig({
       config: {
