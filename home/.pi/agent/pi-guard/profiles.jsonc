@@ -867,7 +867,7 @@
         "transform:deny-asks"
       ]
     },
-    "personal-deny-asks": {
+    "mcp-deny-asks": {
       "description": "The conservative auto-pilot for the MCP profile.",
       "emoji": "👨‍✈️",
       "extends": [
@@ -918,7 +918,8 @@
         "config-maintenance",
         "builtin:committer"
       ],
-      "color": "yellow"
+      "color": "yellow",
+      "sandbox": false
     },
     "config-maintenance-committer-deny-asks": {
       "description": "GIT safe auto-pilot for config-maintenance git profile",
@@ -929,7 +930,8 @@
       "color": "green",
       "transforms": [
         "transform:deny-asks"
-      ]
+      ],
+      "sandbox": false
     },
   },
 }
