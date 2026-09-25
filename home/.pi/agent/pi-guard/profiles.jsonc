@@ -488,6 +488,10 @@
           {
             "pattern": "mv *",
             "decision": "allow"
+          },
+          {
+            "pattern": "pi --version",
+            "decision": "allow"
           }
         ]
       },
@@ -932,6 +936,15 @@
         "transform:deny-asks"
       ],
       "sandbox": false
+    },
+    "config-maintenance-allow-asks-dep-man": {
+      "description": "Dangerous dep manager on auto-pilot",
+      "emoji": "📦",
+      "extends": [
+        "config-maintenance-allow-asks",
+        "ruleset:deps-mutations-allow"
+      ],
+      "color": "red"
     },
   },
 }
