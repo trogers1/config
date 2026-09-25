@@ -687,7 +687,7 @@ describe("profile config mutations", () => {
     expect(restored.status).toBe(profileStoreStatus.refreshed);
   });
 
-  it("emits custom-profile conflict warnings once per store source revision", () => {
+  it("keeps conflict diagnostics out of the profile store", () => {
     const configPath = tempConfig();
     const conflictingSource = ({
       pattern,
@@ -708,47 +708,29 @@ describe("profile config mutations", () => {
         },
       });
     fs.writeFileSync(configPath, conflictingSource({ pattern: "deploy *" }));
-    const warnSpy = vi
-      .spyOn(console, "warn")
-      .mockImplementation(() => undefined);
-    try {
-      const store = profileStore({ configPath });
-      expect(refreshProfileStore({ store }).status).toBe(
-        profileStoreStatus.refreshed,
-      );
-      expect(refreshProfileStore({ store }).status).toBe(
-        profileStoreStatus.unchanged,
-      );
-      expect(refreshProfileStore({ store }).status).toBe(
-        profileStoreStatus.unchanged,
-      );
-      expect(warnSpy).toHaveBeenCalledTimes(1);
+    const store = profileStore({ configPath });
+    expect(refreshProfileStore({ store }).status).toBe(
+      profileStoreStatus.refreshed,
+    );
+    expect(refreshProfileStore({ store }).status).toBe(
+      profileStoreStatus.unchanged,
+    );
 
-      // A session has its own store-local diagnostic history.
-      const freshStore = profileStore({ configPath });
-      expect(refreshProfileStore({ store: freshStore }).status).toBe(
-        profileStoreStatus.refreshed,
-      );
-      expect(warnSpy).toHaveBeenCalledTimes(2);
+    // A second runtime and changed source remain loader concerns, not transient
+    // console diagnostics. The extension decides whether the active profile
+    // merits a user-facing reminder.
+    const freshStore = profileStore({ configPath });
+    expect(refreshProfileStore({ store: freshStore }).status).toBe(
+      profileStoreStatus.refreshed,
+    );
 
-      const changedPattern = "release *";
-      fs.writeFileSync(
-        configPath,
-        conflictingSource({ pattern: changedPattern }),
-      );
-      expect(refreshProfileStore({ store }).status).toBe(
-        profileStoreStatus.refreshed,
-      );
-      expect(refreshProfileStore({ store }).status).toBe(
-        profileStoreStatus.unchanged,
-      );
-      expect(warnSpy).toHaveBeenCalledTimes(3);
-      expect(warnSpy).toHaveBeenLastCalledWith(
-        expect.stringContaining(changedPattern),
-      );
-    } finally {
-      warnSpy.mockRestore();
-    }
+    fs.writeFileSync(configPath, conflictingSource({ pattern: "release *" }));
+    expect(refreshProfileStore({ store }).status).toBe(
+      profileStoreStatus.refreshed,
+    );
+    expect(refreshProfileStore({ store }).status).toBe(
+      profileStoreStatus.unchanged,
+    );
   });
 
   it("keeps selection authority and policy on one revision across an explicit source interleaving", () => {

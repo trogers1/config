@@ -219,7 +219,14 @@ describe("/profile-add", () => {
     expect(fs.readFileSync(configPath, "utf8")).toContain(
       "// Keep user comments",
     );
-    expect(harness.entries.at(-1)).toMatchObject({
+    expect(
+      [...harness.entries]
+        .reverse()
+        .find(
+          (entry) =>
+            entry.type === "custom" && entry.customType === "pi-guard-profile",
+        ),
+    ).toMatchObject({
       customType: "pi-guard-profile",
       data: { profile: "local-test-work" },
     });

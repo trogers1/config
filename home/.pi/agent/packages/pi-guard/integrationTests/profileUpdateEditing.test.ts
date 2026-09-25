@@ -18,7 +18,7 @@ import {
 installProfileUpdateFixture({});
 
 describe("profile updates through the public extension surface", () => {
-  it("updates both command and path rules, then stops enforcing them after /profile switches", async () => {
+  it("updates both command and path rules, then stops enforcing them after /profile-select switches", async () => {
     const bothPath = path.join(process.cwd(), "both.txt");
     const configPath = writeConfig({
       config: {
@@ -95,7 +95,7 @@ describe("profile updates through the public extension surface", () => {
       input: { path: "both.txt" },
     });
 
-    await harness.runCommand("profile", "unrestricted-work");
+    await harness.runCommand("profile-select", "unrestricted-work");
     await harness.callToolWithoutPrompt({
       toolName: "bash",
       input: { command: "echo both > both.txt" },

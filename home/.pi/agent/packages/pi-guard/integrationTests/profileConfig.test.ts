@@ -15,7 +15,10 @@ import type {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import permissionsExtension, { decideBash } from "../extensions/guard";
 import { policyConfig as genericPolicyConfig } from "../modules/policy";
-import { policyReferencePrefix } from "../modules/policyHelpers";
+import {
+  formatPolicyRuleConflictSummary,
+  policyReferencePrefix,
+} from "../modules/policyHelpers";
 import {
   ProfileConfigLoadError,
   ProfileConfigMalformedError,
@@ -84,7 +87,7 @@ describe("profile configuration", () => {
     });
 
     expect(warnSpy).toHaveBeenCalledWith(
-      "Profile 'standalone' has conflicting bash rules for pattern 'deploy *': 'allow' conflicts with later 'deny'.",
+      formatPolicyRuleConflictSummary({ profileNames: ["standalone"] }),
     );
   });
 
@@ -149,7 +152,7 @@ describe("profile configuration", () => {
     });
 
     expect(warnSpy).toHaveBeenCalledWith(
-      "Profile 'child' has conflicting bash rules for pattern 'deploy *': 'allow' conflicts with later 'deny'.",
+      formatPolicyRuleConflictSummary({ profileNames: ["child"] }),
     );
   });
 
@@ -909,6 +912,7 @@ function createHarness(options: { hasUI: boolean; cwd?: string }) {
     registerFlag: () => undefined,
     getFlag: () => undefined,
     registerMessageRenderer: () => undefined,
+    registerEntryRenderer: () => undefined,
     sendMessage: () => undefined,
     sendUserMessage: () => undefined,
     appendEntry: () => undefined,
@@ -1060,9 +1064,10 @@ describe("extension harness profile configuration failures", () => {
 
       const uiHarness = createHarness({ hasUI: true });
       expect(uiHarness.commands).toEqual([
+        "profile-warnings",
         "profile-add",
         "profile-edit",
-        "profile",
+        "profile-select",
         "read-only",
         "sandbox-on",
         "sandbox-off",

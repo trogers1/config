@@ -337,7 +337,7 @@ describe("profile updates through the public extension surface", () => {
     process.env.PI_GUARD_PROFILE_CONFIG = configPath;
     const harness = createExtensionHarness({ interactiveUi: true });
     await harness.start();
-    await harness.runCommand("profile", "path-work");
+    await harness.runCommand("profile-select", "path-work");
 
     const deniedPending = harness.callTool({
       toolName: "write",

@@ -7,6 +7,7 @@ import {
   emptyResolvedRuntime,
   extendProfile,
   finalizeResolvedProfile,
+  formatPolicyRuleConflictSummary,
 } from "../modules/policyHelpers";
 import type {
   CustomToolRule,
@@ -308,9 +309,34 @@ describe("specificity-first rule resolution", () => {
     process.env.DEBUG = "true";
     definePolicyConfig(config);
     expect(warnSpy).toHaveBeenCalledWith(
-      "Profile 'builtin:default' has conflicting bash rules for pattern 'git status': 'allow' conflicts with later 'deny'.",
+      formatPolicyRuleConflictSummary({ profileNames: ["builtin:default"] }),
     );
     delete process.env.DEBUG;
+  });
+
+  it("summarizes all conflicting profiles in one warning", () => {
+    const warnSpy = vi
+      .spyOn(console, "warn")
+      .mockImplementation(() => undefined);
+    const conflicted = bashProfile([
+      { pattern: "echo conflict", decision: "allow" },
+      { pattern: "echo conflict", decision: "deny" },
+    ]);
+
+    definePolicyConfig({
+      defaultProfile: "example-one",
+      profiles: {
+        "example-one": resolvedProfile(conflicted),
+        "example-two": resolvedProfile(conflicted),
+      },
+    });
+
+    expect(warnSpy).toHaveBeenCalledOnce();
+    expect(warnSpy).toHaveBeenCalledWith(
+      formatPolicyRuleConflictSummary({
+        profileNames: ["example-one", "example-two"],
+      }),
+    );
   });
 
   it("warns for path conflicts with overlapping contexts", () => {
@@ -331,7 +357,7 @@ describe("specificity-first rule resolution", () => {
     });
 
     expect(warnSpy).toHaveBeenCalledWith(
-      "Profile 'path-conflicted' has conflicting readPaths rules for pattern 'docs/*': 'allow' conflicts with later 'deny'.",
+      formatPolicyRuleConflictSummary({ profileNames: ["path-conflicted"] }),
     );
   });
 
@@ -382,7 +408,7 @@ describe("specificity-first rule resolution", () => {
     });
 
     expect(warnSpy).toHaveBeenCalledWith(
-      `Profile 'deploy-conflicted' has conflicting custom-tool rules for 'deploy' with match {"action":"deploy","environment":"prod"}: 'allow' conflicts with later 'deny'.`,
+      formatPolicyRuleConflictSummary({ profileNames: ["deploy-conflicted"] }),
     );
   });
 

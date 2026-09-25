@@ -1,7 +1,6 @@
 import {
   loadProfileConfigSnapshot,
   resolveProfileConfigPath,
-  warnOnProfileConfigSnapshotRuleConflicts,
   type ProfileConfigSnapshot,
 } from "./profileConfig";
 import type { PolicyConfig } from "./policyHelpers";
@@ -41,8 +40,6 @@ type ProfileStoreData = {
   readonly configPath: string;
   /** A persisted source was adopted, so losing it may not broaden to fallback. */
   hasLoadedFile: boolean;
-  /** Conflict diagnostics already emitted by this runtime store, keyed by source. */
-  warnedSourceRevisions: Set<string>;
   state: ProfileStoreState;
 };
 const profileStoreData = new WeakMap<ProfileStore, ProfileStoreData>();
@@ -76,7 +73,6 @@ export function createProfileStore({
     fallback,
     configPath: resolveProfileConfigPath({ configPath }),
     hasLoadedFile: false,
-    warnedSourceRevisions: new Set<string>(),
     state: { status: profileStoreStatus.uninitialized },
   });
   return store;
@@ -154,14 +150,6 @@ export function refreshProfileStore({
     return state;
   }
   if (snapshot.raw !== undefined) data.hasLoadedFile = true;
-
-  if (
-    snapshot.raw !== undefined &&
-    !data.warnedSourceRevisions.has(snapshot.sourceRevision)
-  ) {
-    warnOnProfileConfigSnapshotRuleConflicts({ snapshot });
-    data.warnedSourceRevisions.add(snapshot.sourceRevision);
-  }
 
   const previousSnapshot = usableSnapshot({ state: data.state });
   const status =

@@ -112,7 +112,7 @@ describe("profile updates through the public extension surface", () => {
     process.env.PI_GUARD_PROFILE_CONFIG = configPath;
     const harness = createExtensionHarness({ interactiveUi: true });
     await harness.start();
-    await harness.runCommand("profile", "custom-work");
+    await harness.runCommand("profile-select", "custom-work");
 
     const deniedPending = harness.callTool({
       toolName: "bash",
@@ -172,7 +172,7 @@ describe("profile updates through the public extension surface", () => {
     process.env.PI_GUARD_PROFILE_CONFIG = configPath;
     const harness = createExtensionHarness({ interactiveUi: true });
     await harness.start();
-    await harness.runCommand("profile", "three-tabs-work");
+    await harness.runCommand("profile-select", "three-tabs-work");
 
     const request = harness.callTool({
       toolName: "bash",
@@ -418,7 +418,7 @@ describe("profile updates through the public extension surface", () => {
     process.env.PI_GUARD_PROFILE_CONFIG = configPath;
     const harness = createExtensionHarness({ interactiveUi: true });
     await harness.start();
-    await harness.runCommand("profile", "reset-work");
+    await harness.runCommand("profile-select", "reset-work");
 
     const pending = harness.callTool({
       toolName: "bash",

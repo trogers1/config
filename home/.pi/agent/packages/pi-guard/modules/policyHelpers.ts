@@ -989,73 +989,160 @@ function shouldWarnForProfileRuleConflicts(profileName: string): boolean {
   );
 }
 
+export type PolicyRuleConflict = {
+  readonly profileName: string;
+  readonly message: string;
+};
+
+export function formatPolicyRuleConflictSummary({
+  profileNames,
+}: {
+  readonly profileNames: readonly string[];
+}): string | undefined {
+  const uniqueProfileNames = [...new Set(profileNames)];
+  if (uniqueProfileNames.length === 0) return undefined;
+  return `⚠️ Conflicts found in profiles ${uniqueProfileNames.join(", ")}. This may or may not be intentional. Use /profile-warnings to learn more.`;
+}
+
+export function collectPolicyRuleConflicts({
+  policyConfig,
+}: {
+  readonly policyConfig: Pick<PolicyConfig, "profiles">;
+}): PolicyRuleConflict[] {
+  const conflicts: PolicyRuleConflict[] = [];
+  for (const [profileName, profile] of Object.entries(policyConfig.profiles)) {
+    if (!shouldWarnForProfileRuleConflicts(profileName)) continue;
+    conflicts.push(
+      ...collectProfileRuleConflicts({ profileName, profile: profile.policy }),
+    );
+  }
+  return conflicts;
+}
+
 export function warnOnPolicyRuleConflicts(
   policyConfig: Pick<PolicyConfig, "profiles">,
 ): void {
-  for (const [profileName, profile] of Object.entries(policyConfig.profiles)) {
-    if (shouldWarnForProfileRuleConflicts(profileName)) {
-      warnOnProfileRuleConflicts(profileName, profile.policy);
-    }
-  }
+  const conflicts = collectPolicyRuleConflicts({ policyConfig });
+  const summary = formatPolicyRuleConflictSummary({
+    profileNames: conflicts.map((conflict) => conflict.profileName),
+  });
+  if (summary !== undefined) console.warn(summary);
 }
 
 export function warnOnProfileRuleConflicts(
   profileName: string,
   profile: Partial<ProfilePolicy>,
 ): void {
-  warnOnRuleConflicts(profileName, "bash", profile.tools?.bash ?? []);
+  const conflicts = collectProfileRuleConflicts({ profileName, profile });
+  const summary = formatPolicyRuleConflictSummary({
+    profileNames: conflicts.map((conflict) => conflict.profileName),
+  });
+  if (summary !== undefined) console.warn(summary);
+}
+
+export function collectProfileRuleConflicts({
+  profileName,
+  profile,
+}: {
+  readonly profileName: string;
+  readonly profile: Partial<ProfilePolicy>;
+}): PolicyRuleConflict[] {
+  const conflicts: PolicyRuleConflict[] = [];
+  collectRuleConflicts({
+    profileName,
+    toolName: "bash",
+    rules: profile.tools?.bash ?? [],
+    conflicts,
+  });
 
   for (const [toolName, rules] of Object.entries(profile.tools ?? {})) {
     if (toolName === "bash" || !rules) continue;
     assertCustomToolRuleArray(toolName, rules);
-    warnOnCustomToolRuleConflicts(profileName, toolName, rules);
+    collectCustomToolRuleConflicts({
+      profileName,
+      toolName,
+      rules,
+      conflicts,
+    });
   }
 
-  warnOnPathRuleConflicts(profileName, "readPaths", profile.readPaths ?? []);
-  warnOnPathRuleConflicts(profileName, "writePaths", profile.writePaths ?? []);
+  collectPathRuleConflicts({
+    profileName,
+    kind: "readPaths",
+    rules: profile.readPaths ?? [],
+    conflicts,
+  });
+  collectPathRuleConflicts({
+    profileName,
+    kind: "writePaths",
+    rules: profile.writePaths ?? [],
+    conflicts,
+  });
+  return conflicts;
 }
 
-function warnOnRuleConflicts(
-  profileName: string,
-  toolName: string,
-  rules: readonly Rule[],
-): void {
+function collectRuleConflicts({
+  profileName,
+  toolName,
+  rules,
+  conflicts,
+}: {
+  readonly profileName: string;
+  readonly toolName: string;
+  readonly rules: readonly Rule[];
+  readonly conflicts: PolicyRuleConflict[];
+}): void {
   forEachConflictingPair(
     rules,
     (rule) => rule.pattern,
     (first, second) => {
-      console.warn(
-        `Profile '${profileName}' has conflicting ${toolName} rules for pattern '${first.pattern}': '${first.decision}' conflicts with later '${second.decision}'.`,
-      );
+      conflicts.push({
+        profileName,
+        message: `Profile '${profileName}' has conflicting ${toolName} rules for pattern '${first.pattern}': '${first.decision}' conflicts with later '${second.decision}'.`,
+      });
     },
   );
 }
 
-function warnOnCustomToolRuleConflicts(
-  profileName: string,
-  toolName: string,
-  rules: readonly CustomToolRule[],
-): void {
+function collectCustomToolRuleConflicts({
+  profileName,
+  toolName,
+  rules,
+  conflicts,
+}: {
+  readonly profileName: string;
+  readonly toolName: string;
+  readonly rules: readonly CustomToolRule[];
+  readonly conflicts: PolicyRuleConflict[];
+}): void {
   forEachConflictingPair(rules, customToolRuleKey, (first, second) => {
-    console.warn(
-      `Profile '${profileName}' has conflicting custom-tool rules for '${toolName}' with match ${customToolRuleKey(first)}: '${first.decision}' conflicts with later '${second.decision}'.`,
-    );
+    conflicts.push({
+      profileName,
+      message: `Profile '${profileName}' has conflicting custom-tool rules for '${toolName}' with match ${customToolRuleKey(first)}: '${first.decision}' conflicts with later '${second.decision}'.`,
+    });
   });
 }
 
-function warnOnPathRuleConflicts(
-  profileName: string,
-  kind: "readPaths" | "writePaths",
-  rules: readonly PathRule[],
-): void {
+function collectPathRuleConflicts({
+  profileName,
+  kind,
+  rules,
+  conflicts,
+}: {
+  readonly profileName: string;
+  readonly kind: "readPaths" | "writePaths";
+  readonly rules: readonly PathRule[];
+  readonly conflicts: PolicyRuleConflict[];
+}): void {
   forEachConflictingPair(
     rules,
     (rule) => rule.pattern,
     (first, second) => {
       if (!pathRuleContextsOverlap(first.contexts, second.contexts)) return;
-      console.warn(
-        `Profile '${profileName}' has conflicting ${kind} rules for pattern '${first.pattern}': '${first.decision}' conflicts with later '${second.decision}'.`,
-      );
+      conflicts.push({
+        profileName,
+        message: `Profile '${profileName}' has conflicting ${kind} rules for pattern '${first.pattern}': '${first.decision}' conflicts with later '${second.decision}'.`,
+      });
     },
   );
 }

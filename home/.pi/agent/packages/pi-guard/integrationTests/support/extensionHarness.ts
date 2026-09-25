@@ -868,6 +868,7 @@ export function createExtensionHarness(
         createCustomEntry({ customType, data, sequence: nextEntryId++ }),
       );
     },
+    registerEntryRenderer: vi.fn(),
     getActiveTools: () => [...activeToolNames],
     getAllTools: () =>
       [...registeredToolNames].map((name) => {
@@ -897,6 +898,7 @@ export function createExtensionHarness(
     | "registerShortcut"
     | "registerTool"
     | "appendEntry"
+    | "registerEntryRenderer"
     | "getActiveTools"
     | "getAllTools"
     | "setActiveTools"

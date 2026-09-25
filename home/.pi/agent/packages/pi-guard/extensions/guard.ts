@@ -39,7 +39,7 @@ import {
   type UserBashEvent,
   type UserBashEventResult,
 } from "@earendil-works/pi-coding-agent";
-import { Key, truncateToWidth } from "@earendil-works/pi-tui";
+import { Key, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import {
   createProfileAuthoringFlow,
   isProfileAuthoringAbort,
@@ -54,6 +54,7 @@ import {
   definePolicyConfig,
   extendProfile,
   composeSandboxDeclarations,
+  collectPolicyRuleConflicts,
   isCompositionFragmentName,
   withProtectedPathRules,
   type CustomToolRule,
@@ -251,6 +252,7 @@ const defaultPolicy: ProfilePolicy = {
 const moduleDir = typeof __dirname === "string" ? __dirname : process.cwd();
 const profileEntryType = "pi-guard-profile";
 const sandboxEntryType = "pi-guard-sandbox";
+const profileConflictReminderEntryType = "pi-guard-profile-conflict-reminder";
 /** Exposes the active parent policy to subagent launchers in this Pi process. */
 const activeProfileEnvKey = "PI_GUARD_ACTIVE_PROFILE";
 const readToolNames = ["read", "grep", "find", "ls"] as const;
@@ -335,6 +337,7 @@ type GuardExtensionAPI = Omit<
     | "registerFlag"
     | "getFlag"
     | "registerMessageRenderer"
+    | "registerEntryRenderer"
     | "sendMessage"
   >,
   never
@@ -495,6 +498,55 @@ export default function (pi: GuardExtensionAPI) {
     const emoji = profile.emoji ? `${profile.emoji} ` : "";
     return `profile: ${emoji}${formatProfileColor(color, ansi.bold(profileName))}`;
   }
+
+  function appendProfileConflictReminder({
+    ctx,
+    profile,
+    reason,
+  }: {
+    readonly ctx: ExtensionContext;
+    readonly profile: ProfileName;
+    readonly reason:
+      "activated" | "saved" | "configuration-changed" | "session-start";
+  }): void {
+    if (!ctx.hasUI) return;
+    const conflicts = collectPolicyRuleConflicts({ policyConfig }).filter(
+      (conflict) => conflict.profileName === profile,
+    );
+    if (conflicts.length === 0) return;
+
+    const revision = profileConfigRevision ?? "builtin";
+    const alreadyReminded = ctx.sessionManager.getEntries().some((entry) => {
+      if (
+        entry.type !== "custom" ||
+        entry.customType !== profileConflictReminderEntryType
+      )
+        return false;
+      return (
+        readStringProperty(entry.data, "profile") === profile &&
+        readStringProperty(entry.data, "revision") === revision
+      );
+    });
+    if (alreadyReminded) return;
+
+    pi.appendEntry(profileConflictReminderEntryType, {
+      profile,
+      revision,
+      reason,
+      conflictCount: conflicts.length,
+      timestamp: Date.now(),
+    });
+  }
+
+  pi.registerEntryRenderer(
+    profileConflictReminderEntryType,
+    (entry, _options, theme) => {
+      const profile = readStringProperty(entry.data, "profile") ?? "active";
+      return new Text(
+        `${theme.bold("Profile rule precedence review")}: '${profile}' has intentional-or-not rule conflicts. Run /profile-warnings to review.`,
+      );
+    },
+  );
 
   function formatSandboxStatus(policy: ProfilePolicy): string | undefined {
     const sandbox = policy.sandbox;
@@ -732,6 +784,11 @@ export default function (pi: GuardExtensionAPI) {
       pi.appendEntry(profileEntryType, { profile, timestamp: Date.now() });
       await refreshSandboxStatus(ctx);
       ctx.ui.setStatus("permissions", formatProfileStatus(activeProfile));
+      appendProfileConflictReminder({
+        ctx,
+        profile: activeProfile,
+        reason: "activated",
+      });
       if (message) ctx.ui.notify(message, "info");
     });
     profileActivationQueue = activation.catch(() => undefined);
@@ -1032,6 +1089,11 @@ The permissions gate remains loaded and will fail closed until the profile is co
         profile: activeProfile,
         timestamp: Date.now(),
       });
+      appendProfileConflictReminder({
+        ctx,
+        profile: activeProfile,
+        reason: "saved",
+      });
       ctx.ui.notify(selectionIntent.message(activeProfile), "info");
     }
     return { kind: "adopted", profile: activeProfile, changed };
@@ -1047,10 +1109,23 @@ The permissions gate remains loaded and will fail closed until the profile is co
     const intent: RefreshSelectionIntent = selectionIntent ?? {
       kind: "preserve-current",
     };
+    const previousRevision = profileConfigRevision;
     const result = await refreshProfileIfChanged({
       ctx,
       selectionIntent: intent,
     });
+    if (
+      result.kind === "adopted" &&
+      intent.kind === "preserve-current" &&
+      previousRevision !== undefined &&
+      result.changed
+    ) {
+      appendProfileConflictReminder({
+        ctx,
+        profile: result.profile,
+        reason: "configuration-changed",
+      });
+    }
     return result.kind === "adopted";
   }
 
@@ -1106,7 +1181,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
     pi.setActiveTools([...activeTools, ...inactive]);
   }
 
-  pi.on("session_start", async (_event, ctx) => {
+  pi.on("session_start", async (event, ctx) => {
     ensureReadToolsActive();
     restoreActiveProfile(ctx);
     if (!(await refreshOrPreserveConfiguration({ ctx }))) return;
@@ -1122,6 +1197,17 @@ The permissions gate remains loaded and will fail closed until the profile is co
 
     await refreshSandboxStatus(ctx);
     ctx.ui.setStatus("permissions", formatProfileStatus(activeProfile));
+    if (
+      event.reason === "new" ||
+      (event.reason === "startup" &&
+        ctx.sessionManager.getEntries().length === 0)
+    ) {
+      appendProfileConflictReminder({
+        ctx,
+        profile: activeProfile,
+        reason: "session-start",
+      });
+    }
   });
 
   pi.on("session_shutdown", async (_event, ctx) => {
@@ -1756,6 +1842,22 @@ The permissions gate remains loaded and will fail closed until the profile is co
     throw new Error("A protected path rule cannot be persisted from an ASK.");
   }
 
+  pi.registerCommand("profile-warnings", {
+    description: "Show detailed profile rule conflicts",
+    handler: async (_args, ctx) => {
+      if (!(await refreshOrPreserveConfiguration({ ctx }))) return;
+      const conflicts = collectPolicyRuleConflicts({ policyConfig });
+      if (conflicts.length === 0) {
+        ctx.ui.notify("No profile rule conflicts found.", "info");
+        return;
+      }
+      ctx.ui.notify(
+        conflicts.map((conflict) => `• ${conflict.message}`).join("\n"),
+        "warning",
+      );
+    },
+  });
+
   pi.registerCommand("profile-add", {
     description: "Create and activate a custom permissions profile",
     handler: async (_args, ctx) =>
@@ -1767,7 +1869,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
       await runProfileAuthoringCommand({ mode: "edit", ctx }),
   });
 
-  pi.registerCommand("profile", {
+  pi.registerCommand("profile-select", {
     description: "Show or switch the active permissions profile",
     getArgumentCompletions: (prefix) =>
       freshProfileNames()

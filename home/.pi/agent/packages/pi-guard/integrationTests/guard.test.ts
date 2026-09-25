@@ -155,6 +155,7 @@ function createExtensionHarness() {
       if (tool.name === "bash") packageBashTool = tool;
     }),
     appendEntry: vi.fn(),
+    registerEntryRenderer: vi.fn(),
     getActiveTools: () => [...activeTools],
     getAllTools: () =>
       registeredTools.map((name) => ({

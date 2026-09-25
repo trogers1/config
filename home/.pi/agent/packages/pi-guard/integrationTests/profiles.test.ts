@@ -463,7 +463,7 @@ describe("permissions extension", () => {
       lastCallArgument({ mock: harness.ui.setStatus, index: 1 }),
     ).toContain("builtin:default");
     const completions = await harness
-      .command({ name: "profile" })
+      .command({ name: "profile-select" })
       .getArgumentCompletions?.("");
     expect(completions?.map((completion) => completion.value)).toEqual(
       expect.arrayContaining([
@@ -1387,9 +1387,9 @@ describe("permissions extension", () => {
     await expect(
       harness.callTool({ toolName: "bash", input: { command: "git status" } }),
     ).rejects.toThrow("Harness must be started before callTool");
-    await expect(harness.runCommand({ name: "profile" })).rejects.toThrow(
-      "Harness must be started before runCommand",
-    );
+    await expect(
+      harness.runCommand({ name: "profile-select" }),
+    ).rejects.toThrow("Harness must be started before runCommand");
   });
 
   it("starts in the configured default profile and clears its status on shutdown", async () => {
@@ -1411,11 +1411,11 @@ describe("permissions extension", () => {
     );
   });
 
-  it("opens the picker, validates, autocompletes, and switches profiles through /profile", async () => {
+  it("opens the picker, validates, autocompletes, and switches profiles through /profile-select", async () => {
     const harness = createExtensionHarness();
     await harness.start();
 
-    await harness.runCommand({ name: "profile" });
+    await harness.runCommand({ name: "profile-select" });
     expect(harness.ui.custom).toHaveBeenCalledOnce();
     expect(harness.shortcuts.get("alt+g")?.description).toBe(
       "Search and switch permissions profiles",
@@ -1437,19 +1437,22 @@ describe("permissions extension", () => {
       ]),
     );
 
-    await harness.runCommand({ name: "profile", args: "missing" });
+    await harness.runCommand({ name: "profile-select", args: "missing" });
     expect(harness.ui.notify).toHaveBeenLastCalledWith(
       expect.stringContaining("Unknown profile 'missing'"),
       "error",
     );
 
-    await harness.runCommand({ name: "profile", args: "builtin:read-only" });
+    await harness.runCommand({
+      name: "profile-select",
+      args: "builtin:read-only",
+    });
     expect(harness.entries.at(-1)).toMatchObject({
       customType: "pi-guard-profile",
       data: { profile: "builtin:read-only" },
     });
     const completions = await harness
-      .command({ name: "profile" })
+      .command({ name: "profile-select" })
       .getArgumentCompletions?.("builtin:read");
     expect(completions?.map((completion) => completion.value)).toEqual([
       "builtin:read-only",
@@ -1715,7 +1718,7 @@ describe("permissions extension", () => {
     }
 
     for (const profile of ["builtin:read-only", "socrates"] as const) {
-      await harness.runCommand({ name: "profile", args: profile });
+      await harness.runCommand({ name: "profile-select", args: profile });
       const denied = await harness.callTool({
         toolName: "bash",
         input: { command: "cat .env" },
@@ -1732,7 +1735,10 @@ describe("permissions extension", () => {
     ).resolves.toMatchObject({ block: true });
 
     // Return to the default profile for safe-reader allow checks.
-    await harness.runCommand({ name: "profile", args: "builtin:default" });
+    await harness.runCommand({
+      name: "profile-select",
+      args: "builtin:default",
+    });
     for (const command of [
       "cat README.md",
       "sed -n '1,20p' README.md",
@@ -1790,7 +1796,10 @@ describe("permissions extension", () => {
       harness.callTool({ toolName: "edit", input: editInput }),
     ).resolves.toMatchObject({ block: true });
 
-    await harness.runCommand({ name: "profile", args: "read-secrets" });
+    await harness.runCommand({
+      name: "profile-select",
+      args: "read-secrets",
+    });
     await expect(
       harness.callToolWithoutPrompt({ toolName: "read", input: readInput }),
     ).resolves.toBeUndefined();
@@ -1798,7 +1807,10 @@ describe("permissions extension", () => {
       harness.callToolWithoutPrompt({ toolName: "edit", input: editInput }),
     ).resolves.toBeUndefined();
 
-    await harness.runCommand({ name: "profile", args: "scratch-review" });
+    await harness.runCommand({
+      name: "profile-select",
+      args: "scratch-review",
+    });
     await expect(
       harness.callToolWithoutPrompt({ toolName: "read", input: readInput }),
     ).resolves.toBeUndefined();
@@ -1887,7 +1899,10 @@ describe("permissions extension", () => {
     });
     expect(defaultCommit).toMatchObject({ block: true });
 
-    await harness.runCommand({ name: "profile", args: "address-comments" });
+    await harness.runCommand({
+      name: "profile-select",
+      args: "address-comments",
+    });
     await expect(
       harness.callToolWithoutPrompt({
         toolName: "bash",
@@ -1895,7 +1910,10 @@ describe("permissions extension", () => {
       }),
     ).resolves.toBeUndefined();
 
-    await harness.runCommand({ name: "profile", args: "review-tools" });
+    await harness.runCommand({
+      name: "profile-select",
+      args: "review-tools",
+    });
     await expect(
       harness.callToolWithoutPrompt({
         toolName: "bash",
@@ -2198,7 +2216,10 @@ describe("permissions extension", () => {
       await harness.start();
 
       harness.deactivateTool({ name: "grep" });
-      await harness.runCommand({ name: "profile", args: "builtin:read-only" });
+      await harness.runCommand({
+        name: "profile-select",
+        args: "builtin:read-only",
+      });
 
       expect(harness.getActiveTools()).toContain("grep");
     });

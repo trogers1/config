@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   loadRawProfileConfig,
   resolveProfileConfigPath,
@@ -27,7 +27,7 @@ import {
 installProfileUpdateFixture({});
 
 describe("profile updates through the public extension surface", () => {
-  it("deduplicates conflicting-profile warnings by source revision and runtime", async () => {
+  it("adds one active-profile conflict reminder per config revision at useful lifecycle boundaries", async () => {
     const fixturePattern = "echo fixture-conflict-warning";
     const conflictingConfig = (pattern: string) =>
       ({
@@ -50,54 +50,104 @@ describe("profile updates through the public extension surface", () => {
     });
     process.env.PI_GUARD_PROFILE_CONFIG = configPath;
 
-    // The extension loads its first profile snapshot during registration, so
-    // install the spy before constructing the production harness/runtime.
-    const warnSpy = vi
-      .spyOn(console, "warn")
-      .mockImplementation(() => undefined);
-    try {
-      const running = createExtensionHarness({ hasUI: false });
-      await running.start();
-      expect(warnSpy).toHaveBeenCalledTimes(1);
-
-      // Unchanged session lifecycle and guarded tool calls share the adopted
-      // source revision and must not repeat its conflict diagnostic.
-      await running.start({ reason: "reload" });
-      await running.callTool({
-        toolName: "bash",
-        input: { command: fixturePattern },
-      });
-      await running.callTool({
-        toolName: "bash",
-        input: { command: fixturePattern },
-      });
-      expect(warnSpy).toHaveBeenCalledTimes(1);
-
-      const revisedPattern = `${fixturePattern}-revised`;
-      replaceConfig({
-        configPath,
-        config: conflictingConfig(revisedPattern),
-      });
-      await running.callTool({
-        toolName: "bash",
-        input: { command: revisedPattern },
-      });
-      expect(warnSpy).toHaveBeenCalledTimes(2);
-      expect(warnSpy).toHaveBeenLastCalledWith(
-        expect.stringContaining(revisedPattern),
+    const running = createExtensionHarness();
+    await running.start({ reason: "new" });
+    const reminders = () =>
+      running.entries.filter(
+        (entry) =>
+          entry.type === "custom" &&
+          entry.customType === "pi-guard-profile-conflict-reminder",
       );
 
-      // Deduplication is runtime-local: a new extension registration warns
-      // once for the same current persisted source.
-      const freshRuntime = createExtensionHarness({ hasUI: false });
-      await freshRuntime.start();
-      expect(warnSpy).toHaveBeenCalledTimes(3);
-      expect(warnSpy).toHaveBeenLastCalledWith(
-        expect.stringContaining(revisedPattern),
+    expect(reminders()).toHaveLength(1);
+    expect(reminders()[0]).toMatchObject({
+      data: {
+        profile: "conflict-warning-fixture",
+        reason: "session-start",
+      },
+    });
+
+    await running.runCommand("profile-warnings");
+    expect(running.ui.notify).toHaveBeenLastCalledWith(
+      expect.stringContaining(fixturePattern),
+      "warning",
+    );
+
+    // Ordinary work and a reload do not nag again for the same revision.
+    await running.start({ reason: "reload" });
+    await running.callTool({
+      toolName: "bash",
+      input: { command: fixturePattern },
+    });
+    expect(reminders()).toHaveLength(1);
+
+    // An externally changed active profile earns exactly one new reminder.
+    const revisedPattern = `${fixturePattern}-revised`;
+    replaceConfig({
+      configPath,
+      config: conflictingConfig(revisedPattern),
+    });
+    await running.callTool({
+      toolName: "bash",
+      input: { command: revisedPattern },
+    });
+    expect(reminders()).toHaveLength(2);
+    expect(reminders()[1]).toMatchObject({
+      data: {
+        profile: "conflict-warning-fixture",
+        reason: "configuration-changed",
+      },
+    });
+
+    await running.callTool({
+      toolName: "bash",
+      input: { command: revisedPattern },
+    });
+    expect(reminders()).toHaveLength(2);
+  });
+
+  it("reminds once when an explicitly selected profile has conflicts", async () => {
+    const configPath = writeConfig({
+      config: {
+        defaultProfile: "safe",
+        profiles: {
+          safe: {
+            description: "A conflict-free profile.",
+            extends: ["builtin:default"],
+          },
+          conflicted: {
+            description: "A deliberately ordered profile.",
+            extends: ["builtin:default"],
+            tools: {
+              bash: [
+                { pattern: "echo precedence", decision: "allow" },
+                { pattern: "echo precedence", decision: "deny" },
+              ],
+            },
+          },
+        },
+      },
+    });
+    process.env.PI_GUARD_PROFILE_CONFIG = configPath;
+    const running = createExtensionHarness();
+    await running.start({ reason: "new" });
+
+    const reminders = () =>
+      running.entries.filter(
+        (entry) =>
+          entry.type === "custom" &&
+          entry.customType === "pi-guard-profile-conflict-reminder",
       );
-    } finally {
-      warnSpy.mockRestore();
-    }
+    expect(reminders()).toHaveLength(0);
+
+    await running.runCommand("profile-select", "conflicted");
+    expect(reminders()).toHaveLength(1);
+    expect(reminders()[0]).toMatchObject({
+      data: { profile: "conflicted", reason: "activated" },
+    });
+
+    await running.runCommand("profile-select", "conflicted");
+    expect(reminders()).toHaveLength(1);
   });
 
   it("discards a stale picker answer when a newer allow makes the operation effective", async () => {
@@ -435,7 +485,7 @@ describe("profile updates through the public extension surface", () => {
     process.env.PI_GUARD_PROFILE_CONFIG = configPath;
     const harness = createExtensionHarness({ hasUI: false, contextCwd: cwd });
     await harness.start();
-    await harness.runCommand("profile", "explicit-profile");
+    await harness.runCommand("profile-select", "explicit-profile");
 
     for (let operation = 0; operation < 3; operation++) {
       await harness.callToolWithoutPrompt({
@@ -480,7 +530,7 @@ describe("profile updates through the public extension surface", () => {
       contextCwd: cwd,
     });
     await harness.start();
-    await harness.runCommand("profile", "active-profile");
+    await harness.runCommand("profile-select", "active-profile");
 
     const pending = harness.callTool({ toolName: "bash", input: { command } });
     (await harness.ui.waitForPermissionChoice()).choose(saveRulesChoice);
@@ -529,7 +579,7 @@ describe("profile updates through the public extension surface", () => {
       contextCwd: cwd,
     });
     await harness.start();
-    await harness.runCommand("profile", "active-profile");
+    await harness.runCommand("profile-select", "active-profile");
     const statusCountAfterActivation = harness.ui.setStatus.mock.calls.length;
 
     let releaseCacheTransition: (() => void) | undefined;

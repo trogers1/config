@@ -2226,6 +2226,9 @@ export function validateProfileAuthoringCommit({
       fallback,
       configPath,
       source: updated,
+      // Conflicts can be intentional precedence composition. The extension
+      // adds a durable, active-profile reminder after the save succeeds.
+      lintConflicts: false,
     });
   } catch (error) {
     if (!(error instanceof ProfileConfigLoadError) || !error.instancePath)

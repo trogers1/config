@@ -432,7 +432,10 @@ describe("sandbox full-harness OS acceptance", () => {
           }),
         ).not.toBe(0);
 
-        await harness.runCommand({ name: "profile", args: "replacement" });
+        await harness.runCommand({
+          name: "profile-select",
+          args: "replacement",
+        });
         expect(
           exitCodeFrom({
             result: await harness.executeTool({
@@ -442,7 +445,10 @@ describe("sandbox full-harness OS acceptance", () => {
           }),
         ).toBe(0);
 
-        await harness.runCommand({ name: "profile", args: "disabled" });
+        await harness.runCommand({
+          name: "profile-select",
+          args: "disabled",
+        });
         expect(
           exitCodeFrom({
             result: await harness.executeTool({

@@ -25,7 +25,7 @@ release when repeatable upgrades matter:
 pi install npm:@trogers1/pi-guard@0.1.0
 ```
 
-Restart Pi after installing, then use `/profile` to inspect and select a
+Restart Pi after installing, then use `/profile-select` to inspect and select a
 posture. The shipped `builtin:default` profile is selected when no custom
 configuration chooses another profile. Your optional user configuration lives
 at `~/.pi/agent/pi-guard/profiles.jsonc`; start with this minimal example:
@@ -144,10 +144,11 @@ obvious (`deps-mutator`, `git-full`). Profiles may define optional `color`,
 
 ## Commands
 
-- `/profile` opens a fuzzy-searchable profile picker. Type to search profile names and descriptions; use ↑/↓ and Return to select.
+- `/profile-select` opens a fuzzy-searchable profile picker. Type to search profile names and descriptions; use ↑/↓ and Return to select.
 - `Alt+G` opens the same picker without leaving a draft prompt. `Ctrl+Shift+I` is its macOS-safe fallback; `Ctrl+G` remains Pi's external-editor shortcut, `Ctrl+Shift+G` navigates to the previous fullscreen transcript search result, and `Ctrl+Shift+P` cycles models.
 - The remaining no-argument commands also have conflict-free `Ctrl+Shift` aliases: `A` `/profile-add`, `R` `/read-only`, `B` `/sandbox`, `N` `/sandbox-on`, `D` `/sandbox-off`, `X` `/sandbox-on-force`, `C` `/socrates`, and `Z` `/socrates-off`. `Ctrl+Shift+E` starts `/permissions explain ` in the editor so you can provide the required tool and input.
-- `/profile <name>` switches to a profile.
+- `/profile-select <name>` switches to a profile.
+- `/profile-warnings` shows detailed rule-precedence conflicts. pi-guard adds a one-time reminder when you start a new session with, activate, save, or externally reload a conflicted active profile; conflicts can be intentional composition.
 - `/profile-add` creates a custom profile through one overview with ten sections: General, Prompt, Composition, Transforms, Bash, Read, Write, Protected, Sandbox, and Startup Directory globs. It validates the complete raw draft, reports typed errors on every affected section, and saves and activates the profile atomically. Sandbox capability expansion and automatic directory activation each require a second explicit confirmation.
 - `/profile-edit` uses the same ten-section wizard for the active user-owned profile. It edits the exact raw declaration without materializing inherited values, including full identity rename, Prompt inheritance/disable/file modes, ordered composition and transforms, rules, Sandbox, and startup globs. Renames update exact `defaultProfile` and custom `extends` references while preserving JSONC comments and declaration order.
 - In `/profile-add` and `/profile-edit`, Escape is local Back and retains section changes; Ctrl+C aborts the complete command without writing. A successful explicit save activates the saved profile immediately unless `PI_SUBAGENT_PROFILE` is authoritative.

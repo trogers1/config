@@ -67,7 +67,7 @@ export function filterProfiles(
     .map((result) => result.item);
 }
 
-/** Focusable fuzzy-search picker used by the /profile command and shortcut. */
+/** Focusable fuzzy-search picker used by /profile-select and its shortcuts. */
 export class ProfilePicker implements Component, Focusable {
   private _focused = false;
   private readonly input = new Input();
