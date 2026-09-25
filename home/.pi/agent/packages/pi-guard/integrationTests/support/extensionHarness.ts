@@ -9,6 +9,7 @@ import {
   type ExtensionHandler,
   type RegisteredCommand,
   type SessionEntry as SdkSessionEntry,
+  type SessionManager,
   type SessionShutdownEvent,
   type SessionStartEvent,
   type ToolCallEvent,
@@ -257,6 +258,7 @@ export function createExtensionHarness(
     selectResults?: Array<string | undefined>;
     customResults?: Array<unknown>;
     entries?: SessionEntryInput[];
+    sessionManager?: SessionManager;
     registeredTools?: string[];
     activeTools?: string[];
     /**
@@ -281,6 +283,9 @@ export function createExtensionHarness(
     interactionScript?: ScriptedInteraction[];
   } = {},
 ) {
+  if (options.entries !== undefined && options.sessionManager !== undefined)
+    throw new Error("Specify entries or sessionManager, not both");
+
   const contextCwd = options.contextCwd ?? process.cwd();
   const builtInToolNames = [
     "read",
@@ -819,9 +824,11 @@ export function createExtensionHarness(
     | "setWorkingVisible"
   >;
 
-  const sessionManager = {
-    getEntries: () => entries,
-  } satisfies Pick<ExtensionContext["sessionManager"], "getEntries">;
+  const sessionManager =
+    options.sessionManager ??
+    ({
+      getEntries: () => entries,
+    } satisfies Pick<ExtensionContext["sessionManager"], "getEntries">);
 
   const context = {
     cwd: contextCwd,
@@ -868,6 +875,10 @@ export function createExtensionHarness(
       registeredToolNames.add(tool.name);
     }) as ExtensionAPI["registerTool"],
     appendEntry(customType: string, data: unknown) {
+      if (options.sessionManager) {
+        options.sessionManager.appendCustomEntry(customType, data);
+        return;
+      }
       entries.push(
         createCustomEntry({ customType, data, sequence: nextEntryId++ }),
       );
@@ -1337,7 +1348,9 @@ export function createExtensionHarness(
     commands,
     shortcuts,
     context,
-    entries,
+    get entries() {
+      return sessionManager.getEntries();
+    },
     errors,
     ui: {
       ...ui,

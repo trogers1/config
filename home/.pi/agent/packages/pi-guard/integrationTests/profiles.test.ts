@@ -1,11 +1,28 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  ExtensionRunner,
+  ModelRegistry,
+  ModelRuntime,
+  SessionManager,
+  createExtensionRuntime,
+  type ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  onTestFinished,
+  vi,
+} from "vitest";
 import {
   createExtensionHarness,
   lastCallArgument,
 } from "./support/extensionHarness";
+import { profileDraftDiscardTitle } from "../modules/profileAuthoringPresentation";
 import { defaultProtectedPathRules } from "../modules/protectedPaths";
 
 const defaultProtectedDenyPatterns = defaultProtectedPathRules
@@ -33,6 +50,60 @@ function writeTempConfig(contents: string): string {
   const configPath = path.join(directory, "profiles.jsonc");
   fs.writeFileSync(configPath, contents);
   return configPath;
+}
+
+type ShortcutHarnessOptions = Omit<
+  NonNullable<Parameters<typeof createExtensionHarness>[0]>,
+  "entries" | "sessionManager"
+>;
+
+async function createShortcutHarness({
+  options,
+}: {
+  readonly options: ShortcutHarnessOptions;
+}) {
+  const directory = fs.mkdtempSync(
+    path.join(os.tmpdir(), "pi-guard-shortcut-"),
+  );
+  temporaryDirectories.push(directory);
+  const cwd = options.contextCwd ?? process.cwd();
+  const modelRuntime = await ModelRuntime.create({
+    authPath: path.join(directory, "auth.json"),
+    modelsPath: null,
+    refreshOnCreate: false,
+    allowModelNetwork: false,
+  });
+  const sessionManager = SessionManager.inMemory(cwd);
+  const harness = createExtensionHarness({
+    ...options,
+    contextCwd: cwd,
+    sessionManager,
+  });
+  const runtime = createExtensionRuntime();
+  runtime.getThinkingLevel = () => "off";
+  const runner = new ExtensionRunner(
+    [],
+    runtime,
+    cwd,
+    sessionManager,
+    new ModelRegistry(modelRuntime),
+  );
+  const ui = {
+    ...runner.getUIContext(),
+    ...harness.context.ui,
+  } satisfies ExtensionContext["ui"];
+  runner.setUIContext(ui, "tui");
+  const shortcutContext = runner.createContext() satisfies ExtensionContext;
+
+  onTestFinished(async () => {
+    try {
+      await harness.dispose();
+    } finally {
+      runner.invalidate("Shortcut test fixture disposed");
+    }
+  });
+
+  return { harness, shortcutContext };
 }
 
 describe("permissions extension", () => {
@@ -1463,6 +1534,168 @@ describe("permissions extension", () => {
     expect(
       lastCallArgument({ mock: harness.ui.setStatus, index: 1 }),
     ).toContain("builtin:read-only");
+  });
+
+  it("keeps synchronous profile completions stale until a guarded refresh adopts a changed source", async () => {
+    const profileSource = ({ name }: { readonly name: string }) =>
+      JSON.stringify({
+        defaultProfile: name,
+        profiles: {
+          [name]: {
+            description: `Completion profile ${name}.`,
+            extends: ["builtin:default"],
+          },
+        },
+      });
+    const configPath = writeTempConfig(profileSource({ name: "first" }));
+    vi.stubEnv("PI_GUARD_PROFILE_CONFIG", configPath);
+    const harness = createExtensionHarness();
+    await harness.start();
+    fs.writeFileSync(configPath, profileSource({ name: "second" }));
+    const read = vi.spyOn(fs, "readFileSync");
+    read.mockClear();
+
+    const stale = await harness
+      .command({ name: "profile-select" })
+      .getArgumentCompletions?.("");
+    expect(stale?.map((completion) => completion.value)).toContain("first");
+    expect(stale?.map((completion) => completion.value)).not.toContain(
+      "second",
+    );
+    expect(read).not.toHaveBeenCalled();
+
+    await harness.callToolWithoutPrompt({
+      toolName: "bash",
+      input: { command: "git status --short" },
+    });
+    const adopted = await harness
+      .command({ name: "profile-select" })
+      .getArgumentCompletions?.("");
+    expect(adopted?.map((completion) => completion.value)).toContain("second");
+    expect(adopted?.map((completion) => completion.value)).not.toContain(
+      "first",
+    );
+  });
+
+  it("opens and cancels profile authoring from its shortcut without mutations", async () => {
+    const configSource = JSON.stringify({
+      defaultProfile: "authoring-base",
+      profiles: {
+        "authoring-base": {
+          description: "Base profile for authoring shortcut cancellation.",
+          extends: ["builtin:default"],
+        },
+      },
+    });
+    const configPath = writeTempConfig(configSource);
+    vi.stubEnv("PI_GUARD_PROFILE_CONFIG", configPath);
+    const { harness, shortcutContext } = await createShortcutHarness({
+      options: {
+        interactionScript: [
+          { kind: "custom", response: null },
+          {
+            kind: "confirm",
+            title: profileDraftDiscardTitle,
+            message:
+              "No profile changes have been written. Discard the complete draft?",
+            response: true,
+          },
+        ],
+      },
+    });
+    await harness.start();
+    const initialEntries = [...harness.entries];
+    const shortcut = harness.shortcuts.get("ctrl+shift+a");
+    if (!shortcut) throw new Error("missing profile-add shortcut");
+
+    await shortcut.handler(shortcutContext);
+    harness.assertInteractionsDrained();
+
+    expect(fs.readFileSync(configPath, "utf8")).toBe(configSource);
+    expect(harness.entries).toEqual(initialEntries);
+    expect(harness.errors).toEqual([]);
+  });
+
+  it("runs read-only and Socrates shortcuts directly without synthetic slash-command messages", async () => {
+    const configPath = writeTempConfig(
+      JSON.stringify({
+        defaultProfile: "shortcut-base",
+        profiles: {
+          "shortcut-base": {
+            description: "Base profile for direct shortcut activation.",
+            extends: ["builtin:default"],
+          },
+          socrates: {
+            description: "Socrates profile for direct shortcut activation.",
+            extends: ["builtin:default"],
+          },
+        },
+      }),
+    );
+    vi.stubEnv("PI_GUARD_PROFILE_CONFIG", configPath);
+    const { harness, shortcutContext } = await createShortcutHarness({
+      options: {},
+    });
+    await harness.start();
+    const shortcuts = ["ctrl+shift+r", "ctrl+shift+c", "ctrl+shift+z"] as const;
+
+    for (const shortcut of shortcuts) {
+      const registration = harness.shortcuts.get(shortcut);
+      if (!registration) throw new Error(`missing shortcut ${shortcut}`);
+      await registration.handler(shortcutContext);
+    }
+
+    const profileEntryData = harness.entries.flatMap((entry) =>
+      entry.type === "custom" && entry.customType === "pi-guard-profile"
+        ? [entry.data]
+        : [],
+    );
+    expect(profileEntryData.slice(-3)).toEqual([
+      expect.objectContaining({ profile: "builtin:read-only" }),
+      expect.objectContaining({ profile: "socrates" }),
+      expect.objectContaining({ profile: "shortcut-base" }),
+    ]);
+    expect(shortcutContext.sessionManager.getEntries()).toEqual(
+      harness.entries,
+    );
+    expect(harness.errors).toEqual([]);
+  });
+
+  it("runs sandbox shortcuts directly without synthetic slash-command messages", async () => {
+    const { harness, shortcutContext } = await createShortcutHarness({
+      options: {},
+    });
+    await harness.start();
+    const shortcuts = [
+      "ctrl+shift+b",
+      "ctrl+shift+n",
+      "ctrl+shift+d",
+      "ctrl+shift+x",
+    ] as const;
+
+    for (const shortcut of shortcuts) {
+      const registration = harness.shortcuts.get(shortcut);
+      if (!registration) throw new Error(`missing shortcut ${shortcut}`);
+      await registration.handler(shortcutContext);
+    }
+
+    const sandboxEntryData = harness.entries.flatMap((entry) =>
+      entry.type === "custom" && entry.customType === "pi-guard-sandbox"
+        ? [entry.data]
+        : [],
+    );
+    expect(sandboxEntryData.slice(-3)).toEqual([
+      expect.objectContaining({ override: "inherit" }),
+      expect.objectContaining({ override: "disabled" }),
+      expect.objectContaining({ override: "enabled" }),
+    ]);
+    expect(shortcutContext.sessionManager.getEntries()).toEqual(
+      harness.entries,
+    );
+    expect(harness.ui.notify).toHaveBeenCalledWith(
+      expect.stringContaining("Sandbox active"),
+      "info",
+    );
   });
 
   it("restores the persisted read-only profile and its tool policy", async () => {

@@ -422,16 +422,6 @@ export default function (pi: GuardExtensionAPI) {
 
   const profileNames = () => typedKeys(policyConfig.profiles);
 
-  // Pi's completion callback is synchronous. Refreshing this independent
-  // snapshot is synchronous too, so completions never advertise names from a
-  // stale adopted policy; failures deliberately expose no config-derived names.
-  function freshProfileNames(): readonly string[] {
-    const snapshot = profileStoreSnapshot({
-      state: refreshProfileStore({ store: profileStore }),
-    });
-    return snapshot ? typedKeys(snapshot.config.profiles) : [];
-  }
-
   function profileForDirectory(cwd: string): ProfileName | undefined {
     return matchDirectoryGlobs(cwd, directoryGlobDeclarations)?.profile;
   }
@@ -1822,10 +1812,17 @@ The permissions gate remains loaded and will fail closed until the profile is co
     },
   });
 
+  async function createProfile({
+    ctx,
+  }: {
+    readonly ctx: ExtensionContext;
+  }): Promise<void> {
+    await runProfileAuthoringCommand({ mode: "create", ctx });
+  }
+
   pi.registerCommand("profile-add", {
     description: "Create and activate a custom permissions profile",
-    handler: async (_args, ctx) =>
-      await runProfileAuthoringCommand({ mode: "create", ctx }),
+    handler: async (_args, ctx) => await createProfile({ ctx }),
   });
   pi.registerCommand("profile-edit", {
     description: "Edit raw declarations on the active custom profile",
@@ -1836,7 +1833,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
   pi.registerCommand("profile-select", {
     description: "Show or switch the active permissions profile",
     getArgumentCompletions: (prefix) =>
-      freshProfileNames()
+      profileNames()
         .filter((profile) => profile.startsWith(prefix))
         .map((profile) => ({
           value: profile,
@@ -1883,39 +1880,43 @@ The permissions gate remains loaded and will fail closed until the profile is co
     });
   }
 
-  /** Run a no-argument slash command through Pi's ordinary command dispatcher. */
-  const runCommandShortcut = (command: string) => () => {
-    pi.sendUserMessage(`/${command}`);
-  };
-
   pi.registerShortcut("ctrl+shift+a", {
     description: "Create and activate a custom permissions profile",
-    handler: runCommandShortcut("profile-add"),
+    handler: async (ctx) => await createProfile({ ctx }),
   });
+
+  const readOnlyProfileName = "builtin:read-only";
+  async function enableReadOnly({
+    ctx,
+  }: {
+    readonly ctx: ExtensionContext;
+  }): Promise<void> {
+    if (!(await refreshOrPreserveConfiguration({ ctx }))) return;
+    if (!policyConfig.profiles[readOnlyProfileName]) {
+      ctx.ui.notify("No 'builtin:read-only' profile is configured", "error");
+      return;
+    }
+    await activateProfile({
+      profile: readOnlyProfileName,
+      ctx,
+      message: "Read-only profile enabled",
+    });
+  }
 
   pi.registerCommand("read-only", {
     description: "Switch to the read-only permissions profile",
-    handler: async (_args, ctx) => {
-      if (!(await refreshOrPreserveConfiguration({ ctx }))) return;
-      const readOnlyName = "builtin:read-only";
-      if (!policyConfig.profiles[readOnlyName]) {
-        ctx.ui.notify("No 'builtin:read-only' profile is configured", "error");
-        return;
-      }
-
-      await activateProfile({
-        profile: readOnlyName,
-        ctx,
-        message: "Read-only profile enabled",
-      });
-    },
+    handler: async (_args, ctx) => await enableReadOnly({ ctx }),
   });
 
-  async function setSandboxOverride(
-    override: SandboxOverride,
-    ctx: ExtensionContext,
-    message: string,
-  ): Promise<void> {
+  async function setSandboxOverride({
+    override,
+    ctx,
+    message,
+  }: {
+    readonly override: SandboxOverride;
+    readonly ctx: ExtensionContext;
+    readonly message: string;
+  }): Promise<void> {
     sandboxOverride = override;
     pi.appendEntry(sandboxEntryType, { override, timestamp: Date.now() });
     await clearSandboxCaches();
@@ -1923,59 +1924,81 @@ The permissions gate remains loaded and will fail closed until the profile is co
     ctx.ui.notify(message, "info");
   }
 
+  async function changeSandboxOverride({
+    ctx,
+    override,
+  }: {
+    readonly ctx: ExtensionContext;
+    readonly override: SandboxOverride;
+  }): Promise<void> {
+    if (!(await refreshOrPreserveConfiguration({ ctx }))) return;
+    await setSandboxOverride({
+      override,
+      ctx,
+      message: sandboxOverrideOperations[override].message,
+    });
+  }
+
+  async function showSandboxStatus({
+    ctx,
+  }: {
+    readonly ctx: ExtensionContext;
+  }): Promise<void> {
+    if (!(await refreshOrPreserveConfiguration({ ctx }))) return;
+    const resolution = await resolveActiveSandbox(ctx.cwd ?? startupCwd);
+
+    if (resolution.kind === "none") {
+      ctx.ui.notify(`Sandbox: off for ${activeProfile}.`, "info");
+      return;
+    }
+
+    if (resolution.kind === "unavailable") {
+      ctx.ui.notify(
+        `Sandbox unavailable for ${activeProfile}: ${resolution.reason}`,
+        resolution.onUnavailable === "warn" ? "warning" : "error",
+      );
+      return;
+    }
+
+    ctx.ui.notify(formatSandboxReport(resolution), "info");
+  }
+
+  const sandboxOverrideOperations = {
+    inherit: {
+      description: "Use the active profile's Bash sandbox configuration",
+      message: "Bash sandboxing now follows the active profile 🔐",
+    },
+    disabled: {
+      description: "Disable Bash sandboxing for this session",
+      message: "Bash sandboxing disabled ❌",
+    },
+    enabled: {
+      description: "Force a no-network Bash sandbox for this session",
+      message: "Bash sandboxing forced on with network denied 🔐",
+    },
+  } as const satisfies Record<
+    SandboxOverride,
+    { readonly description: string; readonly message: string }
+  >;
+
   pi.registerCommand("sandbox-on", {
-    description: "Use the active profile's Bash sandbox configuration",
-    handler: async (_args, ctx) => {
-      if (!(await refreshOrPreserveConfiguration({ ctx }))) return;
-      await setSandboxOverride(
-        "inherit",
-        ctx,
-        "Bash sandboxing now follows the active profile 🔐",
-      );
-    },
+    description: sandboxOverrideOperations.inherit.description,
+    handler: async (_args, ctx) =>
+      await changeSandboxOverride({ ctx, override: "inherit" }),
   });
-
   pi.registerCommand("sandbox-off", {
-    description: "Disable Bash sandboxing for this session",
-    handler: async (_args, ctx) => {
-      if (!(await refreshOrPreserveConfiguration({ ctx }))) return;
-      await setSandboxOverride("disabled", ctx, "Bash sandboxing disabled ❌");
-    },
+    description: sandboxOverrideOperations.disabled.description,
+    handler: async (_args, ctx) =>
+      await changeSandboxOverride({ ctx, override: "disabled" }),
   });
-
   pi.registerCommand("sandbox-on-force", {
-    description: "Force a no-network Bash sandbox for this session",
-    handler: async (_args, ctx) => {
-      if (!(await refreshOrPreserveConfiguration({ ctx }))) return;
-      await setSandboxOverride(
-        "enabled",
-        ctx,
-        "Bash sandboxing forced on with network denied 🔐",
-      );
-    },
+    description: sandboxOverrideOperations.enabled.description,
+    handler: async (_args, ctx) =>
+      await changeSandboxOverride({ ctx, override: "enabled" }),
   });
-
   pi.registerCommand("sandbox", {
     description: "Show the active sandbox posture",
-    handler: async (_args, ctx) => {
-      if (!(await refreshOrPreserveConfiguration({ ctx }))) return;
-      const resolution = await resolveActiveSandbox(ctx.cwd ?? startupCwd);
-
-      if (resolution.kind === "none") {
-        ctx.ui.notify(`Sandbox: off for ${activeProfile}.`, "info");
-        return;
-      }
-
-      if (resolution.kind === "unavailable") {
-        ctx.ui.notify(
-          `Sandbox unavailable for ${activeProfile}: ${resolution.reason}`,
-          resolution.onUnavailable === "warn" ? "warning" : "error",
-        );
-        return;
-      }
-
-      ctx.ui.notify(formatSandboxReport(resolution), "info");
-    },
+    handler: async (_args, ctx) => await showSandboxStatus({ ctx }),
   });
 
   pi.registerTool({
@@ -2032,19 +2055,22 @@ The permissions gate remains loaded and will fail closed until the profile is co
   });
   pi.registerShortcut("ctrl+shift+b", {
     description: "Show the active sandbox posture",
-    handler: runCommandShortcut("sandbox"),
+    handler: async (ctx) => await showSandboxStatus({ ctx }),
   });
   pi.registerShortcut("ctrl+shift+n", {
-    description: "Use the active profile's Bash sandbox configuration",
-    handler: runCommandShortcut("sandbox-on"),
+    description: sandboxOverrideOperations.inherit.description,
+    handler: async (ctx) =>
+      await changeSandboxOverride({ ctx, override: "inherit" }),
   });
   pi.registerShortcut("ctrl+shift+d", {
-    description: "Disable Bash sandboxing for this session",
-    handler: runCommandShortcut("sandbox-off"),
+    description: sandboxOverrideOperations.disabled.description,
+    handler: async (ctx) =>
+      await changeSandboxOverride({ ctx, override: "disabled" }),
   });
   pi.registerShortcut("ctrl+shift+x", {
-    description: "Force a no-network Bash sandbox for this session",
-    handler: runCommandShortcut("sandbox-on-force"),
+    description: sandboxOverrideOperations.enabled.description,
+    handler: async (ctx) =>
+      await changeSandboxOverride({ ctx, override: "enabled" }),
   });
 
   pi.registerCommand("permissions", {
@@ -2139,46 +2165,56 @@ The permissions gate remains loaded and will fail closed until the profile is co
     },
   });
 
+  async function enableSocrates({
+    ctx,
+  }: {
+    readonly ctx: ExtensionContext;
+  }): Promise<void> {
+    if (!(await refreshOrPreserveConfiguration({ ctx }))) return;
+    if (!policyConfig.profiles.socrates) {
+      ctx.ui.notify("No 'socrates' profile is configured", "error");
+      return;
+    }
+    await activateProfile({
+      profile: "socrates",
+      ctx,
+      message: "Socrates profile enabled",
+    });
+  }
+
+  async function disableSocrates({
+    ctx,
+  }: {
+    readonly ctx: ExtensionContext;
+  }): Promise<void> {
+    if (!(await refreshOrPreserveConfiguration({ ctx }))) return;
+    await activateProfile({
+      profile: policyConfig.defaultProfile,
+      ctx,
+      message: `Socrates profile disabled; active profile: ${policyConfig.defaultProfile}`,
+    });
+  }
+
   pi.registerCommand("socrates", {
     description: "Switch to the Socrates coaching profile",
-    handler: async (_args, ctx) => {
-      if (!(await refreshOrPreserveConfiguration({ ctx }))) return;
-      if (!policyConfig.profiles.socrates) {
-        ctx.ui.notify("No 'socrates' profile is configured", "error");
-        return;
-      }
-
-      await activateProfile({
-        profile: "socrates",
-        ctx,
-        message: "Socrates profile enabled",
-      });
-    },
+    handler: async (_args, ctx) => await enableSocrates({ ctx }),
   });
-
   pi.registerCommand("socrates-off", {
     description: "Switch back to the configured default permissions profile",
-    handler: async (_args, ctx) => {
-      if (!(await refreshOrPreserveConfiguration({ ctx }))) return;
-      await activateProfile({
-        profile: policyConfig.defaultProfile,
-        ctx,
-        message: `Socrates profile disabled; active profile: ${policyConfig.defaultProfile}`,
-      });
-    },
+    handler: async (_args, ctx) => await disableSocrates({ ctx }),
   });
 
   pi.registerShortcut("ctrl+shift+c", {
     description: "Switch to the Socrates coaching profile",
-    handler: runCommandShortcut("socrates"),
+    handler: async (ctx) => await enableSocrates({ ctx }),
   });
   pi.registerShortcut("ctrl+shift+z", {
     description: "Switch back to the configured default permissions profile",
-    handler: runCommandShortcut("socrates-off"),
+    handler: async (ctx) => await disableSocrates({ ctx }),
   });
   pi.registerShortcut("ctrl+shift+r", {
     description: "Switch to the read-only permissions profile",
-    handler: runCommandShortcut("read-only"),
+    handler: async (ctx) => await enableReadOnly({ ctx }),
   });
 
   pi.on("before_agent_start", async (event, ctx) => {
