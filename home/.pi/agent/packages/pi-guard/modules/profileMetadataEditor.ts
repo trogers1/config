@@ -21,10 +21,7 @@ import {
   type PathArrayAuthoring,
   type RawSandboxAuthoring,
 } from "./profileAuthoring";
-import {
-  composeSandboxDeclarations,
-  type SandboxConfigOverride,
-} from "./policyHelpers";
+import type { SandboxConfigOverride } from "./policyHelpers";
 import {
   metadataSectionPresentation,
   profileAuthoringSelectedRowMarker,
@@ -415,7 +412,6 @@ export async function editSandboxDeclaration({
     custom,
     factory: (tui, theme, _keys, done) => {
       let selected = 0;
-      let error: string | undefined;
       const rowCount = () =>
         draft.mode === "customize"
           ? 1 + scalarNames.length + overwritePathArrayNames.length
@@ -525,7 +521,6 @@ export async function editSandboxDeclaration({
               }
             });
           }
-          if (error) lines.push(theme.fg("error", `Invalid: ${error}`));
           lines.push(
             theme.fg(
               "warning",
@@ -556,27 +551,9 @@ export async function editSandboxDeclaration({
                   : draft.mode === "customize"
                     ? { mode: "disabled" as const }
                     : { mode: "inherit" as const };
-              // A customization that merely inherits a restrictive enabled
-              // parent is not actionable and can accidentally normalize its
-              // raw declaration. Require network before entering Customize.
-              const effective = composeSandboxDeclarations(
-                resolvedParent,
-                serializeSandboxAuthoring({ value: next }),
-              );
-              if (
-                next.mode === "customize" &&
-                effective !== false &&
-                effective !== undefined &&
-                effective.network !== "allow"
-              ) {
-                error =
-                  "Customize requires an effective enabled sandbox with network access.";
-              } else {
-                draft = next;
-                error = undefined;
-                rebuildInputs();
-                selected = Math.min(selected, rowCount() - 1);
-              }
+              draft = next;
+              rebuildInputs();
+              selected = Math.min(selected, rowCount() - 1);
             } else if (
               draft.mode === "customize" &&
               selected <= scalarNames.length

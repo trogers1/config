@@ -342,11 +342,14 @@ describe("profile metadata section editors", () => {
     modal.press("Enter");
     await expect(pending).resolves.toMatchObject({
       action: "save",
-      draft: { mode: "inherit" },
+      draft: {
+        mode: "customize",
+        network: { mode: "omitted" },
+      },
     });
   });
 
-  it("blocks Customize when the effective sandbox lacks network", async () => {
+  it("allows Customize to override a restrictive inherited network setting", async () => {
     const harness = createExtensionHarness({ interactiveUi: true });
     const pending = editSandboxDeclaration({
       ctx: harness.context,
@@ -356,13 +359,17 @@ describe("profile metadata section editors", () => {
     });
     const modal = await harness.ui.waitForCustomModal();
     modal.press("Tab");
-    expect(modal.render().join("\n")).toContain(
-      "Customize requires an effective enabled sandbox with network access.",
-    );
-    modal.press("Escape");
-    await expect(pending).resolves.toEqual({
-      action: "back",
-      draft: { mode: "inherit" },
+    expect(modal.render().join("\n")).toContain("Mode: customize");
+    modal.press("ArrowDown");
+    modal.press("Tab");
+    modal.press("ArrowRight");
+    modal.press("Enter");
+    await expect(pending).resolves.toMatchObject({
+      action: "save",
+      draft: {
+        mode: "customize",
+        network: { mode: "local", value: "allow" },
+      },
     });
   });
 

@@ -1023,6 +1023,59 @@ describe("/profile-edit public command", () => {
     );
   });
 
+  it("lets an inherited restrictive sandbox enter Customize and override its network behavior", async () => {
+    const desiredNetwork = "allow";
+    const targetProfile = "example-profile-committer-deny-asks";
+    const configPath = writeConfig({
+      defaultProfile: targetProfile,
+      profiles: {
+        "example-profile": {
+          description: "Restrictive example parent.",
+          extends: ["builtin:default"],
+          sandbox: { network: "deny" },
+        },
+        "example-profile-committer": {
+          description: "Example profile with Git mutation.",
+          extends: ["example-profile", "builtin:committer"],
+        },
+        [targetProfile]: {
+          description: "Non-interactive maintenance committer.",
+          extends: ["example-profile-committer"],
+          transforms: ["transform:deny-asks"],
+        },
+      },
+    });
+    process.env.PI_GUARD_PROFILE_CONFIG = configPath;
+    const harness = createExtensionHarness({
+      interactiveUi: true,
+      confirm: true,
+    });
+    await harness.start();
+
+    const pending = harness.runCommand("profile-edit");
+    (await harness.ui.waitForProfileAuthoringOverview()).choose({
+      selection: overviewSectionSelection({ id: "sandbox" }),
+    });
+    const sandbox = await harness.ui.waitForCustomModal();
+    expect(sandbox.render().join("\n")).toContain("Mode: inherit");
+    sandbox.press("Tab"); // inherit → customize
+    sandbox.press("ArrowDown"); // Network
+    sandbox.press("Tab"); // inherit → deny
+    sandbox.press("ArrowRight"); // deny → allow
+    sandbox.press("Enter");
+    (await harness.ui.waitForProfileAuthoringOverview()).choose({
+      selection: submitOverviewSelection,
+    });
+    await pending;
+
+    const savedSandbox = loadRawProfileConfig({ configPath })?.profiles[
+      targetProfile
+    ]?.sandbox;
+    if (savedSandbox === undefined || savedSandbox === false)
+      throw new Error("profile-edit did not save a sandbox override");
+    expect(savedSandbox.network).toBe(desiredNetwork);
+  });
+
   it("confirms inherited sandbox expansion, retains rejected drafts, and rejects nonidentical directory activation", async () => {
     const configPath = writeConfig({
       defaultProfile: "child",
