@@ -13,15 +13,11 @@
   "lastChangelogVersion": "0.87.1",
   "theme": "dark",
   "enabledModels": [
-    "openai-codex/gpt-5.6-terra",
-    "openai-codex/gpt-5.6-sol",
-    "openai-codex/gpt-5.6-luna",
     "openai/gpt-5.6-terra",
     "openai/gpt-5.6-sol",
-    "anthropic/claude-fable-5",
-    "anthropic/claude-opus-5",
-    "anthropic/claude-opus-4-8",
-    "anthropic/claude-sonnet-5",
-    "anthropic/claude-opus-4-7"
+    "openai/gpt-6-astra",
+    "openai/gpt-6-luna",
+    "openai/gpt-6-sol",
+    "openai/gpt-5.6-luna"
   ]
 }

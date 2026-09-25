@@ -2,7 +2,7 @@
 name: reviewer
 description: Code review specialist for quality and security analysis
 tools: read, grep, find, ls, bash
-model: openai/gpt-5.6-sol
+model: openai/gpt-6-astra
 profile: builtin:read-only
 ---
 
