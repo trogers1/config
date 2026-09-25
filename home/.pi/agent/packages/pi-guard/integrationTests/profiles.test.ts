@@ -2224,19 +2224,16 @@ describe("permissions extension", () => {
       expect(harness.getActiveTools()).toContain("grep");
     });
 
-    it("fails loudly when a required read tool is not registered", async () => {
+    it("skips optional read tools that Pi did not register", async () => {
       const harness = createExtensionHarness({
         registeredTools: ["read", "bash", "edit", "write", "find", "ls"],
       });
       await harness.start();
 
-      expect(harness.errors).toHaveLength(1);
-      expect(harness.errors[0]?.event).toBe("session_start");
-      expect(String(harness.errors[0]?.error)).toContain("grep");
-      // The startup sequence aborts before presenting a normal profile status.
-      expect(harness.ui.setStatus).not.toHaveBeenCalledWith(
-        "permissions",
-        expect.stringContaining("default"),
+      expect(harness.errors).toHaveLength(0);
+      expect(harness.getActiveTools()).not.toContain("grep");
+      expect(harness.getActiveTools()).toEqual(
+        expect.arrayContaining(["read", "find", "ls"]),
       );
     });
   });

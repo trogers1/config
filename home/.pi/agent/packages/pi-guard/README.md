@@ -201,20 +201,20 @@ See [the sandbox guide](docs/sandbox.md) for configuration, `network` posture,
 filesystem derivation, protected-path waivers, coverage reporting, lifecycle,
 and operational limits.
 
-## Required read-only tools
+## Read-only tool activation
 
-This package **requires and will activate** pi's built-in `read`, `grep`,
-`find`, and `ls` tools. Deny guidance throughout the policy steers agents to
-these tools, so the gate assumes they are callable.
+This package activates Pi's registered `read`, `grep`, `find`, and `ls` tools.
+Pi always provides `read`; newer harness versions may omit inactive optional
+built-ins such as `grep`, `find`, and `ls` from the extension registry.
 
-On session start and on every profile switch, the extension activates any
-missing read tools. Activation is purely additive: tools enabled by you or by
-other extensions are never removed. If a required tool is not even registered,
-session start fails loudly — the installed pi version no longer provides a tool
-this package depends on.
+On session start and on every profile switch, the extension activates each of
+these tools that is registered. Activation is purely additive: tools enabled by
+you or by other extensions are never removed, and an unavailable optional tool
+does not prevent session startup.
 
-There is no opt-out from the activation itself. If a read tool should not be
-usable, keep it active but deny its paths in your custom profile configuration.
+There is no opt-out from the activation itself. If a registered read tool
+should not be usable, keep it active but deny its paths in your custom profile
+configuration.
 Context-scoped rules restrict a denial to one tool without weakening the
 others:
 

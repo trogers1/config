@@ -844,6 +844,10 @@ export function createExtensionHarness(
       handler: HandlerStore[E][number],
     ) {
       handlers[event].push(handler);
+      return () => {
+        const index = handlers[event].indexOf(handler);
+        if (index >= 0) handlers[event].splice(index, 1);
+      };
     },
     registerCommand(name: string, registration: CommandRegistration) {
       commands.set(name, registration);
@@ -1452,7 +1456,17 @@ export function createExtensionHarness(
         type: "before_agent_start",
         prompt: "test prompt",
         systemPrompt,
-        systemPromptOptions: { cwd: contextCwd },
+        systemPromptOptions: {
+          cwd: contextCwd,
+          selectedTools: [],
+          toolSnippets: {},
+          toolGuidelines: {},
+          promptGuidelines: [],
+          appendSystemPrompt: "",
+          sections: {},
+          contextFiles: [],
+          skills: [],
+        },
       });
     },
     shutdown: dispose,
