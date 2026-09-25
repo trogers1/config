@@ -201,22 +201,16 @@ See [the sandbox guide](docs/sandbox.md) for configuration, `network` posture,
 filesystem derivation, protected-path waivers, coverage reporting, lifecycle,
 and operational limits.
 
-## Read-only tool activation
+## Tool selection
 
-This package activates Pi's registered `read`, `grep`, `find`, and `ls` tools.
-Pi always provides `read`; newer harness versions may omit inactive optional
-built-ins such as `grep`, `find`, and `ls` from the extension registry.
+This package does not change Pi's active tool set. Pi's defaults remain in
+place, so `read`, `bash`, `edit`, and `write` are active while the optional
+`grep`, `find`, and `ls` tools remain inactive unless you enable them.
+Profile switches and configuration reloads preserve the current selection.
 
-On session start and on every profile switch, the extension activates each of
-these tools that is registered. Activation is purely additive: tools enabled by
-you or by other extensions are never removed, and an unavailable optional tool
-does not prevent session startup.
-
-There is no opt-out from the activation itself. If a registered read tool
-should not be usable, keep it active but deny its paths in your custom profile
-configuration.
-Context-scoped rules restrict a denial to one tool without weakening the
-others:
+If an active read tool should not be usable, deny its paths in your custom
+profile configuration. Context-scoped rules restrict a denial to one tool
+without weakening the others:
 
 ```jsonc
 {

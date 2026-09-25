@@ -2164,25 +2164,24 @@ describe("permissions extension", () => {
     expect(denied?.reason).toContain("npm test -- <requested test filters>");
   });
 
-  describe("required read-only tools", () => {
-    it("activates the built-in read tools on session start", async () => {
+  describe("tool selection", () => {
+    it("preserves Pi's default active tools on session start", async () => {
       const harness = createExtensionHarness();
       await harness.start();
 
       expect(harness.errors).toHaveLength(0);
-      // Policy guidance references the read, grep, find, and ls tools; they
-      // must be active even though pi only activates read/bash/edit/write.
-      expect(harness.getActiveTools()).toEqual(
-        expect.arrayContaining(["read", "grep", "find", "ls"]),
-      );
-      // Activation is additive: the default coding tools stay enabled.
-      expect(harness.getActiveTools()).toEqual(
-        expect.arrayContaining(["bash", "edit", "write"]),
-      );
+      expect(harness.setActiveToolsMock).not.toHaveBeenCalled();
+      expect(harness.getActiveTools()).toEqual([
+        "read",
+        "bash",
+        "edit",
+        "write",
+      ]);
     });
 
-    it("leaves the active set untouched when the read tools are already active", async () => {
+    it("preserves the active tool set across profile switches", async () => {
       const harness = createExtensionHarness({
+        activeTools: ["read", "bash", "edit", "write", "webfetch"],
         registeredTools: [
           "read",
           "bash",
@@ -2193,48 +2192,22 @@ describe("permissions extension", () => {
           "ls",
           "webfetch",
         ],
-        activeTools: [
-          "read",
-          "bash",
-          "edit",
-          "write",
-          "grep",
-          "find",
-          "ls",
-          "webfetch",
-        ],
       });
       await harness.start();
 
-      expect(harness.errors).toHaveLength(0);
-      expect(harness.setActiveToolsMock).not.toHaveBeenCalled();
-      expect(harness.getActiveTools()).toContain("webfetch");
-    });
-
-    it("re-activates a missing read tool on profile switch", async () => {
-      const harness = createExtensionHarness();
-      await harness.start();
-
-      harness.deactivateTool({ name: "grep" });
       await harness.runCommand({
         name: "profile-select",
         args: "builtin:read-only",
       });
 
-      expect(harness.getActiveTools()).toContain("grep");
-    });
-
-    it("skips optional read tools that Pi did not register", async () => {
-      const harness = createExtensionHarness({
-        registeredTools: ["read", "bash", "edit", "write", "find", "ls"],
-      });
-      await harness.start();
-
-      expect(harness.errors).toHaveLength(0);
-      expect(harness.getActiveTools()).not.toContain("grep");
-      expect(harness.getActiveTools()).toEqual(
-        expect.arrayContaining(["read", "find", "ls"]),
-      );
+      expect(harness.setActiveToolsMock).not.toHaveBeenCalled();
+      expect(harness.getActiveTools()).toEqual([
+        "read",
+        "bash",
+        "edit",
+        "write",
+        "webfetch",
+      ]);
     });
   });
 });

@@ -779,7 +779,6 @@ export default function (pi: GuardExtensionAPI) {
       // Subagent launchers inherit this process environment; update it with
       // the committed profile before rebuilding its sandbox state.
       process.env[activeProfileEnvKey] = activeProfile;
-      ensureReadToolsActive();
       await clearSandboxCaches();
       pi.appendEntry(profileEntryType, { profile, timestamp: Date.now() });
       await refreshSandboxStatus(ctx);
@@ -1060,11 +1059,6 @@ The permissions gate remains loaded and will fail closed until the profile is co
     const needsLifecycleTransition =
       changed || pendingSandboxTransition !== undefined;
     try {
-      if (
-        selectionIntent.kind === "post-save" ||
-        pendingSandboxTransition !== undefined
-      )
-        ensureReadToolsActive();
       if (needsLifecycleTransition) {
         await clearSandboxCaches();
         await refreshSandboxStatus(ctx);
@@ -1152,25 +1146,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
       : "changed";
   }
 
-  /**
-   * Activate every registered read-only tool additively on session start and
-   * profile switches. Pi 0.86+ may omit inactive optional built-ins such as
-   * grep, find, and ls from the extension registry, so their absence is not a
-   * compatibility failure; read remains part of Pi's default tool surface.
-   */
-  function ensureReadToolsActive(): void {
-    const registeredNames = new Set(pi.getAllTools().map((tool) => tool.name));
-    const activeTools = pi.getActiveTools();
-    const inactive = readToolNames.filter(
-      (name) => registeredNames.has(name) && !activeTools.includes(name),
-    );
-    if (inactive.length === 0) return;
-    // Purely additive: preserve tools enabled by the user or other extensions.
-    pi.setActiveTools([...activeTools, ...inactive]);
-  }
-
   pi.on("session_start", async (event, ctx) => {
-    ensureReadToolsActive();
     restoreActiveProfile(ctx);
     if (!(await refreshOrPreserveConfiguration({ ctx }))) return;
 
