@@ -687,6 +687,41 @@ describe("profile config mutations", () => {
     expect(restored.status).toBe(profileStoreStatus.refreshed);
   });
 
+  it("reuses an adopted snapshot only when the complete source text is identical", () => {
+    const configPath = tempConfig();
+    const initialSource = storeFixture.source;
+    const sameLengthSource = initialSource.replace(
+      storeFixture.profile,
+      "revised!",
+    );
+    expect(sameLengthSource).toHaveLength(initialSource.length);
+    fs.writeFileSync(configPath, initialSource);
+    const store = profileStore({ configPath });
+    const read = vi.spyOn(fs, "readFileSync");
+
+    const initial = refreshProfileStore({ store });
+    if (!("snapshot" in initial))
+      throw new Error("initial store state was not usable");
+    read.mockClear();
+
+    const unchanged = refreshProfileStore({ store });
+    if (!("snapshot" in unchanged))
+      throw new Error("unchanged store state was not usable");
+    expect(unchanged.status).toBe(profileStoreStatus.unchanged);
+    expect(unchanged.snapshot).toBe(initial.snapshot);
+    expect(read).toHaveBeenCalledTimes(1);
+
+    fs.writeFileSync(configPath, sameLengthSource);
+    read.mockClear();
+    const changed = refreshProfileStore({ store });
+    if (!("snapshot" in changed))
+      throw new Error("changed store state was not usable");
+    expect(changed.status).toBe(profileStoreStatus.refreshed);
+    expect(changed.snapshot).not.toBe(initial.snapshot);
+    expect(read).toHaveBeenCalledTimes(1);
+    read.mockRestore();
+  });
+
   it("keeps conflict diagnostics out of the profile store", () => {
     const configPath = tempConfig();
     const conflictingSource = ({

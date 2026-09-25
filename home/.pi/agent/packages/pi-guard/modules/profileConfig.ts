@@ -335,6 +335,23 @@ export type ProfileConfigSnapshotRuntime = {
   }) => string | undefined;
 };
 
+export function readProfileConfigSnapshotSource({
+  configPath,
+}: {
+  readonly configPath: string;
+}): string | undefined {
+  try {
+    return fs.existsSync(configPath)
+      ? fs.readFileSync(configPath, "utf8")
+      : undefined;
+  } catch (error) {
+    throw new ProfileConfigUnreadableError(
+      configPath,
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+}
+
 export type ProfileConfigSnapshot = {
   /** Opaque content revision for optimistic profile mutations. */
   readonly sourceRevision: string;
@@ -368,10 +385,9 @@ export function loadProfileConfigSnapshot({
   try {
     source = runtime
       ? runtime.readSource({ configPath })
-      : fs.existsSync(configPath)
-        ? fs.readFileSync(configPath, "utf8")
-        : undefined;
+      : readProfileConfigSnapshotSource({ configPath });
   } catch (error) {
+    if (error instanceof ProfileConfigUnreadableError) throw error;
     throw new ProfileConfigUnreadableError(
       configPath,
       error instanceof Error ? error.message : String(error),

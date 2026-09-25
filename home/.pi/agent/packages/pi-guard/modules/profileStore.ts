@@ -1,5 +1,6 @@
 import {
   loadProfileConfigSnapshot,
+  readProfileConfigSnapshotSource,
   resolveProfileConfigPath,
   type ProfileConfigSnapshot,
 } from "./profileConfig";
@@ -40,6 +41,8 @@ type ProfileStoreData = {
   readonly configPath: string;
   /** A persisted source was adopted, so losing it may not broaden to fallback. */
   hasLoadedFile: boolean;
+  /** Exact source for the last successfully adopted snapshot. */
+  adoptedSource: string | undefined;
   state: ProfileStoreState;
 };
 const profileStoreData = new WeakMap<ProfileStore, ProfileStoreData>();
@@ -73,6 +76,7 @@ export function createProfileStore({
     fallback,
     configPath: resolveProfileConfigPath({ configPath }),
     hasLoadedFile: false,
+    adoptedSource: undefined,
     state: { status: profileStoreStatus.uninitialized },
   });
   return store;
@@ -125,11 +129,23 @@ export function refreshProfileStore({
   readonly store: ProfileStore;
 }): ProfileStoreRefreshResult {
   const data = dataFor({ store });
+  let source: string | undefined;
   let snapshot: ProfileConfigSnapshot;
   try {
+    source = readProfileConfigSnapshotSource({ configPath: data.configPath });
+    const previousSnapshot = usableSnapshot({ state: data.state });
+    if (previousSnapshot && source === data.adoptedSource) {
+      const state: UsableProfileStoreState = {
+        status: profileStoreStatus.unchanged,
+        snapshot: previousSnapshot,
+      };
+      data.state = state;
+      return state;
+    }
     snapshot = loadProfileConfigSnapshot({
       fallback: data.fallback,
       configPath: data.configPath,
+      runtime: { readSource: () => source },
       // Store-owned deduplication preserves normal direct-loader linting.
       lintConflicts: false,
     });
@@ -151,12 +167,11 @@ export function refreshProfileStore({
   }
   if (snapshot.raw !== undefined) data.hasLoadedFile = true;
 
-  const previousSnapshot = usableSnapshot({ state: data.state });
-  const status =
-    previousSnapshot?.sourceRevision === snapshot.sourceRevision
-      ? profileStoreStatus.unchanged
-      : profileStoreStatus.refreshed;
-  const state: UsableProfileStoreState = { status, snapshot };
+  data.adoptedSource = source;
+  const state: UsableProfileStoreState = {
+    status: profileStoreStatus.refreshed,
+    snapshot,
+  };
   data.state = state;
   return state;
 }
