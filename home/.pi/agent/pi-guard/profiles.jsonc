@@ -946,5 +946,15 @@
       ],
       "color": "red"
     },
+    "mcp-committer": {
+      "description": "MCP git-commit capable",
+      "emoji": "✍️",
+      "extends": [
+        "mcp",
+        "ruleset:git-commit",
+        "ruleset:git-refs"
+      ],
+      "color": "yellow"
+    },
   },
 }
