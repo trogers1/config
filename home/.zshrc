@@ -24,6 +24,9 @@ elif [ -x /usr/local/bin/brew ]; then
   eval "$(/usr/local/bin/brew shellenv)"
 fi
 
+# Activate mise before nvm so nvm's directory hook has final control of Node's PATH.
+eval "$(/Users/taylor.rogers/.local/bin/mise activate zsh)"
+
 # nvm: load fast, start on an installed Node 24.x, then auto-switch by directory
 export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" --no-use
@@ -104,4 +107,3 @@ dev() {
   [ "$target" != "$env_line" ] && [ -n "$target" ] || { echo "dev home is only available in a tmux dev session"; return 1; }
   cd "$target"
 }
-eval "$(/Users/taylor.rogers/.local/bin/mise activate zsh)"
