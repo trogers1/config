@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   clearSandboxCaches,
+  resolveSandbox,
   setSandboxBackendForTesting,
   type PreparedSandbox,
   type SandboxBackend,
@@ -11,8 +12,21 @@ import {
   type SandboxSpec,
 } from "../modules/sandbox.lib";
 import { createExtensionHarness } from "./support/extensionHarness";
+import { policyConfig } from "../modules/policy";
 
 const temporaryDirectories: string[] = [];
+const sandboxedDefaultProfile = {
+  ...policyConfig.profiles["builtin:default"],
+  policy: {
+    ...policyConfig.profiles["builtin:default"].policy,
+    sandbox: { network: "deny" as const },
+  },
+};
+const sandboxedDefaultState = {
+  profile: "builtin:default",
+  resolvedProfile: sandboxedDefaultProfile,
+  startupCwd: process.cwd(),
+};
 
 function writeTempProfileConfig(config: unknown): string {
   const directory = fs.mkdtempSync(
@@ -80,6 +94,38 @@ afterEach(async () => {
  * containment and normal profile behavior belongs in sandbox.test.ts.
  */
 describe("sandbox unavailable-backend lifecycle", () => {
+  it("disposes prepared sandboxes and the backend exactly once per cache clear", async () => {
+    const preparedDispose = vi.fn(async () => {});
+    const backendDispose = vi.fn(async () => {});
+    setSandboxBackendForTesting({
+      ...availableBackend(),
+      prepare: () =>
+        Promise.resolve({
+          backend: "fake",
+          report: {
+            uncoveredRestrictions: [],
+            waivedRestrictions: [],
+            untranslatedAllows: [],
+            noKernelMeaning: [],
+          },
+          denialSignatures: [],
+          operations: { exec: () => Promise.resolve({ exitCode: 0 }) },
+          dispose: preparedDispose,
+        }),
+      dispose: backendDispose,
+    });
+
+    await resolveSandbox(sandboxedDefaultState);
+    preparedDispose.mockClear();
+    backendDispose.mockClear();
+    await clearSandboxCaches();
+    expect(preparedDispose).toHaveBeenCalledOnce();
+    expect(backendDispose).toHaveBeenCalledOnce();
+
+    await clearSandboxCaches();
+    expect(backendDispose).toHaveBeenCalledTimes(2);
+  });
+
   it("blocks Bash and user ! commands rather than falling back locally by default", async () => {
     setSandboxBackendForTesting(unavailableBackend());
     process.env.PI_GUARD_PROFILE_CONFIG = writeTempProfileConfig({

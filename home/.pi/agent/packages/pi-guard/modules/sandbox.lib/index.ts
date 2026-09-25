@@ -198,7 +198,6 @@ export function clearSandboxCaches(): Promise<void> {
     const backend = sandboxBackendOverride ?? getSandboxBackend();
     await disposeCachedPreparations(backend);
     sandboxCache.clear();
-    await backend.dispose();
   });
 }
 
