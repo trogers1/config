@@ -11,7 +11,7 @@ const usage = {
 	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 } satisfies AssistantMessage["usage"];
 
-function toolCall(id: string, name: string, args: Record<string, unknown>): ToolCall {
+function toolCall(id: string, name: string, args: ToolCall["arguments"]): ToolCall {
 	return { type: "toolCall", id, name, arguments: args };
 }
 

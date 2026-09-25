@@ -51,10 +51,10 @@ function isMissingFile(error: unknown): boolean {
 
 function finalAssistant(event: AgentEndEvent): AssistantRecord | undefined {
 	const messages = parseOrThrow(AgentEndSchema, event, "agent_end event").messages ?? [];
-	return [...messages]
+	const value = [...messages]
 		.reverse()
-		.map((value) => parseOrThrow(AssistantMessageSchema, value, "assistant message"))
-		.find((entry) => entry.role === "assistant");
+		.find((entry) => typeof entry === "object" && entry !== null && "role" in entry && entry.role === "assistant");
+	return value === undefined ? undefined : parseOrThrow(AssistantMessageSchema, value, "assistant message");
 }
 function finalText(event: AgentEndEvent): string {
 	const message = finalAssistant(event);
@@ -76,6 +76,7 @@ export default function childRuntime(pi: ExtensionAPI): void {
 	const terminalFile = `${loadoutPath}.terminal.json`;
 	let waiting = false;
 	let terminalWritten = false;
+	let lastAgentEnd: AgentEndEvent | undefined;
 	let steeringTimer: NodeJS.Timeout | undefined;
 	const observedPaths: string[] = [];
 	const permissionBlocks: Array<Record<string, unknown>> = [];
@@ -198,15 +199,17 @@ export default function childRuntime(pi: ExtensionAPI): void {
 		if ((value.isError || result.isError) && text.includes("[⛔️ by pi-guard]"))
 			permissionBlocks.push({ toolName: value.toolName, text });
 	});
-	pi.on("agent_end", (event: AgentEndEvent, ctx) => {
-		if (waiting) return;
-		const ended = event;
-		const last = finalAssistant(ended);
+	pi.on("agent_end", (event: AgentEndEvent) => {
+		lastAgentEnd = event;
+	});
+	pi.on("agent_settled", (_event, ctx) => {
+		if (waiting || !lastAgentEnd) return;
+		const last = finalAssistant(lastAgentEnd);
 		const successfulStop = last?.stopReason === "stop";
 		const failed = !successfulStop;
 		terminal(
 			failed ? "failed" : "completed",
-			finalText(ended),
+			finalText(lastAgentEnd),
 			failed ? last?.errorMessage || `Child ended with ${last?.stopReason ?? "unknown"}` : undefined,
 			last,
 		);
