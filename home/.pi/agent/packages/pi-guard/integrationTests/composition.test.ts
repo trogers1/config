@@ -82,6 +82,43 @@ describe("profile composition", () => {
     ).toBe("ask");
   });
 
+  it("unions and deduplicates runtime requirements through three profile layers", () => {
+    const config = loadProfileConfig({
+      fallback: genericPolicyConfig,
+      configPath: writeConfig({
+        profiles: {
+          "test-workflow": {
+            description: "Reusable test workflow profile.",
+            extends: ["ruleset:vitest"],
+            ...minimalPaths,
+          },
+          "base-reviewer": {
+            description:
+              "Intermediate reviewer profile composing the default and test workflow.",
+            extends: ["builtin:default", "test-workflow"],
+          },
+          reviewer: {
+            description:
+              "Final reviewer profile inheriting the base and duplicate workflow.",
+            extends: ["base-reviewer", "test-workflow"],
+          },
+        },
+      }),
+    });
+
+    // The final layer receives requirements through both its intermediate
+    // profile and direct workflow parent, without duplicating either the
+    // requirement or its source provenance.
+    expect(config.profiles.reviewer.runtime.requirements).toEqual([
+      "go-toolchain-cache",
+      "vitest-vite-temp",
+    ]);
+    expect(config.profiles.reviewer.runtime.provenance).toEqual({
+      "go-toolchain-cache": ["ruleset:go-runtime-commands"],
+      "vitest-vite-temp": ["ruleset:vitest"],
+    });
+  });
+
   it("transform:deny-asks converts every ordinary ask to deny", () => {
     const config = loadProfileConfig({
       fallback: genericPolicyConfig,
