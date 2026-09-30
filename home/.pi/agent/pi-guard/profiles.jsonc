@@ -701,6 +701,10 @@
             "decision": "deny",
             "guidance": "Use `npm test -- <files>` instead"
           },
+          {
+            "pattern": "node /Users/taylor.rogers/.pi/agent/skills/** *",
+            "decision": "allow"
+          },
         ],
       },
       "readPaths": [
@@ -731,6 +735,13 @@
       "writePaths": [
         {
           "pattern": "/dev/null",
+          "decision": "allow",
+          "contexts": [
+            "bash"
+          ]
+        },
+        {
+          "pattern": "/Users/taylor.rogers/.pi/agent/skills/review/scripts/render_markdown_html.mjs",
           "decision": "allow",
           "contexts": [
             "bash"
