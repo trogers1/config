@@ -2,7 +2,7 @@
 name: explore
 description: Open-ended codebase exploration that returns the relevant compressed context for other agents
 tools: read, grep, find, ls, bash
-model: openai/gpt-5.6-terra
+model: openai/gpt-6.1-sol
 profile: builtin:read-only
 ---
 
