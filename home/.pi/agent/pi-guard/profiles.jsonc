@@ -696,6 +696,11 @@
             "pattern": "nvm use",
             "decision": "allow"
           },
+          {
+            "pattern": "* npx vitest run *",
+            "decision": "deny",
+            "guidance": "Use `npm test -- <files>` instead"
+          },
         ],
       },
       "readPaths": [
@@ -955,6 +960,29 @@
         "ruleset:git-refs"
       ],
       "color": "yellow"
+    },
+    "mcp-allow-asks": {
+      "description": "mcp auto-pilot that allows asks",
+      "emoji": "🔥",
+      "extends": [
+        "mcp"
+      ],
+      "color": "red",
+      "transforms": [
+        "transform:allow-asks"
+      ]
+    },
+    "sidecar-comments-committer-allow-asks": {
+      "description": "auto-pilot committer",
+      "emoji": "🔥",
+      "extends": [
+        "personal-sidecar-comments",
+        "builtin:committer"
+      ],
+      "color": "red",
+      "transforms": [
+        "transform:allow-asks"
+      ]
     },
   },
 }
