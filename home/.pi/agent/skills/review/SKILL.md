@@ -22,13 +22,25 @@ Treat `flow.md` as the working map for the subsequent review: use it to trace be
 Write `flow.md` for a developer who is unfamiliar with the change. It must include:
 
 1. **Overview** — the purpose of the branch and the user-visible or system-visible behavior it changes.
-2. **Changed-file map** — group relevant changed files by responsibility. For each file, explain what changed, why it participates in the feature, and give concise pseudocode for its new or modified behavior. Call out deleted and renamed files. Generated files may be summarized as a group.
-3. **End-to-end code flow** — trace each important execution path from its entry point through validation, business logic, persistence or external calls, and returned result or side effects. Include alternate and failure paths when meaningful.
-4. **Data and state flow** — describe important inputs, outputs, type transformations, state transitions, configuration, schemas, migrations, and external boundaries.
-5. **Test flow** — map tests to the behaviors and paths they exercise, including important gaps discovered during review.
+2. **End-to-end code flow** — trace each important execution path from its entry point through validation, business logic, persistence or external calls, and returned result or side effects. Include alternate and failure paths when meaningful.
+3. **Data and state flow** — VERY IMPORTANT. We care A LOT about the datamodel and the interfaces--just as much as the flow of the code. Describe important inputs, outputs, type transformations, state transitions, configuration, schemas, migrations, and external boundaries.
+4. **Test flow** — map tests to the behaviors and paths they exercise, including important gaps discovered during review.
+5. **Changed-file map** — group relevant changed files by responsibility. For each file, explain what changed, why it participates in the feature, and give concise pseudocode for its new or modified behavior. Call out deleted and renamed files. Generated files may be summarized as a group.
 
 Use concrete symbol and file names, links such as ``[`path/to/file.ts`](path/to/file.ts)``, and readable pseudocode rather than copying implementation. Add Mermaid diagrams when they make a non-trivial interaction or state transition easier to understand. Keep the document branch-specific and omit unrelated pre-existing architecture.
 
 Use mermaid diagrams liberally to help illustrate code-flow (both of the entire change set and for complicated subsystems within it). A combination of pseudo-code and diagrams (with links to actual implementation) is very helpful when reviewing and understanding.
 
-Before completing the review, verify that every relevant file in the branch diff is represented in `flow.md` either individually or in an explicitly named group, and mention in the final response that `flow.md` was written.
+`flow.md` is the canonical, agent-editable review map. After its final update, generate `flow.html` from it for local human review. Do not edit `flow.html` manually.
+
+Before completing the review, verify that every relevant file in the branch diff is represented in `flow.md` either individually or in an explicitly named group.
+
+## Human-readable review map
+
+`flow.md` is the canonical, agent-editable review map. After its final update, generate its human-readable companion with the bundled portable renderer (run the script relative to this skill directory):
+
+```sh
+node scripts/render_markdown_html.mjs flow.md flow.html
+```
+
+Do not edit `flow.html` manually; regenerate it from `flow.md` after material changes. Keep `flow.html` beside `flow.md` so repository-relative source links continue to work. The generated page loads Marked and Mermaid modules from jsDelivr when opened, so a browser needs network access to render it. Mention both `flow.md` and `flow.html` in the final response.
