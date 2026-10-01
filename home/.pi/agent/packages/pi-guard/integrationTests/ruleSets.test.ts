@@ -69,14 +69,14 @@ describe("rule-set namespace", () => {
     ).toBe(true);
   });
 
-  it("ruleset:shell allows file deletion", () => {
+  it("ruleset:shell allows basic workspace file operations", () => {
     const config = loadProfileConfig({
       fallback: genericPolicyConfig,
       configPath: writeConfig({
         profiles: {
-          deletion: {
+          filesystem: {
             description:
-              "Default shell ruleset permits requested file deletion.",
+              "Default shell ruleset permits basic workspace file operations.",
             extends: ["ruleset:shell"],
             ...minimalPaths,
           },
@@ -84,9 +84,16 @@ describe("rule-set namespace", () => {
       }),
     });
 
-    expect(
-      decideBash("rm generated-file", config.profiles.deletion.policy),
-    ).toBe("allow");
+    const policy = config.profiles.filesystem.policy;
+    for (const command of [
+      "cp source.txt copy.txt",
+      "mkdir generated",
+      "mv draft.txt final.txt",
+      "rm generated-file",
+      "touch generated-file",
+    ]) {
+      expect(decideBash(command, policy), command).toBe("allow");
+    }
   });
 
   it("ruleset:read-only-shell and ruleset:read-only-path resolve through JSONC", () => {
@@ -112,7 +119,15 @@ describe("rule-set namespace", () => {
     expect(resolved.protectedPathRules).toEqual(
       pathPosture.policy.protectedPathRules ?? [],
     );
-    expect(decideBash("rm generated-file", resolved)).toBe("deny");
+    for (const command of [
+      "cp source.txt copy.txt",
+      "mkdir generated",
+      "mv draft.txt final.txt",
+      "rm generated-file",
+      "touch generated-file",
+    ]) {
+      expect(decideBash(command, resolved), command).toBe("deny");
+    }
   });
 
   it("builtin:read-only reuses the shipped read-only rule-set arrays", () => {

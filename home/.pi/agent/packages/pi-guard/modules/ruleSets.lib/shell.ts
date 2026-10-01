@@ -39,7 +39,13 @@ export const defaultShellRules: Rule[] = [
   { pattern: "tail *", decision: "allow" },
   { pattern: "rg *", decision: "allow" },
   { pattern: "ripgrep *", decision: "allow" },
+  // Basic workspace file operations; filesystem operands remain constrained by
+  // writePaths and protectedPathRules before Bash is executed.
+  { pattern: "cp *", decision: "allow" },
+  { pattern: "mkdir *", decision: "allow" },
+  { pattern: "mv *", decision: "allow" },
   { pattern: "rm *", decision: "allow" },
+  { pattern: "touch *", decision: "allow" },
 
   { pattern: "true", decision: "allow" },
   { pattern: "terraform fmt *", decision: "allow" },
