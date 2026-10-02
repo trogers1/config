@@ -995,5 +995,15 @@
         "transform:allow-asks"
       ]
     },
+    "mcp-git-full": {
+      "description": "Git",
+      "emoji": "🔥",
+      "extends": [
+        "mcp",
+        "ruleset:git",
+        "builtin:git-full"
+      ],
+      "color": "red"
+    },
   },
 }
