@@ -2,8 +2,9 @@
 /**
  * Render Markdown as a standalone, browser-viewable HTML review artifact.
  *
- * The generator uses only Node's standard library. Generated HTML loads Marked
- * and Mermaid from jsDelivr when opened, so browser rendering needs network access.
+ * The generator uses Node's standard library and fetches pinned Marked from
+ * jsDelivr at generation time. Markdown is embedded as rendered HTML; only
+ * Mermaid diagrams need network access when the generated page is opened.
  */
 
 import { readFile, writeFile } from 'node:fs/promises';
@@ -37,8 +38,33 @@ function documentTitle({ inputPath, markdown }) {
 	return /^#\s+(.+)$/mu.exec(markdown)?.[1] ?? basename(inputPath, '.md');
 }
 
-function renderDocument({ markdown, title }) {
-	const encodedMarkdown = Buffer.from(markdown, 'utf8').toString('base64');
+async function loadMarked() {
+	const response = await fetch('https://cdn.jsdelivr.net/npm/marked@12.0.2/lib/marked.esm.js', {
+		signal: AbortSignal.timeout(30_000),
+	});
+	if (!response.ok) {
+		throw new Error(`Unable to load Markdown renderer: HTTP ${response.status}`);
+	}
+	const source = await response.text();
+	const { marked } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+	return marked;
+}
+
+function renderDocument({ markdown, title, marked }) {
+	const usedHeadingIds = new Map();
+	const contents = [];
+	const renderer = new marked.Renderer();
+	renderer.heading = (text, level, raw) => {
+		const base = raw.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'section';
+		const count = usedHeadingIds.get(base) ?? 0;
+		usedHeadingIds.set(base, count + 1);
+		const id = count === 0 ? base : `${base}-${count}`;
+		if (level <= 3) {
+			contents.push(`<a href="#${id}" class="level-${level}">${escapeHtml({ value: raw })}</a>`);
+		}
+		return `<h${level} id="${id}">${text}</h${level}>\n`;
+	};
+	const renderedMarkdown = marked.parse(markdown, { gfm: true, renderer });
 
 	return `<!doctype html>
 <html lang="en">
@@ -87,55 +113,35 @@ function renderDocument({ markdown, title }) {
   <div class="layout">
     <aside aria-label="Table of contents">
       <h2>Contents</h2>
-      <nav id="table-of-contents"></nav>
+      <nav id="table-of-contents">${contents.join('\n')}</nav>
     </aside>
-    <main id="content" aria-live="polite">Loading rendered Markdown…</main>
+    <main id="content">${renderedMarkdown}</main>
   </div>
-  <p id="render-error">Unable to load the remote Marked or Mermaid renderer. Connect to the internet and reload this file.</p>
+  <p id="render-error">Unable to render one or more diagrams. The document remains readable; diagram source is shown instead. Connect to the internet and reload to retry.</p>
   <script type="module">
-    const markdownBase64 = '${encodedMarkdown}';
-    const markdown = new TextDecoder().decode(Uint8Array.from(
-      atob(markdownBase64),
-      (character) => character.codePointAt(0),
-    ));
-    const content = document.querySelector('#content');
-    const tableOfContents = document.querySelector('#table-of-contents');
     const error = document.querySelector('#render-error');
-    const usedHeadingIds = new Map();
-    const headingId = (value) => {
-      const base = value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'section';
-      const count = usedHeadingIds.get(base) ?? 0;
-      usedHeadingIds.set(base, count + 1);
-      return count === 0 ? base : base + '-' + count;
-    };
-
-    try {
-      const [{ marked }, mermaidModule] = await Promise.all([
-        import('https://cdn.jsdelivr.net/npm/marked@12.0.2/lib/marked.esm.js'),
-        import('https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs'),
-      ]);
-      content.innerHTML = marked.parse(markdown, { gfm: true });
-      for (const heading of content.querySelectorAll('h1, h2, h3')) {
-        const id = headingId(heading.textContent);
-        heading.id = id;
-        const link = document.createElement('a');
-        link.href = '#' + id;
-        link.className = 'level-' + heading.tagName.slice(1);
-        link.textContent = heading.textContent;
-        tableOfContents.append(link);
+    const diagrams = document.querySelectorAll('#content code.language-mermaid');
+    if (diagrams.length > 0) {
+      try {
+        const { default: mermaid } = await import('https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs');
+        mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', suppressErrorRendering: true });
+        let index = 0;
+        for (const code of diagrams) {
+          try {
+            const { svg } = await mermaid.render('review-diagram-' + index++, code.textContent);
+            const diagram = document.createElement('div');
+            diagram.className = 'mermaid';
+            diagram.innerHTML = svg;
+            code.closest('pre').replaceWith(diagram);
+          } catch (renderingError) {
+            console.error(renderingError);
+            error.style.display = 'block';
+          }
+        }
+      } catch (renderingError) {
+        console.error(renderingError);
+        error.style.display = 'block';
       }
-      for (const code of content.querySelectorAll('code.language-mermaid')) {
-        const diagram = document.createElement('pre');
-        diagram.className = 'mermaid';
-        diagram.textContent = code.textContent;
-        code.closest('pre').replaceWith(diagram);
-      }
-      mermaidModule.default.initialize({ startOnLoad: false, securityLevel: 'strict' });
-      await mermaidModule.default.run({ querySelector: '.mermaid' });
-    } catch (renderingError) {
-      console.error(renderingError);
-      content.textContent = markdown;
-      error.style.display = 'block';
     }
   </script>
 </body>
@@ -156,9 +162,10 @@ async function main() {
 	const [inputPath, suppliedOutputPath] = arguments_;
 	const outputPath = outputPathFor({ inputPath, suppliedOutputPath });
 	const markdown = await readFile(resolve(inputPath), 'utf8');
+	const marked = await loadMarked();
 	await writeFile(
 		resolve(outputPath),
-		renderDocument({ markdown, title: documentTitle({ inputPath, markdown }) }),
+		renderDocument({ markdown, title: documentTitle({ inputPath, markdown }), marked }),
 		'utf8',
 	);
 	console.log(`Rendered ${inputPath} → ${outputPath}`);

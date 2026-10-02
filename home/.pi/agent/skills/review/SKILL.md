@@ -43,4 +43,4 @@ Before completing the review, verify that every relevant file in the branch diff
 node scripts/render_markdown_html.mjs flow.md flow.html
 ```
 
-Do not edit `flow.html` manually; regenerate it from `flow.md` after material changes. Keep `flow.html` beside `flow.md` so repository-relative source links continue to work. The generated page loads Marked and Mermaid modules from jsDelivr when opened, so a browser needs network access to render it. Mention both `flow.md` and `flow.html` in the final response.
+Do not edit `flow.html` manually; regenerate it from `flow.md` after material changes. Keep `flow.html` beside `flow.md` so repository-relative source links continue to work. The renderer fetches pinned Marked from jsDelivr at generation time, so generation requires network access. The generated page embeds rendered HTML for the document and table of contents, which remain readable offline or with JavaScript disabled. Only Mermaid diagrams load a module from jsDelivr when opened; network or diagram errors leave diagram source visible without reverting the document to Markdown. Mention both `flow.md` and `flow.html` in the final response.
