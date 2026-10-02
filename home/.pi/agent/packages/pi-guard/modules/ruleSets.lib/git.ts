@@ -41,6 +41,8 @@ const defaultGitReadRules: Rule[] = [
   { pattern: "git diff", decision: "allow" },
   { pattern: "git diff *", decision: "allow" },
   { pattern: "git pull", decision: "allow" },
+  { pattern: "git fetch", decision: "allow" },
+  { pattern: "git fetch *", decision: "allow" },
   { pattern: "git bisect *", decision: "allow" },
   { pattern: "git show *", decision: "allow" },
   { pattern: "git ls-files", decision: "allow" },

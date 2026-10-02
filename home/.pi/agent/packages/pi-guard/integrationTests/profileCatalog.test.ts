@@ -205,6 +205,33 @@ describe("shipped profile catalog", () => {
     expect(testWrite).toMatchObject({ block: true });
   });
 
+  it.each(["builtin:default", "builtin:git-full"])(
+    "%s allows git fetch without prompting",
+    async (profile) => {
+      const harness = await harnessFor(profile);
+      for (const command of [
+        "git fetch",
+        "git fetch origin staging 441-remove-comments",
+      ]) {
+        await expect(
+          harness.callToolWithoutPrompt({
+            toolName: "bash",
+            input: { command },
+          }),
+        ).resolves.toBeUndefined();
+      }
+    },
+  );
+
+  it("builtin:read-only blocks git fetch", async () => {
+    const harness = await harnessFor("builtin:read-only");
+    const result = await harness.callTool({
+      toolName: "bash",
+      input: { command: "git fetch origin" },
+    });
+    expect(result).toMatchObject({ block: true });
+  });
+
   it("builtin:git-full allows git push", async () => {
     const harness = await harnessFor("builtin:git-full");
     await expect(
