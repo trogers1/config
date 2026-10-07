@@ -1,0 +1,8 @@
+{
+  "summary": "Example only: document a local setup workflow",
+  "description": "Example only; do not create this ticket.\n\nProblem: contributors need a documented local setup workflow.\n\nRequested outcome: document the user-approved setup steps.\n\nAcceptance criteria:\n- A new contributor can follow the approved steps.\n- The documentation names the agreed verification command.\n\nNotes: this is a non-sensitive format example, not an approved draft.",
+  "type": "VERIFIED_TYPE_ID_OR_NAME",
+  "status": "VERIFIED_STATUS_ID_OR_NAME",
+  "story_points": "unset",
+  "links": []
+}
