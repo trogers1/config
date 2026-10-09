@@ -27,7 +27,7 @@ After changing the package source, refresh the installed copy explicitly:
 uv tool install --force /absolute/path/to/skill
 ```
 
-The shared Pi setup links the skill but does not install this CLI or uv automatically. Install the CLI once per machine.
+`setup.sh` links the skill and warns when this CLI is missing, but does not install it or uv automatically. Install the CLI once per machine.
 
 Restart the shell if instructed by `uv tool update-shell`. Agents should discover the installed command through help, not inspect package internals:
 

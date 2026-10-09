@@ -129,6 +129,7 @@ preflight() {
 
   command -v nvim >/dev/null 2>&1 || warn "Optional tool 'nvim' is not installed. Install it if wanted with: brew install neovim"
   command -v lazygit >/dev/null 2>&1 || warn "Optional tool 'lazygit' is not installed. Install it if wanted with: brew install lazygit"
+  command -v jira-ticket >/dev/null 2>&1 || warn "Optional tool 'jira-ticket' (used by the jira-ticket-management skill) is not installed. Install it if wanted with: uv tool install $REPO_DIR/home/.agents/skills/jira-ticket-management"
 
   version_at_least "$(node --version)" "22.19.0" || die "Node $(node --version) is too old; Node 22.19.0 or newer is required."
   version_at_least "$(pi --version | head -n1)" "0.85.0" || die "Pi $(pi --version | head -n1) is too old; Pi 0.85.0 or newer is required."
