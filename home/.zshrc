@@ -76,10 +76,12 @@ export PATH="$HOME/.rd/bin:$PATH"
 # Rancher may start after tmux has opened this shell, so retry at every prompt
 # until its socket is available. Existing processes cannot inherit this later;
 # commands started from this shell after the next prompt can.
+# .zshenv sets DOCKER_HOST for every shell when the socket already exists; this adds the
+# rdctl-derived host override and covers Rancher starting after the shell.
 configure-rancher-desktop() {
-  if [[ -z "${DOCKER_HOST:-}" && -S "$HOME/.rd/docker.sock" ]]; then
+  if [[ -z "${TESTCONTAINERS_HOST_OVERRIDE:-}" && -S "$HOME/.rd/docker.sock" ]]; then
     # https://docs.rancherdesktop.io/how-to-guides/using-testcontainers/
-    export DOCKER_HOST="unix://$HOME/.rd/docker.sock"
+    export DOCKER_HOST="${DOCKER_HOST:-unix://$HOME/.rd/docker.sock}"
     export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock
     export TESTCONTAINERS_HOST_OVERRIDE=$(rdctl info --field ip-address)
     export TESTCONTAINERS_RYUK_DISABLED=true

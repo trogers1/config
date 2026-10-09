@@ -11,6 +11,7 @@ NON_INTERACTIVE=0
 PERSONAL_LINKS=(
   'home/.bash_profile|.bash_profile|bash profile'
   'home/.gitconfig|.gitconfig|Git configuration'
+  'home/.zshenv|.zshenv|zsh environment (all shells)'
   'home/.zshrc|.zshrc|zsh configuration'
   'home/.tmux.conf|.tmux.conf|tmux configuration'
   'home/.cursor/cli-config.json|.cursor/cli-config.json|Cursor CLI configuration'
