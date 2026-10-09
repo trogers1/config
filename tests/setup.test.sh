@@ -61,6 +61,9 @@ assert_equals "$(readlink "$HOME_DIR/.claude/skills")" "$REPO_DIR/home/.claude/s
 assert_exists "$HOME_DIR/.claude/skills/flow-review/SKILL.md"
 assert_exists "$HOME_DIR/.claude/skills/code/SKILL.md"
 assert_exists "$HOME_DIR/.claude/agents/scout.md"
+# One global instructions source serves both agents.
+assert_equals "$(readlink "$HOME_DIR/.claude/CLAUDE.md")" "$REPO_DIR/home/.agents/AGENTS.md"
+assert_equals "$(readlink "$HOME_DIR/.pi/agent/AGENTS.md")" "$REPO_DIR/home/.agents/AGENTS.md"
 
 # The installed hook command expands known +markers and reports unknown ones.
 hook_command="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"])' "$HOME_DIR/.claude/settings.json")"
@@ -75,6 +78,12 @@ rm "$HOME_DIR/.claude/settings.json"
 mv "$TMP_DIR/settings-copy.json" "$HOME_DIR/.claude/settings.json"
 if run_shared --verify >/dev/null 2>&1; then fail 'verify missed an unlinked Claude settings file'; fi
 rm "$HOME_DIR/.claude/settings.json"
+run_shared >/dev/null
+cp "$HOME_DIR/.pi/agent/AGENTS.md" "$TMP_DIR/agents-copy.md"
+rm "$HOME_DIR/.pi/agent/AGENTS.md"
+mv "$TMP_DIR/agents-copy.md" "$HOME_DIR/.pi/agent/AGENTS.md"
+if run_shared --verify >/dev/null 2>&1; then fail 'verify missed an unlinked Pi global instructions file'; fi
+rm "$HOME_DIR/.pi/agent/AGENTS.md"
 run_shared >/dev/null
 assert_equals "$(cat "$HOME_DIR/.pi/agent/pi-guard/profiles.jsonc")" 'user profile'
 assert_equals "$(cat "$HOME_DIR/bin/pi")" 'user pi command'
@@ -108,6 +117,8 @@ assert_absent "$HOME_DIR/.pi/agent/settings.json"
 assert_absent "$HOME_DIR/.claude/skills"
 assert_absent "$HOME_DIR/bin/dev"
 assert_absent "$HOME_DIR/.claude/settings.json"
+assert_absent "$HOME_DIR/.claude/CLAUDE.md"
+assert_absent "$HOME_DIR/.pi/agent/AGENTS.md"
 assert_equals "$(cat "$HOME_DIR/.pi/agent/pi-guard/profiles.jsonc")" 'user profile'
 rm "$HOME_DIR/.pi/agent/pi-guard/profiles.jsonc"
 

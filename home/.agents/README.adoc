@@ -15,13 +15,23 @@ and OpenCode. Edit files here; never edit the generated copies.
 | `~/.agents/snippets/<id>.md`
 | Pi snippet menu (`alt+s`), Claude `/<id>` wrappers and `+<id>` markers
 
+| `AGENTS.md`
+| `~/.claude/CLAUDE.md` and `~/.pi/agent/AGENTS.md`
+| Claude and Pi global instructions
+
 | `agents/<name>.md`
 | `~/.claude/agents/<name>.md` and the bundled `pi-guard-subagents` agents
 | Claude subagents, Pi guarded subagents
 |===
 
-`setup.sh` links these directories, plus `home/.claude/{skills,agents,hooks}`
+`setup.sh` links these sources, plus `home/.claude/{skills,agents,hooks}`
 and `home/.claude/settings.json` (which registers the `+marker` hook).
+
+== Global instructions
+
+`AGENTS.md` holds the preferences that apply to every task in every repo, and
+both agents load it in every session. Keep it short: task-specific guidance
+belongs in a skill or snippet, which the file points to rather than repeats.
 
 == Generated config
 

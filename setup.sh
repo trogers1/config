@@ -39,6 +39,8 @@ PI_EXTENSION_LINKS=(
 AGENT_LINKS=(
   'home/.agents/skills|.agents/skills|shared skills'
   'home/.agents/snippets|.agents/snippets|shared prompt snippets'
+  'home/.agents/AGENTS.md|.claude/CLAUDE.md|Claude global instructions'
+  'home/.agents/AGENTS.md|.pi/agent/AGENTS.md|Pi global instructions'
   'home/.claude/skills|.claude/skills|Claude skills'
   'home/.claude/agents|.claude/agents|Claude agents'
   'home/.claude/hooks|.claude/hooks|Claude hooks'
