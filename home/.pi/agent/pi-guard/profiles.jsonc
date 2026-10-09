@@ -577,6 +577,17 @@
             "pattern": "bash *skills/address-comments/scripts/refresh-all-comments-md.sh*",
             "decision": "allow",
           },
+          // post-replies.sh only reads GitLab without --post (dry-run preview);
+          // the more specific --post rule wins and always prompts before writing.
+          {
+            "pattern": "bash *skills/address-comments/scripts/post-replies.sh*",
+            "decision": "allow",
+          },
+          {
+            "pattern": "bash *skills/address-comments/scripts/post-replies.sh*--post*",
+            "decision": "ask",
+            "guidance": "This posts replies to GitLab MR threads. Only run --post after showing Taylor the dry-run preview and getting explicit approval in chat.",
+          },
         ],
       },
       "readPaths": [

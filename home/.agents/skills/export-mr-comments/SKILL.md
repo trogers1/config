@@ -47,6 +47,8 @@ bash ~/.agents/skills/address-comments/scripts/refresh-all-comments-md.sh \
 - Includes resolved and unresolved human discussions.
 - Preserves discussion order and comment bodies from the API.
 
-## Related skill
+## Related skills
 
 Use `address-comments` and `refresh-robot-comments-md.sh` to work unresolved `:robot:` threads and add Robot resolution notes.
+
+Use `post-mr-replies` to post `Reply — APPROVED` blocks from `comments.md` back to their GitLab threads.

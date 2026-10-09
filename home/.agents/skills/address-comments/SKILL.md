@@ -11,7 +11,7 @@ disable-model-invocation: true
 
 Use this workflow to refresh unresolved GitLab MR comments for a supplied MR URL, take Taylor's requested first pass on Robot-marked discussions, and annotate `comments.md` with a `Robot` note for **every** discussion explaining whether it was resolved or remains unresolved.
 
-GitLab data is fetched only through **read-only scripts** in this skill (`scripts/`). Do not run `glab api` or other GitLab CLI commands directly.
+GitLab data is fetched only through **read-only scripts** in this skill (`scripts/`). Do not run `glab api` or other GitLab CLI commands directly. The one write-capable script, `scripts/post-replies.sh`, belongs to the separate `post-mr-replies` skill; never run it with `--post` from this workflow.
 
 ## Role and Goal
 
@@ -211,6 +211,23 @@ Use `Robot — UNRESOLVED` for the cross-reference instead when the group remain
 - Do not claim a discussion is resolved if verification failed, changes were reverted, or product direction is still needed.
 - If the discussion only needs advice or an answer, provide a concise recommended response and mark it `RESOLVED`.
 
+## Drafting GitLab Replies
+
+`Robot` notes are local discussion with Taylor and are never posted. When Taylor asks you to draft an actual reply to a thread, append a `Reply — DRAFT` block to that discussion after the latest `Robot` note:
+
+```md
+---
+**Reply — DRAFT**
+
+<exact text for the reviewer, in GitLab Markdown>
+
+---
+```
+
+- Draft only when asked; one `Reply` block per discussion. Revise the existing draft rather than adding another.
+- Never change `DRAFT` to `APPROVED` yourself unless Taylor explicitly approves that reply in chat. Taylor may also add `, RESOLVE` (`**Reply — APPROVED, RESOLVE**`) to resolve the thread once it's posted.
+- Posting is a separate step: see the `post-mr-replies` skill. Refreshing `comments.md` overwrites the file, so post approved replies before refreshing.
+
 ## Final Checklist
 
 - `comments.md` refreshed via `refresh-robot-comments-md.sh <mr-url> [output-file]`.
@@ -220,6 +237,8 @@ Use `Robot — UNRESOLVED` for the cross-reference instead when the group remain
 - `committ_msg.md` was written only when a new or materially revised commit message is warranted; if written, it covers all resolved changes and relevant discussion links.
 - `comments.md` and `committ_msg.md` remain uncommitted.
 
-## Related skill
+## Related skills
+
+Use `post-mr-replies` to preview and post approved `Reply` blocks to GitLab after Taylor's explicit approval.
 
 Use `export-mr-comments` and `refresh-all-comments-md.sh` for a full export of all human threads (resolved and unresolved).
