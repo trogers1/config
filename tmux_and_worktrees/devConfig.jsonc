@@ -2,6 +2,18 @@
   // Tmux windows (tabs) to open for each dev session.
   // Project-specific repos can override this by adding their own devConfig.jsonc
   // at the repo/worktree root.
+  //
+  // A window with "agent": true runs the selected agent's command. Pick one per
+  // run with `dev new --agent <name>` or `dev tree --agent <name>`; otherwise
+  // defaultAgent is used. `dev tree --stage-agent` types the command without
+  // running it.
+  "defaultAgent": "pi",
+  "agents": {
+    "pi": "pi",
+    // --continue resumes the worktree's last conversation, but exits non-zero
+    // when the directory has none yet, so start a fresh one in that case.
+    "claude": "claude --continue || claude",
+  },
   "windows": [
     {
       "name": "nvim",
@@ -9,7 +21,7 @@
     },
     {
       "name": "agent",
-      "command": "pi",
+      "agent": true,
     },
     {
       "name": "lazygit",

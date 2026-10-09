@@ -4,11 +4,16 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/../tmux_worktree.sh"
 
-branch=""
+target=""
 force="false"
+assume_yes="false"
 
 log() {
     printf "[dkill] %s\n" "$*"
+}
+
+usage() {
+    echo "Usage: dkill [branch|path] [--force] [--yes]"
 }
 
 kill_sessions_for_worktree() {
@@ -17,7 +22,9 @@ kill_sessions_for_worktree() {
     local branch="$3"
     local preferred_session_name=""
 
-    preferred_session_name="$(tmux_worktree_preferred_worktree_session_name "$repo_name" "$branch")"
+    if [ -n "$branch" ]; then
+        preferred_session_name="$(tmux_worktree_preferred_worktree_session_name "$repo_name" "$branch")"
+    fi
     tmux_worktree_kill_sessions_for_worktree_path "$wt_path" "$preferred_session_name" "$(tmux_worktree_current_session_name)" || true
 }
 
@@ -26,11 +33,28 @@ while [ "$#" -gt 0 ]; do
         --force|-f)
             force="true"
             ;;
+        --yes|-y)
+            assume_yes="true"
+            ;;
+        --)
+            shift
+            if [ "$#" -gt 1 ] || { [ "$#" -eq 1 ] && [ -n "$target" ]; }; then
+                usage
+                exit 1
+            fi
+            target="${1:-$target}"
+            break
+            ;;
+        -*)
+            echo "Unknown option: $1"
+            usage
+            exit 1
+            ;;
         *)
-            if [ -z "$branch" ]; then
-                branch="$1"
+            if [ -z "$target" ]; then
+                target="$1"
             else
-                echo "Usage: dkill [branch] [--force]"
+                usage
                 exit 1
             fi
             ;;
@@ -39,17 +63,21 @@ while [ "$#" -gt 0 ]; do
 done
 
 tmux_worktree_require_git
-tmux_worktree_require_git_repo
 
-current_branch="$(tmux_worktree_git_current_branch)"
-if [ -z "$branch" ]; then
-    branch="$current_branch"
+current_wt_path="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+# With no target, act on the worktree this command runs in, which also covers
+# detached worktrees that have no branch to name.
+if [ -z "$target" ]; then
+    tmux_worktree_require_git_repo
+    target="$current_wt_path"
 fi
 
-if [ -z "$branch" ]; then
-    echo "Usage: dkill [branch] [--force]"
-    exit 1
-fi
+repo_root="$(tmux_worktree_main_repo_root_for_target "$target")"
+repo_name="$(basename "$repo_root")"
+
+resolved="$(tmux_worktree_resolve_worktree "$repo_root" "$target")"
+wt_path="${resolved%%$'\t'*}"
+branch="${resolved#*$'\t'}"
 
 case "$branch" in
     main|master|develop|staging)
@@ -60,18 +88,7 @@ case "$branch" in
         ;;
 esac
 
-repo_root="$(tmux_worktree_main_repo_root)"
-repo_name="$(basename "$repo_root")"
-
-wt_path="$(tmux_worktree_path_for_branch "$repo_root" "$branch")"
-
-if [ -z "$wt_path" ]; then
-    echo "No worktree found for branch '$branch'."
-    exit 1
-fi
-
-current_wt_path="$(git rev-parse --show-toplevel)"
-if [ "$wt_path" = "$repo_root" ]; then
+if [ "$(tmux_worktree_physical_path "$wt_path")" = "$(tmux_worktree_physical_path "$repo_root")" ]; then
     echo "Refusing to remove the main checkout: $wt_path"
     exit 1
 fi
@@ -82,8 +99,12 @@ if [ "$force" != "true" ] && [ -n "$(git -C "$wt_path" status --porcelain)" ]; t
     exit 1
 fi
 
-if [ "$force" != "true" ] && [ -t 0 ]; then
-    printf "Close worktree '%s' and delete local branch '%s'? [y/N] " "$wt_path" "$branch"
+if [ "$force" != "true" ] && [ "$assume_yes" != "true" ] && [ -t 0 ]; then
+    if [ -n "$branch" ]; then
+        printf "Close worktree '%s' and delete local branch '%s'? [y/N] " "$wt_path" "$branch"
+    else
+        printf "Close detached worktree '%s'? [y/N] " "$wt_path"
+    fi
     read -r answer
     case "$answer" in
         y|Y|yes|YES)
@@ -103,14 +124,29 @@ if [ "$force" = "true" ]; then
 fi
 
 git -C "$repo_root" "${remove_args[@]}" "$wt_path"
-git -C "$repo_root" "${branch_args[@]}" "$branch"
+
+# Sessions are killed last because this command may be running inside one of
+# them, so a failed branch delete is reported after they are gone.
+branch_deleted=true
+if [ -n "$branch" ] && ! git -C "$repo_root" "${branch_args[@]}" "$branch"; then
+    branch_deleted=false
+fi
+
+if [ "$branch_deleted" = false ]; then
+    echo "Removed worktree $wt_path but kept branch '$branch'; delete it with: git branch -D $branch" >&2
+fi
 
 if command -v tmux >/dev/null 2>&1; then
     kill_sessions_for_worktree "$wt_path" "$repo_name" "$branch"
 fi
 
+if [ "$branch_deleted" = false ]; then
+    exit 1
+fi
+
+label="${branch:-$wt_path}"
 if [ "$current_wt_path" = "$wt_path" ]; then
-    log "Closed current worktree '$branch'. Open another session if needed."
+    log "Closed current worktree '$label'. Open another session if needed."
 else
-    log "Closed worktree '$branch'."
+    log "Closed worktree '$label'."
 fi

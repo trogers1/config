@@ -30,21 +30,33 @@ done
 tmux_worktree_require_git
 tmux_worktree_require_git_repo
 
-if [ -z "$branch" ]; then
-    branch="$(tmux_worktree_git_current_branch)"
-fi
-
-if [ -z "$branch" ]; then
-    echo "Usage: dmerge [branch] [target-branch] [--keep]"
-    exit 1
-fi
-
 repo_root="$(tmux_worktree_main_repo_root)"
 repo_name="$(basename "$repo_root")"
+
+# The source may be a branch or a path inside its worktree; with neither, use
+# the worktree this command runs in.
+source_target="${branch:-$(git rev-parse --show-toplevel)}"
+wt_path=""
+if [ -d "$source_target" ] || [ -n "$(tmux_worktree_path_for_branch "$repo_root" "$source_target")" ]; then
+    resolved="$(tmux_worktree_resolve_worktree "$repo_root" "$source_target")"
+    wt_path="${resolved%%$'\t'*}"
+    branch="${resolved#*$'\t'}"
+    if [ -z "$branch" ]; then
+        echo "Worktree $wt_path is detached; there is no branch to merge."
+        exit 1
+    fi
+elif ! git -C "$repo_root" show-ref --verify --quiet "refs/heads/$source_target"; then
+    echo "No branch or worktree named '$source_target'."
+    exit 1
+fi
 preferred_session_name="$(tmux_worktree_preferred_worktree_session_name "$repo_name" "$branch")"
 
 if [ -z "$target_branch" ]; then
-    mapfile -t candidates < <(git -C "$repo_root" for-each-ref --format='%(refname:short)' refs/heads | awk -v source="$branch" '$0 != source')
+    # macOS ships bash 3.2, which has no mapfile.
+    candidates=()
+    while IFS= read -r candidate; do
+        candidates+=("$candidate")
+    done < <(git -C "$repo_root" for-each-ref --format='%(refname:short)' refs/heads | awk -v source="$branch" '$0 != source')
 
     if [ "${#candidates[@]}" -eq 0 ]; then
         echo "No local target branches found to merge into."
@@ -119,14 +131,13 @@ git -C "$repo_root" checkout "$target_branch"
 git -C "$repo_root" merge --no-ff "$branch"
 
 if [ "$keep_worktree" != "true" ]; then
-    wt_path="$(tmux_worktree_path_for_branch "$repo_root" "$branch")"
-
     if [ -n "$wt_path" ]; then
         git -C "$repo_root" worktree remove "$wt_path"
     fi
 
     git -C "$repo_root" branch -d "$branch" || true
-    if command -v tmux >/dev/null 2>&1; then
+    # A branch without a worktree has no path-bound session to close.
+    if [ -n "$wt_path" ] && command -v tmux >/dev/null 2>&1; then
         tmux_worktree_kill_sessions_for_worktree_path "$wt_path" "$preferred_session_name" "$(tmux_worktree_current_session_name)" || true
     fi
 fi

@@ -27,10 +27,29 @@ tmux_worktree_git_current_branch() {
 }
 
 tmux_worktree_main_repo_root() {
+    local from_dir="${1:-.}"
     local git_common_dir=""
 
-    git_common_dir="$(git rev-parse --git-common-dir)"
-    (cd "${git_common_dir}/.." && pwd)
+    git_common_dir="$(cd "$from_dir" && git rev-parse --git-common-dir)"
+    (cd "$from_dir" && cd "${git_common_dir}/.." && pwd)
+}
+
+# The main checkout that owns a branch-or-path target: a directory names its
+# own repository, so `dev kill <path>` works from anywhere; a branch is looked
+# up in the repository of the current directory.
+tmux_worktree_main_repo_root_for_target() {
+    local target="$1"
+
+    if [ -d "$target" ]; then
+        if ! git -C "$target" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+            echo "Not inside a git worktree: $target" >&2
+            return 1
+        fi
+        tmux_worktree_main_repo_root "$target"
+    else
+        tmux_worktree_require_git_repo
+        tmux_worktree_main_repo_root
+    fi
 }
 
 tmux_worktree_default_root() {
@@ -163,6 +182,13 @@ tmux_worktree_collect_sessions_for_worktree_path() {
     local session_name=""
     local session_path=""
 
+    # Unmanaged sessions have no recorded path, so an empty target would match
+    # every one of them.
+    if [ -z "$target_path" ]; then
+        echo "tmux_worktree_collect_sessions_for_worktree_path: empty worktree path" >&2
+        return 1
+    fi
+
     while IFS= read -r session_name; do
         [ -n "$session_name" ] || continue
 
@@ -287,10 +313,15 @@ tmux_worktree_dev_config_path() {
 
 tmux_worktree_read_dev_config_windows() {
     local config_path="$1"
+    local agent="${2:-}"
     local lib_dir=""
 
     lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    python3 "$lib_dir/read_dev_config_windows.py" "$config_path"
+    if [ -n "$agent" ]; then
+        python3 "$lib_dir/read_dev_config_windows.py" "$config_path" "$agent"
+    else
+        python3 "$lib_dir/read_dev_config_windows.py" "$config_path"
+    fi
 }
 
 tmux_worktree_create_standard_session() {
@@ -298,15 +329,25 @@ tmux_worktree_create_standard_session() {
     local worktree_path="$2"
     local branch="${3:-}"
     local nvim_command="${4:-}"
+    local agent="${5:-}"
+    local stage_agent="${6:-false}"
     local config_path=""
+    local windows=""
+    local window_kind=""
     local window_name=""
     local window_command=""
     local first_window_name=""
     local created_first_window=false
 
-    config_path="$(tmux_worktree_dev_config_path "$worktree_path")"
+    if ! config_path="$(tmux_worktree_dev_config_path "$worktree_path")"; then
+        echo "No devConfig.jsonc found for $worktree_path" >&2
+        exit 1
+    fi
+    # Read the whole config before creating anything so an invalid config or
+    # agent fails without leaving a partial session behind.
+    windows="$(tmux_worktree_read_dev_config_windows "$config_path" "$agent")"
 
-    while IFS=$'\t' read -r window_name window_command; do
+    while IFS=$'\t' read -r window_kind window_name window_command; do
         [ -n "$window_name" ] || continue
 
         if [ -n "$nvim_command" ] && [ "$window_name" = "nvim" ]; then
@@ -322,10 +363,16 @@ tmux_worktree_create_standard_session() {
             tmux new-window -t "$session_name:" -n "$window_name" -c "$worktree_path"
         fi
 
-        if [ -n "$window_command" ]; then
+        if [ -z "$window_command" ]; then
+            :
+        elif [ "$window_kind" = agent ] && [ "$stage_agent" = true ]; then
+            # Typed at the prompt but not run, so the agent starts only when
+            # someone presses Enter in that window.
+            tmux send-keys -t "$session_name:$window_name" "$window_command"
+        else
             tmux send-keys -t "$session_name:$window_name" "$window_command" C-m
         fi
-    done < <(tmux_worktree_read_dev_config_windows "$config_path")
+    done <<<"$windows"
 
     if [ "$created_first_window" = false ]; then
         echo "No windows configured in $config_path"
@@ -335,12 +382,84 @@ tmux_worktree_create_standard_session() {
     tmux select-window -t "$session_name:$first_window_name"
 }
 
+# Prints one "<path>\t<branch>" line per worktree git knows about, including the
+# primary checkout. Detached and bare worktrees have an empty branch. This is
+# the source of truth for worktree locations: worktrees created by other tools
+# (for example Claude Code's .claude/worktrees/) need not follow dev's layout.
+tmux_worktree_list_worktrees() {
+    local repo_root="$1"
+
+    git -C "$repo_root" worktree list --porcelain | awk '
+        /^worktree / { if (seen) print path "\t" branch; path = substr($0, 10); branch = ""; seen = 1 }
+        /^branch refs\/heads\// { branch = substr($0, 19) }
+        END { if (seen) print path "\t" branch }
+    '
+}
+
 tmux_worktree_path_for_branch() {
     local repo_root="$1"
     local branch="$2"
+    local wt_path=""
+    local wt_branch=""
 
-    git -C "$repo_root" worktree list --porcelain | awk -v target="refs/heads/$branch" '
-        $1 == "worktree" { path = $2 }
-        $1 == "branch" && $2 == target { print path; exit }
-    '
+    while IFS=$'\t' read -r wt_path wt_branch; do
+        if [ -n "$wt_branch" ] && [ "$wt_branch" = "$branch" ]; then
+            printf '%s\n' "$wt_path"
+            return 0
+        fi
+    done < <(tmux_worktree_list_worktrees "$repo_root")
+}
+
+tmux_worktree_physical_path() {
+    (cd "$1" 2>/dev/null && pwd -P)
+}
+
+# Resolves a branch name or a path inside a worktree to "<path>\t<branch>",
+# using the worktree's path exactly as git records it. Fails when the target
+# names no worktree, or when it is both a directory and a different branch's
+# worktree.
+tmux_worktree_resolve_worktree() {
+    local repo_root="$1"
+    local target="$2"
+    local branch_path=""
+    local dir_top=""
+    local dir_real=""
+    local wt_path=""
+    local wt_branch=""
+    local dir_match=""
+    local dir_match_branch=""
+
+    branch_path="$(tmux_worktree_path_for_branch "$repo_root" "$target")"
+
+    if [ -d "$target" ]; then
+        if ! dir_top="$(git -C "$target" rev-parse --show-toplevel 2>/dev/null)"; then
+            echo "Not inside a git worktree: $target" >&2
+            return 1
+        fi
+        dir_real="$(tmux_worktree_physical_path "$dir_top")"
+        while IFS=$'\t' read -r wt_path wt_branch; do
+            if [ "$(tmux_worktree_physical_path "$wt_path")" = "$dir_real" ]; then
+                dir_match="$wt_path"
+                dir_match_branch="$wt_branch"
+                break
+            fi
+        done < <(tmux_worktree_list_worktrees "$repo_root")
+
+        if [ -z "$dir_match" ]; then
+            echo "$target is not a worktree of $repo_root" >&2
+            return 1
+        fi
+        if [ -n "$branch_path" ] && [ "$branch_path" != "$dir_match" ]; then
+            echo "'$target' is ambiguous: it is the directory $dir_match and the branch checked out at $branch_path" >&2
+            return 1
+        fi
+        printf '%s\t%s\n' "$dir_match" "$dir_match_branch"
+        return 0
+    fi
+
+    if [ -z "$branch_path" ]; then
+        echo "No worktree found for branch '$target'." >&2
+        return 1
+    fi
+    printf '%s\t%s\n' "$branch_path" "$target"
 }

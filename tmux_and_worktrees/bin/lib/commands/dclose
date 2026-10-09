@@ -9,7 +9,7 @@ log() {
 }
 
 usage() {
-    echo "Usage: dclose [branch]"
+    echo "Usage: dclose [branch|path]"
 }
 
 if [ "$#" -gt 1 ]; then
@@ -19,27 +19,23 @@ fi
 
 tmux_worktree_require_tmux
 
-branch="${1:-}"
+target="${1:-}"
 target_path=""
 preferred_session_name=""
 current_session="$(tmux_worktree_current_session_name)"
 
-if [ -n "$branch" ]; then
+if [ -n "$target" ]; then
     tmux_worktree_require_git
-    tmux_worktree_require_git_repo
 
-    repo_root="$(tmux_worktree_main_repo_root)"
+    repo_root="$(tmux_worktree_main_repo_root_for_target "$target")"
     repo_name="$(basename "$repo_root")"
 
-    wt_path="$(tmux_worktree_path_for_branch "$repo_root" "$branch")"
-
-    if [ -z "$wt_path" ]; then
-        echo "No worktree found for branch '$branch'."
-        exit 1
+    resolved="$(tmux_worktree_resolve_worktree "$repo_root" "$target")"
+    target_path="${resolved%%$'\t'*}"
+    branch="${resolved#*$'\t'}"
+    if [ -n "$branch" ]; then
+        preferred_session_name="$(tmux_worktree_preferred_worktree_session_name "$repo_name" "$branch")"
     fi
-
-    target_path="$wt_path"
-    preferred_session_name="$(tmux_worktree_preferred_worktree_session_name "$repo_name" "$branch")"
 else
     if [ -n "$current_session" ]; then
         target_path="$(tmux_worktree_get_session_worktree_path "$current_session" || true)"

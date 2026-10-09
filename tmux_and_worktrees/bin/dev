@@ -11,15 +11,20 @@ Manage tmux development sessions and git worktrees. Run this from a project
 checkout; commands that create or manage worktrees require a Git repository.
 
 Commands:
-  new [path]                 Open or create a dev tmux session for a path.
+  new [--agent <name>] [path]
+                              Open or create a dev tmux session for a path.
   open [path]                Alias for `dev new`.
-  tree <branch> [base]       Create or open a worktree and its dev session.
+  tree [--no-attach] [--agent <name>] [--stage-agent] <branch> [base]
+                              Create or open a worktree and its dev session.
                               A new branch starts from [base], or the current
-                              branch when omitted.
+                              branch when omitted. --no-attach never prompts or
+                              attaches and prints only the worktree path.
+                              --stage-agent types the agent command unrun.
   tree init [branch]         Re-run a linked worktree's startup script.
-  close [branch]             Close a dev tmux session, retaining its checkout.
-  kill [branch] [--force]    Remove a worktree, its session, and local branch.
-  merge [branch] [target] [--keep]
+  close [branch|path]        Close a dev tmux session, retaining its checkout.
+  kill [branch|path] [--force] [--yes]
+                              Remove a worktree, its session, and local branch.
+  merge [branch|path] [target] [--keep]
                               Merge a worktree branch and clean it up.
   home                       Change this shell to the active session's root.
                               Requires the installed zsh shell integration.

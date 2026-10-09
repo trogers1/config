@@ -6,13 +6,13 @@ This directory contains a portable tmux/worktree workflow you can copy into its 
 
 The `dev` CLI is the primary interface:
 
-* `dev new [path]` -> normal dev tmux session in the current repo/path
+* `dev new [--agent <name>] [path]` -> normal dev tmux session in the current repo/path
 * `dev open [path]` -> alias for `dev new`
-* `dev tree <branch> [base]` -> create/switch to a git worktree + tmux session (defaults base to current branch)
+* `dev tree [--no-attach] [--agent <name>] [--stage-agent] <branch> [base]` -> create/switch to a git worktree + tmux session (defaults base to current branch)
 * `dev tree init [branch]` -> rerun the worktree startup script (defaults to the current branch's worktree)
-* `dev close [branch]` -> kill the tmux session only, leaving the checkout/worktree intact
-* `dev kill [branch] [--force]` -> kill the worktree tmux session and delete that worktree + local branch
-* `dev merge [branch] [target] [--keep]` -> interactively choose merge target and clean up
+* `dev close [branch|path]` -> kill the tmux session only, leaving the checkout/worktree intact
+* `dev kill [branch|path] [--force] [--yes]` -> kill the worktree tmux session and delete that worktree + local branch
+* `dev merge [branch|path] [target] [--keep]` -> interactively choose merge target and clean up
 * `dev home` -> jump the current shell back to the root path for the active tmux dev session
 * `dev help` (or `dev --help`) -> display usage and command descriptions
 
@@ -32,9 +32,14 @@ By default, this subsystem uses `tmux_and_worktrees/devConfig.jsonc`:
 [source,jsonc]
 ----
 {
+  "defaultAgent": "pi",
+  "agents": {
+    "pi": "pi",
+    "claude": "claude --continue || claude"
+  },
   "windows": [
     { "name": "nvim", "command": "nvim" },
-    { "name": "opencode", "command": "opencode" },
+    { "name": "agent", "agent": true },
     { "name": "lazygit", "command": "lazygit" },
     { "name": "term", "command": "" }
   ]
@@ -42,10 +47,38 @@ By default, this subsystem uses `tmux_and_worktrees/devConfig.jsonc`:
 ----
 
 Add a project-specific `devConfig.jsonc` at the repo/worktree root to override
-those windows for that project. `windows` is an array of objects with:
+the whole file for that project. `windows` is an array of objects with:
 
 * `name` -> tmux window/tab name
 * `command` -> command to run in that window; use an empty string for an idle shell
+* `agent: true` -> instead of `command`, run the selected agent (at most one of the two)
+
+The agent window runs the command for the agent you pick per run with
+`dev new --agent <name>` or `dev tree --agent <name>`, and otherwise the
+config's `defaultAgent`. That is also the per-project choice: a project's
+`devConfig.jsonc` sets its own `defaultAgent` and `agents`.
+`dev tree --stage-agent` types the agent's command into its window without
+pressing Enter, so the agent starts only when you do; the other windows run as
+usual. An unknown agent, an agent window with no `defaultAgent` and no `--agent`, or
+`--agent <name>` with a config that has no agent window, fails before any tmux
+session is created. `--agent` and `--stage-agent` apply only when a new session
+is created;
+reopening an existing session says so and keeps its windows.
+
+`claude --continue` resumes the most recent conversation recorded for the
+worktree directory, so closing a session (`dev close`) and reopening it with
+`dev tree` picks the conversation back up. In a directory with no conversation
+yet, `claude --continue` prints `No conversation found to continue` and exits
+non-zero, so the configured command then starts a new one.
+
+`dev close`, `dev kill`, and `dev merge` find worktrees with
+`git worktree list --porcelain`, not dev's directory convention, so they also
+work on worktrees other tools made, such as Claude Code's
+`<repo>/.claude/worktrees/<name>`. Each takes a branch or a path inside the
+worktree; a path names its own repository, so it works from any directory, and
+it is the only way to name a detached worktree. A name that is both a directory
+and a different branch's worktree is rejected as ambiguous. With no argument,
+`dev kill` and `dev merge` act on the worktree they run in.
 
 Session reuse and cleanup are path-based first: `dev new`, `dev tree`,
 `dev close`, `dev kill`, and `dev merge` all resolve the owning tmux session by
@@ -140,7 +173,12 @@ without merging it anywhere.
 
 * `dev kill` -> close the current branch's worktree, kill its tmux session, and delete the local branch
 * `dev kill my-branch` -> close a specific branch worktree
+* `dev kill <path>` -> close the worktree containing a path, including a detached one
 * `dev kill --force` -> allow closing a dirty worktree and force-delete the local branch
+* `dev kill --yes` -> skip the confirmation prompt, while keeping the dirty and unmerged checks
+
+When `git branch -d` refuses an unmerged branch, `dev kill` has already removed
+the worktree; it still closes the session, keeps the branch, and exits non-zero.
 
 `dev kill` refuses to remove the main checkout, and it protects `main`, `master`,
 `develop`, and `staging` unless you pass `--force`.
@@ -183,3 +221,81 @@ Copy that example into one of the project-specific locations and adapt it for
 project setup. The script runs with its working directory set to the new
 worktree and receives `REPO_ROOT` (the main checkout) and `WORKTREE_PATH` (the
 new worktree) as environment variables.
+
+== Non-interactive worktrees
+
+`dev tree --no-attach <branch>` is for scripts. It creates or reuses the
+worktree and its tmux session exactly as `dev tree` does, runs the startup script
+for a new worktree, and records the session, but never attaches and never
+prompts. All progress, including git and startup-script output, goes to
+stderr; stdout carries only the worktree path. Where `dev tree` would ask, it
+takes the safe path or fails with a message on stderr:
+
+* it never fetches `origin`; a new branch starts from the base;
+* it fails when `origin/<branch>` is already known locally, rather than
+  silently creating an unrelated branch of the same name;
+* it fails when the branch is checked out in the primary checkout, rather than
+  switching that checkout;
+* it fails when the default path exists but is not that branch's worktree.
+
+== Claude Code worktrees
+
+`home/.claude/settings.json` (linked to `~/.claude/settings.json` by
+`./setup.sh`) registers two hooks from `home/.claude/hooks/`, so Claude Code's
+worktrees follow dev's layout instead of `<repo>/.claude/worktrees/`:
+
+* `WorktreeCreate` -> `worktree-create.sh` runs
+  `dev tree --no-attach --agent claude --stage-agent -- <name>` in the session's
+  directory. The worktree lands at `<repo-parent>/<repo>-worktrees/<name>` on
+  branch `<name>`, based on that directory's current branch, the startup script
+  runs, and a detached dev session is created. Its agent window has
+  `claude --continue || claude` typed but not run: the Claude session that asked
+  for the worktree is already running, and starting the TUI then would begin a
+  second, separate conversation. A name that already has a worktree reuses it.
+* `WorktreeRemove` -> `worktree-remove.sh` runs `dev kill --yes` on the path,
+  which also closes the session and deletes the branch. It never forces: a
+  dirty worktree is refused and stays on disk, and an unmerged branch is kept
+  (the worktree directory is still removed).
+
+The hooks fire for `claude --worktree`, for subagents with
+`isolation: worktree`, and for background sessions, and they replace Claude's
+git logic entirely. Some consequences of that:
+
+* `.worktreeinclude` is not processed; use the startup script (`.env` linking
+  is already in the bundled example).
+* `worktree.baseRef` is ignored; the base is the current branch, as for `dev tree`.
+* Every subagent worktree also gets a dev tmux session, and Claude's periodic
+  sweep never removes hook-created worktrees, so leftover subagent worktrees
+  stay until you `dev kill` them.
+* Claude never deletes a hook worktree's branch itself; `dev kill` does.
+
+To move a session from the app to the TUI, stop using it in the app, attach
+with `dev tree <name>`, and press Enter in the agent window; `claude --continue`
+resumes the conversation. This works for desktop-app sessions because the app
+runs the session with the hook's worktree as its directory and records the
+transcript there. A terminal
+`claude --worktree` session keeps its transcript under the directory it was
+launched from, so `--continue` in the worktree starts a new conversation
+instead. Use one client at a time: running the same conversation in the app and
+the TUI at once is untested.
+
+=== Claude desktop app
+
+The desktop app runs the same `WorktreeCreate` hook when you start a new local
+session with the worktree option in a folder whose settings configure one
+(verified with app-created session names such as `first-message-test-ad03fe`).
+It then uses the printed path, with the worktree name as the branch (no branch
+prefix), and runs `WorktreeRemove` when you delete the session and it cleans the
+worktree up. The app refuses repositories under a Claude session's scratch
+space (`/private/tmp/claude-*`), so test it with a repository elsewhere. The desktop
+app runs the hook only for a session a person starts in that folder; it refuses
+to create a worktree for a repository with a hook when nobody opened that
+folder.
+
+Without the hook, the fallback is the desktop's *Worktree location* setting
+(Settings -> Claude Code). It can move worktrees out of the project to one folder
+you choose, with a subfolder per repository. It cannot express dev's layout: no
+per-repository `<repo>-worktrees` sibling folder, branches still get the desktop
+branch prefix (`claude/<name>` by default), and it runs no startup script and
+creates no tmux session. `dev close`, `dev kill`, and `dev merge` still work on
+those worktrees by branch or path.

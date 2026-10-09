@@ -8,6 +8,21 @@ log() {
     printf "[dtree] %s\n" "$*"
 }
 
+usage() {
+    cat <<'EOF'
+Usage: dtree [--no-attach] [--agent <name>] [--stage-agent] [--] [branch] [base-branch]
+       dtree init [branch]
+
+  --no-attach      Never prompt or attach. Create (or reuse) the worktree and
+                   its tmux session, send all progress to stderr, and print only
+                   the worktree path on stdout. Fails instead of prompting.
+  --agent <name>   Agent for the session's agent window (from devConfig.jsonc
+                   agents). Used only when a new session is created.
+  --stage-agent    Type the agent's command into its window without running
+                   it, so it starts when you press Enter there.
+EOF
+}
+
 default_primary_branch() {
     local remote_head=""
 
@@ -109,8 +124,72 @@ if [ "${1:-}" = "init" ]; then
     exit 0
 fi
 
-branch="${1:-}"
-base_branch="${2:-}"
+no_attach=false
+agent=""
+stage_agent=false
+positionals=()
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --no-attach)
+            no_attach=true
+            shift
+            ;;
+        --agent)
+            if [ "$#" -lt 2 ] || [ -z "$2" ]; then
+                echo "[dtree] Missing value for --agent" >&2
+                exit 1
+            fi
+            agent="$2"
+            shift 2
+            ;;
+        --stage-agent)
+            stage_agent=true
+            shift
+            ;;
+        --)
+            shift
+            positionals+=("$@")
+            break
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        -*)
+            echo "[dtree] Unknown option: $1" >&2
+            usage >&2
+            exit 1
+            ;;
+        *)
+            positionals+=("$1")
+            shift
+            ;;
+    esac
+done
+
+if [ "${#positionals[@]}" -gt 2 ]; then
+    usage >&2
+    exit 1
+fi
+branch="${positionals[0]:-}"
+base_branch="${positionals[1]:-}"
+
+# In non-interactive mode stdout carries only the worktree path, so callers
+# such as Claude Code's WorktreeCreate hook can read it. Everything else,
+# including git, tmux, and startup-script output, goes to stderr.
+if [ "$no_attach" = true ]; then
+    exec 3>&1 1>&2
+fi
+
+finish() {
+    local session_name="$1"
+
+    if [ "$no_attach" = true ]; then
+        printf '%s\n' "$wt_path" >&3
+    else
+        tmux_worktree_attach_or_switch "$session_name"
+    fi
+}
 
 tmux_worktree_require_git
 tmux_worktree_require_tmux
@@ -122,7 +201,7 @@ if [ -z "$branch" ]; then
     if [ -n "$current_branch" ]; then
         branch="$current_branch"
     else
-        echo "Usage: dtree <branch> [base-branch]"
+        usage >&2
         exit 1
     fi
 fi
@@ -157,6 +236,11 @@ if [ "$existing_wt_path" = "$repo_root" ] && [ "$current_branch" = "$branch" ]; 
         exit 1
     fi
 
+    if [ "$no_attach" = true ]; then
+        echo "[dtree] $branch is checked out in the primary checkout ($repo_root). --no-attach never moves it; run \`dev tree $branch\` interactively or check out another branch there first." >&2
+        exit 1
+    fi
+
     if prompt_to_convert_main_checkout "$primary_branch"; then
         main_session_name="$(tmux_worktree_find_session_for_worktree_path "$repo_root" || true)"
         git -C "$repo_root" checkout "$primary_branch"
@@ -174,6 +258,10 @@ else
     mkdir -p "$worktree_root"
 
     if [ -d "$wt_path" ]; then
+        if [ "$no_attach" = true ]; then
+            echo "[dtree] $wt_path already exists but is not the worktree for $branch; refusing to use it." >&2
+            exit 1
+        fi
         echo "Worktree already exists at $wt_path"
     else
         if git -C "$repo_root" show-ref --verify --quiet "refs/heads/$branch"; then
@@ -183,16 +271,23 @@ else
             remote_branch=""
             checked_remote=false
 
-            if git -C "$repo_root" remote get-url "$remote_name" >/dev/null 2>&1; then
-                if prompt_to_check_remote_branch "$remote_name"; then
-                    checked_remote=true
-                    git -C "$repo_root" fetch "$remote_name"
-                    if git -C "$repo_root" show-ref --verify --quiet "refs/remotes/$remote_name/$branch"; then
-                        remote_branch="$remote_name/$branch"
-                    fi
-                fi
-            else
+            if ! git -C "$repo_root" remote get-url "$remote_name" >/dev/null 2>&1; then
                 log "No $remote_name remote configured; creating $branch from $base_branch"
+            elif [ "$no_attach" = true ]; then
+                # Without a prompt, dtree cannot ask whether to fetch, and a
+                # new branch from the base would silently diverge from a
+                # remote branch of the same name that is already known.
+                if git -C "$repo_root" show-ref --verify --quiet "refs/remotes/$remote_name/$branch"; then
+                    echo "[dtree] $remote_name/$branch exists, and --no-attach never chooses between it and $base_branch. Run \`dev tree $branch\` interactively, or create the local branch first." >&2
+                    exit 1
+                fi
+                log "--no-attach does not fetch $remote_name; creating $branch from $base_branch"
+            elif prompt_to_check_remote_branch "$remote_name"; then
+                checked_remote=true
+                git -C "$repo_root" fetch "$remote_name"
+                if git -C "$repo_root" show-ref --verify --quiet "refs/remotes/$remote_name/$branch"; then
+                    remote_branch="$remote_name/$branch"
+                fi
             fi
 
             if [ -n "$remote_branch" ]; then
@@ -201,7 +296,7 @@ else
             else
                 if [ "$checked_remote" = true ]; then
                     log "No remote branch $remote_name/$branch found; creating $branch from $base_branch"
-                elif git -C "$repo_root" remote get-url "$remote_name" >/dev/null 2>&1; then
+                elif [ "$no_attach" = false ] && git -C "$repo_root" remote get-url "$remote_name" >/dev/null 2>&1; then
                     log "Skipped remote lookup; creating $branch from $base_branch"
                 fi
                 git -C "$repo_root" worktree add -b "$branch" "$wt_path" "$base_branch"
@@ -216,7 +311,10 @@ session_name="$(tmux_worktree_find_session_for_worktree_path "$wt_path" || true)
 
 if [ -n "$session_name" ]; then
     tmux_worktree_set_session_metadata "$session_name" "$wt_path" "$branch"
-    tmux_worktree_attach_or_switch "$session_name"
+    if [ -n "$agent" ] || [ "$stage_agent" = true ]; then
+        log "Reusing session $session_name; --agent and --stage-agent apply only to new sessions (dev close it to switch)"
+    fi
+    finish "$session_name"
     exit 0
 fi
 
@@ -230,5 +328,5 @@ if [ "$created_worktree" = true ]; then
     run_startup_script "$repo_root" "$wt_path"
 fi
 
-tmux_worktree_create_standard_session "$session_name" "$wt_path" "$branch"
-tmux_worktree_attach_or_switch "$session_name"
+tmux_worktree_create_standard_session "$session_name" "$wt_path" "$branch" "" "$agent" "$stage_agent"
+finish "$session_name"

@@ -72,6 +72,25 @@ run_hook 'tidy this +code' | grep -Fq '# Code Style' || fail 'hook did not expan
 run_hook 'tidy this +cod' | grep -Fq 'Unknown snippet marker(s): +cod' || fail 'hook did not report an unknown marker'
 assert_equals "$(run_hook 'c++ and a+b')" ''
 
+# The installed worktree hooks create a dev-layout worktree, print only its
+# path, and remove it again. They need real git, so tmux alone is faked here.
+settings_command() { python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["hooks"][sys.argv[2]][0]["hooks"][0]["command"])' "$HOME_DIR/.claude/settings.json" "$1"; }
+create_command="$(settings_command WorktreeCreate)"
+remove_command="$(settings_command WorktreeRemove)"
+HOOK_BIN="$TMP_DIR/hook-bin"
+HOOK_REPO="$(mkdir -p "$TMP_DIR/hook-repos/proj" && cd "$TMP_DIR/hook-repos/proj" && pwd -P)"
+mkdir -p "$HOOK_BIN"
+printf '#!/usr/bin/env bash\n[ "$1" != has-session ] && [ "$1" != show-environment ]\n' >"$HOOK_BIN/tmux"
+chmod +x "$HOOK_BIN/tmux"
+run_worktree_hook() { HOME="$HOME_DIR" PATH="$HOOK_BIN:$PATH" GIT_CONFIG_GLOBAL=/dev/null bash -c "$1"; }
+git -C "$HOOK_REPO" init -q -b main
+git -C "$HOOK_REPO" -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m init
+: >"$HOOK_REPO/.worktree-init.sh"
+created_path="$(printf '{"name":"hooked","cwd":"%s"}' "$HOOK_REPO" | run_worktree_hook "$create_command" 2>/dev/null)"
+assert_equals "$created_path" "$(dirname "$HOOK_REPO")/proj-worktrees/hooked"
+printf '{"worktree_path":"%s"}' "$created_path" | run_worktree_hook "$remove_command" >/dev/null 2>&1
+assert_absent "$created_path"
+
 # A Claude settings file that replaced the link (for example, by an atomic rewrite) is drift.
 cp "$HOME_DIR/.claude/settings.json" "$TMP_DIR/settings-copy.json"
 rm "$HOME_DIR/.claude/settings.json"

@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/../tmux_worktree.sh"
 
 nvim_command=""
+agent=""
 target_path="$(pwd)"
 
 while [ "$#" -gt 0 ]; do
@@ -15,6 +16,14 @@ while [ "$#" -gt 0 ]; do
                 exit 1
             fi
             nvim_command="$2"
+            shift 2
+            ;;
+        --agent)
+            if [ "$#" -lt 2 ] || [ -z "$2" ]; then
+                echo "Missing value for --agent"
+                exit 1
+            fi
+            agent="$2"
             shift 2
             ;;
         --)
@@ -49,6 +58,9 @@ session_name="$(tmux_worktree_find_session_for_worktree_path "$project_path" || 
 
 if [ -n "$session_name" ]; then
     tmux_worktree_set_session_metadata "$session_name" "$project_path"
+    if [ -n "$agent" ]; then
+        echo "Reusing session $session_name; --agent $agent applies only to new sessions (dev close it to switch)" >&2
+    fi
     tmux_worktree_attach_or_switch "$session_name"
     exit 0
 fi
@@ -58,5 +70,5 @@ if tmux has-session -t "$session_name" 2>/dev/null; then
     session_name="$(tmux_worktree_make_session_name "${preferred_session_name}-$(tmux_worktree_path_checksum "$project_path")")"
 fi
 
-tmux_worktree_create_standard_session "$session_name" "$project_path" "" "$nvim_command"
+tmux_worktree_create_standard_session "$session_name" "$project_path" "" "$nvim_command" "$agent"
 tmux_worktree_attach_or_switch "$session_name"
