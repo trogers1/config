@@ -9,6 +9,11 @@ const piSkillReadRules: ReadonlyArray<Omit<ReadPathRule, "contexts">> = [
     pattern: "/**/.pi/agent/skills/**",
     decision: "allow",
   },
+  // Pi also loads global skills from ~/.agents/skills.
+  {
+    pattern: "/**/.agents/skills/**",
+    decision: "allow",
+  },
 ];
 
 const piReferencePathRules: ReadonlyArray<Omit<ReadPathRule, "contexts">> = [

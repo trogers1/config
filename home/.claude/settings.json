@@ -1,0 +1,15 @@
+{
+  "theme": "dark",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$HOME/.claude/hooks/snippet-markers.mjs\""
+          }
+        ]
+      }
+    ]
+  }
+}

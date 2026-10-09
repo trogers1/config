@@ -5,6 +5,7 @@ Herein lies my configuration files 📜
 == Layout
 
 * `home/` contains files that should be symlinked into `~/` (including selected nested app configs like `home/.cursor/cli-config.json` → `~/.cursor/cli-config.json`, `home/.pi/agent/settings.json` → `~/.pi/agent/settings.json`, `home/.pi/agent/packages/pi-guard` → `~/.pi/agent/packages/pi-guard`, and `home/.pi/agent/packages/pi-guard-subagents` → `~/.pi/agent/packages/pi-guard-subagents`)
+* `home/.agents/` holds the skills, prompt snippets, and subagents shared by Pi, Claude, and OpenCode; `home/.claude/` holds Claude config, mostly generated from it (see link:./home/.agents/README.adoc[`home/.agents`])
 * `xdg/` contains application configs that should be symlinked into `~/.config/`
 * `tmux_and_worktrees/` contains my tmux + git worktree development workflow (tooling built specifically for parallel agentic workflows)
 
@@ -59,8 +60,10 @@ The safe shared Pi and non-writing tmux/worktree workflow is installed with:
 ----
 
 This macOS-only installer has an explicit, limited surface: it installs the
-shared Pi configuration (packages, extensions, skills, settings, and usage),
-the `dev` CLI, and the tmux status helper. It does not install or link Cursor, Git, Ghostty,
+shared Pi configuration (packages, extensions, settings, and usage), the
+shared `~/.agents` skills and snippets, the Claude skills, subagents, hooks,
+and settings (`~/.claude/settings.json`), the `dev` CLI, and the tmux status
+helper. It does not install or link Cursor, Git, Ghostty,
 Neovim, OpenCode, or shell dotfiles. `wopen`, `wnew`, and `wclose` are excluded.
 
 Before changing files it requires existing `pi`, `tmux`, `git`, `python3`, and

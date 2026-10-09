@@ -1,0 +1,84 @@
+= Shared agent resources
+
+One source for the skills, prompt snippets, and subagents used by Pi, Claude,
+and OpenCode. Edit files here; never edit the generated copies.
+
+[cols="1,2,2"]
+|===
+| Source | Installed as | Used by
+
+| `skills/<name>/`
+| `~/.agents/skills/<name>` and, via generated relative links, `~/.claude/skills/<name>`
+| Pi and OpenCode (`~/.agents/skills`), Claude (`~/.claude/skills`)
+
+| `snippets/<id>.md`
+| `~/.agents/snippets/<id>.md`
+| Pi snippet menu (`alt+s`), Claude `/<id>` wrappers and `+<id>` markers
+
+| `agents/<name>.md`
+| `~/.claude/agents/<name>.md` and the bundled `pi-guard-subagents` agents
+| Claude subagents, Pi guarded subagents
+|===
+
+`setup.sh` links these directories, plus `home/.claude/{skills,agents,hooks}`
+and `home/.claude/settings.json` (which registers the `+marker` hook).
+
+== Generated config
+
+`scripts/generate-agent-config.mjs` renders every file under
+`home/.claude/skills`, `home/.claude/agents`, and
+`home/.pi/agent/packages/pi-guard-subagents/agents`. Rerun it after changing a
+skill, snippet, or agent; `setup.sh` and `tests/setup.test.sh` refuse stale output.
+
+[source,bash]
+----
+node scripts/generate-agent-config.mjs          # write
+node scripts/generate-agent-config.mjs --check  # verify
+----
+
+== Skills
+
+Skills use the frontmatter both agents understand. Add
+`disable-model-invocation: true` to make a skill manual-only (`/name` in
+Claude, `/skill:name` in Pi). Reference bundled scripts through
+`~/.agents/skills/<name>/...`, which resolves for every agent.
+
+== Snippets
+
+A snippet's file name is its short id, used everywhere:
+
+* Claude: start a message with up to six wrappers, `/code /noassume fix the parser`
+  (autocompleted), or put `+code` anywhere in the message. An unknown `+word`
+  shows a warning listing the available ids.
+* Pi: toggle snippets in the `alt+s` / `ctrl+shift+s` menu.
+
+Frontmatter: `name` (Pi menu label), `description`, `placement`
+(`prepend`/`append`), and `order`. A snippet id must not match a skill name, and neither should match a
+Claude built-in command (for example `/review` and `/verify` are taken).
+
+== Agents
+
+Agent prompts are shared; the frontmatter is neutral and mapped per agent:
+
+[cols="1,2,2"]
+|===
+| Field | Pi | Claude
+
+| `tier: default`
+| `openai/gpt-6.1-sol`
+| `opus`
+
+| `tier: fast`
+| `openai/gpt-5.6-terra`
+| `haiku`
+
+| `tools` (Pi names)
+| unchanged
+| `read`→`Read`, `grep`→`Grep`, `find`/`ls`→`Glob`, `bash`→`Bash`; omitted means all tools
+
+| `profile`
+| pi-guard profile
+| ignored (Claude has no equivalent until agent-guard)
+|===
+
+The model and tool tables live at the top of the generator.

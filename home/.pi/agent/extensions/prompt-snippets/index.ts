@@ -2,7 +2,8 @@
  * Prompt Snippets — mix-and-match single-purpose prompt rules.
  *
  * Each snippet is a markdown file with frontmatter (name, description,
- * placement, order) stored in the `snippets/` directory next to this file.
+ * placement, order) stored in `~/.agents/snippets`, which is shared with the
+ * Claude snippet wrappers and `+marker` hook.
  *
  * - Press alt+s, ctrl+shift+s, or run /snippets to open the toggle menu (space: toggle,
  *   tab: preview, enter: apply, esc: cancel). The menu is a bordered,
@@ -15,9 +16,9 @@
  * - Toggles reset to all-off after each send and at session start.
  */
 
-import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Key, matchesKey, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 
@@ -31,8 +32,7 @@ interface Snippet {
 	body: string;
 }
 
-const extensionDir = dirname(fileURLToPath(import.meta.url));
-const snippetsDir = join(extensionDir, "snippets");
+const snippetsDir = join(homedir(), ".agents", "snippets");
 const WIDGET_ID = "prompt-snippets";
 
 function parseSnippet(filename: string, raw: string): Snippet | null {
@@ -293,7 +293,6 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_start", (_event, ctx) => {
 		enabled = new Set();
 		snippets = loadSnippets();
-		if (!existsSync(snippetsDir)) mkdirSync(snippetsDir, { recursive: true });
 		updateWidget(ctx);
 	});
 

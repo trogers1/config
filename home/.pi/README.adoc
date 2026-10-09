@@ -10,7 +10,7 @@ This repo manages selected global pi agent config:
 * `home/.pi/agent/packages/pi-usage` → `~/.pi/agent/packages/pi-usage`
 * `home/.pi/agent/packages/pi-webfetch` → `~/.pi/agent/packages/pi-webfetch`
 * `home/.pi/agent/models.json` → `~/.pi/agent/models.json`
-* `home/.pi/agent/skills` → `~/.pi/agent/skills`
+* `home/.agents/skills` → `~/.agents/skills` and `home/.agents/snippets` → `~/.agents/snippets` (shared with Claude; see link:../.agents/README.adoc[`home/.agents`])
 * `home/.pi/agent/usage` → `~/.pi/agent/usage`
 * `home/.pi/agent/pi-guard/profiles.jsonc` → `~/.pi/agent/pi-guard/profiles.jsonc` (personal setup only)
 * `home/.pi/agent/pi-guard/prompts` → `~/.pi/agent/pi-guard/prompts` (personal setup only)

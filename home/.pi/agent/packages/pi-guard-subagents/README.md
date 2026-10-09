@@ -88,7 +88,7 @@ Forked from pi's `examples/extensions/subagent` with additions:
   not completed, so the orchestrator resumes the session instead of trusting
   silence. Worker stderr is captured into the handoff file.
 - **Orchestrate skill.** A companion skill at
-  `~/.pi/agent/skills/orchestrate/SKILL.md` drives the full plan.md →
+  `~/.agents/skills/orchestrate/SKILL.md` drives the full plan.md →
   progress.md → dispatch → review → integrate loop.
 
 ## Layout
@@ -100,7 +100,7 @@ pi-guard-subagents/
 │   ├── index.ts          # the `subagent` tool
 │   ├── agents.ts         # agent discovery (builtin < user < project)
 │   └── handoff.ts        # handoff files, scope checks, files-changed extraction
-├── agents/               # builtin agents (override by name in ~/.pi/agent/agents/)
+├── agents/               # builtin agents, generated from home/.agents/agents (override by name in ~/.pi/agent/agents/)
 │   ├── scout.md          # fast read-only recon          → openai/gpt-5-nano
 │   ├── worker.md         # general implementation       → openai/gpt-5.4-mini
 │   ├── planner.md        # implementation plans         → default model

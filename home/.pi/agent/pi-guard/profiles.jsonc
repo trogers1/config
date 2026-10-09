@@ -591,12 +591,12 @@
           "decision": "allow",
         },
         {
-          "pattern": "/**/home/.pi/agent/skills/address-comments/scripts/*.sh",
+          "pattern": "/**/home/.agents/skills/address-comments/scripts/*.sh",
           "decision": "allow",
           "contexts": ["bash"],
         },
         {
-          "pattern": "/**/.pi/agent/skills/address-comments/**",
+          "pattern": "/**/.agents/skills/address-comments/**",
           "decision": "allow",
           "contexts": ["bash"],
         },
@@ -702,7 +702,7 @@
             "guidance": "Use `npm test -- <files>` instead"
           },
           {
-            "pattern": "node /Users/taylor.rogers/.pi/agent/skills/** *",
+            "pattern": "node /Users/taylor.rogers/.agents/skills/** *",
             "decision": "allow"
           },
           {
@@ -768,7 +768,7 @@
           ]
         },
         {
-          "pattern": "/Users/taylor.rogers/.pi/agent/skills/review/scripts/render_markdown_html.mjs",
+          "pattern": "/Users/taylor.rogers/.agents/skills/flow-review/scripts/render_markdown_html.mjs",
           "decision": "allow",
           "contexts": [
             "bash"

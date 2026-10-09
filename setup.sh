@@ -20,7 +20,6 @@ BOOTSTRAP=0
 PI_LINKS=(
   "settings.json"
   "models.json"
-  "skills"
   "usage"
 )
 PI_PACKAGE_LINKS=(
@@ -33,6 +32,21 @@ PI_PACKAGE_LINKS=(
 PI_EXTENSION_LINKS=(
   "ask-user-question.ts"
   "prompt-snippets"
+)
+# Agent-neutral resources shared by Pi, Claude, and OpenCode, plus the Claude
+# config generated from them by scripts/generate-agent-config.mjs.
+# Entries are repo source|home target|label.
+AGENT_LINKS=(
+  'home/.agents/skills|.agents/skills|shared skills'
+  'home/.agents/snippets|.agents/snippets|shared prompt snippets'
+  'home/.claude/skills|.claude/skills|Claude skills'
+  'home/.claude/agents|.claude/agents|Claude agents'
+  'home/.claude/hooks|.claude/hooks|Claude hooks'
+  'home/.claude/settings.json|.claude/settings.json|Claude settings'
+)
+# Links an earlier layout created; install and uninstall remove them when still owned.
+RETIRED_LINKS=(
+  'home/.pi/agent/skills|.pi/agent/skills|Pi skills (moved to ~/.agents/skills)'
 )
 COMMANDS=(dev tmux-status-action)
 APPROVED_CONFLICTS=()
@@ -54,8 +68,8 @@ Usage: ./setup.sh [--dry-run] [--non-interactive] [--bootstrap-pi-deps]
        ./setup.sh --verify
        ./setup.sh --uninstall [--dry-run]
 
-Installs only the shared Pi configuration and non-writing `dev` tmux/worktree
-workflow. It does not install system tools. Conflicting user files are backed
+Installs only the shared Pi and Claude configuration and non-writing `dev`
+tmux/worktree workflow. It does not install system tools. Conflicting user files are backed
 up next to the target as <target>.bak after an interactive confirmation.
 EOF
 }
@@ -140,9 +154,13 @@ preflight() {
     source="$REPO_DIR/tmux_and_worktrees/bin/$item"; [ -f "$source" ] && [ -x "$source" ] || die "Missing executable command source: $source"
   done
   [ -f "$REPO_DIR/tmux_and_worktrees/tmux-worktree.conf" ] || die "Missing tmux workflow source."
-  for source in "$HOME_DIR/.pi" "$PI_DIR" "$PI_DIR/packages" "$PI_DIR/extensions" "$BIN_DIR"; do
-    [ ! -L "$source" ] || die "Refusing to manage targets beneath symlinked directory: $source"
+  local entry target label
+  for entry in "${AGENT_LINKS[@]}"; do
+    IFS='|' read -r source target label <<<"$entry"
+    [ -e "$REPO_DIR/$source" ] || die "Missing $label source: $REPO_DIR/$source"
   done
+  node "$REPO_DIR/scripts/generate-agent-config.mjs" --check || die "Generated agent config is stale; no files were changed."
+  reject_linked_target_ancestors
 
   if [ "$BOOTSTRAP" -eq 0 ]; then
     local missing=0 package
@@ -246,7 +264,7 @@ personal_tmux_link() {
 
 reject_linked_target_ancestors() {
   local ancestor
-  for ancestor in "$HOME_DIR/.pi" "$PI_DIR" "$PI_DIR/packages" "$PI_DIR/extensions" "$BIN_DIR"; do
+  for ancestor in "$HOME_DIR/.pi" "$PI_DIR" "$PI_DIR/packages" "$PI_DIR/extensions" "$HOME_DIR/.agents" "$HOME_DIR/.claude" "$BIN_DIR"; do
     [ ! -L "$ancestor" ] || die "Refusing to manage targets beneath symlinked directory: $ancestor"
   done
 }
@@ -316,11 +334,28 @@ preflight_block_conflict() {
   fi
 }
 
+# Calls "$1 <source> <target> <label>" for every AGENT_LINKS (or "$2"-named) entry.
+each_link() {
+  local fn="$1" list="${2:-AGENT_LINKS}[@]" entry source target label
+  for entry in "${!list}"; do
+    IFS='|' read -r source target label <<<"$entry"
+    "$fn" "$REPO_DIR/$source" "$HOME_DIR/$target" "$label"
+  done
+}
+
+retire_link() {
+  local source="$1" target="$2" label="$3"
+  owned_link "$source" "$target" || return 0
+  run rm "$target"
+  say "Removed retired link: $label ($target)"
+}
+
 preflight_conflicts() {
   local item
   for item in "${PI_LINKS[@]}"; do preflight_link_conflict "$REPO_DIR/home/.pi/agent/$item" "$PI_DIR/$item"; done
   for item in "${PI_PACKAGE_LINKS[@]}"; do preflight_link_conflict "$REPO_DIR/home/.pi/agent/packages/$item" "$PI_DIR/packages/$item"; done
   for item in "${PI_EXTENSION_LINKS[@]}"; do preflight_link_conflict "$REPO_DIR/home/.pi/agent/extensions/$item" "$PI_DIR/extensions/$item"; done
+  each_link preflight_link_conflict
   for item in "${COMMANDS[@]}"; do preflight_wrapper_conflict "$item"; done
   preflight_link_conflict "$REPO_DIR/tmux_and_worktrees/tmux-worktree.conf" "$TMUX_WORKTREE_CONF"
   preflight_block_conflict "$ZSHRC" "$ZSH_BEGIN" "$ZSH_END" "$ZSH_CONTENT" "zsh" "$PERSONAL_ZSH_SOURCE"
@@ -550,6 +585,8 @@ install_all() {
   for item in "${PI_EXTENSION_LINKS[@]}"; do
     link_owned "$REPO_DIR/home/.pi/agent/extensions/$item" "$PI_DIR/extensions/$item" "Pi extension $item"
   done
+  each_link retire_link RETIRED_LINKS
+  each_link link_owned
   for item in "${COMMANDS[@]}"; do install_wrapper "$item"; done
 
   link_owned "$REPO_DIR/tmux_and_worktrees/tmux-worktree.conf" "$TMUX_WORKTREE_CONF" "tmux workflow config"
@@ -570,6 +607,8 @@ uninstall_all() {
   for item in "${PI_EXTENSION_LINKS[@]}"; do
     uninstall_link "$REPO_DIR/home/.pi/agent/extensions/$item" "$PI_DIR/extensions/$item" "Pi extension $item"
   done
+  each_link retire_link RETIRED_LINKS
+  each_link uninstall_link
   for item in "${COMMANDS[@]}"; do uninstall_wrapper "$item"; done
   uninstall_link "$REPO_DIR/tmux_and_worktrees/tmux-worktree.conf" "$TMUX_WORKTREE_CONF" "tmux workflow config"
   remove_block "$ZSHRC" "$ZSH_BEGIN" "$ZSH_END" "$ZSH_CONTENT" "zsh" "$PERSONAL_ZSH_SOURCE"
@@ -582,10 +621,15 @@ show_status() {
   for item in "${PI_LINKS[@]}"; do status_item "$REPO_DIR/home/.pi/agent/$item" "$PI_DIR/$item" "Pi $item"; done
   for item in "${PI_PACKAGE_LINKS[@]}"; do status_item "$REPO_DIR/home/.pi/agent/packages/$item" "$PI_DIR/packages/$item" "Pi package $item"; done
   for item in "${PI_EXTENSION_LINKS[@]}"; do status_item "$REPO_DIR/home/.pi/agent/extensions/$item" "$PI_DIR/extensions/$item" "Pi extension $item"; done
+  each_link status_item
   for item in "${COMMANDS[@]}"; do status_wrapper "$item"; done
   status_item "$REPO_DIR/tmux_and_worktrees/tmux-worktree.conf" "$TMUX_WORKTREE_CONF" "tmux workflow config"
   status_block "$ZSHRC" "$ZSH_BEGIN" "$ZSH_END" "$ZSH_CONTENT" "zsh" "$PERSONAL_ZSH_SOURCE"
   status_block "$TMUX_CONF" "$TMUX_BEGIN" "$TMUX_END" "$TMUX_CONTENT" "tmux" "$PERSONAL_TMUX_SOURCE"
+}
+
+verify_link() {
+  [ -e "$1" ] && owned_link "$1" "$2" || die "$3 link is missing or drifted"
 }
 
 verify_all() {
@@ -603,6 +647,7 @@ verify_all() {
     source="$REPO_DIR/home/.pi/agent/extensions/$item"
     [ -e "$source" ] && owned_link "$source" "$PI_DIR/extensions/$item" || die "Pi extension $item link is missing or drifted"
   done
+  each_link verify_link
   for item in "${COMMANDS[@]}"; do wrapper_is_owned "$item" "$BIN_DIR/$item" || die "$item wrapper is missing or drifted"; done
   [ -f "$REPO_DIR/tmux_and_worktrees/tmux-worktree.conf" ] && owned_link "$REPO_DIR/tmux_and_worktrees/tmux-worktree.conf" "$TMUX_WORKTREE_CONF" || die "tmux workflow link is missing or drifted"
   verify_block "$ZSHRC" "$ZSH_BEGIN" "$ZSH_END" "$ZSH_CONTENT" "zsh" "$PERSONAL_ZSH_SOURCE"

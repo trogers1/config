@@ -25,6 +25,13 @@ esac
 EOF
   chmod +x "$FAKE_BIN/$command_name"
 done
+# Setup runs real Node scripts; only the version probe is faked.
+cat >"$FAKE_BIN/node" <<EOF
+#!/usr/bin/env bash
+[ "\${1:-}" = --version ] && { echo v22.19.0; exit 0; }
+exec "$(command -v node)" "\$@"
+EOF
+chmod +x "$FAKE_BIN/node"
 cat >"$FAKE_BIN/playwright" <<'EOF'
 #!/usr/bin/env bash
 [ "${1:-}" = install ] && [ "${2:-}" = --list ] && printf '/cache/ms-playwright/chromium-1234\n'
@@ -38,12 +45,37 @@ run_personal() {
   HOME="$HOME_DIR" PATH="$FAKE_BIN:$PATH" "$REPO_DIR/setup-personal.sh" "$@"
 }
 
+# Generated Claude/Pi agent config matches its shared sources.
+node "$REPO_DIR/scripts/generate-agent-config.mjs" --check
+
 # Shared install owns only its explicit resources and preserves user profiles.
 mkdir -p "$HOME_DIR/.pi/agent/pi-guard" "$HOME_DIR/bin"
 printf 'user profile\n' >"$HOME_DIR/.pi/agent/pi-guard/profiles.jsonc"
 printf 'user pi command\n' >"$HOME_DIR/bin/pi"
+ln -s "$REPO_DIR/home/.pi/agent/skills" "$HOME_DIR/.pi/agent/skills"
 run_shared >/dev/null
 run_shared --verify >/dev/null
+assert_absent "$HOME_DIR/.pi/agent/skills"
+assert_equals "$(readlink "$HOME_DIR/.agents/skills")" "$REPO_DIR/home/.agents/skills"
+assert_equals "$(readlink "$HOME_DIR/.claude/skills")" "$REPO_DIR/home/.claude/skills"
+assert_exists "$HOME_DIR/.claude/skills/flow-review/SKILL.md"
+assert_exists "$HOME_DIR/.claude/skills/code/SKILL.md"
+assert_exists "$HOME_DIR/.claude/agents/scout.md"
+
+# The installed hook command expands known +markers and reports unknown ones.
+hook_command="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"])' "$HOME_DIR/.claude/settings.json")"
+run_hook() { printf '{"prompt":"%s"}' "$1" | HOME="$HOME_DIR" bash -c "$hook_command"; }
+run_hook 'tidy this +code' | grep -Fq '# Code Style' || fail 'hook did not expand +code'
+run_hook 'tidy this +cod' | grep -Fq 'Unknown snippet marker(s): +cod' || fail 'hook did not report an unknown marker'
+assert_equals "$(run_hook 'c++ and a+b')" ''
+
+# A Claude settings file that replaced the link (for example, by an atomic rewrite) is drift.
+cp "$HOME_DIR/.claude/settings.json" "$TMP_DIR/settings-copy.json"
+rm "$HOME_DIR/.claude/settings.json"
+mv "$TMP_DIR/settings-copy.json" "$HOME_DIR/.claude/settings.json"
+if run_shared --verify >/dev/null 2>&1; then fail 'verify missed an unlinked Claude settings file'; fi
+rm "$HOME_DIR/.claude/settings.json"
+run_shared >/dev/null
 assert_equals "$(cat "$HOME_DIR/.pi/agent/pi-guard/profiles.jsonc")" 'user profile'
 assert_equals "$(cat "$HOME_DIR/bin/pi")" 'user pi command'
 assert_exists "$HOME_DIR/bin/dev"
@@ -73,7 +105,9 @@ rm "$HOME_DIR/.zshrc"
 run_shared >/dev/null
 run_shared --uninstall >/dev/null
 assert_absent "$HOME_DIR/.pi/agent/settings.json"
+assert_absent "$HOME_DIR/.claude/skills"
 assert_absent "$HOME_DIR/bin/dev"
+assert_absent "$HOME_DIR/.claude/settings.json"
 assert_equals "$(cat "$HOME_DIR/.pi/agent/pi-guard/profiles.jsonc")" 'user profile'
 rm "$HOME_DIR/.pi/agent/pi-guard/profiles.jsonc"
 

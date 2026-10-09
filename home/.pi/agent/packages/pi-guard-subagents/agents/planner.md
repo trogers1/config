@@ -1,6 +1,6 @@
 ---
 name: planner
-description: Creates implementation plans from context and requirements (no model pinned — inherits the default model)
+description: Creates implementation plans from context and requirements
 tools: read, grep, find, ls
 model: openai/gpt-6.1-sol
 profile: builtin:read-only

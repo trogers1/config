@@ -28,7 +28,8 @@ standalone instruction — toggle exactly the ones you want per message.
 
 ## Snippet files
 
-Snippets live in `snippets/` next to `index.ts` — one markdown file each,
+Snippets live in `~/.agents/snippets` (linked from `home/.agents/snippets` by
+`setup.sh`, and shared with Claude's `/name` wrappers and `+name` markers) — one markdown file each,
 with frontmatter:
 
 ```markdown
