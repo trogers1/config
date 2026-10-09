@@ -705,6 +705,26 @@
             "pattern": "node /Users/taylor.rogers/.pi/agent/skills/** *",
             "decision": "allow"
           },
+          {
+            "pattern": "-v jiratui",
+            "decision": "allow"
+          },
+          {
+            "pattern": "jiratui *",
+            "decision": "allow"
+          },
+          {
+            "pattern": "jira-ticket *",
+            "decision": "allow"
+          },
+          {
+            "pattern": "-v terraform",
+            "decision": "allow"
+          },
+          {
+            "pattern": "node --version",
+            "decision": "allow"
+          },
         ],
       },
       "readPaths": [
@@ -730,6 +750,13 @@
           "contexts": [
             "ls"
           ]
+        },
+        {
+          "pattern": "/Users/taylor.rogers/Documents/bruno/**",
+          "decision": "allow",
+          "contexts": [
+            "read"
+          ]
         }
       ],
       "writePaths": [
@@ -742,6 +769,27 @@
         },
         {
           "pattern": "/Users/taylor.rogers/.pi/agent/skills/review/scripts/render_markdown_html.mjs",
+          "decision": "allow",
+          "contexts": [
+            "bash"
+          ]
+        },
+        {
+          "pattern": "/Users/taylor.rogers/Documents/bruno/**",
+          "decision": "allow",
+          "contexts": [
+            "write"
+          ]
+        },
+        {
+          "pattern": "/Users/taylor.rogers/Documents/bruno/**",
+          "decision": "allow",
+          "contexts": [
+            "bash"
+          ]
+        },
+        {
+          "pattern": "/Users/taylor.rogers/.local/share/lightcast-mcp/tokens/**",
           "decision": "allow",
           "contexts": [
             "bash"
