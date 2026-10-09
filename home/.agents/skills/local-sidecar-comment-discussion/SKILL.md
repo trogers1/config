@@ -11,13 +11,13 @@ Find and read any `*.comments` or `comments.md` files (sidecar comments files). 
 
 
 ```.comments
-@<id1> <line>:<col>[-<line>:<col>] | <hash>== User comment
-@<id2> <line>:<col>[-<line>:<col>] | <hash>== User comment
+[@<id1> <line>[:<col>][-<line>[:<col>]][ | <base64-anchor>]] User comment
+[@<id2> <line>[:<col>][-<line>[:<col>]][ | <base64-anchor>]] User comment
 
 That has multiple
 
 Lines.
-@<id2> <line>:<col>[-<line>:<col>] | <hash>== User comment again
+[@<id3> <line>[:<col>][-<line>[:<col>]][ | <base64-anchor>]] User comment again
 ```
 
 You must READ each comments file and respond to each comment that ends in a user comment (ignore any that has a Robot comment as the final comment in the 'thread'). Respond with this format for each 'thread':
@@ -33,14 +33,14 @@ You must READ each comments file and respond to each comment that ends in a user
 So the first example would look like:
 
 ```.comments
-@<id1> <line>:<col>[-<line>:<col>] | <hash>== User comment
+[@<id1> <line>[:<col>][-<line>[:<col>]][ | <base64-anchor>]] User comment
 ---
 
 🤖 <your response>
 
 ---
 
-@<id2> <line>:<col>[-<line>:<col>] | <hash>== User comment
+[@<id2> <line>[:<col>][-<line>[:<col>]][ | <base64-anchor>]] User comment
 
 That has multiple
 
@@ -51,7 +51,7 @@ Lines.
 
 ---
 
-@<id2> <line>:<col>[-<line>:<col>] | <hash>== User comment again
+[@<id3> <line>[:<col>][-<line>[:<col>]][ | <base64-anchor>]] User comment again
 ---
 
 🤖 <your response>
@@ -84,4 +84,5 @@ Snippet/pseudocode:
 DO NOT MAKE CHANGES OUTSIDE OF THE COMMENTS FILES UNLESS SPECIFICALLY REQUESTED TO DO SO or the comment indicates that the thread is resolved and changes ought to be made.
 
 NOTE:
+- Never edit or move a `[@id ...]` header; the Neovim sidecar plugin uses it to anchor the comment to its source text. Replies go in the comment body below the header.
 - Sidecar comment files or comment.md files can be either in the root of the project, or deeply nested. `comments.md` is usually at the root of the project.
