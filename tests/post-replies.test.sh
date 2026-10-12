@@ -20,6 +20,9 @@ ENDPOINT="projects/group%2Fproject/merge_requests/125"
 D1=a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1
 D2=b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2
 D3=c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3
+BASE_SHA=1111111111111111111111111111111111111111
+START_SHA=2222222222222222222222222222222222222222
+HEAD_SHA=3333333333333333333333333333333333333333
 
 FAKE_BIN="$TMP_DIR/bin"
 export FAKE_GLAB_DIR="$TMP_DIR/glab"
@@ -59,14 +62,17 @@ case "$method $endpoint" in
     id="$(cat "$dir/next_note_id")"
     echo "$((id + 1))" >"$dir/next_note_id"
     cat >"$dir/posted.$id.json"
-    jq -n --argjson id "$id" --arg user "$FAKE_GLAB_USER" --slurpfile payload "$dir/posted.$id.json" '
-      {id: ("d" * 40 | .[0:40]), individual_note: false, notes: [{
+    jq -n --arg d "$(printf 'e%039d' "$id")" --argjson id "$id" --arg user "$FAKE_GLAB_USER" --slurpfile payload "$dir/posted.$id.json" '
+      {id: $d, individual_note: false, notes: [{
         id: $id, type: (if $payload[0].position then "DiffNote" else "DiscussionNote" end),
         body: $payload[0].body, author: {name: "Taylor Rogers", username: $user},
         created_at: "2026-10-12T12:00:00.000Z", system: false, noteable_iid: 125,
         resolvable: true, resolved: false
       } + (if $payload[0].position then {position: $payload[0].position} else {} end)]}
-    '
+    ' >"$dir/discussion.new"
+    jq --slurpfile new "$dir/discussion.new" '. + $new' "$dir/discussions.json" >"$dir/discussions.next"
+    mv "$dir/discussions.next" "$dir/discussions.json"
+    cat "$dir/discussion.new"
     ;;
   "POST $prefix/discussions/"*/notes)
     discussion="${endpoint#"$prefix/discussions/"}"
@@ -138,6 +144,15 @@ reset_gitlab() {
       ]}
     ]
   ' >"$FAKE_GLAB_DIR/discussions.json"
+  jq -n --arg base "$BASE_SHA" --arg start "$START_SHA" --arg head "$HEAD_SHA" \
+    '{id: 9125, iid: 125, diff_refs: {base_sha: $base, start_sha: $start, head_sha: $head}}' >"$FAKE_GLAB_DIR/mr.json"
+  # src/app.ts new side: 10 a, 11 +b, 12 +c, 13 d, 14 +e, 15 return.
+  jq -n '[
+    {old_path: "README.md", new_path: "README.md", new_file: false, renamed_file: false, deleted_file: false,
+     diff: "@@ -1 +1 @@\n-Old\n+New\n"},
+    {old_path: "src/app.ts", new_path: "src/app.ts", new_file: false, renamed_file: false, deleted_file: false,
+     diff: "@@ -10,4 +10,6 @@ export function main() {\n const a = 1;\n-const b = 2;\n+const b = 3;\n+const c = 4;\n const d = 5;\n+const e = 6;\n return a;\n"}
+  ]' >"$FAKE_GLAB_DIR/diffs.json"
 }
 
 # Insert stdin after the end marker of the n-th discussion's reviewer comments.
@@ -336,22 +351,106 @@ fi
 assert_contains "$out" "reserved <!-- reviewer-comments: marker"
 cmp -s "$COMMENTS" "$TMP_DIR/before.md" || fail "failed render modified comments.md"
 
+# Approved Thread blocks under `## New threads` start new discussions: the
+# preview shows each anchor, --post starts them and marks them POSTED, and a
+# rerun skips threads that already exist on GitLab.
+add_new_threads() {
+  cat >>"$COMMENTS" <<'EOF'
+
+## New threads
+
+**Thread — DRAFT** general
+
+Not ready yet.
+
+---
+**Thread — APPROVED** general
+
+Should the retry limit be configurable?
+
+---
+**Thread — APPROVED** positional src/app.ts L13-L15
+
+This block could use the shared helper.
+EOF
+}
+setup_comments
+add_new_threads
+out="$(preview)"
+assert_contains "$out" "[4/5] New thread (general)"
+assert_contains "$out" "[5/5] New thread (positional src/app.ts L13-L15)"
+assert_contains "$out" "  thread: start"
+assert_not_contains "$out" "Not ready yet."
+assert_equals "$(writes)" ""
+out="$(post)"
+assert_equals "$(writes)" "POST $ENDPOINT/discussions/$D1/notes
+POST $ENDPOINT/discussions/$D2/notes
+POST $ENDPOINT/discussions
+POST $ENDPOINT/discussions"
+assert_equals "$(posted_body 1002)" "Should the retry limit be configurable?"
+assert_equals "$(jq -c 'has("position")' "$FAKE_GLAB_DIR/posted.1002.json")" "false"
+assert_equals "$(posted_body 1003)" "This block could use the shared helper."
+assert_equals "$(jq -c '.position | [.new_path, .line_range.start.new_line, .line_range.end.new_line]' "$FAKE_GLAB_DIR/posted.1003.json")" '["src/app.ts",13,15]'
+assert_contains "$(cat "$COMMENTS")" "**Thread — POSTED** [note_1002]($MR_URL#note_1002) "
+assert_contains "$(cat "$COMMENTS")" "**Thread — POSTED** [note_1003]($MR_URL#note_1003) "
+assert_contains "$(cat "$COMMENTS")" "**Thread — DRAFT** general"
+# Restoring a header to APPROVED finds the existing thread instead of posting again.
+sed -i.bak 's/^\*\*Thread — POSTED\*\* \[note_1003\].*$/**Thread — APPROVED** positional src\/app.ts L13-L15/' "$COMMENTS"
+: >"$FAKE_GLAB_DIR/log"
+out="$(post)"
+assert_contains "$out" "already started as note_1003"
+assert_equals "$(writes)" ""
+# The same text on other lines is a different thread.
+sed -i.bak 's/^\*\*Thread — POSTED\*\* \[note_1003\].*$/**Thread — APPROVED** positional src\/app.ts L12-L12/' "$COMMENTS"
+out="$(preview)"
+assert_contains "$out" "  thread: start"
+
+# A positional thread outside the diff aborts the whole run before any write.
+setup_comments
+add_new_threads
+sed -i.bak 's/ L13-L15$/ L9-L10/' "$COMMENTS"
+if out="$(post)"; then fail "post accepted a thread outside the diff"; fi
+assert_contains "$out" "line 9 of src/app.ts is not an added or unchanged line"
+assert_equals "$(writes)" ""
+
+# Malformed or misplaced Thread blocks are refused before any GitLab call.
+refuse_comments() {
+  local expected="$1"
+  if out="$(preview)"; then fail "preview accepted comments.md expecting: $expected"; fi
+  assert_contains "$out" "$expected"
+  assert_equals "$(cat "$FAKE_GLAB_DIR/log")" ""
+}
+setup_comments
+add_local "$COMMENTS" 1 <<'EOF'
+**Thread — APPROVED** general
+
+Misplaced.
+EOF
+refuse_comments "Thread block outside the ## New threads section"
+setup_comments
+add_new_threads
+sed -i.bak 's/^\*\*Thread — APPROVED\*\* general$/**Thread — APPROVED**/' "$COMMENTS"
+refuse_comments "unrecognized Thread header"
+setup_comments
+add_new_threads
+printf '\n---\n**Reply — APPROVED**\n\nWrong section.\n' >>"$COMMENTS"
+refuse_comments "Reply block in ## New threads"
+setup_comments
+add_new_threads
+printf '\n## New threads\n' >>"$COMMENTS"
+refuse_comments "more than one ## New threads section"
+
+# Two identical approved threads are refused instead of posting one twice.
+setup_comments
+add_new_threads
+printf '\n---\n**Thread — APPROVED** general\n\nShould the retry limit be configurable?\n' >>"$COMMENTS"
+if out="$(preview)"; then fail "duplicate threads accepted"; fi
+assert_contains "$out" "Two APPROVED Thread blocks have the same anchor and body"
+
 # gitlab_write_start_thread requires an explicit --type: general opens an MR
 # thread, positional anchors one to new-side lines of the MR diff, and bad
 # input is refused before any write.
 reset_gitlab
-BASE_SHA=1111111111111111111111111111111111111111
-START_SHA=2222222222222222222222222222222222222222
-HEAD_SHA=3333333333333333333333333333333333333333
-jq -n --arg base "$BASE_SHA" --arg start "$START_SHA" --arg head "$HEAD_SHA" \
-  '{id: 9125, iid: 125, diff_refs: {base_sha: $base, start_sha: $start, head_sha: $head}}' >"$FAKE_GLAB_DIR/mr.json"
-# src/app.ts new side: 10 a, 11 +b, 12 +c, 13 d, 14 +e, 15 return.
-jq -n '[
-  {old_path: "README.md", new_path: "README.md", new_file: false, renamed_file: false, deleted_file: false,
-   diff: "@@ -1 +1 @@\n-Old\n+New\n"},
-  {old_path: "src/app.ts", new_path: "src/app.ts", new_file: false, renamed_file: false, deleted_file: false,
-   diff: "@@ -10,4 +10,6 @@ export function main() {\n const a = 1;\n-const b = 2;\n+const b = 3;\n+const c = 4;\n const d = 5;\n+const e = 6;\n return a;\n"}
-]' >"$FAKE_GLAB_DIR/diffs.json"
 APP_SHA="$(printf 'src/app.ts' | shasum -a 1 | cut -d ' ' -f 1)"
 start_thread() {
   (

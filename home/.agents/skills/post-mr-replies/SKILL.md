@@ -3,13 +3,14 @@ name: post-mr-replies
 description: >-
   Preview and, only after Taylor's explicit approval in chat, post the
   `Reply — APPROVED` blocks from comments.md as replies to their GitLab MR
-  threads, optionally resolving threads tagged RESOLVE.
+  threads (optionally resolving threads tagged RESOLVE) and start the
+  `Thread — APPROVED` blocks as new MR threads.
 disable-model-invocation: true
 ---
 
 # Post MR Replies
 
-This is the final, **write-capable** step of the MR review loop (`export-mr-comments` / `address-comments` → local discussion in `comments.md` → this skill). It posts the replies Taylor approved in `comments.md` to their GitLab threads.
+This is the final, **write-capable** step of the MR review loop (`export-mr-comments` / `address-comments` → local discussion in `comments.md` → this skill). It posts the replies Taylor approved in `comments.md` to their GitLab threads, and starts the new threads he approved.
 
 `scripts/post-replies.sh` lives next to the read-only scripts, but it is the only one that writes. All writes go through `scripts/lib/gitlab-write.sh`, which allowlists exactly three endpoints: start a discussion, add a note to a discussion, and resolve a discussion. Preview with `scripts/preview-replies.sh`, a wrapper that rejects every flag and so can never write. Do not run `glab api` or other GitLab CLI commands directly.
 
@@ -44,9 +45,40 @@ Rules:
 - The body is everything after the header up to the next bare `---` line outside a code fence, the next `## ` heading, or end of file. Leading/trailing blank lines are trimmed; the rest is posted verbatim. Code fences inside the body may contain `---`.
 - Write the reply for the reviewer, not for Taylor: no `Robot` framing, no local-only file links (use GitLab-relative paths or plain text).
 
+## New thread blocks in `comments.md`
+
+To start a new GitLab thread, draft a `Thread` block under a single `## New threads` heading (usually at the end of the file; it has no `Thread:` link and no reviewer markers):
+
+```md
+## New threads
+
+**Thread — DRAFT** general
+
+<text for a new general MR thread>
+
+---
+**Thread — DRAFT** positional src/app.ts L12-L15
+
+<text for a new thread on new-side lines 12–15 of src/app.ts>
+```
+
+| Header                                                      | Meaning                                                    |
+| ----------------------------------------------------------- | ---------------------------------------------------------- |
+| `**Thread — DRAFT** <anchor>`                               | Agent draft. Never posted.                                 |
+| `**Thread — APPROVED** general`                             | Taylor approved it. Started as a general MR thread on `--post`. |
+| `**Thread — APPROVED** positional <path> L<start>-L<end>`   | Taylor approved it. Started on those lines of the MR diff on `--post`. |
+| `**Thread — POSTED** [note_<id>](<mr-url>#note_<id>) <ts>`  | Written by the script after starting the thread. Skipped on rerun. |
+
+Rules:
+
+- The anchor type is always explicit. Lines are new-side line numbers in the MR's latest diff (added or unchanged lines; not removed ones); use `L12-L12` for one line. Paths cannot contain spaces.
+- Every positional anchor is checked against the live MR diff while planning, so a line outside the diff aborts the run before any write.
+- A thread is skipped as already started when the MR has a discussion opened by the current glab user with the same body and anchor. Two identical approved threads in one file are refused.
+- Body, approval, and writing rules are the same as for Reply blocks. `Thread` blocks outside `## New threads`, and `Reply` blocks inside it, are errors.
+
 ## Workflow
 
-1. **Do not refresh `comments.md` first.** The refresh scripts rewrite the whole file and would drop the `Reply` blocks.
+1. **Do not refresh `comments.md` first.** The refresh scripts rewrite the whole file and would drop the `Reply` and `Thread` blocks.
 2. Run the preview (read-only; fetches live discussions to plan) and show Taylor the **full** output in chat:
 
    ```bash

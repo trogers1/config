@@ -19,8 +19,20 @@ fi
 
 # Reviewer text sits between these markers so post-replies.sh can tell it apart
 # from local Robot and Reply blocks; a note that contains a marker could forge
-# that boundary, so refuse to render it.
+# that boundary, so refuse to render it. The usage notes sit in the preamble,
+# which post-replies.sh skips, so no line there may start with `**Reply`,
+# `## `, `---`, or a code fence.
 jq_defs='
+  def usage_notes:
+    "How to use this file:\n\n"
+    + "- Never edit between the `reviewer-comments` markers; that text comes from GitLab and is rewritten on refresh.\n"
+    + "- To discuss a thread with the agent, add your notes below its end marker and ask the agent to respond. It answers in `**Robot — RESOLVED**` or `**Robot — UNRESOLVED**` notes, which are never posted.\n"
+    + "- To reply on GitLab, ask the agent to draft a `**Reply — DRAFT**` block under the thread, or write one yourself.\n"
+    + "- To approve a draft, change its header to `**Reply — APPROVED**`, or `**Reply — APPROVED, RESOLVE**` to also resolve the thread. One approved reply per thread.\n"
+    + "- A reply body ends at the next bare `---` line, the next discussion heading, or the end of the file.\n"
+    + "- To start a new thread, add a `## New threads` heading at the end and draft `**Thread — DRAFT** general` or `**Thread — DRAFT** positional <path> L<start>-L<end>` blocks under it. Approve them the same way.\n"
+    + "- To post, ask the agent to run the `post-mr-replies` skill. It previews every approved reply and thread, posts them only after you say yes in chat, and marks each header POSTED.\n"
+    + "- Refreshing rewrites this whole file and drops your notes, replies, and new threads, so post approved ones first.\n\n";
   def reviewer_text:
     if contains("<!-- reviewer-comments:") then
       error("a reviewer note contains the reserved <!-- reviewer-comments: marker; refusing to render it")
@@ -34,6 +46,7 @@ render_robot() {
     | "# Merge Request Comments\n\n"
       + "Merge request: [!" + $mr_iid + "](" + $mr_url + ")\n\n"
       + "Only unresolved discussions with :robot: reaction\n\n"
+      + usage_notes
       + (
           [
             $all[]
@@ -96,6 +109,7 @@ render_all() {
     | "# Merge Request Comments\n\n"
       + "Merge request: [!" + $mr_iid + "](" + $mr_url + ")\n\n"
       + "All human discussions (resolved and unresolved)\n\n"
+      + usage_notes
       + (
           [
             $all[]
