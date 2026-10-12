@@ -13,6 +13,30 @@ I like comprehensive, behavioral testing that is as production-like as possible.
 
 WITH THAT IN MIND, please review the testing and implementation of the current branch to meet the provided AC. Assume you are reviewing it compared to the remote `staging` branch unless otherwise specified.
 
+## GitLab merge requests
+
+When given a GitLab MR URL, use the `address-comments` skill scripts (installed at `~/.agents/skills/address-comments/scripts`) for all GitLab access. Do not run `glab` or other GitLab CLI commands directly, and never post anything: posting belongs to the `post-mr-replies` skill after Taylor approves it. Without an MR URL, skip this section.
+
+### Read existing review comments first
+
+Before reviewing, export every human discussion on the MR to a scratch file and read it, so the review builds on what reviewers already said instead of repeating it. This counts as inspecting the change, so it may come before `flow.md`:
+
+```sh
+bash ~/.agents/skills/address-comments/scripts/refresh-all-comments-md.sh <mr-url> <scratch-dir>/mr-comments.md
+```
+
+Never point a refresh at the repository's `comments.md`: a refresh rewrites the whole file and drops Taylor's Robot notes, Reply blocks, and Thread blocks. When a finding is already raised in an existing discussion, say so in the review and link the thread rather than reporting it as new.
+
+### Draft findings as new threads
+
+After the review, draft each finding Taylor might want on the MR as a `Thread — DRAFT` block in the repository's `comments.md`, so `post-mr-replies` can post the ones he approves:
+
+- If `comments.md` does not exist, create it with `refresh-all-comments-md.sh <mr-url> comments.md`. If it exists, check that its `Merge request:` line is this MR and edit it in place; stop and ask if it is for another MR.
+- Put every draft under the file's single `## New threads` heading (add it at the end if missing). Use `**Thread — DRAFT** positional <path> L<start>-L<end>` for findings on specific lines, with new-side line numbers of added or unchanged lines in the MR's diff (`L12-L12` for one line), and `**Thread — DRAFT** general` for broader findings. Separate blocks with a bare `---` line.
+- Write each body for the MR author: standalone, in GitLab Markdown, with no Robot framing and no local-only links.
+- Take line numbers from the MR's diff, and confirm the local branch matches the MR's latest pushed commit; otherwise use `general` drafts that name the file and line in the body. Anchors are checked against the live diff only when an approved block is previewed.
+- Only draft; never mark a block `APPROVED`. Run `bash ~/.agents/skills/address-comments/scripts/preview-replies.sh <mr-url> comments.md` to confirm the file still parses, and list the drafts you added in the final response.
+
 ## Required first step: map the branch flow
 
 Before evaluating the implementation, looking for findings, or writing the review, first create or replace `flow.md` at the repository root. The only review work that should precede it is identifying the comparison branch and inspecting the diff and source needed to understand and write the artifact. Build it from the complete branch diff against the selected comparison branch (normally remote `staging`), not just the latest commit.
