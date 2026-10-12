@@ -11,7 +11,7 @@ disable-model-invocation: true
 
 Use this workflow to refresh unresolved GitLab MR comments for a supplied MR URL, take Taylor's requested first pass on Robot-marked discussions, and annotate `comments.md` with a `Robot` note for **every** discussion explaining whether it was resolved or remains unresolved.
 
-GitLab data is fetched only through **read-only scripts** in this skill (`scripts/`). Do not run `glab api` or other GitLab CLI commands directly. The one write-capable script, `scripts/post-replies.sh`, belongs to the separate `post-mr-replies` skill; never run it with `--post` from this workflow.
+GitLab data is fetched only through **read-only scripts** in this skill (`scripts/`). Do not run `glab api` or other GitLab CLI commands directly. The one write-capable script, `scripts/post-replies.sh`, belongs to the separate `post-mr-replies` skill; never run it from this workflow.
 
 ## Role and Goal
 
@@ -150,7 +150,7 @@ If tests fail:
 
 ## `Robot` Note Format
 
-For every discussion, append one of these structures immediately after that discussion in `comments.md` using the edit tool. Avoid ad-hoc scripts for this file update. For grouped discussions, use one full canonical note and short cross-reference notes for the rest of the group.
+For every discussion, append one of these structures immediately after that discussion in `comments.md` (below its `<!-- reviewer-comments:end -->` marker; never edit between the reviewer-comments markers) using the edit tool. Avoid ad-hoc scripts for this file update. For grouped discussions, use one full canonical note and short cross-reference notes for the rest of the group.
 
 Resolved with code change:
 
@@ -213,7 +213,7 @@ Use `Robot — UNRESOLVED` for the cross-reference instead when the group remain
 
 ## Drafting GitLab Replies
 
-`Robot` notes are local discussion with Taylor and are never posted. When Taylor asks you to draft an actual reply to a thread, append a `Reply — DRAFT` block to that discussion after the latest `Robot` note:
+`Robot` notes are local discussion with Taylor and are never posted. When Taylor asks you to draft an actual reply to a thread, append a `Reply — DRAFT` block to that discussion after the latest `Robot` note (always below the discussion's `<!-- reviewer-comments:end -->` marker; Reply headers between the markers are reviewer text and are ignored):
 
 ```md
 ---

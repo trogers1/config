@@ -73,6 +73,9 @@ gitlab_read_validate_endpoint() {
     projects/*/merge_requests/[0-9]*/notes/[0-9]*/award_emoji)
       allowed=1
       ;;
+    user)
+      allowed=1
+      ;;
   esac
 
   if [[ "$allowed" -ne 1 ]]; then

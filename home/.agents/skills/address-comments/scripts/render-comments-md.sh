@@ -17,8 +17,18 @@ if [[ ! -f "$discussions_file" ]]; then
   exit 1
 fi
 
+# Reviewer text sits between these markers so post-replies.sh can tell it apart
+# from local Robot and Reply blocks; a note that contains a marker could forge
+# that boundary, so refuse to render it.
+jq_defs='
+  def reviewer_text:
+    if contains("<!-- reviewer-comments:") then
+      error("a reviewer note contains the reserved <!-- reviewer-comments: marker; refusing to render it")
+    else . end;
+'
+
 render_robot() {
-  jq -r --arg mr_url "$mr_url" '
+  jq -r --arg mr_url "$mr_url" "$jq_defs"'
     . as $all
     | ($all[0].notes[0].noteable_iid | tostring) as $mr_iid
     | "# Merge Request Comments\n\n"
@@ -61,15 +71,18 @@ render_robot() {
                     end
                   )
                 + "Status: unresolved\n\n"
+                + "<!-- reviewer-comments:begin -->\n\n"
                 + (
                     [
                       $human[]
                       | "**" + .author.name + "** (@" + .author.username + ") - " + .created_at
                         + " — [comment](" + $mr_url + "#note_" + (.id | tostring) + ")\n\n"
                         + (.body | gsub("\r"; ""))
+                      | reviewer_text
                     ]
                     | join("\n\n---\n\n")
                   )
+                + "\n\n<!-- reviewer-comments:end -->"
             )
           | join("\n\n")
         )
@@ -77,7 +90,7 @@ render_robot() {
 }
 
 render_all() {
-  jq -r --arg mr_url "$mr_url" '
+  jq -r --arg mr_url "$mr_url" "$jq_defs"'
     . as $all
     | ($all[0].notes[0].noteable_iid | tostring) as $mr_iid
     | "# Merge Request Comments\n\n"
@@ -118,25 +131,34 @@ render_all() {
                 + "Status: "
                 + (if ($d.resolved // false) then "resolved" else "unresolved" end)
                 + "\n\n"
+                + "<!-- reviewer-comments:begin -->\n\n"
                 + (
                     [
                       $human[]
                       | "**" + .author.name + "** (@" + .author.username + ") - " + .created_at
                         + " — [comment](" + $mr_url + "#note_" + (.id | tostring) + ")\n\n"
                         + (.body | gsub("\r"; ""))
+                      | reviewer_text
                     ]
                     | join("\n\n---\n\n")
                   )
+                + "\n\n<!-- reviewer-comments:end -->"
             )
           | join("\n\n")
         )
   ' "$discussions_file"
 }
 
+# Render to a temporary file so a failed render never truncates an existing
+# comments.md (and the local Robot and Reply blocks in it).
+tmp_file="$(mktemp "$out_file.XXXXXX")"
+trap 'rm -f "$tmp_file"' EXIT
 if [[ "$mode" == "robot" ]]; then
-  render_robot >"$out_file"
+  render_robot >"$tmp_file"
 else
-  render_all >"$out_file"
+  render_all >"$tmp_file"
 fi
+chmod 644 "$tmp_file"
+mv "$tmp_file" "$out_file"
 
 echo "Wrote $out_file"

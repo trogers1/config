@@ -577,16 +577,19 @@
             "pattern": "bash *skills/address-comments/scripts/refresh-all-comments-md.sh*",
             "decision": "allow",
           },
-          // post-replies.sh only reads GitLab without --post (dry-run preview);
-          // the more specific --post rule wins and always prompts before writing.
+          // preview-replies.sh rejects every flag after shell expansion, so it
+          // can never write. Patterns match raw command text (`--po''st` would
+          // slip past a `*--post*` rule), so the write-capable post-replies.sh
+          // always asks whatever its arguments. Both are anchored to the
+          // installed path so a copy elsewhere is not trusted.
           {
-            "pattern": "bash *skills/address-comments/scripts/post-replies.sh*",
+            "pattern": "bash ~/.agents/skills/address-comments/scripts/preview-replies.sh *",
             "decision": "allow",
           },
           {
-            "pattern": "bash *skills/address-comments/scripts/post-replies.sh*--post*",
+            "pattern": "bash ~/.agents/skills/address-comments/scripts/post-replies.sh *",
             "decision": "ask",
-            "guidance": "This posts replies to GitLab MR threads. Only run --post after showing Taylor the dry-run preview and getting explicit approval in chat.",
+            "guidance": "This can post replies to GitLab MR threads. Run preview-replies.sh first, show Taylor the full preview, and only run post-replies.sh --post after explicit approval in chat.",
           },
         ],
       },
