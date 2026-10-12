@@ -240,8 +240,8 @@ takes the safe path or fails with a message on stderr:
 
 == Claude Code worktrees
 
-`home/.claude/settings.json` (linked to `~/.claude/settings.json` by
-`./setup.sh`) registers two hooks from `home/.claude/hooks/`, so Claude Code's
+`home/.claude/settings.json` (added to `~/.claude/settings.json` by
+`./setup.sh`, or linked whole by `./setup-personal.sh`) registers two hooks from `home/.claude/hooks/`, so Claude Code's
 worktrees follow dev's layout instead of `<repo>/.claude/worktrees/`:
 
 * `WorktreeCreate` -> `worktree-create.sh` runs

@@ -16,7 +16,7 @@ and OpenCode. Edit files here; never edit the generated copies.
 | Pi snippet menu (`alt+s`), Claude `/<id>` wrappers and `+<id>` markers
 
 | `AGENTS.md`
-| `~/.claude/CLAUDE.md` and `~/.pi/agent/AGENTS.md`
+| `~/.claude/CLAUDE.md` and `~/.pi/agent/AGENTS.md` (`setup-personal.sh` only)
 | Claude and Pi global instructions
 
 | `agents/<name>.md`
@@ -24,13 +24,18 @@ and OpenCode. Edit files here; never edit the generated copies.
 | Claude subagents, Pi guarded subagents
 |===
 
-`setup.sh` links these sources, plus `home/.claude/{skills,agents,hooks}`
-and `home/.claude/settings.json` (which registers the `+marker` hook).
+`setup.sh` links these sources (except `AGENTS.md`) plus
+`home/.claude/{skills,agents,hooks}`, and adds the hooks registered in
+`home/.claude/settings.json` (`+marker` snippets, worktree routing) to an
+existing `~/.claude/settings.json` without touching its other keys.
+`setup-personal.sh` instead links `home/.claude/settings.json` whole, and
+shared setup then leaves it alone.
 
 == Global instructions
 
-`AGENTS.md` holds the preferences that apply to every task in every repo, and
-both agents load it in every session. Keep it short: task-specific guidance
+`AGENTS.md` holds Taylor's preferences that apply to every task in every
+repo, and both agents load it in every session. Being personal, it is linked
+only by `setup-personal.sh`. Keep it short: task-specific guidance
 belongs in a skill or snippet, which the file points to rather than repeats.
 
 == Generated config

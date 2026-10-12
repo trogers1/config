@@ -61,9 +61,10 @@ assert_equals "$(readlink "$HOME_DIR/.claude/skills")" "$REPO_DIR/home/.claude/s
 assert_exists "$HOME_DIR/.claude/skills/flow-review/SKILL.md"
 assert_exists "$HOME_DIR/.claude/skills/code/SKILL.md"
 assert_exists "$HOME_DIR/.claude/agents/scout.md"
-# One global instructions source serves both agents.
-assert_equals "$(readlink "$HOME_DIR/.claude/CLAUDE.md")" "$REPO_DIR/home/.agents/AGENTS.md"
-assert_equals "$(readlink "$HOME_DIR/.pi/agent/AGENTS.md")" "$REPO_DIR/home/.agents/AGENTS.md"
+# Personal instructions and whole-file Claude settings stay out of the shared install.
+assert_absent "$HOME_DIR/.claude/CLAUDE.md"
+assert_absent "$HOME_DIR/.pi/agent/AGENTS.md"
+[ -f "$HOME_DIR/.claude/settings.json" ] && [ ! -L "$HOME_DIR/.claude/settings.json" ] || fail 'shared setup linked Claude settings instead of adding hooks'
 
 # The installed hook command expands known +markers and reports unknown ones.
 hook_command="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"])' "$HOME_DIR/.claude/settings.json")"
@@ -91,18 +92,14 @@ assert_equals "$created_path" "$(dirname "$HOOK_REPO")/proj-worktrees/hooked"
 printf '{"worktree_path":"%s"}' "$created_path" | run_worktree_hook "$remove_command" >/dev/null 2>&1
 assert_absent "$created_path"
 
-# A Claude settings file that replaced the link (for example, by an atomic rewrite) is drift.
-cp "$HOME_DIR/.claude/settings.json" "$TMP_DIR/settings-copy.json"
+# Shared setup owns only the repo's hooks inside a user's Claude settings.
+edit_settings() { python3 -c "import json, sys; p = sys.argv[1]; s = json.load(open(p)); $1; json.dump(s, open(p, 'w'))" "$HOME_DIR/.claude/settings.json"; }
+edit_settings 's["theme"] = "light"; s["hooks"]["Stop"] = [{"hooks": [{"type": "command", "command": "user-stop"}]}]'
+run_shared --verify >/dev/null
+edit_settings 'del s["hooks"]["WorktreeRemove"]'
+if run_shared --verify >/dev/null 2>&1; then fail 'verify missed a missing shared Claude hook'; fi
+if run_shared --non-interactive >/dev/null 2>&1; then fail 'Claude settings were edited noninteractively'; fi
 rm "$HOME_DIR/.claude/settings.json"
-mv "$TMP_DIR/settings-copy.json" "$HOME_DIR/.claude/settings.json"
-if run_shared --verify >/dev/null 2>&1; then fail 'verify missed an unlinked Claude settings file'; fi
-rm "$HOME_DIR/.claude/settings.json"
-run_shared >/dev/null
-cp "$HOME_DIR/.pi/agent/AGENTS.md" "$TMP_DIR/agents-copy.md"
-rm "$HOME_DIR/.pi/agent/AGENTS.md"
-mv "$TMP_DIR/agents-copy.md" "$HOME_DIR/.pi/agent/AGENTS.md"
-if run_shared --verify >/dev/null 2>&1; then fail 'verify missed an unlinked Pi global instructions file'; fi
-rm "$HOME_DIR/.pi/agent/AGENTS.md"
 run_shared >/dev/null
 assert_equals "$(cat "$HOME_DIR/.pi/agent/pi-guard/profiles.jsonc")" 'user profile'
 assert_equals "$(cat "$HOME_DIR/bin/pi")" 'user pi command'
@@ -131,13 +128,14 @@ rm -f "$HOME_DIR/.zshrc.bak"
 if run_shared --non-interactive >/dev/null 2>&1; then fail 'drifted block was replaced noninteractively'; fi
 rm "$HOME_DIR/.zshrc"
 run_shared >/dev/null
+edit_settings 's["theme"] = "light"; s["hooks"]["Stop"] = [{"hooks": [{"type": "command", "command": "user-stop"}]}]'
 run_shared --uninstall >/dev/null
 assert_absent "$HOME_DIR/.pi/agent/settings.json"
 assert_absent "$HOME_DIR/.claude/skills"
 assert_absent "$HOME_DIR/bin/dev"
-assert_absent "$HOME_DIR/.claude/settings.json"
-assert_absent "$HOME_DIR/.claude/CLAUDE.md"
-assert_absent "$HOME_DIR/.pi/agent/AGENTS.md"
+assert_equals "$(python3 -c 'import json, sys; print(json.dumps(json.load(open(sys.argv[1])), sort_keys=True))' "$HOME_DIR/.claude/settings.json")" \
+  '{"hooks": {"Stop": [{"hooks": [{"command": "user-stop", "type": "command"}]}]}, "theme": "light"}'
+rm "$HOME_DIR/.claude/settings.json"
 assert_equals "$(cat "$HOME_DIR/.pi/agent/pi-guard/profiles.jsonc")" 'user profile'
 rm "$HOME_DIR/.pi/agent/pi-guard/profiles.jsonc"
 
@@ -156,13 +154,21 @@ assert_equals "$(readlink "$HOME_DIR/.zshrc")" "$REPO_DIR/home/.zshrc"
 assert_equals "$(readlink "$HOME_DIR/.config/nvim")" "$REPO_DIR/xdg/nvim"
 assert_equals "$(readlink "$HOME_DIR/.pi/agent/pi-guard/profiles.jsonc")" "$REPO_DIR/home/.pi/agent/pi-guard/profiles.jsonc"
 assert_equals "$(readlink "$HOME_DIR/.pi/agent/pi-guard/prompts")" "$REPO_DIR/home/.pi/agent/pi-guard/prompts"
-# Shared setup recognizes personal shell links and never edits their repository targets.
+# One personal instructions file serves both agents.
+assert_equals "$(readlink "$HOME_DIR/.claude/CLAUDE.md")" "$REPO_DIR/home/.agents/AGENTS.md"
+assert_equals "$(readlink "$HOME_DIR/.pi/agent/AGENTS.md")" "$REPO_DIR/home/.agents/AGENTS.md"
+assert_equals "$(readlink "$HOME_DIR/.claude/settings.json")" "$REPO_DIR/home/.claude/settings.json"
+# Shared setup recognizes personal shell and Claude settings links and never edits their repository targets.
 zsh_before="$(cksum "$REPO_DIR/home/.zshrc")"
 tmux_before="$(cksum "$REPO_DIR/home/.tmux.conf")"
+claude_settings_before="$(cksum "$REPO_DIR/home/.claude/settings.json")"
 run_shared >/dev/null
 run_shared --verify >/dev/null
+status_output="$(run_shared --status)"
+grep -Fq "personal link: shared Claude hooks are provided by $HOME_DIR/.claude/settings.json" <<<"$status_output" || fail "status did not report personal Claude settings: $status_output"
 assert_equals "$(cksum "$REPO_DIR/home/.zshrc")" "$zsh_before"
 assert_equals "$(cksum "$REPO_DIR/home/.tmux.conf")" "$tmux_before"
+assert_equals "$(cksum "$REPO_DIR/home/.claude/settings.json")" "$claude_settings_before"
 run_personal --uninstall >/dev/null
 assert_absent "$HOME_DIR/.config/nvim"
 

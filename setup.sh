@@ -39,13 +39,15 @@ PI_EXTENSION_LINKS=(
 AGENT_LINKS=(
   'home/.agents/skills|.agents/skills|shared skills'
   'home/.agents/snippets|.agents/snippets|shared prompt snippets'
-  'home/.agents/AGENTS.md|.claude/CLAUDE.md|Claude global instructions'
-  'home/.agents/AGENTS.md|.pi/agent/AGENTS.md|Pi global instructions'
   'home/.claude/skills|.claude/skills|Claude skills'
   'home/.claude/agents|.claude/agents|Claude agents'
   'home/.claude/hooks|.claude/hooks|Claude hooks'
-  'home/.claude/settings.json|.claude/settings.json|Claude settings'
 )
+# ~/.claude/settings.json is user-owned: setup-personal.sh links the repo copy
+# whole, and this installer only adds that copy's hooks to an existing file.
+CLAUDE_SETTINGS="$HOME_DIR/.claude/settings.json"
+CLAUDE_SETTINGS_SOURCE="$REPO_DIR/home/.claude/settings.json"
+CLAUDE_SETTINGS_TOOL="$REPO_DIR/scripts/setup/claude-settings.mjs"
 # Links an earlier layout created; install and uninstall remove them when still owned.
 RETIRED_LINKS=(
   'home/.pi/agent/skills|.pi/agent/skills|Pi skills (moved to ~/.agents/skills)'
@@ -162,6 +164,7 @@ preflight() {
     IFS='|' read -r source target label <<<"$entry"
     [ -e "$REPO_DIR/$source" ] || die "Missing $label source: $REPO_DIR/$source"
   done
+  [ -f "$CLAUDE_SETTINGS_SOURCE" ] || die "Missing Claude settings source: $CLAUDE_SETTINGS_SOURCE"
   node "$REPO_DIR/scripts/generate-agent-config.mjs" --check || die "Generated agent config is stale; no files were changed."
   reject_linked_target_ancestors
 
@@ -229,11 +232,11 @@ preflight_wrapper_conflict() {
 }
 
 confirm_block_update() {
-  local target="$1" label="$2" backup="$1.bak"
+  local target="$1" label="$2" change="${3:-a managed block}" backup="$1.bak"
   conflict_is_approved "$target" && return 0
   [ ! -e "$backup" ] && [ ! -L "$backup" ] || die "Refusing to overwrite existing backup: $backup"
   if [ "$DRY_RUN" -eq 1 ]; then
-    say "PLAN: existing $label file $target would be preserved, backed up to $backup, and updated with a managed block after confirmation"
+    say "PLAN: existing $label file $target would be preserved, backed up to $backup, and updated with $change after confirmation"
     APPROVED_CONFLICTS+=("$target")
     return 0
   fi
@@ -243,7 +246,7 @@ confirm_block_update() {
   [ -r /dev/tty ] || die "Existing $label file at $target but no interactive terminal is available."
   local reply
   while true; do
-    printf 'Update existing %s file %s by appending a managed block? The current file will remain in place and be copied to %s. [y/N] ' "$label" "$target" "$backup" >/dev/tty
+    printf 'Update existing %s file %s by adding %s? The current file will remain in place and be copied to %s. [y/N] ' "$label" "$target" "$change" "$backup" >/dev/tty
     read -r reply </dev/tty
     case "$reply" in
       y|Y) APPROVED_CONFLICTS+=("$target"); return 0 ;;
@@ -353,12 +356,73 @@ retire_link() {
   say "Removed retired link: $label ($target)"
 }
 
+# personal (setup-personal.sh link), owned, partial, or absent.
+CLAUDE_SETTINGS_STATE=""
+read_claude_settings_state() {
+  if owned_link "$CLAUDE_SETTINGS_SOURCE" "$CLAUDE_SETTINGS"; then CLAUDE_SETTINGS_STATE=personal; return; fi
+  [ ! -L "$CLAUDE_SETTINGS" ] || die "Refusing to edit symlinked Claude settings: $CLAUDE_SETTINGS"
+  CLAUDE_SETTINGS_STATE="$(node "$CLAUDE_SETTINGS_TOOL" status "$CLAUDE_SETTINGS" "$CLAUDE_SETTINGS_SOURCE")" || die "Could not read Claude settings: $CLAUDE_SETTINGS"
+}
+
+run_claude_settings_tool() {
+  run node "$CLAUDE_SETTINGS_TOOL" "$1" "$CLAUDE_SETTINGS" "$CLAUDE_SETTINGS_SOURCE"
+}
+
+preflight_claude_settings() {
+  read_claude_settings_state
+  case "$CLAUDE_SETTINGS_STATE" in personal|owned) return ;; esac
+  if [ -e "$CLAUDE_SETTINGS" ]; then confirm_block_update "$CLAUDE_SETTINGS" "Claude settings" "the shared Claude hooks"; fi
+}
+
+install_claude_settings() {
+  read_claude_settings_state
+  case "$CLAUDE_SETTINGS_STATE" in
+    personal) say "Unchanged: personal Claude settings provide the shared hooks ($CLAUDE_SETTINGS)"; return ;;
+    owned) say "Unchanged: shared Claude hooks ($CLAUDE_SETTINGS)"; return ;;
+  esac
+  if [ -e "$CLAUDE_SETTINGS" ]; then
+    confirm_block_update "$CLAUDE_SETTINGS" "Claude settings" "the shared Claude hooks"
+    run cp -p "$CLAUDE_SETTINGS" "$CLAUDE_SETTINGS.bak"
+    say "Backed up: $CLAUDE_SETTINGS -> $CLAUDE_SETTINGS.bak"
+  fi
+  run mkdir -p "$(dirname "$CLAUDE_SETTINGS")"
+  run_claude_settings_tool install
+  say "Installed: shared Claude hooks ($CLAUDE_SETTINGS)"
+}
+
+uninstall_claude_settings() {
+  read_claude_settings_state
+  case "$CLAUDE_SETTINGS_STATE" in
+    personal) say "Preserved: personal Claude settings ($CLAUDE_SETTINGS)"; return ;;
+    absent) say "Absent: shared Claude hooks ($CLAUDE_SETTINGS)"; return ;;
+  esac
+  run_claude_settings_tool uninstall
+  say "Removed: shared Claude hooks ($CLAUDE_SETTINGS)"
+  if [ -e "$CLAUDE_SETTINGS.bak" ] || [ -L "$CLAUDE_SETTINGS.bak" ]; then say "Preserved backup for manual restoration: $CLAUDE_SETTINGS.bak"; fi
+}
+
+status_claude_settings() {
+  read_claude_settings_state
+  case "$CLAUDE_SETTINGS_STATE" in
+    personal) say "personal link: shared Claude hooks are provided by $CLAUDE_SETTINGS" ;;
+    owned) say "owned Claude hooks: $CLAUDE_SETTINGS" ;;
+    partial) say "foreign/drifted Claude hooks: $CLAUDE_SETTINGS" ;;
+    absent) say "absent Claude hooks: $CLAUDE_SETTINGS" ;;
+  esac
+}
+
+verify_claude_settings() {
+  read_claude_settings_state
+  case "$CLAUDE_SETTINGS_STATE" in personal|owned) ;; *) die "Shared Claude hooks are missing or drifted in $CLAUDE_SETTINGS" ;; esac
+}
+
 preflight_conflicts() {
   local item
   for item in "${PI_LINKS[@]}"; do preflight_link_conflict "$REPO_DIR/home/.pi/agent/$item" "$PI_DIR/$item"; done
   for item in "${PI_PACKAGE_LINKS[@]}"; do preflight_link_conflict "$REPO_DIR/home/.pi/agent/packages/$item" "$PI_DIR/packages/$item"; done
   for item in "${PI_EXTENSION_LINKS[@]}"; do preflight_link_conflict "$REPO_DIR/home/.pi/agent/extensions/$item" "$PI_DIR/extensions/$item"; done
   each_link preflight_link_conflict
+  preflight_claude_settings
   for item in "${COMMANDS[@]}"; do preflight_wrapper_conflict "$item"; done
   preflight_link_conflict "$REPO_DIR/tmux_and_worktrees/tmux-worktree.conf" "$TMUX_WORKTREE_CONF"
   preflight_block_conflict "$ZSHRC" "$ZSH_BEGIN" "$ZSH_END" "$ZSH_CONTENT" "zsh" "$PERSONAL_ZSH_SOURCE"
@@ -590,6 +654,7 @@ install_all() {
   done
   each_link retire_link RETIRED_LINKS
   each_link link_owned
+  install_claude_settings
   for item in "${COMMANDS[@]}"; do install_wrapper "$item"; done
 
   link_owned "$REPO_DIR/tmux_and_worktrees/tmux-worktree.conf" "$TMUX_WORKTREE_CONF" "tmux workflow config"
@@ -612,6 +677,7 @@ uninstall_all() {
   done
   each_link retire_link RETIRED_LINKS
   each_link uninstall_link
+  uninstall_claude_settings
   for item in "${COMMANDS[@]}"; do uninstall_wrapper "$item"; done
   uninstall_link "$REPO_DIR/tmux_and_worktrees/tmux-worktree.conf" "$TMUX_WORKTREE_CONF" "tmux workflow config"
   remove_block "$ZSHRC" "$ZSH_BEGIN" "$ZSH_END" "$ZSH_CONTENT" "zsh" "$PERSONAL_ZSH_SOURCE"
@@ -625,6 +691,7 @@ show_status() {
   for item in "${PI_PACKAGE_LINKS[@]}"; do status_item "$REPO_DIR/home/.pi/agent/packages/$item" "$PI_DIR/packages/$item" "Pi package $item"; done
   for item in "${PI_EXTENSION_LINKS[@]}"; do status_item "$REPO_DIR/home/.pi/agent/extensions/$item" "$PI_DIR/extensions/$item" "Pi extension $item"; done
   each_link status_item
+  status_claude_settings
   for item in "${COMMANDS[@]}"; do status_wrapper "$item"; done
   status_item "$REPO_DIR/tmux_and_worktrees/tmux-worktree.conf" "$TMUX_WORKTREE_CONF" "tmux workflow config"
   status_block "$ZSHRC" "$ZSH_BEGIN" "$ZSH_END" "$ZSH_CONTENT" "zsh" "$PERSONAL_ZSH_SOURCE"
@@ -651,6 +718,7 @@ verify_all() {
     [ -e "$source" ] && owned_link "$source" "$PI_DIR/extensions/$item" || die "Pi extension $item link is missing or drifted"
   done
   each_link verify_link
+  verify_claude_settings
   for item in "${COMMANDS[@]}"; do wrapper_is_owned "$item" "$BIN_DIR/$item" || die "$item wrapper is missing or drifted"; done
   [ -f "$REPO_DIR/tmux_and_worktrees/tmux-worktree.conf" ] && owned_link "$REPO_DIR/tmux_and_worktrees/tmux-worktree.conf" "$TMUX_WORKTREE_CONF" || die "tmux workflow link is missing or drifted"
   verify_block "$ZSHRC" "$ZSH_BEGIN" "$ZSH_END" "$ZSH_CONTENT" "zsh" "$PERSONAL_ZSH_SOURCE"

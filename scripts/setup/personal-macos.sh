@@ -17,6 +17,9 @@ PERSONAL_LINKS=(
   'home/.cursor/cli-config.json|.cursor/cli-config.json|Cursor CLI configuration'
   'home/.pi/agent/pi-guard/profiles.jsonc|.pi/agent/pi-guard/profiles.jsonc|Pi guard profiles'
   'home/.pi/agent/pi-guard/prompts|.pi/agent/pi-guard/prompts|Pi guard prompts'
+  'home/.agents/AGENTS.md|.claude/CLAUDE.md|Claude global instructions'
+  'home/.agents/AGENTS.md|.pi/agent/AGENTS.md|Pi global instructions'
+  'home/.claude/settings.json|.claude/settings.json|Claude settings'
   'xdg/ghostty|.config/ghostty|Ghostty configuration'
   'xdg/nvim|.config/nvim|Neovim configuration'
   'xdg/opencode|.config/opencode|OpenCode configuration'
@@ -72,7 +75,7 @@ confirm_conflict() {
 validate_environment() {
   local ancestor
   [ "$(uname -s)" = "Darwin" ] || die "This installer supports macOS only."
-  for ancestor in "$HOME/.config" "$HOME/.cursor" "$HOME/.pi" "$HOME/.pi/agent" "$HOME/.pi/agent/pi-guard"; do
+  for ancestor in "$HOME/.config" "$HOME/.cursor" "$HOME/.pi" "$HOME/.pi/agent" "$HOME/.pi/agent/pi-guard" "$HOME/.claude"; do
     [ ! -L "$ancestor" ] || die "Refusing to manage targets beneath symlinked directory: $ancestor"
   done
 }

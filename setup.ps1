@@ -36,9 +36,6 @@ $Operation = if ($Verify) { 'verify' } elseif ($Status) { 'status' } elseif ($Un
 
 $PiLinks = @('settings.json', 'models.json', 'usage')
 $AgentLinks = @('skills', 'snippets')
-# One global instructions file, read by Pi as ~/.pi/agent/AGENTS.md.
-$GlobalInstructions = Join-Path $RepoDir 'home\.agents\AGENTS.md'
-$GlobalInstructionsTarget = Join-Path $PiDir 'AGENTS.md'
 $PackageLinks = @('pi-guard', 'pi-webfetch', 'pi-usage', 'pi-guard-subagents', 'pi-skill-toggle')
 $ExtensionLinks = @('ask-user-question.ts', 'prompt-snippets')
 $ApprovedConflicts = @{}
@@ -157,7 +154,6 @@ function Preflight {
     $source = Join-Path $RepoDir "home\.agents\$item"
     if (-not (Test-Path -LiteralPath $source -PathType Container)) { Fail "Missing shared agent source: $source" }
   }
-  if (-not (Test-Path -LiteralPath $GlobalInstructions -PathType Leaf)) { Fail "Missing shared global instructions: $GlobalInstructions" }
   if (-not $BootstrapPiDeps) {
     $missing = $false
     foreach ($package in $PackageLinks) {
@@ -212,13 +208,11 @@ if ($Operation -eq 'install') {
   foreach ($item in $PackageLinks) { Preflight-LinkConflict (Join-Path $RepoDir "home\.pi\agent\packages\$item") (Join-Path $PackagesDir $item) }
   foreach ($item in $ExtensionLinks) { Preflight-LinkConflict (Join-Path $RepoDir "home\.pi\agent\extensions\$item") (Join-Path $ExtensionsDir $item) }
   foreach ($item in $AgentLinks) { Preflight-LinkConflict (Join-Path $RepoDir "home\.agents\$item") (Join-Path $AgentsDir $item) }
-  Preflight-LinkConflict $GlobalInstructions $GlobalInstructionsTarget
   if ($BootstrapPiDeps) { Bootstrap-Dependencies }
   foreach ($item in $PiLinks) { Install-Link (Join-Path $RepoDir "home\.pi\agent\$item") (Join-Path $PiDir $item) "Pi $item" }
   foreach ($item in $PackageLinks) { Install-Link (Join-Path $RepoDir "home\.pi\agent\packages\$item") (Join-Path $PackagesDir $item) "Pi package $item" }
   foreach ($item in $ExtensionLinks) { Install-Link (Join-Path $RepoDir "home\.pi\agent\extensions\$item") (Join-Path $ExtensionsDir $item) "Pi extension $item" }
   foreach ($item in $AgentLinks) { Install-Link (Join-Path $RepoDir "home\.agents\$item") (Join-Path $AgentsDir $item) "shared $item" }
-  Install-Link $GlobalInstructions $GlobalInstructionsTarget "Pi global instructions"
   Say 'Pi setup complete. The tmux/worktree workflow is not installed on native Windows.'
 } elseif ($Operation -eq 'uninstall') {
   Assert-SafeTargetAncestors
@@ -226,14 +220,12 @@ if ($Operation -eq 'install') {
   foreach ($item in $PackageLinks) { Uninstall-Link (Join-Path $RepoDir "home\.pi\agent\packages\$item") (Join-Path $PackagesDir $item) "Pi package $item" }
   foreach ($item in $ExtensionLinks) { Uninstall-Link (Join-Path $RepoDir "home\.pi\agent\extensions\$item") (Join-Path $ExtensionsDir $item) "Pi extension $item" }
   foreach ($item in $AgentLinks) { Uninstall-Link (Join-Path $RepoDir "home\.agents\$item") (Join-Path $AgentsDir $item) "shared $item" }
-  Uninstall-Link $GlobalInstructions $GlobalInstructionsTarget "Pi global instructions"
 } elseif ($Operation -eq 'verify') {
   Assert-SafeTargetAncestors
   foreach ($item in $PiLinks) { Verify-Link (Join-Path $RepoDir "home\.pi\agent\$item") (Join-Path $PiDir $item) "Pi $item" }
   foreach ($item in $PackageLinks) { Verify-Link (Join-Path $RepoDir "home\.pi\agent\packages\$item") (Join-Path $PackagesDir $item) "Pi package $item" }
   foreach ($item in $ExtensionLinks) { Verify-Link (Join-Path $RepoDir "home\.pi\agent\extensions\$item") (Join-Path $ExtensionsDir $item) "Pi extension $item" }
   foreach ($item in $AgentLinks) { Verify-Link (Join-Path $RepoDir "home\.agents\$item") (Join-Path $AgentsDir $item) "shared $item" }
-  Verify-Link $GlobalInstructions $GlobalInstructionsTarget "Pi global instructions"
   Say 'Verification passed.'
 } else {
   Assert-SafeTargetAncestors
@@ -241,5 +233,4 @@ if ($Operation -eq 'install') {
   foreach ($item in $PackageLinks) { Status-Link (Join-Path $RepoDir "home\.pi\agent\packages\$item") (Join-Path $PackagesDir $item) "Pi package $item" }
   foreach ($item in $ExtensionLinks) { Status-Link (Join-Path $RepoDir "home\.pi\agent\extensions\$item") (Join-Path $ExtensionsDir $item) "Pi extension $item" }
   foreach ($item in $AgentLinks) { Status-Link (Join-Path $RepoDir "home\.agents\$item") (Join-Path $AgentsDir $item) "shared $item" }
-  Status-Link $GlobalInstructions $GlobalInstructionsTarget "Pi global instructions"
 }
