@@ -63,11 +63,22 @@ gitlab_read_validate_endpoint() {
   local endpoint="$1"
   local allowed=0
 
+  # A glob would let `merge_requests/[0-9]*` match every MR sub-resource.
+  if [[ "$endpoint" =~ ^projects/[^/]+/merge_requests/[0-9]+$ ]]; then
+    allowed=1
+  fi
+
   case "$endpoint" in
     projects/*/merge_requests/[0-9]*/discussions\?per_page=[0-9]*)
       allowed=1
       ;;
     projects/*/merge_requests/[0-9]*/discussions\?per_page=[0-9]*\&page=[0-9]*)
+      allowed=1
+      ;;
+    projects/*/merge_requests/[0-9]*/diffs\?per_page=[0-9]*)
+      allowed=1
+      ;;
+    projects/*/merge_requests/[0-9]*/diffs\?per_page=[0-9]*\&page=[0-9]*)
       allowed=1
       ;;
     projects/*/merge_requests/[0-9]*/notes/[0-9]*/award_emoji)
@@ -89,4 +100,44 @@ gitlab_read_get() {
   local endpoint="$1"
   gitlab_read_validate_endpoint "$endpoint"
   glab api --method GET "$endpoint"
+}
+
+# GET every page (up to 10 of 100) of a project list endpoint and print one
+# merged JSON array. suffix is relative to the project, e.g.
+# merge_requests/12/discussions.
+gitlab_read_get_all() {
+  local suffix="$1"
+  local per_page=100
+  local page=1
+  local pages=()
+  local endpoint chunk count
+
+  while true; do
+    if [[ "$page" -eq 1 ]]; then
+      endpoint="$(gitlab_read_project_endpoint "${suffix}?per_page=${per_page}")"
+    else
+      endpoint="$(gitlab_read_project_endpoint "${suffix}?per_page=${per_page}&page=${page}")"
+    fi
+
+    chunk="$(gitlab_read_get "$endpoint")"
+    count="$(jq 'length' <<<"$chunk")"
+
+    if [[ "$count" -eq 0 ]]; then
+      break
+    fi
+
+    pages+=("$chunk")
+
+    if [[ "$count" -lt "$per_page" ]] || [[ "$page" -ge 10 ]]; then
+      break
+    fi
+
+    page=$((page + 1))
+  done
+
+  if [[ "${#pages[@]}" -eq 0 ]]; then
+    echo '[]'
+  else
+    jq -s 'add' <<<"$(printf '%s\n' "${pages[@]}")"
+  fi
 }

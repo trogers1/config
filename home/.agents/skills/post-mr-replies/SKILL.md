@@ -11,7 +11,7 @@ disable-model-invocation: true
 
 This is the final, **write-capable** step of the MR review loop (`export-mr-comments` / `address-comments` → local discussion in `comments.md` → this skill). It posts the replies Taylor approved in `comments.md` to their GitLab threads.
 
-`scripts/post-replies.sh` lives next to the read-only scripts, but it is the only one that writes. All writes go through `scripts/lib/gitlab-write.sh`, which allowlists exactly two endpoints: add a note to a discussion and resolve a discussion. Preview with `scripts/preview-replies.sh`, a wrapper that rejects every flag and so can never write. Do not run `glab api` or other GitLab CLI commands directly.
+`scripts/post-replies.sh` lives next to the read-only scripts, but it is the only one that writes. All writes go through `scripts/lib/gitlab-write.sh`, which allowlists exactly three endpoints: start a discussion, add a note to a discussion, and resolve a discussion. Preview with `scripts/preview-replies.sh`, a wrapper that rejects every flag and so can never write. Do not run `glab api` or other GitLab CLI commands directly.
 
 ## Reply blocks in `comments.md`
 

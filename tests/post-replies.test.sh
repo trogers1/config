@@ -49,6 +49,25 @@ case "$method $endpoint" in
   "GET $prefix/discussions?per_page=100")
     cat "$dir/discussions.json"
     ;;
+  "GET $prefix")
+    cat "$dir/mr.json"
+    ;;
+  "GET $prefix/diffs?per_page=100")
+    cat "$dir/diffs.json"
+    ;;
+  "POST $prefix/discussions")
+    id="$(cat "$dir/next_note_id")"
+    echo "$((id + 1))" >"$dir/next_note_id"
+    cat >"$dir/posted.$id.json"
+    jq -n --argjson id "$id" --arg user "$FAKE_GLAB_USER" --slurpfile payload "$dir/posted.$id.json" '
+      {id: ("d" * 40 | .[0:40]), individual_note: false, notes: [{
+        id: $id, type: (if $payload[0].position then "DiffNote" else "DiscussionNote" end),
+        body: $payload[0].body, author: {name: "Taylor Rogers", username: $user},
+        created_at: "2026-10-12T12:00:00.000Z", system: false, noteable_iid: 125,
+        resolvable: true, resolved: false
+      } + (if $payload[0].position then {position: $payload[0].position} else {} end)]}
+    '
+    ;;
   "POST $prefix/discussions/"*/notes)
     discussion="${endpoint#"$prefix/discussions/"}"
     discussion="${discussion%/notes}"
@@ -316,5 +335,87 @@ if out="$(bash "$SCRIPTS/render-comments-md.sh" all "$TMP_DIR/forged.json" "$MR_
 fi
 assert_contains "$out" "reserved <!-- reviewer-comments: marker"
 cmp -s "$COMMENTS" "$TMP_DIR/before.md" || fail "failed render modified comments.md"
+
+# gitlab_write_start_thread requires an explicit --type: general opens an MR
+# thread, positional anchors one to new-side lines of the MR diff, and bad
+# input is refused before any write.
+reset_gitlab
+BASE_SHA=1111111111111111111111111111111111111111
+START_SHA=2222222222222222222222222222222222222222
+HEAD_SHA=3333333333333333333333333333333333333333
+jq -n --arg base "$BASE_SHA" --arg start "$START_SHA" --arg head "$HEAD_SHA" \
+  '{id: 9125, iid: 125, diff_refs: {base_sha: $base, start_sha: $start, head_sha: $head}}' >"$FAKE_GLAB_DIR/mr.json"
+# src/app.ts new side: 10 a, 11 +b, 12 +c, 13 d, 14 +e, 15 return.
+jq -n '[
+  {old_path: "README.md", new_path: "README.md", new_file: false, renamed_file: false, deleted_file: false,
+   diff: "@@ -1 +1 @@\n-Old\n+New\n"},
+  {old_path: "src/app.ts", new_path: "src/app.ts", new_file: false, renamed_file: false, deleted_file: false,
+   diff: "@@ -10,4 +10,6 @@ export function main() {\n const a = 1;\n-const b = 2;\n+const b = 3;\n+const c = 4;\n const d = 5;\n+const e = 6;\n return a;\n"}
+]' >"$FAKE_GLAB_DIR/diffs.json"
+APP_SHA="$(printf 'src/app.ts' | shasum -a 1 | cut -d ' ' -f 1)"
+start_thread() {
+  (
+    source "$SCRIPTS/lib/gitlab-read.sh"
+    source "$SCRIPTS/lib/gitlab-write.sh"
+    GITLAB_READ_PROJECT_ID="group%2Fproject" gitlab_write_start_thread "$@"
+  ) 2>&1
+}
+positional() { start_thread --type positional --path src/app.ts "$@" 125 "$TMP_DIR/thread-body"; }
+posted_position() { jq -c '.position' "$FAKE_GLAB_DIR/posted.$1.json"; }
+# Expected position for a range given as "old new type" for its start and end.
+expected_position() {
+  jq -nc --arg base "$BASE_SHA" --arg start "$START_SHA" --arg head "$HEAD_SHA" --arg sha "$APP_SHA" \
+    --arg from "$1" --arg to "$2" '
+    def line_end: split(" ") as [$old, $new, $type]
+      | {line_code: "\($sha)_\($old)_\($new)", type: (if $type == "new" then "new" else null end),
+         old_line: (if $type == "new" then null else ($old | tonumber) end), new_line: ($new | tonumber)};
+    ($from | line_end) as $s | ($to | line_end) as $e
+    | {position_type: "text", base_sha: $base, start_sha: $start, head_sha: $head,
+       old_path: "src/app.ts", new_path: "src/app.ts",
+       new_line: $e.new_line, old_line: $e.old_line, line_range: {start: $s, end: $e}}'
+}
+printf 'Should this be configurable?\n' >"$TMP_DIR/thread-body"
+
+out="$(start_thread --type general 125 "$TMP_DIR/thread-body")"
+assert_equals "$(jq -r '.notes[0].type' <<<"$out")" "DiscussionNote"
+assert_equals "$(posted_body 1000)" "Should this be configurable?"
+assert_equals "$(jq -c 'has("position")' "$FAKE_GLAB_DIR/posted.1000.json")" "false"
+
+# One added line: the line code carries the old-side counter, old_line is null.
+out="$(positional --start-line 12 --end-line 12)"
+assert_equals "$(jq -r '.notes[0].type' <<<"$out")" "DiffNote"
+assert_equals "$(posted_position 1001)" "$(expected_position "12 12 new" "12 12 new")"
+
+# A range from an unchanged line to another unchanged line, across an addition.
+out="$(positional --end-line 15 --start-line 13)"
+assert_equals "$(posted_position 1002)" "$(expected_position "12 13 unchanged" "13 15 unchanged")"
+assert_equals "$(writes)" "POST $ENDPOINT/discussions
+POST $ENDPOINT/discussions
+POST $ENDPOINT/discussions"
+
+: >"$FAKE_GLAB_DIR/log"
+refuse() {
+  local expected="$1"
+  shift
+  if out="$(start_thread "$@")"; then fail "start_thread accepted: $*"; fi
+  assert_contains "$out" "$expected"
+}
+body="$TMP_DIR/thread-body"
+refuse "--type general|positional is required" 125 "$body"
+refuse "invalid --type" --type diff 125 "$body"
+refuse "--type given more than once" --type general --type positional 125 "$body"
+refuse "unknown flag: --line" --type general --line 3 125 "$body"
+refuse "--type general takes no --path" --type general --path src/app.ts 125 "$body"
+refuse "--type positional requires --end-line" --type positional --path src/app.ts --start-line 12 125 "$body"
+refuse "expected <mr_iid> <body_file>, got 1" --type general 125
+refuse "Invalid merge request IID" --type general 12x "$body"
+refuse "Invalid line number" --type positional --path src/app.ts --start-line 0 --end-line 1 125 "$body"
+refuse "--start-line 13 is after --end-line 12" --type positional --path src/app.ts --start-line 13 --end-line 12 125 "$body"
+assert_equals "$(cat "$FAKE_GLAB_DIR/log")" ""
+refuse "line 9 of src/app.ts is not an added or unchanged line" --type positional --path src/app.ts --start-line 9 --end-line 10 125 "$body"
+refuse "src/other.ts appears 0 times in the MR diff" --type positional --path src/other.ts --start-line 1 --end-line 1 125 "$body"
+jq '.[1].diff = ""' "$FAKE_GLAB_DIR/diffs.json" >"$FAKE_GLAB_DIR/diffs.next" && mv "$FAKE_GLAB_DIR/diffs.next" "$FAKE_GLAB_DIR/diffs.json"
+refuse "GitLab returned no diff for src/app.ts" --type positional --path src/app.ts --start-line 12 --end-line 12 125 "$body"
+assert_equals "$(writes)" ""
 
 echo "post-replies tests passed"
