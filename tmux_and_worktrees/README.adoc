@@ -59,10 +59,15 @@ config's `defaultAgent`. That is also the per-project choice: a project's
 `devConfig.jsonc` sets its own `defaultAgent` and `agents`.
 `dev tree --stage-agent` types the agent's command into its window without
 pressing Enter, so the agent starts only when you do; the other windows run as
-usual. An unknown agent, an agent window with no `defaultAgent` and no `--agent`, or
-`--agent <name>` with a config that has no agent window, fails before any tmux
-session is created. `--agent` and `--stage-agent` apply only when a new session
-is created;
+usual. When the config cannot provide an agent (an unknown `--agent`, an agent
+window with no `defaultAgent` and no `--agent`, or `--agent <name>` with a
+config that has no agent window), dev prints a warning on stderr and opens the
+session anyway, with the agent window, if any, as an empty shell. Any other
+invalid config fails before anything is created. `dev tree` reads a new
+worktree's config before `git worktree add`: the `devConfig.jsonc` committed at
+the commit the worktree starts from, or the bundled default, so a config the
+startup script writes later is not used. `--agent` and `--stage-agent` apply
+only when a new session is created;
 reopening an existing session says so and keeps its windows.
 
 `claude --continue` resumes the most recent conversation recorded for the
@@ -76,8 +81,11 @@ non-zero, so the configured command then starts a new one.
 work on worktrees other tools made, such as Claude Code's
 `<repo>/.claude/worktrees/<name>`. Each takes a branch or a path inside the
 worktree; a path names its own repository, so it works from any directory, and
-it is the only way to name a detached worktree. A name that is both a directory
-and a different branch's worktree is rejected as ambiguous. With no argument,
+it is the only way to name a detached worktree. A target is a path only when it
+is an existing directory written as `.`, `..`, or with a `/` (`./docs`, not
+`docs`), so a bare name is always a branch even if the current directory has a
+folder of that name. A path that is also a different branch's worktree is
+rejected as ambiguous. With no argument,
 `dev kill` and `dev merge` act on the worktree they run in.
 
 Session reuse and cleanup are path-based first: `dev new`, `dev tree`,
@@ -228,14 +236,16 @@ new worktree) as environment variables.
 worktree and its tmux session exactly as `dev tree` does, runs the startup script
 for a new worktree, and records the session, but never attaches and never
 prompts. All progress, including git and startup-script output, goes to
-stderr; stdout carries only the worktree path. Where `dev tree` would ask, it
+stderr; stdout carries only the worktree path. The startup script gets no
+stdin and not the caller's stdout, so a process it leaves running in the
+background cannot keep the caller waiting. Where `dev tree` would ask, it
 takes the safe path or fails with a message on stderr:
 
 * it never fetches `origin`; a new branch starts from the base;
 * it fails when `origin/<branch>` is already known locally, rather than
   silently creating an unrelated branch of the same name;
-* it fails when the branch is checked out in the primary checkout, rather than
-  switching that checkout;
+* it fails when the branch is checked out in the primary checkout, from any
+  worktree, rather than switching that checkout or printing its path;
 * it fails when the default path exists but is not that branch's worktree.
 
 == Claude Code worktrees
@@ -251,11 +261,19 @@ worktrees follow dev's layout instead of `<repo>/.claude/worktrees/`:
   runs, and a detached dev session is created. Its agent window has
   `claude --continue || claude` typed but not run: the Claude session that asked
   for the worktree is already running, and starting the TUI then would begin a
-  second, separate conversation. A name that already has a worktree reuses it.
+  second, separate conversation. A project whose `devConfig.jsonc` has no agent
+  window or no `claude` agent still gets the worktree, with a warning and no
+  agent typed. A name that already has a worktree reuses it.
 * `WorktreeRemove` -> `worktree-remove.sh` runs `dev kill --yes` on the path,
   which also closes the session and deletes the branch. It never forces: a
-  dirty worktree is refused and stays on disk, and an unmerged branch is kept
-  (the worktree directory is still removed).
+  dirty worktree is refused and stays on disk (the hook fails), and an unmerged
+  branch is kept: the worktree is still removed, so the hook succeeds and
+  reports the kept branch on stderr.
+
+Both hooks add Homebrew's `bin` directories (`$HOMEBREW_PREFIX/bin`,
+`/opt/homebrew/bin`, `/usr/local/bin`) that exist and are missing from `PATH`
+to its front, because the desktop app runs hooks with the GUI's `PATH`, which
+usually lacks them, and `dev` needs tmux.
 
 The hooks fire for `claude --worktree`, for subagents with
 `isolation: worktree`, and for background sessions, and they replace Claude's

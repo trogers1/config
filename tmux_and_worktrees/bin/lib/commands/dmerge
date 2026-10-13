@@ -37,7 +37,7 @@ repo_name="$(basename "$repo_root")"
 # the worktree this command runs in.
 source_target="${branch:-$(git rev-parse --show-toplevel)}"
 wt_path=""
-if [ -d "$source_target" ] || [ -n "$(tmux_worktree_path_for_branch "$repo_root" "$source_target")" ]; then
+if tmux_worktree_target_is_path "$source_target" || [ -n "$(tmux_worktree_path_for_branch "$repo_root" "$source_target")" ]; then
     resolved="$(tmux_worktree_resolve_worktree "$repo_root" "$source_target")"
     wt_path="${resolved%%$'\t'*}"
     branch="${resolved#*$'\t'}"

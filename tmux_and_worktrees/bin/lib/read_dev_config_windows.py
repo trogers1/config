@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import argparse
 import json
 import sys
 
@@ -75,81 +76,102 @@ def strip_trailing_commas(source):
     return "".join(out)
 
 
-def read_agents(config):
+def read_agents(config, name):
     agents = config.get("agents", {})
     if not isinstance(agents, dict):
-        raise SystemExit("devConfig.jsonc agents must be an object")
-    for name, command in agents.items():
+        raise SystemExit(f"{name} agents must be an object")
+    for agent, command in agents.items():
         if not isinstance(command, str) or not command:
-            raise SystemExit(f"devConfig.jsonc agents.{name} must be a non-empty command string")
+            raise SystemExit(f"{name} agents.{agent} must be a non-empty command string")
 
     default_agent = config.get("defaultAgent")
     if default_agent is not None and default_agent not in agents:
-        raise SystemExit(f"devConfig.jsonc defaultAgent {default_agent!r} is not defined in agents")
+        raise SystemExit(f"{name} defaultAgent {default_agent!r} is not defined in agents")
 
     return agents, default_agent
 
 
-def agent_command(agents, default_agent, requested_agent, path):
-    agent = requested_agent or default_agent
+def warn(message):
+    print(f"warning: {message}", file=sys.stderr)
+
+
+# A missing agent is not worth failing a session over: the agent window, if
+# any, opens as an empty shell instead.
+def agent_command(agents, default_agent, args):
+    agent = args.agent or default_agent
     if agent is None:
-        raise SystemExit(f"{path} has an agent window but no defaultAgent; pass --agent <name>")
+        warn(f"{args.name} has an agent window but no defaultAgent; opening no agent (pass --agent <name>)")
+        return ""
     if agent not in agents:
-        available = ", ".join(sorted(agents))
-        raise SystemExit(f"Unknown agent {agent!r} in {path}; available: {available}")
+        available = ", ".join(sorted(agents)) or "none"
+        warn(f"agent {agent!r} is not available in {args.name} (available: {available}); opening no agent")
+        return ""
     return agents[agent]
 
 
-def main():
-    if len(sys.argv) not in (2, 3):
-        raise SystemExit("Usage: read_dev_config_windows.py <devConfig.jsonc> [agent]")
+def parse_args():
+    parser = argparse.ArgumentParser(description="Print a devConfig.jsonc's tmux windows as <kind>\t<name>\t<command> lines.")
+    parser.add_argument("config", help="devConfig.jsonc path, or - to read it from stdin")
+    parser.add_argument("--name", help="how messages name the config (default: its path)")
+    parser.add_argument("--agent", default="", help="agent for the agent window (default: defaultAgent)")
+    args = parser.parse_args()
+    if args.name is None:
+        args.name = "stdin" if args.config == "-" else args.config
+    return args
 
-    path = sys.argv[1]
-    requested_agent = sys.argv[2] if len(sys.argv) == 3 else ""
-    with open(path, "r", encoding="utf-8") as f:
-        source = f.read()
+
+def main():
+    args = parse_args()
+    if args.config == "-":
+        source = sys.stdin.read()
+    else:
+        with open(args.config, "r", encoding="utf-8") as f:
+            source = f.read()
+    name = args.name
 
     config = json.loads(strip_trailing_commas(strip_jsonc(source)))
     windows = config.get("windows", [])
     if not isinstance(windows, list):
-        raise SystemExit("devConfig.jsonc windows must be an array")
-    agents, default_agent = read_agents(config)
+        raise SystemExit(f"{name} windows must be an array")
+    agents, default_agent = read_agents(config, name)
+    if not windows:
+        raise SystemExit(f"No windows configured in {name}")
 
     lines = []
     has_agent_window = False
     for index, window in enumerate(windows):
         if not isinstance(window, dict):
-            raise SystemExit(f"devConfig.jsonc windows[{index}] must be an object")
+            raise SystemExit(f"{name} windows[{index}] must be an object")
 
-        name = window.get("name")
-        if not isinstance(name, str) or not name:
-            raise SystemExit(f"devConfig.jsonc windows[{index}].name must be a non-empty string")
+        window_name = window.get("name")
+        if not isinstance(window_name, str) or not window_name:
+            raise SystemExit(f"{name} windows[{index}].name must be a non-empty string")
 
         is_agent = window.get("agent", False)
         if not isinstance(is_agent, bool):
-            raise SystemExit(f"devConfig.jsonc windows[{index}].agent must be a boolean")
+            raise SystemExit(f"{name} windows[{index}].agent must be a boolean")
         if is_agent:
             # The agent window's command comes from the selected agent, so a
             # fixed command alongside it would be ambiguous.
             if "command" in window:
-                raise SystemExit(f"devConfig.jsonc windows[{index}] sets both agent and command")
+                raise SystemExit(f"{name} windows[{index}] sets both agent and command")
             has_agent_window = True
             kind = "agent"
-            command = agent_command(agents, default_agent, requested_agent, path)
+            command = agent_command(agents, default_agent, args)
         else:
             kind = "window"
             command = window.get("command", "")
             if command is None:
                 command = ""
             if not isinstance(command, str):
-                raise SystemExit(f"devConfig.jsonc windows[{index}].command must be a string")
+                raise SystemExit(f"{name} windows[{index}].command must be a string")
 
         # The kind comes first because it is never empty: bash `read` with a
         # tab IFS collapses empty fields, so only the last one may be empty.
-        lines.append(f"{kind}\t{name}\t{command}")
+        lines.append(f"{kind}\t{window_name}\t{command}")
 
-    if requested_agent and not has_agent_window:
-        raise SystemExit(f"--agent {requested_agent} was given, but {path} has no agent window")
+    if args.agent and not has_agent_window:
+        warn(f"agent {args.agent!r} is not available in {name}, which has no agent window; opening no agent")
 
     for line in lines:
         print(line)

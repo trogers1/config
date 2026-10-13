@@ -34,13 +34,26 @@ tmux_worktree_main_repo_root() {
     (cd "$from_dir" && cd "${git_common_dir}/.." && pwd)
 }
 
+# A branch-or-path target is a path only when it is an existing directory
+# spelled like one: `.`, `..`, or containing a `/`. A bare name such as `docs`
+# is always a branch, even when the current directory happens to contain a
+# directory of that name.
+tmux_worktree_target_is_path() {
+    local target="$1"
+
+    case "$target" in
+        .|..|*/*) [ -d "$target" ] ;;
+        *) return 1 ;;
+    esac
+}
+
 # The main checkout that owns a branch-or-path target: a directory names its
 # own repository, so `dev kill <path>` works from anywhere; a branch is looked
 # up in the repository of the current directory.
 tmux_worktree_main_repo_root_for_target() {
     local target="$1"
 
-    if [ -d "$target" ]; then
+    if tmux_worktree_target_is_path "$target"; then
         if ! git -C "$target" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
             echo "Not inside a git worktree: $target" >&2
             return 1
@@ -311,41 +324,78 @@ tmux_worktree_dev_config_path() {
     return 1
 }
 
+# Prints the session's "<kind>\t<name>\t<command>" window lines for a
+# devConfig.jsonc read from stdin, named <config-name> in messages. An agent
+# the config cannot provide is a warning, and its window runs nothing.
 tmux_worktree_read_dev_config_windows() {
-    local config_path="$1"
-    local agent="${2:-}"
+    local config_name="$1"
+    local agent="$2"
     local lib_dir=""
+    local args=(--name "$config_name")
 
     lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     if [ -n "$agent" ]; then
-        python3 "$lib_dir/read_dev_config_windows.py" "$config_path" "$agent"
-    else
-        python3 "$lib_dir/read_dev_config_windows.py" "$config_path"
+        args+=(--agent "$agent")
     fi
+    python3 "$lib_dir/read_dev_config_windows.py" "${args[@]}" -
 }
 
+# Window lines for an existing checkout: its own devConfig.jsonc, else the
+# bundled default.
+tmux_worktree_dev_config_windows_for_path() {
+    local worktree_path="$1"
+    local agent="$2"
+    local config_path=""
+
+    if ! config_path="$(tmux_worktree_dev_config_path "$worktree_path")"; then
+        echo "No devConfig.jsonc found for $worktree_path" >&2
+        return 1
+    fi
+    tmux_worktree_read_dev_config_windows "$config_path" "$agent" <"$config_path"
+}
+
+# Window lines for a worktree that is about to be checked out at <ref>: the
+# devConfig.jsonc committed there, else the bundled default. Resolving them
+# before `git worktree add` means an invalid config creates nothing.
+tmux_worktree_dev_config_windows_for_ref() {
+    local repo_root="$1"
+    local ref="$2"
+    local agent="$3"
+    local config_path=""
+
+    if git -C "$repo_root" cat-file -e "$ref:devConfig.jsonc" 2>/dev/null; then
+        git -C "$repo_root" show "$ref:devConfig.jsonc" |
+            tmux_worktree_read_dev_config_windows "$ref:devConfig.jsonc" "$agent"
+        return
+    fi
+
+    config_path="$(tmux_worktree_default_dev_config_path)"
+    if [ ! -f "$config_path" ]; then
+        echo "No devConfig.jsonc at $ref and no default at $config_path" >&2
+        return 1
+    fi
+    tmux_worktree_read_dev_config_windows "$config_path" "$agent" <"$config_path"
+}
+
+# Creates a detached session from window lines that a
+# tmux_worktree_dev_config_windows_* function already resolved and validated.
 tmux_worktree_create_standard_session() {
     local session_name="$1"
     local worktree_path="$2"
-    local branch="${3:-}"
-    local nvim_command="${4:-}"
-    local agent="${5:-}"
+    local branch="$3"
+    local nvim_command="$4"
+    local windows="$5"
     local stage_agent="${6:-false}"
-    local config_path=""
-    local windows=""
     local window_kind=""
     local window_name=""
     local window_command=""
     local first_window_name=""
     local created_first_window=false
 
-    if ! config_path="$(tmux_worktree_dev_config_path "$worktree_path")"; then
-        echo "No devConfig.jsonc found for $worktree_path" >&2
+    if [ -z "$windows" ]; then
+        echo "tmux_worktree_create_standard_session: no windows for $worktree_path" >&2
         exit 1
     fi
-    # Read the whole config before creating anything so an invalid config or
-    # agent fails without leaving a partial session behind.
-    windows="$(tmux_worktree_read_dev_config_windows "$config_path" "$agent")"
 
     while IFS=$'\t' read -r window_kind window_name window_command; do
         [ -n "$window_name" ] || continue
@@ -373,11 +423,6 @@ tmux_worktree_create_standard_session() {
             tmux send-keys -t "$session_name:$window_name" "$window_command" C-m
         fi
     done <<<"$windows"
-
-    if [ "$created_first_window" = false ]; then
-        echo "No windows configured in $config_path"
-        exit 1
-    fi
 
     tmux select-window -t "$session_name:$first_window_name"
 }
@@ -414,10 +459,10 @@ tmux_worktree_physical_path() {
     (cd "$1" 2>/dev/null && pwd -P)
 }
 
-# Resolves a branch name or a path inside a worktree to "<path>\t<branch>",
-# using the worktree's path exactly as git records it. Fails when the target
-# names no worktree, or when it is both a directory and a different branch's
-# worktree.
+# Resolves a branch name or a path inside a worktree (see
+# tmux_worktree_target_is_path) to "<path>\t<branch>", using the worktree's path
+# exactly as git records it. Fails when the target names no worktree, or when
+# it is both a directory and a different branch's worktree.
 tmux_worktree_resolve_worktree() {
     local repo_root="$1"
     local target="$2"
@@ -431,7 +476,7 @@ tmux_worktree_resolve_worktree() {
 
     branch_path="$(tmux_worktree_path_for_branch "$repo_root" "$target")"
 
-    if [ -d "$target" ]; then
+    if tmux_worktree_target_is_path "$target"; then
         if ! dir_top="$(git -C "$target" rev-parse --show-toplevel 2>/dev/null)"; then
             echo "Not inside a git worktree: $target" >&2
             return 1

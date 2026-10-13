@@ -12,6 +12,7 @@ HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 DEV="$HOOK_DIR/../../../tmux_and_worktrees/bin/dev"
 # shellcheck source=hook-input.sh
 . "$HOOK_DIR/hook-input.sh"
+hook_add_homebrew_to_path
 
 if [ ! -x "$DEV" ]; then
     echo "WorktreeCreate: dev is not executable at $DEV" >&2
@@ -26,5 +27,6 @@ cd "$cwd"
 # The Claude session that asked for this worktree is already running, so the
 # tmux agent window only gets `claude --continue` typed in. Pressing Enter there
 # later resumes that conversation in the TUI, instead of a second conversation
-# starting now in the same worktree.
+# starting now in the same worktree. A project whose devConfig.jsonc has no
+# agent window or no claude agent still gets its worktree, with a warning.
 exec "$DEV" tree --no-attach --agent claude --stage-agent -- "$name"

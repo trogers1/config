@@ -17,7 +17,9 @@ Usage: dtree [--no-attach] [--agent <name>] [--stage-agent] [--] [branch] [base-
                    its tmux session, send all progress to stderr, and print only
                    the worktree path on stdout. Fails instead of prompting.
   --agent <name>   Agent for the session's agent window (from devConfig.jsonc
-                   agents). Used only when a new session is created.
+                   agents). Used only when a new session is created. An
+                   agent the config cannot provide is a warning, and the agent
+                   window opens as an empty shell.
   --stage-agent    Type the agent's command into its window without running
                    it, so it starts when you press Enter there.
 EOF
@@ -96,7 +98,10 @@ run_startup_script() {
     fi
 
     log "Running startup script: $startup_script"
-    (cd "$wt_path" && REPO_ROOT="$repo_root" WORKTREE_PATH="$wt_path" bash "$startup_script")
+    # Under --no-attach, fd 3 is the caller's stdout. Close it so a process the
+    # script leaves in the background cannot hold the caller's pipe open, and
+    # give the script no stdin to block on.
+    (cd "$wt_path" && REPO_ROOT="$repo_root" WORKTREE_PATH="$wt_path" bash "$startup_script") 3>&- </dev/null
 }
 
 if [ "${1:-}" = "init" ]; then
@@ -220,6 +225,17 @@ default_wt_path="$(tmux_worktree_default_path "$repo_root" "$branch")"
 
 existing_wt_path="$(tmux_worktree_path_for_branch "$repo_root" "$branch")"
 created_worktree=false
+# Window lines for the new session. A new worktree resolves them before it is
+# created, so an invalid config leaves nothing behind.
+windows=""
+
+# --no-attach callers expect a linked worktree, so never hand them the primary
+# checkout, whichever worktree this runs from.
+if [ "$no_attach" = true ] && [ -n "$existing_wt_path" ] &&
+    [ "$(tmux_worktree_physical_path "$existing_wt_path")" = "$(tmux_worktree_physical_path "$repo_root")" ]; then
+    echo "[dtree] $branch is checked out in the primary checkout ($repo_root). --no-attach never moves it; run \`dev tree $branch\` interactively or check out another branch there first." >&2
+    exit 1
+fi
 
 # A branch checked out in the primary checkout cannot also be added as a
 # worktree. Offer to move the primary checkout to its default branch first.
@@ -233,11 +249,6 @@ if [ "$existing_wt_path" = "$repo_root" ] && [ "$current_branch" = "$branch" ]; 
 
     if [ -n "$(git -C "$repo_root" status --porcelain)" ]; then
         echo "[dtree] Cannot turn $branch into a worktree because the primary checkout has uncommitted changes. Commit or stash them first." >&2
-        exit 1
-    fi
-
-    if [ "$no_attach" = true ]; then
-        echo "[dtree] $branch is checked out in the primary checkout ($repo_root). --no-attach never moves it; run \`dev tree $branch\` interactively or check out another branch there first." >&2
         exit 1
     fi
 
@@ -265,7 +276,8 @@ else
         echo "Worktree already exists at $wt_path"
     else
         if git -C "$repo_root" show-ref --verify --quiet "refs/heads/$branch"; then
-            git -C "$repo_root" worktree add "$wt_path" "$branch"
+            start_ref="refs/heads/$branch"
+            add_args=("$wt_path" "$branch")
         else
             remote_name="origin"
             remote_branch=""
@@ -292,16 +304,21 @@ else
 
             if [ -n "$remote_branch" ]; then
                 log "Found remote branch $remote_branch; creating local branch $branch tracking it"
-                git -C "$repo_root" worktree add --track -b "$branch" "$wt_path" "$remote_branch"
+                start_ref="$remote_branch"
+                add_args=(--track -b "$branch" "$wt_path" "$remote_branch")
             else
                 if [ "$checked_remote" = true ]; then
                     log "No remote branch $remote_name/$branch found; creating $branch from $base_branch"
                 elif [ "$no_attach" = false ] && git -C "$repo_root" remote get-url "$remote_name" >/dev/null 2>&1; then
                     log "Skipped remote lookup; creating $branch from $base_branch"
                 fi
-                git -C "$repo_root" worktree add -b "$branch" "$wt_path" "$base_branch"
+                start_ref="$base_branch"
+                add_args=(-b "$branch" "$wt_path" "$base_branch")
             fi
         fi
+
+        windows="$(tmux_worktree_dev_config_windows_for_ref "$repo_root" "$start_ref" "$agent")"
+        git -C "$repo_root" worktree add "${add_args[@]}"
         created_worktree=true
     fi
 fi
@@ -324,9 +341,13 @@ if tmux has-session -t "$session_name" 2>/dev/null; then
     log "Session $preferred_session_name is already attached to another worktree; using $session_name"
 fi
 
+if [ -z "$windows" ]; then
+    windows="$(tmux_worktree_dev_config_windows_for_path "$wt_path" "$agent")"
+fi
+
 if [ "$created_worktree" = true ]; then
     run_startup_script "$repo_root" "$wt_path"
 fi
 
-tmux_worktree_create_standard_session "$session_name" "$wt_path" "$branch" "" "$agent" "$stage_agent"
+tmux_worktree_create_standard_session "$session_name" "$wt_path" "$branch" "" "$windows" "$stage_agent"
 finish "$session_name"

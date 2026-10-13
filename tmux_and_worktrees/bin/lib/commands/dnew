@@ -70,5 +70,6 @@ if tmux has-session -t "$session_name" 2>/dev/null; then
     session_name="$(tmux_worktree_make_session_name "${preferred_session_name}-$(tmux_worktree_path_checksum "$project_path")")"
 fi
 
-tmux_worktree_create_standard_session "$session_name" "$project_path" "" "$nvim_command" "$agent"
+windows="$(tmux_worktree_dev_config_windows_for_path "$project_path" "$agent")"
+tmux_worktree_create_standard_session "$session_name" "$project_path" "" "$nvim_command" "$windows"
 tmux_worktree_attach_or_switch "$session_name"
