@@ -59,7 +59,7 @@ Your config uses manual folds, so folds normally disappear when the file is reop
 | Command | Description |
 |---------|-------------|
 | `gd` | **G**o to **d**efinition |
-| `gf` | **G**o to **f**ile (under cursor) |
+| `gf` | **G**o (go) to **f**ile (under cursor). i.e. go to the link for a local file within nvim |
 | `<C-o>` | Jump backward in jumplist |
 | `<C-i>` | Jump forward in jumplist |
 | `<C-^>` | Switch to previous buffer |

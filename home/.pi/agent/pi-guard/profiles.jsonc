@@ -739,6 +739,10 @@
             "pattern": "node --version",
             "decision": "allow"
           },
+          {
+            "pattern": "-v jira-ticket",
+            "decision": "allow"
+          },
         ],
       },
       "readPaths": [
