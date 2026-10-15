@@ -190,10 +190,7 @@
         "customruleset:config-symlink-boundaries",
       ],
       "sandbox": false,
-      "directoryGlobs": [
-        "~/Code/config",
-        "~/code/config",
-      ],
+      "directoryGlobs": ["~/Code/config", "~/code/config"],
       "readPaths": [
         {
           "pattern": "/Users/*/.nvm/versions/**/lib/node_modules/@earendil-works/pi-coding-agent/**",
@@ -204,105 +201,84 @@
           "decision": "allow",
         },
         {
-          "pattern": "/Users/taylor.rogers/.pi",
+          "pattern": "~/.pi",
           "decision": "deny",
           "guidance": "There's no reason to read from ~. The local files at ./home/.pi/ are symlinked to there",
-          "contexts": [
-            "ls"
-          ]
+          "contexts": ["ls"],
         },
         {
-          "pattern": "/Users/taylor.rogers/Code/open_source/*",
+          "pattern": "~/**/open_source/*",
           "decision": "allow",
-          "contexts": [
-            "ls"
-          ]
+          "contexts": ["ls"],
         },
         {
-          "pattern": "/Users/taylor.rogers/Code/open_source/**",
+          "pattern": "~/**/open_source/**",
           "decision": "allow",
-          "contexts": [
-            "read"
-          ]
+          "contexts": ["read"],
         },
         {
-          "pattern": "/Users/taylor.rogers/.nvm/versions/node/v24.15.0/lib/node_modules/@earendil-works/*",
+          "pattern": "~/.nvm/versions/node/v24.15.0/lib/node_modules/@earendil-works/*",
           "decision": "allow",
-          "contexts": [
-            "ls"
-          ]
+          "contexts": ["ls"],
         },
         {
-          "pattern": "/Users/taylor.rogers/.nvm/versions/node/v24.15.0/lib/node_modules/@earendil-works",
+          "pattern": "~/.nvm/versions/node/v24.15.0/lib/node_modules/@earendil-works",
           "decision": "allow",
-          "contexts": [
-            "ls"
-          ]
+          "contexts": ["ls"],
         },
         {
           "pattern": "/var/folders/pc/*/T/**",
-          "decision": "allow"
+          "decision": "allow",
         },
         {
           "pattern": "/dev/null",
-          "decision": "allow"
-        },
-        {
-          "pattern": "/Users/taylor.rogers/Code/open_source/pi-interactive-subagents/**",
           "decision": "allow",
-          "contexts": [
-            "grep"
-          ]
         },
         {
-          "pattern": "/Users/taylor.rogers/Code/config/.pi/orchestration/*",
+          "pattern": "~/**/open_source/pi-interactive-subagents/**",
           "decision": "allow",
-          "contexts": [
-            "read"
-          ]
+          "contexts": ["grep"],
         },
         {
-          "pattern": "/Users/taylor.rogers/Code/config/.pi/**",
+          "pattern": "~/**/config/.pi/orchestration/*",
           "decision": "allow",
-          "contexts": [
-            "read"
-          ]
+          "contexts": ["read"],
         },
         {
-          "pattern": "/Users/taylor.rogers/Code/config/.pi/**",
+          "pattern": "~/**/config/.agents/**",
           "decision": "allow",
-          "contexts": [
-            "ls"
-          ]
+          "contexts": ["read"],
         },
         {
-          "pattern": "/Users/taylor.rogers/Code/config/home/.pi/agent/*",
+          "pattern": "~/**/config/.pi/**",
+          "decision": "allow",
+          "contexts": ["read"],
+        },
+        {
+          "pattern": "~/**/config/.pi/**",
+          "decision": "allow",
+          "contexts": ["ls"],
+        },
+        {
+          "pattern": "~/**/config/home/.pi/agent/*",
           "decision": "deny",
           "guidance": "Those files are symlinks to the real ones at ./home/.pi",
-          "contexts": [
-            "read"
-          ]
+          "contexts": ["read"],
         },
         {
-          "pattern": "/Users/taylor.rogers/Code/config/home/.pi/agent/pi-guard/profiles.jsonc",
+          "pattern": "~/**/config/home/.pi/agent/pi-guard/profiles.jsonc",
           "decision": "allow",
-          "contexts": [
-            "read"
-          ]
+          "contexts": ["read"],
         },
         {
-          "pattern": "/Users/taylor.rogers/Code/sidecar-comments/**",
+          "pattern": "~/**/sidecar-comments/**",
           "decision": "allow",
-          "contexts": [
-            "read"
-          ]
+          "contexts": ["read"],
         },
         {
-          "pattern": "/Users/taylor.rogers/Code/sidecar-comments",
+          "pattern": "~/**/sidecar-comments",
           "decision": "allow",
-          "contexts": [
-            "ls"
-          ]
+          "contexts": ["ls"],
         },
       ],
       "writePaths": [
@@ -319,32 +295,24 @@
           "decision": "allow",
         },
         {
-          "pattern": "/Users/taylor.rogers/.nvm/versions/node/v24.15.0/lib/node_modules/@earendil-works/**",
+          "pattern": "~/.nvm/versions/node/v24.15.0/lib/node_modules/@earendil-works/**",
           "decision": "allow",
-          "contexts": [
-            "bash"
-          ]
+          "contexts": ["bash"],
         },
         {
           "pattern": "/var/folders/pc/*/T/**",
           "decision": "allow",
-          "contexts": [
-            "bash"
-          ]
+          "contexts": ["bash"],
         },
         {
           "pattern": "/dev/null",
           "decision": "allow",
-          "contexts": [
-            "bash"
-          ]
+          "contexts": ["bash"],
         },
         {
-          "pattern": "/Users/taylor.rogers/Code/sidecar-comments/**",
+          "pattern": "~/**/sidecar-comments/**",
           "decision": "allow",
-          "contexts": [
-            "write"
-          ]
+          "contexts": ["write"],
         },
       ],
       "tools": {
@@ -352,148 +320,148 @@
           {
             "pattern": "npx prettier --check *",
             "decision": "deny",
-            "guidance": "Use `npm run prettier:fix` instead of checking."
+            "guidance": "Use `npm run prettier:fix` instead of checking.",
           },
           {
             "pattern": "npx vitest run *",
             "decision": "deny",
-            "guidance": "Use `npm test` and `npm test -- <file>` instead"
+            "guidance": "Use `npm test` and `npm test -- <file>` instead",
           },
           {
             "pattern": "npx tsc --noEmit",
-            "decision": "allow"
+            "decision": "allow",
           },
           {
             "pattern": "npm root -g",
-            "decision": "allow"
+            "decision": "allow",
           },
           {
             "pattern": "npx prettier --write *",
             "decision": "deny",
-            "guidance": "Just use `npm run fix:prettier`"
+            "guidance": "Just use `npm run fix:prettier`",
           },
           {
             "pattern": "./node_modules/.bin/prettier *",
             "decision": "deny",
-            "guidance": "Use `npm run prettier:fix` or `npm run fix:prettier`"
+            "guidance": "Use `npm run prettier:fix` or `npm run fix:prettier`",
           },
           {
             "pattern": "npx vitest",
             "decision": "deny",
-            "guidance": "Use npm test instead"
+            "guidance": "Use npm test instead",
           },
           {
             "pattern": "node_modules/prettier/bin/prettier.cjs",
             "decision": "deny",
-            "guidance": "Use npm run fix:prettier"
+            "guidance": "Use npm run fix:prettier",
           },
           {
             "pattern": "node_modules/prettier/bin/prettier.cjs *",
             "decision": "deny",
-            "guidance": "Use npm run fix:prettier"
+            "guidance": "Use npm run fix:prettier",
           },
           {
             "pattern": "npx tsc",
             "decision": "deny",
-            "guidance": "Use npm run check:all"
+            "guidance": "Use npm run check:all",
           },
           {
             "pattern": "npx tsc *",
             "decision": "deny",
-            "guidance": "Use npm run check:all"
+            "guidance": "Use npm run check:all",
           },
           {
             "pattern": "npx prettier *",
             "decision": "deny",
-            "guidance": "Use npm run fix:prettier"
+            "guidance": "Use npm run fix:prettier",
           },
           {
             "pattern": "npx vitest *",
             "decision": "deny",
-            "guidance": "Just use `npm test -- `"
+            "guidance": "Just use `npm test -- `",
           },
           {
             "pattern": "npm * --ignore-scripts *",
             "decision": "deny",
-            "guidance": "Do not use --ignore-scripts"
+            "guidance": "Do not use --ignore-scripts",
           },
           {
             "pattern": "npm --ignore-scripts test *",
             "decision": "deny",
-            "guidance": "Do not use --ignore-scripts"
+            "guidance": "Do not use --ignore-scripts",
           },
           {
             "pattern": "./node_modules/.bin/vitest *",
             "decision": "deny",
-            "guidance": "Just use `npm test --` instead"
+            "guidance": "Just use `npm test --` instead",
           },
           {
             "pattern": "node -e * prettier *",
             "decision": "deny",
-            "guidance": "Just use `npm run fix:prettier` to format"
+            "guidance": "Just use `npm run fix:prettier` to format",
           },
           {
             "pattern": "printf *",
-            "decision": "allow"
+            "decision": "allow",
           },
           {
             "pattern": "node --version",
-            "decision": "allow"
+            "decision": "allow",
           },
           {
             "pattern": "npm --version",
-            "decision": "allow"
+            "decision": "allow",
           },
           {
             "pattern": "echo *",
-            "decision": "allow"
+            "decision": "allow",
           },
           {
             "pattern": "prettier --write *",
             "decision": "deny",
-            "guidance": "Just use `npm run fix:prettier`"
+            "guidance": "Just use `npm run fix:prettier`",
           },
           {
             "pattern": "* CI=1 *",
             "decision": "deny",
-            "guidance": "You're not in CI, do not set that env var"
+            "guidance": "You're not in CI, do not set that env var",
           },
           {
             "pattern": "home/.pi/agent/packages/pi-guard/node_modules/.bin/vitest *",
             "decision": "deny",
-            "guidance": "Just use `npm test` or `npm test -- <file>`"
+            "guidance": "Just use `npm test` or `npm test -- <file>`",
           },
           {
             "pattern": "CI=1 *",
             "decision": "deny",
-            "guidance": "You're not in CI, so don't set that env var"
+            "guidance": "You're not in CI, so don't set that env var",
           },
           {
             "pattern": "**/node_modules/.bin/prettier *",
             "decision": "deny",
-            "guidance": "Just use `npm run fix:prettier`"
+            "guidance": "Just use `npm run fix:prettier`",
           },
           {
             "pattern": "npm --prefix home/.pi/agent/packages/* run fix:prettier",
-            "decision": "allow"
+            "decision": "allow",
           },
           {
             "pattern": "npm --prefix home/.pi/agent/packages/* run *",
-            "decision": "allow"
+            "decision": "allow",
           },
           {
             "pattern": "cp *",
-            "decision": "allow"
+            "decision": "allow",
           },
           {
             "pattern": "mv *",
-            "decision": "allow"
+            "decision": "allow",
           },
           {
             "pattern": "pi --version",
-            "decision": "allow"
-          }
-        ]
+            "decision": "allow",
+          },
+        ],
       },
     },
     "config-maintenance-tests-hidden": {
@@ -554,27 +522,7 @@
       "tools": {
         "bash": [
           {
-            "pattern": "bash *skills/address-comments/scripts/fetch-open-mr.sh*",
-            "decision": "allow",
-          },
-          {
-            "pattern": "bash *skills/address-comments/scripts/fetch-mr-discussions.sh*",
-            "decision": "allow",
-          },
-          {
-            "pattern": "bash *skills/address-comments/scripts/enrich-discussions.sh*",
-            "decision": "allow",
-          },
-          {
-            "pattern": "bash *skills/address-comments/scripts/render-comments-md.sh*",
-            "decision": "allow",
-          },
-          {
-            "pattern": "bash *skills/address-comments/scripts/refresh-robot-comments-md.sh*",
-            "decision": "allow",
-          },
-          {
-            "pattern": "bash *skills/address-comments/scripts/refresh-all-comments-md.sh*",
+            "pattern": "bash **skills/address-comments/scripts/**",
             "decision": "allow",
           },
           // preview-replies.sh rejects every flag after shell expansion, so it
@@ -622,7 +570,7 @@
         "builtin:default",
         "ruleset:vitest",
         "customruleset:infra-mutation-deny",
-        "gitlab-skills"
+        "gitlab-skills",
       ],
       "sandbox": {
         "network": "allow",
@@ -684,64 +632,64 @@
           {
             "pattern": "env",
             "decision": "deny",
-            "guidance": "You don't need to check that. Ask if you need anything specific."
+            "guidance": "You don't need to check that. Ask if you need anything specific.",
           },
           {
             "pattern": "docker version",
-            "decision": "allow"
+            "decision": "allow",
           },
           {
             "pattern": "docker info *",
-            "decision": "allow"
+            "decision": "allow",
           },
           {
             "pattern": "echo *",
-            "decision": "allow"
+            "decision": "allow",
           },
           {
             "pattern": "docker context *",
-            "decision": "allow"
+            "decision": "allow",
           },
           {
             "pattern": "printf *",
-            "decision": "allow"
+            "decision": "allow",
           },
           {
             "pattern": "nvm use",
-            "decision": "allow"
+            "decision": "allow",
           },
           {
             "pattern": "* npx vitest run *",
             "decision": "deny",
-            "guidance": "Use `npm test -- <files>` instead"
+            "guidance": "Use `npm test -- <files>` instead",
           },
           {
-            "pattern": "node /Users/taylor.rogers/.agents/skills/** *",
-            "decision": "allow"
+            "pattern": "node ~/.agents/skills/** *",
+            "decision": "allow",
           },
           {
             "pattern": "-v jiratui",
-            "decision": "allow"
+            "decision": "allow",
           },
           {
             "pattern": "jiratui *",
-            "decision": "allow"
+            "decision": "allow",
           },
           {
             "pattern": "jira-ticket *",
-            "decision": "allow"
+            "decision": "allow",
           },
           {
             "pattern": "-v terraform",
-            "decision": "allow"
+            "decision": "allow",
           },
           {
             "pattern": "node --version",
-            "decision": "allow"
+            "decision": "allow",
           },
           {
             "pattern": "-v jira-ticket",
-            "decision": "allow"
+            "decision": "allow",
           },
         ],
       },
@@ -749,70 +697,52 @@
         {
           "pattern": "/var/folders/pc/*/T/**",
           "decision": "allow",
-          "contexts": [
-            "grep"
-          ]
+          "contexts": ["grep"],
         },
         {
-          "pattern": "/Users/taylor.rogers/.pi/agent/packages/pi-guard",
+          "pattern": "~/.pi/agent/packages/pi-guard",
           "decision": "deny",
           "guidance": "Just update local files within this project (they should be symlinked in the setup scripts)",
-          "contexts": [
-            "ls"
-          ]
+          "contexts": ["ls"],
         },
         {
-          "pattern": "/Users/taylor.rogers/.pi/agent/packages/pi-guard-subagents",
+          "pattern": "~/.pi/agent/packages/pi-guard-subagents",
           "decision": "deny",
           "guidance": "Just update local files within this project (they should be symlinked in the setup scripts)",
-          "contexts": [
-            "ls"
-          ]
+          "contexts": ["ls"],
         },
         {
-          "pattern": "/Users/taylor.rogers/Documents/bruno/**",
+          "pattern": "~/Documents/bruno/**",
           "decision": "allow",
-          "contexts": [
-            "read"
-          ]
-        }
+          "contexts": ["read"],
+        },
       ],
       "writePaths": [
         {
           "pattern": "/dev/null",
           "decision": "allow",
-          "contexts": [
-            "bash"
-          ]
+          "contexts": ["bash"],
         },
         {
-          "pattern": "/Users/taylor.rogers/.agents/skills/flow-review/scripts/render_markdown_html.mjs",
+          "pattern": "~/.agents/skills/**",
           "decision": "allow",
-          "contexts": [
-            "bash"
-          ]
+          "contexts": ["bash"],
         },
         {
-          "pattern": "/Users/taylor.rogers/Documents/bruno/**",
+          "pattern": "~/Documents/bruno/**",
           "decision": "allow",
-          "contexts": [
-            "write"
-          ]
+          "contexts": ["write"],
         },
         {
-          "pattern": "/Users/taylor.rogers/Documents/bruno/**",
+          "pattern": "~/Documents/bruno/**",
           "decision": "allow",
-          "contexts": [
-            "bash"
-          ]
+          "contexts": ["bash"],
         },
         {
-          "pattern": "/Users/taylor.rogers/.local/share/lightcast-mcp/tokens/**",
+          "pattern": "~/.local/share/lightcast-mcp/tokens/**",
           "decision": "allow",
-          "contexts": [
-            "bash"
-          ]
-        }
+          "contexts": ["bash"],
+        },
       ],
     },
     "performance-review": {
@@ -850,226 +780,166 @@
     "personal-sidecar-comments": {
       "description": "Sidecar-specific profile (can see config repo)",
       "emoji": "🛵",
-      "extends": [
-        "mcp",
-        "ruleset:go-runtime-commands"
-      ],
-      "directoryGlobs": [
-        "/Users/taylor.rogers/Code/sidecar-comments"
-      ],
+      "extends": ["mcp", "ruleset:go-runtime-commands"],
+      "directoryGlobs": ["~/**/sidecar-comments"],
       "color": "yellow",
       "readPaths": [
         {
           "pattern": "~/Code/config",
-          "decision": "allow"
+          "decision": "allow",
         },
         {
           "pattern": "~/Code/config/**",
-          "decision": "allow"
+          "decision": "allow",
         },
         {
-          "pattern": "/Users/taylor.rogers/Code/config/xdg/nvim/*",
+          "pattern": "~/**/config/xdg/nvim/*",
           "decision": "allow",
-          "contexts": [
-            "read"
-          ]
+          "contexts": ["read"],
         },
         {
-          "pattern": "/Users/taylor.rogers/Code/config/xdg/nvim",
+          "pattern": "~/**/config/xdg/nvim",
           "decision": "allow",
-          "contexts": [
-            "read"
-          ]
+          "contexts": ["read"],
         },
         {
           "pattern": "/usr/local/go/src/**",
           "decision": "allow",
-          "contexts": [
-            "read"
-          ]
+          "contexts": ["read"],
         },
         {
           "pattern": "/usr/local/go/src",
           "decision": "allow",
-          "contexts": [
-            "grep"
-          ]
+          "contexts": ["grep"],
         },
         {
           "pattern": ".temp",
-          "decision": "allow"
-        }
+          "decision": "allow",
+        },
       ],
       "tools": {
         "bash": [
           {
             "pattern": "gofmt *",
-            "decision": "allow"
+            "decision": "allow",
           },
           {
             "pattern": "git reflog *",
-            "decision": "allow"
+            "decision": "allow",
           },
           {
             "pattern": "make *",
-            "decision": "allow"
+            "decision": "allow",
           },
           {
             "pattern": "mkdir *",
-            "decision": "allow"
+            "decision": "allow",
           },
           {
             "pattern": "GOTOOLCHAIN=local go test *",
-            "decision": "allow"
-          }
-        ]
+            "decision": "allow",
+          },
+        ],
       },
       "writePaths": [
         {
           "pattern": ".temp",
-          "decision": "allow"
-        }
-      ]
+          "decision": "allow",
+        },
+      ],
     },
     "personal-sidecar-comments-allow-asks": {
       "description": "Sidecar-comments Golang profile for auto-pilot that allows asks",
       "emoji": "🤖",
-      "extends": [
-        "personal-sidecar-comments"
-      ],
+      "extends": ["personal-sidecar-comments"],
       "color": "orange",
-      "transforms": [
-        "transform:allow-asks"
-      ]
+      "transforms": ["transform:allow-asks"],
     },
     "personal-sidecar-comments-deny-asks": {
       "description": "Auto-pilot extension to the golang sidecar profile that denies asks",
       "emoji": "🚅",
-      "extends": [
-        "personal-sidecar-comments-allow-asks"
-      ],
+      "extends": ["personal-sidecar-comments-allow-asks"],
       "color": "green",
-      "transforms": [
-        "transform:deny-asks"
-      ]
+      "transforms": ["transform:deny-asks"],
     },
     "mcp-deny-asks": {
       "description": "The conservative auto-pilot for the MCP profile.",
       "emoji": "👨‍✈️",
-      "extends": [
-        "mcp"
-      ],
+      "extends": ["mcp"],
       "color": "green",
-      "transforms": [
-        "transform:deny-asks"
-      ]
+      "transforms": ["transform:deny-asks"],
     },
     "personal-allow-asks": {
       "description": "Dangerous auto-pilot for the MCP profile",
       "emoji": "🔥",
-      "extends": [
-        "mcp"
-      ],
+      "extends": ["mcp"],
       "color": "red",
-      "transforms": [
-        "transform:allow-asks"
-      ]
+      "transforms": ["transform:allow-asks"],
     },
     "config-maintenance-allow-asks": {
       "description": "Auto-pilot",
       "emoji": "🔥",
-      "extends": [
-        "config-maintenance"
-      ],
-      "transforms": [
-        "transform:allow-asks"
-      ],
-      "color": "red"
+      "extends": ["config-maintenance"],
+      "transforms": ["transform:allow-asks"],
+      "color": "red",
     },
     "config-maintenance-deny-asks": {
       "description": "Safer auto-pilot",
       "emoji": "🚅",
-      "extends": [
-        "config-maintenance"
-      ],
+      "extends": ["config-maintenance"],
       "color": "green",
-      "transforms": [
-        "transform:deny-asks"
-      ]
+      "transforms": ["transform:deny-asks"],
     },
     "config-maintenance-committer": {
       "description": "Git-capable config-maintence profile",
       "emoji": "⚠️",
-      "extends": [
-        "config-maintenance",
-        "builtin:committer"
-      ],
+      "extends": ["config-maintenance", "builtin:committer"],
       "color": "yellow",
-      "sandbox": false
+      "sandbox": false,
     },
     "config-maintenance-committer-deny-asks": {
       "description": "GIT safe auto-pilot for config-maintenance git profile",
       "emoji": "🚅",
-      "extends": [
-        "config-maintenance-committer"
-      ],
+      "extends": ["config-maintenance-committer"],
       "color": "green",
-      "transforms": [
-        "transform:deny-asks"
-      ],
-      "sandbox": false
+      "transforms": ["transform:deny-asks"],
+      "sandbox": false,
     },
     "config-maintenance-allow-asks-dep-man": {
       "description": "Dangerous dep manager on auto-pilot",
       "emoji": "📦",
       "extends": [
         "config-maintenance-allow-asks",
-        "ruleset:deps-mutations-allow"
+        "ruleset:deps-mutations-allow",
       ],
-      "color": "red"
+      "color": "red",
     },
     "mcp-committer": {
       "description": "MCP git-commit capable",
       "emoji": "✍️",
-      "extends": [
-        "mcp",
-        "ruleset:git-commit",
-        "ruleset:git-refs"
-      ],
-      "color": "yellow"
+      "extends": ["mcp", "ruleset:git-commit", "ruleset:git-refs"],
+      "color": "yellow",
     },
     "mcp-allow-asks": {
       "description": "mcp auto-pilot that allows asks",
       "emoji": "🔥",
-      "extends": [
-        "mcp"
-      ],
+      "extends": ["mcp"],
       "color": "red",
-      "transforms": [
-        "transform:allow-asks"
-      ]
+      "transforms": ["transform:allow-asks"],
+      "directoryGlobs": ["~/**/mcp"],
     },
     "sidecar-comments-committer-allow-asks": {
       "description": "auto-pilot committer",
       "emoji": "🔥",
-      "extends": [
-        "personal-sidecar-comments",
-        "builtin:committer"
-      ],
+      "extends": ["personal-sidecar-comments", "builtin:committer"],
       "color": "red",
-      "transforms": [
-        "transform:allow-asks"
-      ]
+      "transforms": ["transform:allow-asks"],
     },
     "mcp-git-full": {
       "description": "Git",
       "emoji": "🔥",
-      "extends": [
-        "mcp",
-        "ruleset:git",
-        "builtin:git-full"
-      ],
-      "color": "red"
+      "extends": ["mcp", "ruleset:git", "builtin:git-full"],
+      "color": "red",
     },
   },
 }
