@@ -39,6 +39,10 @@ Never point a refresh at the repository's `comments.md`: a refresh rewrites the 
 
 ### Draft findings as new threads
 
+Use `discuss-mr-comments` after the review to discuss draft findings one at a
+time with Taylor, inspect supporting snippets, refine wording, and record his
+explicit local approval before the separate posting workflow.
+
 After the review, draft each finding Taylor might want on the MR as a `Thread — DRAFT` block in the repository's `comments.md`, so `post-mr-replies` can post the ones he approves:
 
 - If `comments.md` does not exist, create it with `refresh-all-comments-md.sh <mr-url> comments.md`. If it exists, check that its `Merge request:` line is this MR and edit it in place; stop and ask if it is for another MR.

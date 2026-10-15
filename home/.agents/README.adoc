@@ -58,6 +58,10 @@ Skills use the frontmatter both agents understand. Add
 Claude, `/skill:name` in Pi). Reference bundled scripts through
 `~/.agents/skills/<name>/...`, which resolves for every agent.
 
+MR review loop: `export-mr-comments` / `address-comments` / `flow-review` →
+`discuss-mr-comments` (interactive, one thread at a time; local approval only) →
+`post-mr-replies` (preview and separately approve publishing).
+
 == Snippets
 
 A snippet's file name is its short id, used everywhere:

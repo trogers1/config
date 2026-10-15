@@ -239,6 +239,10 @@ Use `Robot — UNRESOLVED` for the cross-reference instead when the group remain
 
 ## Related skills
 
+Use `discuss-mr-comments` for an interactive, local-only walkthrough of each
+unapproved thread: explain code context, discuss validity, and workshop and
+approve the exact reply with Taylor without implementing more fixes.
+
 Use `post-mr-replies` to preview and post approved `Reply` blocks to GitLab after Taylor's explicit approval.
 
 Use `export-mr-comments` and `refresh-all-comments-md.sh` for a full export of all human threads (resolved and unresolved).

@@ -14,6 +14,11 @@ This is the final, **write-capable** step of the MR review loop (`export-mr-comm
 
 `scripts/post-replies.sh` lives next to the read-only scripts, but it is the only one that writes. All writes go through `scripts/lib/gitlab-write.sh`, which allowlists exactly three endpoints: start a discussion, add a note to a discussion, and resolve a discussion. Preview with `scripts/preview-replies.sh`, a wrapper that rejects every flag and so can never write. Do not run `glab api` or other GitLab CLI commands directly.
 
+Use `discuss-mr-comments` before this step to walk through unapproved threads
+with Taylor, inspect code context, workshop wording, and record local approval
+one thread at a time. That approval does not replace the fresh posting approval
+required below.
+
 ## Reply blocks in `comments.md`
 
 Normal back-and-forth stays in `Robot — RESOLVED|UNRESOLVED` notes and is **never posted**. When Taylor asks for an actual reply to a thread, draft one as a `Reply` block in that discussion:
