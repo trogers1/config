@@ -43,9 +43,9 @@ Use `discuss-mr-comments` after the review to discuss draft findings one at a
 time with Taylor, inspect supporting snippets, refine wording, and record his
 explicit local approval before the separate posting workflow.
 
-After the review, draft each finding Taylor might want on the MR as a `Thread — DRAFT` block in the repository's `comments.md`, so `post-mr-replies` can post the ones he approves:
+After the review, draft each finding Taylor might want on the MR as a `Thread — DRAFT` block in the repository's `comments.md`, so `post-mr-replies` can post the ones he approves. Like the Reply drafts produced by `address-comments`, these are outbound drafts, not local Robot notes or approval. Read `post-mr-replies` for the canonical block syntax and approval rules:
 
-- If `comments.md` does not exist, create it with `refresh-all-comments-md.sh <mr-url> comments.md`. If it exists, check that its `Merge request:` line is this MR and edit it in place; stop and ask if it is for another MR.
+- If `comments.md` does not exist, create it with `refresh-all-comments-md.sh <mr-url> comments.md`. If it exists, check that its `Merge request:` line is this MR and edit it in place; stop and ask if the identity is missing or for another MR. Preserve reviewer text, Robot notes, Reply blocks, unrelated drafts, approvals, and posted history. Revise an existing DRAFT for the same finding instead of duplicating it; do not overwrite approved or posted text.
 - Put every draft under the file's single `## New threads` heading (add it at the end if missing). Use `**Thread — DRAFT** positional <path> L<start>-L<end>` for findings on specific lines, with new-side line numbers of added or unchanged lines in the MR's diff (`L12-L12` for one line), and `**Thread — DRAFT** general` for broader findings. Separate blocks with a bare `---` line.
 - Write each body for the MR author: standalone, in GitLab Markdown, with no Robot framing and no local-only links.
 - Take line numbers from the MR's diff, and confirm the local branch matches the MR's latest pushed commit; otherwise use `general` drafts that name the file and line in the body. Anchors are checked against the live diff only when an approved block is previewed.

@@ -27,12 +27,12 @@ jq_defs='
     "How to use this file:\n\n"
     + "- Never edit between the `reviewer-comments` markers; that text comes from GitLab and is rewritten on refresh.\n"
     + "- To discuss a thread with the agent, add your notes below its end marker and ask the agent to respond. It answers in `**Robot — RESOLVED**` or `**Robot — UNRESOLVED**` notes, which are never posted.\n"
-    + "- To reply on GitLab, ask the agent to draft a `**Reply — DRAFT**` block under the thread, or write one yourself.\n"
+    + "- The `address-comments` workflow drafts `**Reply — DRAFT**` blocks by default alongside local Robot notes. Use `discuss-mr-comments` to inspect evidence, refine drafts, and approve one thread at a time; you can also write drafts yourself. Drafts are never posted.\n"
     + "- To approve a draft, change its header to `**Reply — APPROVED**`, or `**Reply — APPROVED, RESOLVE**` to also resolve the thread. One approved reply per thread.\n"
     + "- A reply body ends at the next bare `---` line, the next discussion heading, or the end of the file.\n"
     + "- To start a new thread, add a `## New threads` heading at the end and draft `**Thread — DRAFT** general` or `**Thread — DRAFT** positional <path> L<start>-L<end>` blocks under it. Approve them the same way.\n"
     + "- To post, ask the agent to run the `post-mr-replies` skill. It previews every approved reply and thread, posts them only after you say yes in chat, and marks each header POSTED.\n"
-    + "- Refreshing rewrites this whole file and drops your notes, replies, and new threads, so post approved ones first.\n\n";
+    + "- Refreshing rewrites the destination file. When this working file already exists, fetch live context into a separate scratch file and reconcile it without discarding local notes, drafts, approvals, posted history, or new threads.\n\n";
   def reviewer_text:
     if contains("<!-- reviewer-comments:") then
       error("a reviewer note contains the reserved <!-- reviewer-comments: marker; refusing to render it")

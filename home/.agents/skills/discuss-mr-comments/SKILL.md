@@ -30,8 +30,10 @@ resolve remote threads. Code fixes and posting are separate workflows.
 3. Work in file order. An existing discussion needs attention when it has no
    `Reply — APPROVED`, `Reply — APPROVED, RESOLVE`, or `Reply — POSTED` block.
    A `Thread — DRAFT` block under `## New threads` is also a queue item;
-   approved or posted Thread blocks are skipped. These include findings drafted
-   by `flow-review`: discuss their validity and outbound wording the same way.
+   approved or posted Thread blocks are skipped. `address-comments` supplies
+   Reply drafts by default, and `flow-review` supplies new-thread drafts:
+   discuss their validity and outbound wording the same way. Neither a draft
+   nor a Robot resolution note is approval.
 4. Do not use GitLab's resolved status, a Robot resolution note, or a `:robot:`
    reaction as an approval signal or a filter. A locally unapproved thread still
    needs discussion even if a previous agent considers the issue resolved.

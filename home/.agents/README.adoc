@@ -61,6 +61,12 @@ Claude, `/skill:name` in Pi). Reference bundled scripts through
 MR review loop: `export-mr-comments` / `address-comments` / `flow-review` →
 `discuss-mr-comments` (interactive, one thread at a time; local approval only) →
 `post-mr-replies` (preview and separately approve publishing).
+`export-mr-comments` creates a snapshot; `address-comments` adds local Robot
+resolution notes and reviewer-facing `Reply — DRAFT` blocks by default;
+`flow-review` drafts new findings as `Thread — DRAFT` blocks. Drafts are never
+approval, and Robot resolution is not remote thread resolution. Refresh live
+context into a scratch file when `comments.md` already exists so local work
+and approvals survive.
 
 == Snippets
 

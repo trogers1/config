@@ -10,7 +10,7 @@ disable-model-invocation: true
 
 # Post MR Replies
 
-This is the final, **write-capable** step of the MR review loop (`export-mr-comments` / `address-comments` → local discussion in `comments.md` → this skill). It posts the replies Taylor approved in `comments.md` to their GitLab threads, and starts the new threads he approved.
+This is the final, **write-capable** step of the MR review loop (`export-mr-comments` / `address-comments` / `flow-review` → `discuss-mr-comments` in `comments.md` → this skill). It posts the replies Taylor approved in `comments.md` to their GitLab threads, and starts the new threads he approved.
 
 `scripts/post-replies.sh` lives next to the read-only scripts, but it is the only one that writes. All writes go through `scripts/lib/gitlab-write.sh`, which allowlists exactly three endpoints: start a discussion, add a note to a discussion, and resolve a discussion. Preview with `scripts/preview-replies.sh`, a wrapper that rejects every flag and so can never write. Do not run `glab api` or other GitLab CLI commands directly.
 
@@ -21,7 +21,7 @@ required below.
 
 ## Reply blocks in `comments.md`
 
-Normal back-and-forth stays in `Robot — RESOLVED|UNRESOLVED` notes and is **never posted**. When Taylor asks for an actual reply to a thread, draft one as a `Reply` block in that discussion:
+Normal back-and-forth stays in `Robot — RESOLVED|UNRESOLVED` notes and is **never posted**. `address-comments` creates reviewer-facing Reply drafts by default alongside those notes; `discuss-mr-comments` creates or refines them while discussing each thread. `flow-review` drafts new Thread blocks for findings instead. These drafts require no separate drafting request, but none of these workflows may infer approval from a Robot resolution note. Use this Reply format in an existing discussion:
 
 ```md
 ---
@@ -44,7 +44,7 @@ States (the header line must match exactly; anything else starting with `**Reply
 Rules:
 
 - Only Taylor moves a block from `DRAFT` to `APPROVED` — either by editing the file or by explicitly telling you in chat to approve a specific reply. Never approve on your own judgement.
-- `render-comments-md.sh` wraps each discussion's reviewer notes in `<!-- reviewer-comments:begin -->` / `<!-- reviewer-comments:end -->`, and refuses to render a note containing those markers. Everything between them is reviewer text: a `**Reply — …**` or `Thread:` line there is never treated as structure. Reply blocks must sit below the discussion's end marker. A `comments.md` rendered before the markers existed is rejected; re-render it, which drops existing Reply blocks.
+- `render-comments-md.sh` wraps each discussion's reviewer notes in `<!-- reviewer-comments:begin -->` / `<!-- reviewer-comments:end -->`, and refuses to render a note containing those markers. Everything between them is reviewer text: a `**Reply — …**` or `Thread:` line there is never treated as structure. Reply blocks must sit below the discussion's end marker. A `comments.md` rendered before the markers existed is rejected; render a fresh snapshot to a separate scratch file and reconcile it with Taylor before migrating local blocks. Never overwrite local drafts or approvals with a refresh.
 - A discussion is a `## ` heading whose first non-blank line is its `Thread:` link. Later `Thread:` lines are ignored.
 - At most one `APPROVED` block per discussion, and at most one per GitLab thread across the file.
 - The body is everything after the header up to the next bare `---` line outside a code fence, the next `## ` heading, or end of file. Leading/trailing blank lines are trimmed; the rest is posted verbatim. Code fences inside the body may contain `---`.
