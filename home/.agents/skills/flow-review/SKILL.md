@@ -13,6 +13,16 @@ I like comprehensive, behavioral testing that is as production-like as possible.
 
 WITH THAT IN MIND, please review the testing and implementation of the current branch to meet the provided AC. Assume you are reviewing it compared to the remote `staging` branch unless otherwise specified.
 
+## Jira information
+
+When given a Jira ticket key or URL, read the ticket with the read-only `jira-ticket` CLI, and treat its AC section as the acceptance criteria for the review:
+
+```sh
+jira-ticket get <KEY>
+```
+
+The description comes back as Atlassian Document Format JSON. Pipe it through `jq -r '.. | objects | select(.type=="text") | .text'` to get readable text. Never use `jira-ticket update` or `create`. If the CLI fails, run `jira-ticket doctor` and tell the user, rather than falling back to the MR description silently. Fetching the ticket counts as inspecting the change, so it may come before `flow.md`. In `flow.md`, map each AC item to its status (met, not met, or partial) and to the code or test that covers it.
+
 ## GitLab merge requests
 
 When given a GitLab MR URL, use the `address-comments` skill scripts (installed at `~/.agents/skills/address-comments/scripts`) for all GitLab access. Do not run `glab` or other GitLab CLI commands directly, and never post anything: posting belongs to the `post-mr-replies` skill after Taylor approves it. Without an MR URL, skip this section.
