@@ -9,11 +9,11 @@ force="false"
 assume_yes="false"
 
 log() {
-    printf "[dkill] %s\n" "$*"
+    printf "[dev kill] %s\n" "$*"
 }
 
 usage() {
-    echo "Usage: dkill [branch|path] [--force] [--yes]"
+    echo "Usage: dev kill [branch|path] [--force] [--yes]"
 }
 
 kill_sessions_for_worktree() {
@@ -25,11 +25,15 @@ kill_sessions_for_worktree() {
     if [ -n "$branch" ]; then
         preferred_session_name="$(tmux_worktree_preferred_worktree_session_name "$repo_name" "$branch")"
     fi
-    tmux_worktree_kill_sessions_for_worktree_path "$wt_path" "$preferred_session_name" "$(tmux_worktree_current_session_name)" || true
+    tmux_worktree_kill_sessions_for_worktree_path "$wt_path" "$preferred_session_name" "$(tmux_worktree_current_session_name)" false || true
 }
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
+        --help|-h)
+            usage
+            exit 0
+            ;;
         --force|-f)
             force="true"
             ;;
@@ -123,7 +127,13 @@ if [ "$force" = "true" ]; then
     branch_args=(branch -D)
 fi
 
+tmux_worktree_registry check
 git -C "$repo_root" "${remove_args[@]}" "$wt_path"
+registry_failed=false
+if ! tmux_worktree_registry forget "$wt_path"; then
+    registry_failed=true
+    echo "Removed $wt_path, but could not unregister it. Session/branch cleanup will continue; repair the registry and run dev close from the restored checkout to remove stale intent." >&2
+fi
 
 # Sessions are killed last because this command may be running inside one of
 # them, so a failed branch delete is reported after they are gone.
@@ -140,7 +150,7 @@ if command -v tmux >/dev/null 2>&1; then
     kill_sessions_for_worktree "$wt_path" "$repo_name" "$branch"
 fi
 
-if [ "$branch_deleted" = false ]; then
+if [ "$branch_deleted" = false ] || [ "$registry_failed" = true ]; then
     exit 1
 fi
 

@@ -32,6 +32,7 @@ PI_PACKAGE_LINKS=(
 PI_EXTENSION_LINKS=(
   "ask-user-question.ts"
   "prompt-snippets"
+  "dev-session.ts"
 )
 # Agent-neutral resources shared by Pi, Claude, and OpenCode, plus the Claude
 # config generated from them by scripts/generate-agent-config.mjs.

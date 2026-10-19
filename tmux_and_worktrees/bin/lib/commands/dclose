@@ -5,12 +5,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/../tmux_worktree.sh"
 
 log() {
-    printf "[dclose] %s\n" "$*"
+    printf "[dev close] %s\n" "$*"
 }
 
 usage() {
-    echo "Usage: dclose [branch|path]"
+    echo "Usage: dev close [branch|path]"
 }
+
+if [ "${1:-}" = --help ] || [ "${1:-}" = -h ]; then
+    usage
+    exit 0
+fi
 
 if [ "$#" -gt 1 ]; then
     usage
@@ -49,7 +54,7 @@ else
 fi
 
 if ! tmux_worktree_kill_sessions_for_worktree_path "$target_path" "$preferred_session_name" "$current_session"; then
-    echo "No tmux session found for $target_path"
+    echo "Could not close session(s) for $target_path; see the registry error above." >&2
     exit 1
 fi
 

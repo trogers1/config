@@ -13,6 +13,9 @@ The `dev` CLI is the primary interface:
 * `dev close [branch|path]` -> kill the tmux session only, leaving the checkout/worktree intact
 * `dev kill [branch|path] [--force] [--yes]` -> kill the worktree tmux session and delete that worktree + local branch
 * `dev merge [branch|path] [target] [--keep]` -> interactively choose merge target and clean up
+* `dev --list` -> list open/saved dev sessions and the current repository's Git worktrees
+* `dev switch` -> fuzzy-pick OPEN sessions; Ctrl+A toggles ALL sessions/worktrees (requires `fzf`)
+* `dev resume-all` -> recreate missing registered sessions detached, with their exact recorded agent conversations
 * `dev home` -> jump the current shell back to the root path for the active tmux dev session
 * `dev help` (or `dev --help`) -> display usage and command descriptions
 
@@ -51,7 +54,7 @@ the whole file for that project. `windows` is an array of objects with:
 
 * `name` -> tmux window/tab name
 * `command` -> command to run in that window; use an empty string for an idle shell
-* `agent: true` -> instead of `command`, run the selected agent (at most one of the two)
+* `agent: true` -> instead of `command`, run the selected agent (at most one agent window per config)
 
 The agent window runs the command for the agent you pick per run with
 `dev new --agent <name>` or `dev tree --agent <name>`, and otherwise the
@@ -93,6 +96,148 @@ Session reuse and cleanup are path-based first: `dev new`, `dev tree`,
 `DTREE_WORKTREE_PATH` before falling back to the preferred human-readable
 session name.
 
+== Finding and switching sessions
+
+Run `dev --list` for a read-only inventory shared with `dev switch`:
+
+* `open`: a live managed tmux session tagged with its checkout path
+* `saved`: a registered session whose checkout has no live managed session
+* `available`: another worktree reported by Git for the current repository,
+  including the primary checkout and worktrees created by other tools
+
+Each entry shows its absolute checkout path, actual branch (or `(detached)`),
+and checkout status (`clean`, `dirty`, `missing`, or unavailable/not Git).
+A checkout already open or saved is not repeated as available. The heading
+shows the main repository root and its conventional sibling
+`<repo-name>-worktrees` directory, even when invoked from a linked worktree.
+Git is authoritative: arbitrary directories under that sibling directory are
+never candidates. Outside a Git checkout, open and saved sessions still appear.
+
+`dev switch` requires `fzf` (`brew install fzf` on macOS). Use a recent fzf
+with `--tmux` support: inside tmux it opens a popup; elsewhere it uses the
+terminal. The picker starts with *OPEN sessions only*. Press *Ctrl+A* to toggle
+between OPEN and ALL (open/saved sessions and available worktrees). The prompt
+and header identify the current scope and the next toggle action. Your search
+query is retained across toggles. Even with no open sessions, the picker stays
+available so Ctrl+A can reveal saved sessions/worktrees. `dev --list` always
+shows the full detailed inventory, including clean/dirty Git status, independent
+of picker scope. Initial OPEN reads live managed tmux metadata and the small
+saved registry for opening order: no Git checkout/status scans or
+current-repository discovery.
+Ctrl+A discovers ALL on demand, displaying *Loading available sessions/worktrees…*
+and fzf's native spinner while it runs. Returning to OPEN or cancelling stops
+in-flight discovery. Failures replace Loading with an actionable error; details
+are printed on exit. Each switch to ALL discovers fresh data, without a cache.
+
+With an empty query, known sessions follow their original opening order in the
+saved registry, not alphabetical or most-recently-used order. ALL keeps open and
+saved sessions in that same order, followed by never-opened available worktrees;
+OPEN shows only the live subset. Recovery/re-registering preserves positions,
+while an intentional close forgets the entry and reopening appends it. A confirmed
+fresh workspace starts with only its successful target, then later openings append.
+Live tagged sessions predating tracking remain visible after known records, in
+tmux creation order (session id breaks same-second ties). The current session has
+no special position. Nonempty queries still use standard fzf match ranking.
+
+Columns are space-aligned across both scopes, accounting for wide/combining
+characters, without shortening session names, branches, or paths. Search by
+session, branch, or path, then press Enter. Picker scopes do not scan or display
+clean/dirty status; OPEN uses tmux's stored branch, while saved/available entries
+use cheap Git branch metadata:
+
+
+* Open session: attach from a terminal, or switch clients inside tmux.
+* Saved session: restore *only that session*, using its exact recorded agent
+  conversation, then connect after recovery has completed. A missing checkout,
+  transcript, or conversation metadata fails explicitly; it never falls back
+  to a fresh conversation. Other saved sessions remain untouched.
+* Available worktree: run `dev new` with that absolute checkout path, then
+  connect normally. This does not create a Git worktree or move a branch.
+
+Scope changes only read inventory and reload private snapshots; they do not
+create/restore sessions or change records. OPEN retains its initial live-session
+snapshot. Esc or Ctrl-C cancels without creating/restoring sessions or changing
+records. The picker has no delete actions and does not execute text from its selection.
+User fzf defaults are disabled for this picker so bindings/output overrides
+cannot change that contract. Use `prefix + w` to open the picker in the current
+pane's directory, or run `dev switch` explicitly. `prefix + s` remains the
+existing tmux session chooser.
+
+== Persistent sessions and reboot recovery
+
+Successful `dev new`, `dev open`, and `dev tree` calls automatically register
+session intent in `${XDG_STATE_HOME:-$HOME/.local/state}/dev/sessions.json`.
+There is no save command. `dev close`, `dev kill`, and merge cleanup unregister
+intentional closures, including when the tmux server is already gone.
+`dev merge --keep` retains the record. Exiting an agent, killing tmux outside
+dev, a crash, or a reboot does not clear the registry.
+
+When saved records exist but *no managed dev sessions are running* on the current
+tmux server, ordinary `dev new`, `dev open`, and `dev tree` ask before replacing
+the *entire saved workspace*. Managed sessions are those tagged with a checkout
+path; unrelated tmux sessions do not suppress this prompt. This boundary applies
+after any server loss, whether from a reboot, crash, or manually stopping tmux;
+there is no OS reboot detection or boot-level mode.
+
+The prompt lists every affected session name, checkout path, and branch; the
+default is *No*. Noninteractive use (including `dev tree --no-attach`) fails
+before creation and explains how to recover or retry interactively. Approval
+replaces recovery records only, never checkouts or agent conversations, and
+commits a target-only baseline only after successful creation. Failed creation
+retains the previous workspace. While *any* managed dev session is running,
+ordinary opens append or reuse records without prompting.
+
+To keep the prior workspace, explicitly run `dev resume-all`, or choose one
+saved entry in `dev switch`. Both preserve all saved records even if recovery
+fails; selecting a saved entry restores only that exact session. If every
+recovery fails and no managed sessions are running, the next ordinary open asks
+again. Read-only `dev --list`, opening the picker, and OPEN/ALL toggles never
+change saved intent. The version-3 registry has no boot metadata; version-1 and
+version-2 files migrate on the next write, preserving all records, their data,
+and insertion order regardless of obsolete boot metadata.
+
+Run `dev resume-all` after restarting. It recreates missing sessions detached
+and does not modify, select windows in, or attach to sessions already open for
+a recorded path. It uses the checkout's current `devConfig.jsonc` (or the bundled
+default) for standard windows, retaining the chosen agent and explicit
+writing/`--nvim-command` override. It does not restore editor buffers, shell
+history/processes, additional manually created windows/panes, or subagents.
+
+Only the original configured agent pane is tracked, by its tmux pane and server
+identity. The installed Pi extension records `getSessionFile()` and session ID
+at `session_start`, including `/new`, `/resume`, `/fork`, and `/reload`. Claude's
+metadata-only `SessionStart` hook records `session_id` and `transcript_path`,
+including `/clear` and `/resume`. Neither integration reads transcript contents.
+Resume uses `pi --session <exact-file>` or `claude --resume <exact-id>` with no
+fallback to latest/fresh. Custom agent command flags/wrappers are not replayed
+on exact resume; normal session creation still uses the configured command.
+Other agent implementations are not resumable once started.
+
+Staged agent commands remain staged after recovery. If they have never run,
+the configured initial command is typed without Enter; once a conversation is
+recorded, its exact resume command is staged instead. An agent window that was
+intentionally empty stays empty, even if the config later adds an agent.
+
+Missing checkouts, missing/empty/unreadable transcripts, ephemeral Pi sessions,
+and missing conversation metadata fail explicitly with recovery instructions.
+Records are retained, other resumable sessions are still processed, and the
+command exits non-zero. Restore the exact path/file and retry; do not substitute
+a different transcript. To intentionally discard a record and start over, run
+`dev close` from that checkout, then `dev new`/`dev tree`.
+Registry read-modify-write operations use an OS lock and atomic rename; dev's
+session lifecycle operations are serialized separately so hooks can record
+metadata while sessions start. A worktree startup script must not synchronously
+run another dev lifecycle command: dev rejects that nested call rather than
+waiting on its own lock. Run follow-up dev commands after initialization finishes.
+
+After installing/updating, new Pi processes and Claude sessions load the
+integration. A running tracked Pi can `/reload` to capture its active file;
+Claude captures on the next `SessionStart`. A pre-existing tmux session opened
+before tracking is registered on reuse but has no reliable agent/pane metadata:
+resume fails rather than guessing its agent, overrides, or conversation. Close
+and recreate that session intentionally to bootstrap tracking. Never-started
+or unpersisted conversations cannot be recovered after a crash.
+
 == Install (or re-setup after updating)
 
 From the repository root:
@@ -114,7 +259,11 @@ configurations. Verify them with `./setup.sh --verify` and, when used,
 
 == tmux keybinds
 
-Prefix is `M-Space` (Meta+Space), then:
+Prefix is `M-Space` (Meta+Space), or `C-b` (Ctrl+B) when Meta is unavailable.
+Both prefixes work with every shortcut below. Press Ctrl+B twice to send a
+literal Ctrl+B to the pane (useful for nested tmux).
+
+After either prefix:
 
 * `n` -> local dev session (`dev new`)
 * `N` -> local dev session (`dev new`)
@@ -123,7 +272,8 @@ Prefix is `M-Space` (Meta+Space), then:
 * `M` -> run `dev merge` in-pane (interactive target prompt)
 * `c` -> create a shell window in the current directory; its tab is named for that directory
 * `&` -> hide the current window without stopping its pane processes
-* `s` -> open the tmux session chooser; it labels sessions as `attached` or `detached`
+* `w` -> searchable dev session/worktree picker (`dev switch`); replaces tmux's default window chooser
+* `s` -> open the native tmux session chooser; it labels sessions as `attached` or `detached`
 * `?` -> show tab/control keyboard help in the tmux message area
 
 == Clickable tmux tabs
@@ -317,3 +467,40 @@ per-repository `<repo>-worktrees` sibling folder, branches still get the desktop
 branch prefix (`claude/<name>` by default), and it runs no startup script and
 creates no tmux session. `dev close`, `dev kill`, and `dev merge` still work on
 those worktrees by branch or path.
+
+== Verification
+
+From the repository root, after installing bundled package dependencies:
+
+[source,bash]
+----
+bash tests/dev.test.sh
+python3 tests/dev-picker.test.py
+python3 tests/dev-picker.fzf.test.py
+python3 tests/dev-bindings.tmux.test.py
+bash tests/dev-resume.tmux.test.sh
+bash tests/setup.test.sh
+home/.pi/agent/packages/pi-guard-subagents/node_modules/.bin/tsc -p tests/dev-session.tsconfig.json
+----
+
+The dev tests use isolated HOME/XDG state and fake tmux. The picker suite also
+uses fake fzf and real throwaway Git worktrees, times each test, and bounds each
+command to eight seconds (90 seconds for the suite). It verifies saved opening
+order across reuse, close/reopen, recovery, and pretracking sessions, selected-only
+recovery, and that attachment occurs after lifecycle lock release, without a
+live tmux server or user registry/transcripts. The real-fzf smoke uses a
+controlling pseudo-terminal with isolated HOME/XDG and fake tmux, tests OPEN/ALL
+reloads in both directions (including an empty OPEN scope), unchanged state
+while toggling, retained queries, selection after reload, opening-order default
+selection, and standard nonempty-query match ranking. It requires fzf
+and is bounded to ten seconds per picker / thirty seconds for the suite.
+`python3 tests/dev-picker-loading.fzf.test.py` adds real-fzf PTY flows with
+blocked fake discovery: zero initial Git probes and one registry ordering read,
+Loading and native spinner visible before release, fresh ALL data with retained queries, actionable
+failure, and rapid toggle/cancel without leaked discovery processes. It uses
+isolated HOME/XDG and bounded process groups (50-second suite limit).
+The binding smoke test uses an
+isolated tmux server and attached pseudo-terminal to exercise both prefixes
+through `dev switch`, with a cancelling fake fzf. The real-tmux recovery smoke
+test uses a private server/socket and synthetic agent processes through the
+actual lifecycle adapters; it does not call an LLM or access user transcripts.

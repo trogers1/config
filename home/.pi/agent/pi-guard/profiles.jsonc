@@ -461,6 +461,18 @@
             "pattern": "pi --version",
             "decision": "allow",
           },
+          {
+            "pattern": "bash tests/**",
+            "decision": "allow"
+          },
+          {
+            "pattern": "bash -n **",
+            "decision": "allow"
+          },
+          {
+            "pattern": "python3 tests/**",
+            "decision": "allow"
+          },
         ],
       },
     },
@@ -474,6 +486,7 @@
       ],
       "sandbox": {
         "network": "deny",
+        "extraWritePaths": ["~/.local/state/dev"],
         // Tests remain denied to agent tools by builtin:tests-hidden, but the
         // test runner must be able to load them from its sandboxed process.
         "kernelUnenforcedProtectedPaths": [
@@ -508,6 +521,7 @@
       ],
       "sandbox": {
         "network": "deny",
+        "extraWritePaths": ["~/.local/state/dev"],
       },
       "readPaths": [
         {
@@ -519,6 +533,9 @@
     "gitlab-skills": {
       "description": "GitLab skill scripts with network access and gate-only .git access for merge-request workflows.",
       "extends": ["builtin:default-with-net"],
+      "sandbox": {
+        "extraWritePaths": ["~/.local/state/dev"],
+      },
       "tools": {
         "bash": [
           {
@@ -578,6 +595,8 @@
         "extraWritePaths": [
           "/var/folders/*/*/T/**",
           "~/.local/share/lightcast-mcp/tokens/**",
+          // dev writes locks, recovery records, and atomic-replacement temp files.
+          "~/.local/state/dev",
         ],
         "kernelUnenforcedProtectedPaths": ["**/.env*", "**/.git", "**/.git/**"],
       },
@@ -691,6 +710,14 @@
             "pattern": "-v jira-ticket",
             "decision": "allow",
           },
+          {
+            "pattern": "dev tree *",
+            "decision": "allow"
+          },
+          {
+            "pattern": "-v dev",
+            "decision": "allow"
+          },
         ],
       },
       "readPaths": [
@@ -715,6 +742,27 @@
           "pattern": "~/Documents/bruno/**",
           "decision": "allow",
           "contexts": ["read"],
+        },
+        {
+          "pattern": "/Users/taylor.rogers/bin/dev",
+          "decision": "allow",
+          "contexts": [
+            "read"
+          ]
+        },
+        {
+          "pattern": "/Users/taylor.rogers/bin/dev *",
+          "decision": "allow",
+          "contexts": [
+            "read"
+          ]
+        },
+        {
+          "pattern": "/Users/taylor.rogers/Code/config/tmux_and_worktrees/bin/**",
+          "decision": "allow",
+          "contexts": [
+            "read"
+          ]
         },
       ],
       "writePaths": [
@@ -750,6 +798,7 @@
       "extends": ["builtin:default", "customruleset:infra-mutation-deny"],
       "sandbox": {
         "network": "allow",
+        "extraWritePaths": ["~/.local/state/dev"],
       },
       "color": "red",
       "emoji": "📋",
@@ -773,6 +822,9 @@
     "socrates": {
       "description": "Read-only Socratic coaching profile.",
       "extends": ["builtin:read-only", "customruleset:infra-mutation-deny"],
+      "sandbox": {
+        "extraWritePaths": ["~/.local/state/dev"],
+      },
       "promptFile": "~/.pi/agent/pi-guard/prompts/socrates.md",
       "color": "cyan",
       "emoji": "🧠",
@@ -861,6 +913,18 @@
       "extends": ["personal-sidecar-comments-allow-asks"],
       "color": "green",
       "transforms": ["transform:deny-asks"],
+    },
+    "mcp-worktrees": {
+      "description": "MCP workspace management with shared Git metadata and sibling-worktree write access.",
+      "emoji": "🌳",
+      "extends": ["mcp"],
+      "color": "yellow",
+      "sandbox": {
+        "extraWritePaths": [
+          "~/Code/mcp/.git",
+          "~/Code/mcp-worktrees",
+        ],
+      },
     },
     "mcp-deny-asks": {
       "description": "The conservative auto-pilot for the MCP profile.",

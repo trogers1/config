@@ -75,6 +75,14 @@ does not require them, but warns when they are absent and shows the optional
 `brew install neovim` or `brew install lazygit` command.
 Pi itself is intentionally not installed by the script.
 
+The shared setup also installs the dev-session Pi extension and Claude
+`SessionStart` metadata hook. `dev new`/`open`/`tree` persist session intent;
+`dev resume-all` restores missing sessions detached after a reboot, using only
+the configured agent pane's exact recorded Pi file or Claude session ID.
+Intentional dev closures unregister sessions; crashes do not. Existing sessions
+from before tracking cannot be guessed. See
+link:tmux_and_worktrees/README.adoc#_persistent_sessions_and_reboot_recovery[recovery and bootstrap caveats].
+
 The local Pi packages have dependencies that are not committed. A fresh clone
 will fail the dependency preflight without making changes. After reviewing the
 packages, bootstrap those dependencies explicitly:
@@ -148,3 +156,13 @@ See link:./xdg/README.adoc[`./xdg/README.adoc`] for the rationale and mapping.
 == link:./tmux_and_worktrees[Tmux and Worktrees]
 
 This config includes my development tmux+worktree setup for parallel agentic development. Install the shared workflow with link:./setup.sh[`./setup.sh`]. Personal dotfiles are installed separately by `./setup-personal.sh`; see link:./tmux_and_worktrees/README.adoc[the README] for instructions and dependencies.
+
+Use `dev --list` to discover live/saved dev sessions and the current repository's
+Git worktrees. `dev switch` starts with OPEN sessions in `fzf` (tmux popup inside
+tmux, terminal otherwise). Ctrl+A toggles ALL sessions/worktrees while retaining
+the search query, even if no sessions are open. Select an open session, exactly
+restore just one saved session, or open an available checkout. Scope toggles and
+Esc/Ctrl-C cancellation do not change session/registry state.
+Open the picker with `prefix + w`, using either Meta+Space or Ctrl+B as the
+prefix. The existing `prefix + s` tmux chooser is unchanged; see
+link:./tmux_and_worktrees/README.adoc#_finding_and_switching_sessions[discovery and picker behavior].

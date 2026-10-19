@@ -114,6 +114,7 @@ def parse_args():
     parser.add_argument("config", help="devConfig.jsonc path, or - to read it from stdin")
     parser.add_argument("--name", help="how messages name the config (default: its path)")
     parser.add_argument("--agent", default="", help="agent for the agent window (default: defaultAgent)")
+    parser.add_argument("--selected-agent", action="store_true", help="print only the resolved agent name")
     args = parser.parse_args()
     if args.name is None:
         args.name = "stdin" if args.config == "-" else args.config
@@ -137,6 +138,10 @@ def main():
     if not windows:
         raise SystemExit(f"No windows configured in {name}")
 
+    if args.selected_agent:
+        print(args.agent or default_agent or "")
+        return
+
     lines = []
     has_agent_window = False
     for index, window in enumerate(windows):
@@ -155,6 +160,8 @@ def main():
             # fixed command alongside it would be ambiguous.
             if "command" in window:
                 raise SystemExit(f"{name} windows[{index}] sets both agent and command")
+            if has_agent_window:
+                raise SystemExit(f"{name} must configure at most one agent window")
             has_agent_window = True
             kind = "agent"
             command = agent_command(agents, default_agent, args)

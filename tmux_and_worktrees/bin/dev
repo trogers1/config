@@ -6,11 +6,23 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 usage() {
     cat <<'EOF'
 Usage: dev <command> [arguments]
+       dev --list
 
 Manage tmux development sessions and git worktrees. Run this from a project
 checkout; commands that create or manage worktrees require a Git repository.
 
 Commands:
+  --list                    List open/saved sessions and this repo's worktrees.
+  switch                    Fuzzy-pick OPEN sessions by default (requires fzf).
+                              Ctrl+A toggles OPEN / ALL sessions and worktrees,
+                              preserving the search query (even with no OPEN).
+                              OPEN reads live tmux metadata only. ALL discovers
+                              on demand with a Loading indicator; no Git status
+                              scans (use --list for clean/dirty details).
+                              Uses a popup inside tmux; terminal otherwise.
+                              Connect to open sessions, exactly resume one saved
+                              session, or run dev new for an available worktree.
+                              Esc/Ctrl-C cancels without changing sessions.
   new [--agent <name>] [path]
                               Open or create a dev tmux session for a path.
   open [path]                Alias for `dev new`.
@@ -26,6 +38,8 @@ Commands:
                               Remove a worktree, its session, and local branch.
   merge [branch|path] [target] [--keep]
                               Merge a worktree branch and clean it up.
+  resume-all                 Recreate missing registered sessions detached,
+                              resuming only their exact recorded agent chats.
   home                       Change this shell to the active session's root.
                               Requires the installed zsh shell integration.
   help                       Show this help.
@@ -33,31 +47,64 @@ Commands:
 EOF
 }
 
+run_lifecycle_command() {
+    # Leading help flags exit inside the command before any lifecycle work.
+    # Do not require state-directory access just to read usage in a sandbox.
+    case "${2:-}" in
+        --help|-h) exec "$@" ;;
+    esac
+    exec python3 "$SCRIPT_DIR/lib/dev_registry.py" run "$@"
+}
+
 command_name="${1:-}"
 case "$command_name" in
+    --list)
+        [ "$#" -eq 1 ] || { echo 'Usage: dev --list' >&2; exit 1; }
+        source "$SCRIPT_DIR/lib/tmux_worktree.sh"
+        source "$SCRIPT_DIR/lib/dev_inventory.sh"
+        tmux_worktree_list_inventory
+        ;;
+    switch)
+        shift
+        case "${1:-}" in
+            -h|--help) [ "$#" -eq 1 ] || { echo 'Usage: dev switch' >&2; exit 1; }; usage; exit 0 ;;
+        esac
+        [ "$#" -eq 0 ] || { echo 'Usage: dev switch' >&2; exit 1; }
+        source "$SCRIPT_DIR/lib/tmux_worktree.sh"
+        source "$SCRIPT_DIR/lib/dev_inventory.sh"
+        tmux_worktree_switch_inventory
+        ;;
     new)
         shift
-        exec "$SCRIPT_DIR/lib/commands/dnew" "$@"
+        run_lifecycle_command "$SCRIPT_DIR/lib/commands/dnew" "$@"
         ;;
     open)
         shift
-        exec "$SCRIPT_DIR/lib/commands/dnew" "$@"
+        run_lifecycle_command "$SCRIPT_DIR/lib/commands/dnew" "$@"
         ;;
     tree)
         shift
-        exec "$SCRIPT_DIR/lib/commands/dtree" "$@"
+        run_lifecycle_command "$SCRIPT_DIR/lib/commands/dtree" "$@"
         ;;
     close)
         shift
-        exec "$SCRIPT_DIR/lib/commands/dclose" "$@"
+        run_lifecycle_command "$SCRIPT_DIR/lib/commands/dclose" "$@"
         ;;
     kill)
         shift
-        exec "$SCRIPT_DIR/lib/commands/dkill" "$@"
+        run_lifecycle_command "$SCRIPT_DIR/lib/commands/dkill" "$@"
         ;;
     merge)
         shift
-        exec "$SCRIPT_DIR/lib/commands/dmerge" "$@"
+        run_lifecycle_command "$SCRIPT_DIR/lib/commands/dmerge" "$@"
+        ;;
+    _record-agent)
+        shift
+        exec python3 "$SCRIPT_DIR/lib/dev_registry.py" bind "$@"
+        ;;
+    resume-all)
+        [ "$#" -eq 1 ] || { echo 'Usage: dev resume-all' >&2; exit 1; }
+        run_lifecycle_command python3 "$SCRIPT_DIR/lib/dev_registry.py" resume-all
         ;;
     home)
         echo "dev home must be run from a shell with the dev shell integration loaded" >&2

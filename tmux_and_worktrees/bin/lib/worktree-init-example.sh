@@ -15,7 +15,7 @@ if [ ! -d "$REPO_ROOT" ]; then
     exit 1
 fi
 
-# dtree runs this from the new worktree and sets REPO_ROOT to the primary
+# dev tree runs this from the new worktree and sets REPO_ROOT to the primary
 # checkout. Copy this file into a project as .worktree-init.sh (or
 # scripts/worktree-init.sh) and adapt it for project-specific setup.
 if [ ! -e .env ] && [ ! -L .env ] && [ -f "$REPO_ROOT/.env" ]; then
@@ -35,7 +35,7 @@ repo_root="$(cd "$REPO_ROOT" && pwd -P)"
 terraform_root="$repo_root/terraform"
 
 # Terraform is optional. Avoid a missing root turning the fallback initializer
-# into a failing pipeline under `set -o pipefail` before dtree can open tmux.
+# into a failing pipeline under `set -o pipefail` before dev tree can open tmux.
 if [ -d "$terraform_root" ]; then
     find "$terraform_root" -type d -name .terraform -print |
     while IFS= read -r terraform_dir; do

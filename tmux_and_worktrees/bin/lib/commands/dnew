@@ -10,6 +10,11 @@ target_path="$(pwd)"
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
+        --help|-h)
+            echo "Usage: dev new [--agent <name>] [--nvim-command <command>] [path]"
+            echo "       dev open [arguments]  (alias for dev new)"
+            exit 0
+            ;;
         --nvim-command)
             if [ "$#" -lt 2 ]; then
                 echo "Missing value for --nvim-command"
@@ -55,12 +60,15 @@ tmux_worktree_require_tmux
 project_path="$(tmux_worktree_resolve_project_path "$target_path")"
 preferred_session_name="$(tmux_worktree_preferred_local_session_name "$project_path")"
 session_name="$(tmux_worktree_find_session_for_worktree_path "$project_path" || true)"
+workspace_decision="$(tmux_worktree_registry prepare-workspace "$project_path" false)"
 
 if [ -n "$session_name" ]; then
     tmux_worktree_set_session_metadata "$session_name" "$project_path"
+    tmux_worktree_registry adopt "$session_name" "$project_path" ""
     if [ -n "$agent" ]; then
         echo "Reusing session $session_name; --agent $agent applies only to new sessions (dev close it to switch)" >&2
     fi
+    tmux_worktree_registry commit-workspace "$workspace_decision" "$project_path"
     tmux_worktree_attach_or_switch "$session_name"
     exit 0
 fi
@@ -71,5 +79,7 @@ if tmux has-session -t "$session_name" 2>/dev/null; then
 fi
 
 windows="$(tmux_worktree_dev_config_windows_for_path "$project_path" "$agent")"
-tmux_worktree_create_standard_session "$session_name" "$project_path" "" "$nvim_command" "$windows"
+session_agent="$(tmux_worktree_dev_config_windows_for_path "$project_path" "$agent" --selected-agent)"
+tmux_worktree_create_standard_session "$session_name" "$project_path" "" "$nvim_command" "$windows" false "$session_agent"
+tmux_worktree_registry commit-workspace "$workspace_decision" "$project_path"
 tmux_worktree_attach_or_switch "$session_name"

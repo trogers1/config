@@ -182,8 +182,21 @@ sandboxing first activates.
 
 - Bash writes start denied. Only effective `writePaths` rules applicable to the
   `bash` context, plus `extraWritePaths`, open writable roots.
-- `ask` write rules remain kernel-denied. Approving an ask prompt does not
-  dynamically widen the sandbox.
+- `ask` write regions remain kernel-denied unless fully covered by an explicit
+  configured `sandbox.extraWritePaths` root. This preauthorization uses literal
+  containment only: globs or partial overlaps do not remove an ask denial.
+  Ordinary strict-ancestor asks do not close the startup workspace, but remain
+  carve-outs when contained in a broader opened root.
+- `extraWritePaths` preauthorizes Bash containment only, not ordinary tool-gate
+  permission. Direct path requests still ask. Approving an interactive ask
+  prompt never dynamically widens the sandbox.
+- Explicit subtree write denies (including ancestors of extra roots), protected
+  denies, `extraDenyWritePaths`, and subagent narrowing still constrain extra roots.
+  The relative `..` and `../**` boundary rules mean outside the startup workspace:
+  even under `transform:deny-asks`, they preserve startup writes but deny opened
+  sibling roots. If a wider grant contains startup CWD and outside-only denial
+  cannot be represented, the sandbox stays tighter and reports that grant as
+  untranslated.
 - Effective protected denies become both read and write denials.
 - A protected allow can restore a protected read exception, but never grants
   write access on its own. Denies take precedence over allows, including a
@@ -255,12 +268,12 @@ indicator uses `🔐` when sandboxing is on and `❌` when it is off. Active out
 includes the backend, network mode, effective writable roots, subagent scope,
 Bash-tool ownership, and coverage summary. The report distinguishes:
 
-| Coverage category       | Meaning                                                                                  |
-| ----------------------- | ---------------------------------------------------------------------------------------- |
-| `uncoveredRestrictions` | Required restriction the backend/compiler cannot prove; sandbox activation blocks.       |
-| `waivedRestrictions`    | Explicit profile-authorized gate-only protected restriction.                             |
-| `untranslatedAllows`    | Gate may allow access that the kernel intentionally keeps denied.                        |
-| `noKernelMeaning`       | Policy concept that has no Bash filesystem boundary, such as dedicated-tool `readPaths`. |
+| Coverage category       | Meaning                                                                                                             |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `uncoveredRestrictions` | Required restriction the backend/compiler cannot prove; sandbox activation blocks.                                  |
+| `waivedRestrictions`    | Explicit profile-authorized gate-only protected restriction or ask region fully preauthorized by extra write roots. |
+| `untranslatedAllows`    | Gate may allow access that the kernel intentionally keeps denied.                                                   |
+| `noKernelMeaning`       | Policy concept that has no Bash filesystem boundary, such as dedicated-tool `readPaths`.                            |
 
 The agent prompt also describes an active sandbox's backend and network posture
 or explains why Bash is blocked/falling back.

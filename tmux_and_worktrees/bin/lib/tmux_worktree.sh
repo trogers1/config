@@ -125,10 +125,13 @@ tmux_worktree_path_checksum() {
 tmux_worktree_attach_or_switch() {
     local session_name="$1"
 
+    tmux_worktree_registry unlock
+    unset DEV_LIFECYCLE_LOCK_FD
+
     if [ -n "${TMUX:-}" ]; then
-        tmux switch-client -t "$session_name"
+        tmux_worktree_registry external tmux switch-client -t "$session_name"
     else
-        tmux attach-session -t "$session_name"
+        tmux_worktree_registry external tmux attach-session -t "$session_name"
     fi
 }
 
@@ -227,7 +230,6 @@ tmux_worktree_session_is_excluded() {
 }
 
 tmux_worktree_find_last_used_managed_session() {
-    local excluded_sessions=("$@")
     local session_name=""
     local session_last_attached=""
     local session_path=""
@@ -237,7 +239,7 @@ tmux_worktree_find_last_used_managed_session() {
     while IFS=$'\t' read -r session_name session_last_attached; do
         [ -n "$session_name" ] || continue
 
-        if tmux_worktree_session_is_excluded "$session_name" "${excluded_sessions[@]}"; then
+        if tmux_worktree_session_is_excluded "$session_name" "$@"; then
             continue
         fi
 
@@ -265,6 +267,7 @@ tmux_worktree_kill_sessions_for_worktree_path() {
     local target_path="$1"
     local preferred_session_name="${2:-}"
     local current_session_name="${3:-}"
+    local forget_record="${4:-true}"
     local session_name=""
     local matches=()
     local fallback_session_name=""
@@ -274,14 +277,18 @@ tmux_worktree_kill_sessions_for_worktree_path() {
         matches+=("$session_name")
     done < <(tmux_worktree_collect_sessions_for_worktree_path "$target_path" "$preferred_session_name")
 
+    # Intentional closure removes durable intent even after a server crash.
+    if [ "$forget_record" = true ]; then
+        tmux_worktree_registry forget "$target_path" || return 1
+    fi
     if [ "${#matches[@]}" -eq 0 ]; then
-        return 1
+        return 0
     fi
 
     if [ -n "$current_session_name" ] && tmux_worktree_session_is_excluded "$current_session_name" "${matches[@]}"; then
         fallback_session_name="$(tmux_worktree_find_last_used_managed_session "${matches[@]}" || true)"
         if [ -n "$fallback_session_name" ]; then
-            tmux switch-client -t "$fallback_session_name"
+            tmux_worktree_registry external tmux switch-client -t "$fallback_session_name"
         fi
     fi
 
@@ -332,6 +339,7 @@ tmux_worktree_read_dev_config_windows() {
     local agent="$2"
     local lib_dir=""
     local args=(--name "$config_name")
+    if [ -n "${3:-}" ]; then args+=("$3"); fi
 
     lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     if [ -n "$agent" ]; then
@@ -351,7 +359,7 @@ tmux_worktree_dev_config_windows_for_path() {
         echo "No devConfig.jsonc found for $worktree_path" >&2
         return 1
     fi
-    tmux_worktree_read_dev_config_windows "$config_path" "$agent" <"$config_path"
+    tmux_worktree_read_dev_config_windows "$config_path" "$agent" "${3:-}" <"$config_path"
 }
 
 # Window lines for a worktree that is about to be checked out at <ref>: the
@@ -365,7 +373,7 @@ tmux_worktree_dev_config_windows_for_ref() {
 
     if git -C "$repo_root" cat-file -e "$ref:devConfig.jsonc" 2>/dev/null; then
         git -C "$repo_root" show "$ref:devConfig.jsonc" |
-            tmux_worktree_read_dev_config_windows "$ref:devConfig.jsonc" "$agent"
+            tmux_worktree_read_dev_config_windows "$ref:devConfig.jsonc" "$agent" "${4:-}"
         return
     fi
 
@@ -374,23 +382,43 @@ tmux_worktree_dev_config_windows_for_ref() {
         echo "No devConfig.jsonc at $ref and no default at $config_path" >&2
         return 1
     fi
-    tmux_worktree_read_dev_config_windows "$config_path" "$agent" <"$config_path"
+    tmux_worktree_read_dev_config_windows "$config_path" "$agent" "${4:-}" <"$config_path"
 }
 
 # Creates a detached session from window lines that a
 # tmux_worktree_dev_config_windows_* function already resolved and validated.
-tmux_worktree_create_standard_session() {
-    local session_name="$1"
-    local worktree_path="$2"
-    local branch="$3"
-    local nvim_command="$4"
-    local windows="$5"
-    local stage_agent="${6:-false}"
-    local window_kind=""
-    local window_name=""
-    local window_command=""
-    local first_window_name=""
-    local created_first_window=false
+tmux_worktree_create_standard_session() (
+    # The subshell isolates these variables. Do not make them local: Bash
+    # unwinds function locals before its EXIT trap, including on errexit.
+    session_name="$1"
+    worktree_path="$2"
+    branch="$3"
+    nvim_command="$4"
+    windows="$5"
+    stage_agent="${6:-false}"
+    selected_agent="${7:-}"
+    agent_pane=""
+    agent_enabled=false
+    window_kind=""
+    window_name=""
+    window_command=""
+    first_window_name=""
+    created_first_window=false
+    registered=false
+    completed=false
+    checkpoint=""
+
+    checkpoint="$(tmux_worktree_registry checkpoint "$worktree_path")"
+    trap '
+        status=$?
+        if [ "$completed" = false ] && [ "$created_first_window" = true ]; then
+            tmux kill-session -t "$session_name" || { echo "Failed to roll back partial session $session_name" >&2; status=1; }
+            if [ "$registered" = true ]; then
+                tmux_worktree_registry restore "$worktree_path" "$checkpoint" || { echo "Failed to restore registry after creation failure: $worktree_path" >&2; status=1; }
+            fi
+        fi
+        exit "$status"
+    ' EXIT
 
     if [ -z "$windows" ]; then
         echo "tmux_worktree_create_standard_session: no windows for $worktree_path" >&2
@@ -405,14 +433,25 @@ tmux_worktree_create_standard_session() {
         fi
 
         if [ "$created_first_window" = false ]; then
-            tmux new-session -d -s "$session_name" -n "$window_name" -c "$worktree_path"
+            tmux_worktree_registry external tmux new-session -d -s "$session_name" -n "$window_name" -c "$worktree_path"
+            created_first_window=true
             tmux_worktree_set_session_metadata "$session_name" "$worktree_path" "$branch"
             first_window_name="$window_name"
-            created_first_window=true
         else
-            tmux new-window -t "$session_name:" -n "$window_name" -c "$worktree_path"
+            tmux_worktree_registry external tmux new-window -t "$session_name:" -n "$window_name" -c "$worktree_path"
         fi
 
+        if [ "$window_kind" = agent ]; then
+            agent_pane="$(tmux display-message -p -t "$session_name:$window_name" '#{pane_id}')"
+            if [ -n "$window_command" ]; then agent_enabled=true; fi
+        fi
+    done <<<"$windows"
+
+    registered=true
+    tmux_worktree_registry register "$session_name" "$worktree_path" "$branch" "$nvim_command" "$stage_agent" "$selected_agent" "$agent_enabled" "$agent_pane"
+
+    while IFS=$'\t' read -r window_kind window_name window_command; do
+        if [ -n "$nvim_command" ] && [ "$window_name" = nvim ]; then window_command="$nvim_command"; fi
         if [ -z "$window_command" ]; then
             :
         elif [ "$window_kind" = agent ] && [ "$stage_agent" = true ]; then
@@ -425,6 +464,11 @@ tmux_worktree_create_standard_session() {
     done <<<"$windows"
 
     tmux select-window -t "$session_name:$first_window_name"
+    completed=true
+)
+
+tmux_worktree_registry() {
+    python3 "$(dirname "${BASH_SOURCE[0]}")/dev_registry.py" "$@"
 }
 
 # Prints one "<path>\t<branch>" line per worktree git knows about, including the

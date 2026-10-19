@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "paths": {
+      "@earendil-works/pi-coding-agent": ["../home/.pi/agent/packages/pi-guard-subagents/node_modules/@earendil-works/pi-coding-agent"]
+    },
+    "typeRoots": ["../home/.pi/agent/packages/pi-guard-subagents/node_modules/@types"]
+  },
+  "files": ["../home/.pi/agent/extensions/dev-session.ts"]
+}

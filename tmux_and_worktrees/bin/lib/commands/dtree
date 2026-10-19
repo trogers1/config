@@ -5,13 +5,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/../tmux_worktree.sh"
 
 log() {
-    printf "[dtree] %s\n" "$*"
+    printf "[dev tree] %s\n" "$*"
 }
 
 usage() {
     cat <<'EOF'
-Usage: dtree [--no-attach] [--agent <name>] [--stage-agent] [--] [branch] [base-branch]
-       dtree init [branch]
+Usage: dev tree [--no-attach] [--agent <name>] [--stage-agent] [--] [branch] [base-branch]
+       dev tree init [branch]
 
   --no-attach      Never prompt or attach. Create (or reuse) the worktree and
                    its tmux session, send all progress to stderr, and print only
@@ -44,10 +44,10 @@ prompt_to_check_remote_branch() {
     local remote_name="$1"
     local response=""
 
-    printf '[dtree] No local branch named %s. Fetch %s and look for %s/%s? [y/N] (N creates it from %s) ' "$branch" "$remote_name" "$remote_name" "$branch" "$base_branch" >&2
+    printf '[dev tree] No local branch named %s. Fetch %s and look for %s/%s? [y/N] (N creates it from %s) ' "$branch" "$remote_name" "$remote_name" "$branch" "$base_branch" >&2
 
     if ! read -r response </dev/tty; then
-        printf '\n[dtree] Cannot read a confirmation; creating the branch from %s.\n' "$base_branch" >&2
+        printf '\n[dev tree] Cannot read a confirmation; creating the branch from %s.\n' "$base_branch" >&2
         return 1
     fi
 
@@ -65,11 +65,11 @@ prompt_to_convert_main_checkout() {
     local primary_branch="$1"
     local response=""
 
-    printf '\n[dtree] %s is already checked out in the primary checkout: %s\n' "$branch" "$repo_root" >&2
-    printf '[dtree] Turn it into a worktree at %s? The primary checkout will switch to %s. [y/N] ' "$default_wt_path" "$primary_branch" >&2
+    printf '\n[dev tree] %s is already checked out in the primary checkout: %s\n' "$branch" "$repo_root" >&2
+    printf '[dev tree] Turn it into a worktree at %s? The primary checkout will switch to %s. [y/N] ' "$default_wt_path" "$primary_branch" >&2
 
     if ! read -r response </dev/tty; then
-        printf '\n[dtree] Cannot read a confirmation; leaving the branch in the primary checkout.\n' >&2
+        printf '\n[dev tree] Cannot read a confirmation; leaving the branch in the primary checkout.\n' >&2
         return 1
     fi
 
@@ -78,7 +78,7 @@ prompt_to_convert_main_checkout() {
             return 0
             ;;
         *)
-            printf '[dtree] Leaving the branch in the primary checkout.\n' >&2
+            printf '[dev tree] Leaving the branch in the primary checkout.\n' >&2
             return 1
             ;;
     esac
@@ -101,12 +101,12 @@ run_startup_script() {
     # Under --no-attach, fd 3 is the caller's stdout. Close it so a process the
     # script leaves in the background cannot hold the caller's pipe open, and
     # give the script no stdin to block on.
-    (cd "$wt_path" && REPO_ROOT="$repo_root" WORKTREE_PATH="$wt_path" bash "$startup_script") 3>&- </dev/null
+    (cd "$wt_path" && REPO_ROOT="$repo_root" WORKTREE_PATH="$wt_path" tmux_worktree_registry initialize bash "$startup_script") 3>&- </dev/null
 }
 
 if [ "${1:-}" = "init" ]; then
     if [ "$#" -gt 2 ]; then
-        echo "Usage: dtree init [branch]" >&2
+        echo "Usage: dev tree init [branch]" >&2
         exit 1
     fi
 
@@ -115,13 +115,13 @@ if [ "${1:-}" = "init" ]; then
     repo_root="$(tmux_worktree_main_repo_root)"
     branch="${2:-$(tmux_worktree_git_current_branch)}"
     if [ -z "$branch" ]; then
-        echo "[dtree] Cannot determine a branch. Use: dtree init <branch>" >&2
+        echo "[dev tree] Cannot determine a branch. Use: dev tree init <branch>" >&2
         exit 1
     fi
 
     wt_path="$(tmux_worktree_path_for_branch "$repo_root" "$branch")"
     if [ -z "$wt_path" ] || [ "$wt_path" = "$repo_root" ]; then
-        echo "[dtree] No linked worktree found for branch: $branch" >&2
+        echo "[dev tree] No linked worktree found for branch: $branch" >&2
         exit 1
     fi
 
@@ -141,7 +141,7 @@ while [ "$#" -gt 0 ]; do
             ;;
         --agent)
             if [ "$#" -lt 2 ] || [ -z "$2" ]; then
-                echo "[dtree] Missing value for --agent" >&2
+                echo "[dev tree] Missing value for --agent" >&2
                 exit 1
             fi
             agent="$2"
@@ -161,7 +161,7 @@ while [ "$#" -gt 0 ]; do
             exit 0
             ;;
         -*)
-            echo "[dtree] Unknown option: $1" >&2
+            echo "[dev tree] Unknown option: $1" >&2
             usage >&2
             exit 1
             ;;
@@ -189,6 +189,8 @@ fi
 finish() {
     local session_name="$1"
 
+    tmux_worktree_registry commit-workspace "$workspace_decision" "$wt_path"
+    completed=true
     if [ "$no_attach" = true ]; then
         printf '%s\n' "$wt_path" >&3
     else
@@ -225,17 +227,32 @@ default_wt_path="$(tmux_worktree_default_path "$repo_root" "$branch")"
 
 existing_wt_path="$(tmux_worktree_path_for_branch "$repo_root" "$branch")"
 created_worktree=false
+created_branch=false
+completed=false
+trap '
+    status=$?
+    if [ "$completed" = false ] && [ "$created_worktree" = true ]; then
+        git -C "$repo_root" worktree remove --force "$wt_path" || { echo "Failed to roll back new worktree: $wt_path" >&2; status=1; }
+        if [ "$created_branch" = true ]; then
+            git -C "$repo_root" branch -D "$branch" || { echo "Failed to roll back new branch: $branch" >&2; status=1; }
+        fi
+    fi
+    exit "$status"
+' EXIT
 # Window lines for the new session. A new worktree resolves them before it is
 # created, so an invalid config leaves nothing behind.
 windows=""
+session_agent="$agent"
 
 # --no-attach callers expect a linked worktree, so never hand them the primary
 # checkout, whichever worktree this runs from.
 if [ "$no_attach" = true ] && [ -n "$existing_wt_path" ] &&
     [ "$(tmux_worktree_physical_path "$existing_wt_path")" = "$(tmux_worktree_physical_path "$repo_root")" ]; then
-    echo "[dtree] $branch is checked out in the primary checkout ($repo_root). --no-attach never moves it; run \`dev tree $branch\` interactively or check out another branch there first." >&2
+    echo "[dev tree] $branch is checked out in the primary checkout ($repo_root). --no-attach never moves it; run \`dev tree $branch\` interactively or check out another branch there first." >&2
     exit 1
 fi
+
+workspace_decision="$(tmux_worktree_registry prepare-workspace "branch $branch" "$no_attach")"
 
 # A branch checked out in the primary checkout cannot also be added as a
 # worktree. Offer to move the primary checkout to its default branch first.
@@ -243,12 +260,12 @@ if [ "$existing_wt_path" = "$repo_root" ] && [ "$current_branch" = "$branch" ]; 
     primary_branch="$(default_primary_branch)"
 
     if [ -z "$primary_branch" ] || [ "$primary_branch" = "$branch" ]; then
-        echo "[dtree] Cannot choose a primary branch. Set origin/HEAD or create main/master before rerunning." >&2
+        echo "[dev tree] Cannot choose a primary branch. Set origin/HEAD or create main/master before rerunning." >&2
         exit 1
     fi
 
     if [ -n "$(git -C "$repo_root" status --porcelain)" ]; then
-        echo "[dtree] Cannot turn $branch into a worktree because the primary checkout has uncommitted changes. Commit or stash them first." >&2
+        echo "[dev tree] Cannot turn $branch into a worktree because the primary checkout has uncommitted changes. Commit or stash them first." >&2
         exit 1
     fi
 
@@ -270,7 +287,7 @@ else
 
     if [ -d "$wt_path" ]; then
         if [ "$no_attach" = true ]; then
-            echo "[dtree] $wt_path already exists but is not the worktree for $branch; refusing to use it." >&2
+            echo "[dev tree] $wt_path already exists but is not the worktree for $branch; refusing to use it." >&2
             exit 1
         fi
         echo "Worktree already exists at $wt_path"
@@ -286,11 +303,11 @@ else
             if ! git -C "$repo_root" remote get-url "$remote_name" >/dev/null 2>&1; then
                 log "No $remote_name remote configured; creating $branch from $base_branch"
             elif [ "$no_attach" = true ]; then
-                # Without a prompt, dtree cannot ask whether to fetch, and a
+                # Without a prompt, dev tree cannot ask whether to fetch, and a
                 # new branch from the base would silently diverge from a
                 # remote branch of the same name that is already known.
                 if git -C "$repo_root" show-ref --verify --quiet "refs/remotes/$remote_name/$branch"; then
-                    echo "[dtree] $remote_name/$branch exists, and --no-attach never chooses between it and $base_branch. Run \`dev tree $branch\` interactively, or create the local branch first." >&2
+                    echo "[dev tree] $remote_name/$branch exists, and --no-attach never chooses between it and $base_branch. Run \`dev tree $branch\` interactively, or create the local branch first." >&2
                     exit 1
                 fi
                 log "--no-attach does not fetch $remote_name; creating $branch from $base_branch"
@@ -318,8 +335,12 @@ else
         fi
 
         windows="$(tmux_worktree_dev_config_windows_for_ref "$repo_root" "$start_ref" "$agent")"
+        session_agent="$(tmux_worktree_dev_config_windows_for_ref "$repo_root" "$start_ref" "$agent" --selected-agent)"
         git -C "$repo_root" worktree add "${add_args[@]}"
         created_worktree=true
+        if [ "${add_args[0]}" = -b ] || [ "${add_args[0]}" = --track ]; then
+            created_branch=true
+        fi
     fi
 fi
 
@@ -328,6 +349,7 @@ session_name="$(tmux_worktree_find_session_for_worktree_path "$wt_path" || true)
 
 if [ -n "$session_name" ]; then
     tmux_worktree_set_session_metadata "$session_name" "$wt_path" "$branch"
+    tmux_worktree_registry adopt "$session_name" "$wt_path" "$branch"
     if [ -n "$agent" ] || [ "$stage_agent" = true ]; then
         log "Reusing session $session_name; --agent and --stage-agent apply only to new sessions (dev close it to switch)"
     fi
@@ -343,11 +365,12 @@ fi
 
 if [ -z "$windows" ]; then
     windows="$(tmux_worktree_dev_config_windows_for_path "$wt_path" "$agent")"
+    session_agent="$(tmux_worktree_dev_config_windows_for_path "$wt_path" "$agent" --selected-agent)"
 fi
 
 if [ "$created_worktree" = true ]; then
     run_startup_script "$repo_root" "$wt_path"
 fi
 
-tmux_worktree_create_standard_session "$session_name" "$wt_path" "$branch" "" "$windows" "$stage_agent"
+tmux_worktree_create_standard_session "$session_name" "$wt_path" "$branch" "" "$windows" "$stage_agent" "$session_agent"
 finish "$session_name"

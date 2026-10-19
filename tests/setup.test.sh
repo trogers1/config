@@ -4,6 +4,8 @@ set -euo pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
+export XDG_STATE_HOME="$TMP_DIR/state"
+unset TMUX TMUX_PANE DEV_LIFECYCLE_LOCK_FD
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 assert_exists() { [ -e "$1" ] || [ -L "$1" ] || fail "expected $1 to exist"; }
@@ -61,6 +63,7 @@ assert_equals "$(readlink "$HOME_DIR/.claude/skills")" "$REPO_DIR/home/.claude/s
 assert_exists "$HOME_DIR/.claude/skills/flow-review/SKILL.md"
 assert_exists "$HOME_DIR/.claude/skills/code/SKILL.md"
 assert_exists "$HOME_DIR/.claude/agents/scout.md"
+assert_equals "$(readlink "$HOME_DIR/.pi/agent/extensions/dev-session.ts")" "$REPO_DIR/home/.pi/agent/extensions/dev-session.ts"
 # Personal instructions and whole-file Claude settings stay out of the shared install.
 assert_absent "$HOME_DIR/.claude/CLAUDE.md"
 assert_absent "$HOME_DIR/.pi/agent/AGENTS.md"
@@ -78,10 +81,25 @@ assert_equals "$(run_hook 'c++ and a+b')" ''
 settings_command() { python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["hooks"][sys.argv[2]][0]["hooks"][0]["command"])' "$HOME_DIR/.claude/settings.json" "$1"; }
 create_command="$(settings_command WorktreeCreate)"
 remove_command="$(settings_command WorktreeRemove)"
+record_command="$(settings_command SessionStart)"
+# The installed metadata hook ignores agents outside tmux without creating state.
+printf '{"hook_event_name":"SessionStart","source":"startup","session_id":"test"}' | HOME="$HOME_DIR" bash -c "$record_command"
+assert_absent "$XDG_STATE_HOME/dev/sessions.json"
 HOOK_BIN="$TMP_DIR/hook-bin"
 HOOK_REPO="$(mkdir -p "$TMP_DIR/hook-repos/proj" && cd "$TMP_DIR/hook-repos/proj" && pwd -P)"
 mkdir -p "$HOOK_BIN"
-printf '#!/usr/bin/env bash\n[ "$1" != has-session ] && [ "$1" != show-environment ]\n' >"$HOOK_BIN/tmux"
+cat >"$HOOK_BIN/tmux" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+  display-message)
+    case "${!#}" in
+      '#{pane_id}') echo '%1' ;;
+      *) printf 'proj-hooked\t%%1\t/fake/tmux\t123\n' ;;
+    esac
+    ;;
+  has-session|show-environment) exit 1 ;;
+esac
+EOF
 chmod +x "$HOOK_BIN/tmux"
 run_worktree_hook() { HOME="$HOME_DIR" PATH="$HOOK_BIN:$PATH" GIT_CONFIG_GLOBAL=/dev/null bash -c "$1"; }
 git -C "$HOOK_REPO" init -q -b main

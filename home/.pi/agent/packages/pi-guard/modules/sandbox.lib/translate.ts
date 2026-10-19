@@ -101,7 +101,8 @@ function normalizeRoots(roots: string[]): string[] {
 }
 
 function isWithin(candidate: string, root: string): boolean {
-  return candidate === root || candidate.startsWith(`${root}${path.sep}`);
+  const prefix = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
+  return candidate === root || candidate.startsWith(prefix);
 }
 
 /** Return the narrower representable root, or no intersection. */
@@ -207,6 +208,9 @@ export function translatePolicy(
   const readAllowRoots: string[] = [];
   const writeAllowRoots: string[] = [];
   const writeDenyRoots: string[] = [];
+  const parentBoundaryDenyRoots: string[] = [];
+  const writeAsks: { rule: WritePathRule; roots: string[] }[] = [];
+  const extraWriteRoots: string[] = [];
   const readRules: SandboxPathRule[] = [];
   const writeRules: SandboxPathRule[] = [];
   let missingRestriction = false;
@@ -295,9 +299,16 @@ export function translatePolicy(
 
     if (rule.decision === "allow") {
       writeAllowRoots.push(...compiled.roots);
+    } else if (rule.decision === "ask") {
+      // Resolve asks separately: configured extra roots can preauthorize an
+      // entire ask region, but must never remove an explicit deny.
+      writeAsks.push({ rule, roots: compiled.roots });
+      continue;
+    } else if (rule.pattern === ".." || rule.pattern === "../**") {
+      // These gate patterns refer outside startup CWD, not to its contents.
+      // Keep their provenance when a deny-asks transform changes the decision.
+      parentBoundaryDenyRoots.push(...compiled.roots);
     } else {
-      // ask is deliberately kernel-denied: v1 never widens containment after
-      // a prompt, while deny must remain an unconditional carve-out.
       writeDenyRoots.push(...compiled.roots);
     }
     writeRules.push({
@@ -315,6 +326,7 @@ export function translatePolicy(
       addUntranslatedAllow(report, pattern, "sandbox", compiled.reason);
     } else {
       writeAllowRoots.push(...compiled.roots);
+      extraWriteRoots.push(...compiled.roots);
       writeRules.push({
         pattern,
         decision: "allow",
@@ -354,6 +366,36 @@ export function translatePolicy(
     }
   }
 
+  const askDenyRoots: string[] = [];
+  for (const { rule, roots } of writeAsks) {
+    // Only literal containment proves coverage. In particular, a narrow extra
+    // root must not erase a parent ask and expose other policy-allowed paths.
+    const preauthorized = roots.every(
+      (ask) =>
+        !/[*?\[\]]/.test(ask) &&
+        extraWriteRoots.some(
+          (extra) => !/[*?\[\]]/.test(extra) && isWithin(ask, extra),
+        ),
+    );
+    if (preauthorized) {
+      report.waivedRestrictions.push({
+        pattern: rule.pattern,
+        source: "profile",
+        reason:
+          "Bash ask region fully preauthorized by configured sandbox.extraWritePaths; the ordinary permission gate is unchanged",
+      });
+    } else {
+      askDenyRoots.push(...roots);
+      writeRules.push({
+        pattern: rule.pattern,
+        decision: "deny",
+        context: rule.contexts?.includes("bash") ? "bash" : "any",
+        source: "profile",
+        guidance: rule.guidance,
+      });
+    }
+  }
+
   const scopeRoots: string[] | undefined =
     subagentScopes.length === 0 ? undefined : [];
   if (scopeRoots) {
@@ -381,13 +423,31 @@ export function translatePolicy(
     normalizeRoots(writeAllowRoots),
     scopeRoots && normalizeRoots(scopeRoots),
   );
-  // SRT denies override allows. A deny outside an opened root is already
-  // covered by default-deny writes, so omit it. A deny inside an opened root
-  // is an enforceable carve-out. A descendant allow cannot reopen that deny;
-  // preserve the restriction and make the resulting tighter boundary visible.
-  const effectiveWriteDenies = normalizeRoots(writeDenyRoots).filter((deny) => {
-    const containsOpenedRoot = writable.some((allow) => isWithin(deny, allow));
-    if (!containsOpenedRoot) return false;
+  // Relative parent-boundary denies must not close startup CWD. Clip them to
+  // opened roots outside it. A wider grant containing CWD cannot be subtracted
+  // safely, so it retains the tighter deny and is reported below.
+  const parentBoundaryDenies = parentBoundaryDenyRoots.flatMap((deny) =>
+    writable.flatMap((allow) => {
+      if (isWithin(allow, cwd)) return [];
+      const overlap = intersectRoot(deny, allow);
+      return overlap === undefined ? [] : [overlap];
+    }),
+  );
+  // Ordinary parent asks must not close the startup workspace either. Retain
+  // them only inside an opened root; other explicit denies also constrain
+  // descendant grants. SRT denies always take precedence over allows.
+  const relevantAsks = askDenyRoots.filter((ask) =>
+    writable.some((allow) => isWithin(ask, allow)),
+  );
+  const effectiveWriteDenies = normalizeRoots([
+    ...writeDenyRoots,
+    ...parentBoundaryDenies,
+    ...relevantAsks,
+  ]).filter((deny) => {
+    const overlapsOpenedRoot = writable.some(
+      (allow) => isWithin(deny, allow) || isWithin(allow, deny),
+    );
+    if (!overlapsOpenedRoot) return false;
     for (const allow of writable.filter((allow) => isWithin(allow, deny))) {
       addUntranslatedAllow(
         report,

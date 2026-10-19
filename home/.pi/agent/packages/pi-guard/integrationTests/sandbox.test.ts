@@ -336,6 +336,222 @@ function node({ source }: { source: string }): string {
  * behavior under test.
  */
 describe("sandbox full-harness OS acceptance", () => {
+  it("extra-root precedence creates a real sibling Git worktree without widening the gate or denies", async () => {
+    // All repository and profile fixtures stay in this checkout, never HOME
+    // or an external temporary directory. Do not use the allow-asks helper.
+    const root = fs.mkdtempSync(path.join(import.meta.dirname, ".extra-root-"));
+    tempDirectories.push(root);
+    const main = path.join(root, "main");
+    const trees = path.join(root, "trees");
+    const workspace = path.join(trees, "source");
+    const target = path.join(trees, "target");
+    fs.mkdirSync(main);
+    fs.mkdirSync(trees);
+    function git({ args }: { args: string[] }): void {
+      const result = spawnSync("git", args, {
+        cwd: main,
+        encoding: "utf8",
+        timeout: 10_000,
+      });
+      if (result.status !== 0) throw new Error(result.stderr || "Git failed");
+    }
+    git({ args: ["init", "--initial-branch=main"] });
+    fs.writeFileSync(path.join(main, "base.txt"), "base\n");
+    git({ args: ["add", "base.txt"] });
+    git({
+      args: [
+        "-c",
+        "user.name=Pi Guard Test",
+        "-c",
+        "user.email=pi-guard@example.test",
+        "commit",
+        "-m",
+        "base",
+      ],
+    });
+    git({ args: ["worktree", "add", "--detach", workspace] });
+    for (const name of ["protected", "locked"]) {
+      fs.mkdirSync(path.join(trees, name));
+    }
+    const configPath = path.join(root, "profiles.jsonc");
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        defaultProfile: "baseline",
+        profiles: {
+          baseline: {
+            description: "Unmodified default sandbox boundary",
+            extends: ["builtin:default"],
+          },
+          granted: {
+            description:
+              "Explicit sibling worktree roots retaining inherited asks",
+            extends: ["baseline"],
+            protectedPathRules: [
+              { pattern: path.join(trees, "protected"), decision: "deny" },
+            ],
+            sandbox: {
+              network: "deny",
+              extraWritePaths: [path.join(main, ".git"), trees],
+              extraDenyWritePaths: [path.join(trees, "locked")],
+            },
+          },
+          denied: {
+            description: "Explicit ancestor deny must beat the extra root",
+            extends: ["granted"],
+            writePaths: [{ pattern: trees, decision: "deny" }],
+          },
+          worker: {
+            description: "Worker retaining its outside-workspace denies",
+            extends: ["builtin:worker"],
+            tools: { bash: [{ pattern: "node *", decision: "allow" }] },
+          },
+          "worker-granted": {
+            description: "A sibling grant cannot reopen worker parent denies",
+            extends: ["worker"],
+            sandbox: { extraWritePaths: [target] },
+          },
+        },
+      }),
+    );
+    process.env.PI_GUARD_PROFILE_CONFIG = configPath;
+    function createWorkspaceHarness() {
+      // The gate captures process.cwd at extension registration, separately
+      // from the execution context. Reproduce a Pi started in the worktree.
+      const previousCwd = process.cwd();
+      try {
+        process.chdir(workspace);
+        return createExtensionHarness({ contextCwd: workspace, confirm: true });
+      } finally {
+        process.chdir(previousCwd);
+      }
+    }
+    const harness = createWorkspaceHarness();
+    await harness.start();
+    async function execute({
+      source,
+      success,
+    }: {
+      source: string;
+      success: boolean;
+    }): Promise<void> {
+      const command = node({ source });
+      // Approve this opaque interpreter request only; never transform path asks.
+      const gate = await harness.callTool({
+        toolName: "bash",
+        input: { command, timeout: 10 },
+      });
+      expect(gate?.block, gate?.reason).not.toBe(true);
+      const result = await harness.executeTool({
+        name: "bash",
+        params: { command, timeout: 10 },
+      });
+      const code = exitCodeFrom({ result });
+      if (success) {
+        expect(code, JSON.stringify(result)).toBe(0);
+      } else {
+        expect(code, JSON.stringify(result)).not.toBe(0);
+        expect(JSON.stringify(result)).toMatch(
+          /EPERM|EACCES|EROFS|Operation not permitted/,
+        );
+      }
+    }
+    try {
+      expect(harness.errors).toEqual([]);
+      await execute({
+        source: `require('fs').writeFileSync(${JSON.stringify(path.join(trees, "default-marker"))}, 'blocked')`,
+        success: false,
+      });
+      expect(fs.existsSync(path.join(trees, "default-marker"))).toBe(false);
+      await harness.runCommand({ name: "profile-select", args: "granted" });
+      const promptsBefore = harness.customComponents.length;
+      const directGate = await harness.callTool({
+        toolName: "write",
+        input: { path: path.join(trees, "direct-marker"), content: "ask" },
+      });
+      expect(directGate?.block).not.toBe(true);
+      expect(harness.customComponents.length).toBeGreaterThan(promptsBefore);
+      await execute({
+        source: [
+          "const fs = require('fs');",
+          `require('child_process').execFileSync('git', ['worktree', 'add', '--detach', ${JSON.stringify(target)}], { timeout: 10000 });`,
+          "fs.writeFileSync('workspace-marker', 'ok');",
+          `for (const destination of ${JSON.stringify([path.join(trees, "protected", "marker"), path.join(trees, "locked", "marker"), path.join(root, "unapproved-marker")])}) {`,
+          "try { fs.writeFileSync(destination, 'escaped'); throw new Error('Unexpected writable path: ' + destination); }",
+          "catch (error) { if (!['EPERM', 'EACCES', 'EROFS'].includes(error.code)) throw error; }",
+          "}",
+        ].join(" "),
+        success: true,
+      });
+      expect(fs.readFileSync(path.join(target, ".git"), "utf8")).toMatch(
+        /^gitdir: /,
+      );
+      expect(fs.readFileSync(path.join(target, "base.txt"), "utf8")).toBe(
+        "base\n",
+      );
+      expect(
+        fs.readFileSync(path.join(workspace, "workspace-marker"), "utf8"),
+      ).toBe("ok");
+      for (const marker of ["protected/marker", "locked/marker"]) {
+        expect(fs.existsSync(path.join(trees, marker))).toBe(false);
+      }
+      expect(fs.existsSync(path.join(root, "unapproved-marker"))).toBe(false);
+      await harness.runCommand({ name: "profile-select", args: "denied" });
+      await execute({
+        source: `require('fs').writeFileSync(${JSON.stringify(path.join(trees, "denied-marker"))}, 'blocked')`,
+        success: false,
+      });
+      expect(fs.existsSync(path.join(trees, "denied-marker"))).toBe(false);
+      await harness.runCommand({ name: "profile-select", args: "worker" });
+      await execute({
+        source: "require('fs').writeFileSync('worker-marker', 'ok')",
+        success: true,
+      });
+      expect(
+        fs.readFileSync(path.join(workspace, "worker-marker"), "utf8"),
+      ).toBe("ok");
+      await harness.runCommand({
+        name: "profile-select",
+        args: "worker-granted",
+      });
+      await execute({
+        source: `require('fs').writeFileSync(${JSON.stringify(path.join(target, "worker-denied-marker"))}, 'blocked')`,
+        success: false,
+      });
+      expect(fs.existsSync(path.join(target, "worker-denied-marker"))).toBe(
+        false,
+      );
+    } finally {
+      await harness.shutdown();
+    }
+    process.env.PI_SUBAGENT_PERMISSIBLE_GLOBS = ".";
+    const scoped = createWorkspaceHarness();
+    await scoped.start();
+    try {
+      await scoped.runCommand({ name: "profile-select", args: "granted" });
+      const command = node({
+        source: `require('fs').writeFileSync(${JSON.stringify(path.join(trees, "scoped-marker"))}, 'blocked')`,
+      });
+      const gate = await scoped.callTool({
+        toolName: "bash",
+        input: { command, timeout: 10 },
+      });
+      expect(gate?.block, gate?.reason).not.toBe(true);
+      expect(
+        exitCodeFrom({
+          result: await scoped.executeTool({
+            name: "bash",
+            params: { command, timeout: 10 },
+          }),
+        }),
+      ).not.toBe(0);
+      expect(fs.existsSync(path.join(trees, "scoped-marker"))).toBe(false);
+      expect(scoped.errors).toEqual([]);
+    } finally {
+      await scoped.shutdown();
+    }
+  }, 40_000);
+
   it("allows an unparsed protected read without sandboxing and denies the identical read when sandboxed", async () => {
     const localRoot = fixture();
     const expression = node({
