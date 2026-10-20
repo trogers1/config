@@ -10,6 +10,9 @@ Pi: `/skill:start-ticket <ticket> [request]`. Claude: `/start-ticket <ticket> [r
 Use the current shared Jira retrieval skill and generic `dev` workflow, not a new
 Jira client, registry, runtime helper, or agent-specific skill copy. This skill
 prepares the assignment; it does not implement the ticket in the source checkout.
+Jira is read-only by default. Only explicitly user-requested updates may be
+composed through `jira-ticket-management`, with its separate final approval gate;
+launch intent or implementation authorization alone never authorizes Jira writes.
 
 ## 1. Establish intent and read-only facts
 
@@ -33,8 +36,11 @@ choices. Do not launch or write artifacts while a blocking choice remains.
 - Read `../jira-ticket-management/SKILL.md` relative to this skill directory.
   Discover the installed contract with `jira-ticket --help`, then
   `jira-ticket get --help`. Only then use the documented read-only
-  `jira-ticket get KEY_OR_NUMERIC_ID`. No create, update, transition, assignment,
-  comment, or other Jira write is authorized. Do not inspect CLI internals or
+  `jira-ticket get KEY_OR_NUMERIC_ID`. Record any explicitly requested Jira
+  updates separately (for example assignment and “In Development”); do not apply
+  them yet. Without such a request, no Jira write is authorized. Only the optional
+  update flow below can authorize the requested existing-ticket changes; never
+  create a ticket or add unsolicited changes. Do not inspect CLI internals or
   config/credentials, invent flags, or replace the CLI with an API client.
 - Require a successful `outcome: issue`, `read_only: true` response with canonical
   `key`, browser `link`, and relevant `details`. Use the returned canonical identity,
@@ -51,10 +57,13 @@ choices. Do not launch or write artifacts while a blocking choice remains.
 Read `git status --porcelain=v1 --untracked-files=all`, local branch refs, and
 `git worktree list --porcelain`, plus `dev --list` for open/saved session and
 worktree inventory. Do not read other conversations/transcripts or contact a live
-service other than the requested Jira read. Check for the canonical ticket key
-in branch/worktree/session names (including case and repository naming conventions),
+service other than the requested Jira reads/discovery/dry-run. Check for the
+canonical ticket key in branch/worktree/session names (including case and repository
+naming conventions),
 not just one proposed exact branch. If inventory cannot establish absence safely,
-stop rather than treat errors as an empty result.
+stop rather than treat errors as an empty result. A denied/failed Git status is
+unknown, not clean: report the error and stop. Never exclude protected files,
+suppress errors, or change profiles/sandbox settings to force a clean result.
 
 Choose a repository-conventional branch containing the canonical key (fall back
 to the key alone), validate it with `git check-ref-format --branch`, and establish
@@ -79,9 +88,51 @@ each; the consolidated decision must resolve both. Changed facts/new conflicts
 invalidate the decision: stop and explain before mutation.
 
 Recheck source HEAD, branch, status, chosen refs/worktrees, and session inventory
-immediately before artifact publication/launch. Use the recorded commit SHA as the
-base, never a moving branch name. If facts changed, stop and reconcile. `dev` owns
-lifecycle locking and final race checks; do not build a parallel registry.
+immediately before any approved Jira write, and again before artifact
+publication/launch. Use the recorded commit SHA as the base, never a moving branch
+name. If facts changed, stop and reconcile. `dev` owns lifecycle locking and final
+race checks; do not build a parallel registry.
+
+### Optional explicitly requested Jira updates (pre-launch only)
+
+Skip this entire flow unless the user explicitly requested changes to this ticket.
+Resolve launch/conflict choices and read-only launch preflight first, then follow
+`jira-ticket-management`'s existing update workflow, not a parallel implementation:
+
+- Discover relevant command help (`update`, `draft-example`, `statuses`, as needed)
+  before use. Resolve only requested fields through live CLI discovery/validation.
+  Verify the exact assignee; “me” must not be inferred from Git identity or a
+  create-time default. Ask if the installed CLI cannot resolve it unambiguously.
+  Verify “In Development” against live project/type statuses and a supported direct
+  transition; never substitute another status or intermediate transitions.
+- Save a private UTF-8 JSON partial-update draft containing **only requested
+  changes**; omitted fields remain untouched. Use the existing CLI's documented
+  format and `update CANONICAL_KEY --draft FILE --dry-run`. Do not add discovery
+  clients, inspect credentials, or bypass CLI/permission/transition failures.
+- Show the exact canonical target, resolved requested changes, and complete
+  dry-run mutation plan. Explain ordering: approved Jira update first, then
+  handoff publication and launch (or staging); these are not one transaction.
+  Ask the separate final approval question required by `jira-ticket-management`
+  and wait. The original “assign me and move to In Development” request is intent,
+  **not** final approval of the resolved plan. Conflict/launch approval is not Jira
+  approval either. A changed draft/plan requires renewed approval.
+- After approval and the source/inventory recheck, execute once with the same
+  unchanged draft through the documented `update` command. Inspect the JSON
+  outcome, not merely the exit code. Only verified `updated` or `unchanged` permits
+  continuing. A dry run is not an update. Refresh relevant ticket data read-only
+  for the handoff after success; inability to verify facts still blocks launch.
+- Any failure, `partial_failure`, timeout, or uncertain result stops before launch.
+  Report the canonical link, verified changes, `failed_step`, `remaining_action`
+  and `uncertain_operation` when present; reconcile read-only with the user. Never
+  blindly retry, automatically undo Jira changes, or silently drop the requested
+  update and call this a successful launch. If the user explicitly elects to
+  proceed without completing Jira work, record/report that unresolved outcome.
+
+Jira can succeed while later publication/launch fails or a recheck finds changed
+facts. Report both outcomes and retain known artifacts; do not roll back Jira or
+rerun its update when recovering the launch. Staging does not defer an approved
+Jira update until Enter: disclose that it happens now. No Jira mutation authority
+is delegated to the receiving session, in either implementation mode.
 
 ## 3. Assemble a minimal, self-contained assignment
 
@@ -103,6 +154,9 @@ Build the following sections, with actual verified values (no unresolved placeho
    note that any approved dirty source changes are excluded.
 3. **Relevant conversation context**: concise decisions, constraints, document paths,
    caveats, and known blocking questions. Distinguish user facts from inferences.
+   Record any requested Jira update's verified or unresolved outcome as context
+   only; explicitly state that it grants no receiving-session mutation authority.
+   Do not include the private update draft or unnecessary account IDs.
 4. **Receiving-session instructions**: the common instructions and exactly one
    authorized mode block below. For direct mode, read the shared discipline at
    `../implement-plan/references/implementation.md` and embed its full current body
@@ -196,12 +250,14 @@ Only after all decisions/preflight facts are resolved:
   requested **and supported by installed help**, pass `--agent-profile <name>` for
   Pi. Unsupported flags/integration block the request; don't silently ignore them.
   Never translate a Pi profile into Claude permission flags.
-- On failure report the exact known state and handoff path. Do not retry blindly,
+- On failure report the exact known launch state, handoff path, and separate Jira
+  outcome (including any changes already applied). Do not retry blindly,
   delete possible started work, claim completion, or apply prompt options to an
   existing session. Use only existing `dev` lifecycle/recovery semantics; exact
   recovery resumes its recorded conversation and must never replay the kickoff.
 - On success use returned path and read-only inventory to report canonical ticket
   link, source commit, branch, worktree, tmux session, agent, authorized mode,
   handoff location, and **launched** versus **staged, waiting for Enter**. Process
-  startup is not proof of a plan or completed implementation. Outcomes stay in the
-  new session.
+  startup is not proof of a plan or completed implementation. Report Jira separately:
+  not requested/read-only, verified updated/unchanged, or explicitly unresolved;
+  launch success never implies Jira success. Coding outcomes stay in the new session.

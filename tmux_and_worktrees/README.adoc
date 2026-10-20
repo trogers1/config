@@ -194,7 +194,25 @@ relevant context into a private handoff. It checks dirty source changes and
 existing ticket branches/worktrees/sessions before creating anything. Conflicts
 require one explicit decision; dirty changes are not transferred. It never
 commits, stashes, copies, or discards source changes for you, and it does not
-inject another kickoff into an existing session.
+inject another kickoff into an existing session. Failed or denied Git inventory
+is a blocker, not a clean checkout; the skill never hides protected files or
+changes sandbox permissions to obtain a status result.
+
+Jira stays read-only unless you explicitly request an update, such as “assign to
+me and move to In Development.” The skill composes the shared
+`jira-ticket-management` workflow: installed help and live discovery, a private
+partial-update draft, dry-run, exact change/operation preview, then a separate
+explicit final approval before any write. No assignee or status is guessed and
+no other fields are changed by default. Conflict resolution and launch intent do
+not replace Jira approval.
+
+An approved Jira update happens after launch preflight/conflict resolution but
+before publication and launch (also before staging, not when Enter is pressed).
+Jira and launch are not atomic. Failed/partial/uncertain Jira updates stop launch
+for read-only reconciliation; no blind retries, automatic rollback, or silent
+launch-only success. If Jira succeeds but launch later fails, its changes remain
+and are reported separately. Proceeding with unresolved Jira work needs an explicit
+user decision. Neither mode grants Jira mutation authority to the receiving session.
 
 The default is a detached, immediately launched session whose first deliverable
 is a written plan. It follows the destination repository's planning convention
@@ -225,6 +243,8 @@ For either implementation entry point, checks are bounded and production-like,
 results and omissions are reported in the coding session, and changes remain
 uncommitted. There are no automatic commits, pushes, merge requests, merges,
 deployments, Jira mutations, parent messages, notifications, or watchers.
+Explicitly requested, separately approved pre-launch Jira updates are the sole
+Jira exception in the launching session, never in the receiving coding session.
 Implementation authorization never adds permissions or routes around denials.
 
 Request staging explicitly when desired; `--stage-agent` leaves a safe command
