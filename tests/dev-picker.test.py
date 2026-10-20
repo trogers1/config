@@ -4,9 +4,11 @@
 Run: python3 tests/dev-picker.test.py (90s suite / 8s per command bounds).
 No real tmux, fzf, user registry, or conversation files are used.
 """
+import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import signal
 import subprocess
@@ -15,6 +17,9 @@ import time
 import unittest
 
 DEV = Path(__file__).resolve().parents[1] / "tmux_and_worktrees/bin/dev"
+spec = importlib.util.spec_from_file_location('picker_format', DEV.parent / 'lib/dev_picker_format.py')
+picker_format = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(picker_format)
 
 FAKE_TMUX = r'''#!/usr/bin/env python3
 import fcntl, json, os, sys
@@ -50,6 +55,9 @@ elif cmd == 'new-session':
     if name in state: sys.exit('session already exists')
     next_id = max((values.get('_id', 0) for values in state.values()), default=0) + 1
     state[name] = {'_created': next_id, '_id': next_id}
+    if '-P' in args: print('%1')
+elif cmd == 'new-window':
+    if '-P' in args: print('%1')
 elif cmd == 'kill-session':
     del state[name]
 elif cmd == 'display-message':
@@ -65,7 +73,7 @@ elif cmd in ('attach-session', 'switch-client'):
     if lock.exists():
         with lock.open('a') as handle:
             fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-elif cmd not in ('select-window', 'send-keys', 'new-window'):
+elif cmd not in ('select-window', 'send-keys'):
     sys.exit('unsupported fake tmux operation: ' + repr(args))
 statefile.write_text(json.dumps(state))
 '''
@@ -203,16 +211,44 @@ class DevPickerTests(unittest.TestCase):
         (Path(self.env['FAKE_TMUX_DIR']) / 'sessions.json').write_text(json.dumps(state))
         self.choose(path=unusual, cwd=self.repo, scope='all')
         picker = json.loads(Path(self.env['FZF_LOG']).read_text())
-        import unicodedata
-        def cells(*, text):
-            return sum(0 if unicodedata.combining(c) else
-                       2 if unicodedata.east_asian_width(c) in ('W', 'F') else 1 for c in text)
         rows = [row.split('\t', 1)[1] for row in picker['rows'][1:]]
-        starts = [cells(text=row[:row.index(str(self.root))]) for row in rows]
+        starts = [picker_format.width(text=row[:row.index(str(self.root))]) for row in rows]
         self.assertEqual(len(set(starts)), 1)
         self.assertTrue(all('\t' not in row for row in rows))
         self.assertIn(str(unusual), [s['DTREE_WORKTREE_PATH'] for s in self.sessions().values()])
         self.assertFalse((self.repo / 'injected').exists())
+
+    def test_long_names_are_display_only_and_unicode_aligned(self):
+        limit = picker_format.MAX_NAME_WIDTH
+        self.run_cmd(args=['git', 'config', 'core.precomposeunicode', 'false'], cwd=self.repo)
+        cases = [
+            ('x' * limit, 'x' * limit),
+            ('x' * limit + 'a', 'x' * (limit - 1) + '…'),
+            ('x' * limit + 'b', 'x' * (limit - 1) + '…'),
+            ('界' * limit, '界' * ((limit - 1) // 2) + '…'),
+            ('é' * limit, 'é' * limit),
+            ('é' * (limit + 1), 'é' * (limit - 1) + '…'),
+        ]
+        statefile = Path(self.env['FAKE_TMUX_DIR']) / 'sessions.json'
+        for index, (name, displayed) in enumerate(cases):
+            with self.subTest(name=name):
+                path = self.root / f'long-name-{index}'
+                self.run_cmd(args=['git', 'worktree', 'add', '-qb', name, str(path)], cwd=self.repo)
+                self.dev(args=['tree', '--no-attach', name], cwd=self.repo)
+                state = self.sessions()
+                generated = next(key for key, value in state.items() if value['DTREE_WORKTREE_PATH'] == str(path))
+                state[name] = state.pop(generated)
+                statefile.write_text(json.dumps(state))
+                for scope in ('open', 'all'):
+                    self.choose(path=path, cwd=self.repo, scope=scope)
+                    picker = json.loads(Path(self.env['FZF_LOG']).read_text())
+                    rows = [row.split('\t', 1)[1] for row in picker['rows'][1:]]
+                    selected = next(row for row in rows if row.endswith('  ' + str(path)))
+                    self.assertEqual(re.split(r' {2,}', selected), ['open', displayed, displayed, str(path)])
+                    starts = [picker_format.width(text=row[:row.index(str(self.root))]) for row in rows]
+                    self.assertEqual(len(set(starts)), 1)
+                    self.assertEqual(self.log()[-1], ['attach-session', '-t', '=' + name])
+                self.assertIn('branch: ' + name, self.dev(args=['--list'], cwd=self.repo))
 
     def test_open_exact_attach_and_popup_switch_outside_repo(self):
         self.dev(args=['new', str(self.repo)])

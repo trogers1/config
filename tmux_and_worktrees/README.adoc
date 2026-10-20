@@ -281,8 +281,11 @@ tmux creation order (session id breaks same-second ties). The current session ha
 no special position. Nonempty queries still use standard fzf match ranking.
 
 Columns are space-aligned across both scopes, accounting for wide/combining
-characters, without shortening session names, branches, or paths. Search by
-session, branch, or path, then press Enter. Picker scopes do not scan or display
+characters. SESSION and BRANCH are capped at 32 display cells, including a
+trailing `…` for longer names; paths remain unshortened. Only picker display
+names are shortened: selection still uses the exact session and checkout path,
+and `dev --list` shows full names. Search by the displayed session, branch, or
+path, then press Enter. Picker scopes do not scan or display
 clean/dirty status; OPEN uses tmux's stored branch, while saved/available entries
 use cheap Git branch metadata:
 
