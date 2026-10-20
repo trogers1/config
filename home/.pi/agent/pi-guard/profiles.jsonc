@@ -473,6 +473,18 @@
             "pattern": "python3 tests/**",
             "decision": "allow"
           },
+          {
+            "pattern": "pi --help",
+            "decision": "allow"
+          },
+          {
+            "pattern": "claude --help",
+            "decision": "allow"
+          },
+          {
+            "pattern": "-v *",
+            "decision": "allow"
+          },
         ],
       },
     },
@@ -716,6 +728,14 @@
           },
           {
             "pattern": "-v dev",
+            "decision": "allow"
+          },
+          {
+            "pattern": "pg_dump --version",
+            "decision": "allow"
+          },
+          {
+            "pattern": "psql --version",
             "decision": "allow"
           },
         ],
@@ -1004,6 +1024,18 @@
       "emoji": "🔥",
       "extends": ["mcp", "ruleset:git", "builtin:git-full"],
       "color": "red",
+      "tools": {
+        "bash": [
+          {
+            "pattern": "CI=true npm test -- *",
+            "decision": "allow"
+          },
+          {
+            "pattern": "CI=true npm run test:watch -- *",
+            "decision": "allow"
+          }
+        ]
+      },
     },
   },
 }
