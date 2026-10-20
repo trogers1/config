@@ -610,7 +610,16 @@
           // dev writes locks, recovery records, and atomic-replacement temp files.
           "~/.local/state/dev",
         ],
-        "kernelUnenforcedProtectedPaths": ["**/.env*", "**/.git", "**/.git/**"],
+        // Full kernel waivers, not Git-only or read-only exceptions: approved
+        // child processes can read these files and write within writable roots.
+        // Direct tool/path requests remain protected by the permission gate.
+        "kernelUnenforcedProtectedPaths": [
+          "**/.env*",
+          "**/.git",
+          "**/.git/**",
+          "**/.npmrc",
+          "**/*.tfvars",
+        ],
       },
       "tools": {
         "bash": [

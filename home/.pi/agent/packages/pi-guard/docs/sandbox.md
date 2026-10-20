@@ -226,7 +226,19 @@ as Git metadata. A profile may leave an exact protected deny gate-only:
 
 Every waiver must exactly match an effective protected deny pattern. It does
 not relax the permission gate, and `/sandbox` reports it as a kernel coverage
-waiver. Keep waivers minimal.
+waiver. This is a **full read/write kernel waiver**, not a read-only or Git-only
+exception: every approved process and its descendants can read matching contents
+and potentially write matching files within otherwise writable roots. Direct
+read/write/edit requests and analyzable Bash path references remain gate-protected;
+opaque child-process access is no longer kernel-denied by that protected rule.
+Other sandbox restrictions still apply. Waivers inherit into child profiles unless
+explicitly overwritten. Keep waivers exact and minimal and approve that tradeoff
+before using them for implicitly accessed files such as `.npmrc` or `*.tfvars`.
+
+If Git inventory fails with a protected-path error, its status is unknown, not
+clean. Do not hide the error by excluding files or ignoring the failed command.
+A profile owner can choose an explicit waiver after reviewing the above tradeoff;
+a workflow must otherwise stop and report the denied access.
 
 ### Git mutation compositions
 
