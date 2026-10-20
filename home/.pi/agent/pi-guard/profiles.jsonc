@@ -1001,7 +1001,13 @@
     "mcp-committer": {
       "description": "MCP git-commit capable",
       "emoji": "✍️",
-      "extends": ["mcp", "ruleset:git-commit", "ruleset:git-refs"],
+      // The command-only git-commit rule set does not grant sandbox writes
+      // to a linked worktree's shared metadata outside its startup directory.
+      "extends": ["mcp", "builtin:committer", "ruleset:git-refs"],
+      "sandbox": {
+        // Preserve MCP networking; builtin:committer otherwise selects deny.
+        "network": "allow",
+      },
       "color": "yellow",
     },
     "mcp-allow-asks": {

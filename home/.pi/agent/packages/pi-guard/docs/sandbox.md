@@ -228,6 +228,21 @@ Every waiver must exactly match an effective protected deny pattern. It does
 not relax the permission gate, and `/sandbox` reports it as a kernel coverage
 waiver. Keep waivers minimal.
 
+### Git mutation compositions
+
+`builtin:committer` and `builtin:git-full` include writable Git metadata roots
+(`/**/.git` and descendants), so Git can update a linked worktree's index,
+objects, and refs even when the shared `.git` directory is outside startup CWD.
+Direct metadata access remains protected at the permission gate; these roots do
+not open sibling checkout files. Explicit denies and subagent scopes still apply.
+
+`ruleset:git-commit` and `ruleset:git-refs` add command permissions, not those
+sandbox roots. A custom composition that needs linked-worktree mutations should
+inherit `builtin:committer` (or `builtin:git-full`), rather than only the command
+rule sets. Remember that sandbox scalars compose too: `builtin:committer` selects
+`network: "deny"`, so a network-enabled composition must explicitly retain
+`network: "allow"` if that is its intended posture.
+
 ### Subagent scopes
 
 When `PI_SUBAGENT_PERMISSIBLE_GLOBS` is present, its normalized roots narrow

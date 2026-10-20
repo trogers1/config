@@ -81,7 +81,11 @@ function fixture() {
 }
 
 function runGit(cwd: string, args: string[]): string {
-  const result = spawnSync("git", args, { cwd, encoding: "utf8" });
+  const result = spawnSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    timeout: 10_000,
+  });
   if (result.status !== 0) {
     throw new Error(
       `git ${args.join(" ")} failed: ${result.stderr || result.stdout}`,
@@ -92,7 +96,7 @@ function runGit(cwd: string, args: string[]): string {
 
 function linkedWorktreeFixture(): { main: string; worktree: string } {
   const root = fs.mkdtempSync(
-    path.join(os.tmpdir(), `pi-sandbox-git-${crypto.randomUUID()}`),
+    path.join(import.meta.dirname, ".linked-worktree-"),
   );
   tempDirectories.push(root);
   const main = path.join(root, "main");
@@ -1210,6 +1214,128 @@ func main() {
       await new Promise((resolve) => setTimeout(resolve, 100));
       expect(fs.existsSync(path.join(root, "outside", filename))).toBe(false);
     },
+  );
+
+  it.each(["builtin:committer", "builtin:git-full"])(
+    "%s stages and commits in a linked worktree without opening its sibling checkout",
+    async (profile) => {
+      const { main, worktree } = linkedWorktreeFixture();
+      const originalMainHead = runGit(main, ["rev-parse", "HEAD"]);
+      const originalTopicHead = runGit(worktree, ["rev-parse", "HEAD"]);
+      fs.writeFileSync(path.join(worktree, "change.txt"), "linked change\n");
+      fs.writeFileSync(
+        path.join(worktree, ".npmrc"),
+        "//registry.example.test/:_authToken=secret\n",
+      );
+      // No user configuration: exercise only the portable shipped policies.
+      process.env.PI_GUARD_PROFILE_CONFIG = path.join(worktree, "absent.jsonc");
+      delete process.env.PI_SUBAGENT_PROFILE;
+      delete process.env.PI_SUBAGENT_PERMISSIBLE_GLOBS;
+      const previousCwd = process.cwd();
+      const harness = (() => {
+        try {
+          // Both the gate's immutable startup directory and Bash's cwd must be
+          // the linked checkout, not the package directory running Vitest.
+          process.chdir(worktree);
+          return createExtensionHarness({
+            contextCwd: worktree,
+            hasUI: false,
+            flags: new Map([["guard-profile", profile]]),
+          });
+        } finally {
+          process.chdir(previousCwd);
+        }
+      })();
+      await harness.start();
+      try {
+        expect(harness.errors).toEqual([]);
+        // Metadata access must not change command tiers. Do not execute a push.
+        const push = await harness.callTool({
+          toolName: "bash",
+          input: { command: "git push", timeout: 10 },
+        });
+        expect(push?.block === true).toBe(profile === "builtin:committer");
+        // Retain dependency guards, protected metadata/secrets, and outside-
+        // workspace asks (blocked without a UI).
+        for (const command of [
+          "npm install unexpected-package",
+          "git add .npmrc",
+          "cat .git",
+          `printf blocked > ${JSON.stringify(path.join(main, "outside-marker"))}`,
+        ]) {
+          expect(
+            await harness.callTool({
+              toolName: "bash",
+              input: { command, timeout: 10 },
+            }),
+            command,
+          ).toMatchObject({ block: true });
+        }
+        for (const command of [
+          "git add change.txt",
+          "git commit -m 'linked sandbox commit'",
+        ]) {
+          const gate = await harness.callTool({
+            toolName: "bash",
+            input: { command, timeout: 10 },
+          });
+          expect(gate?.block, gate?.reason).not.toBe(true);
+          const result = await harness.executeTool({
+            name: "bash",
+            params: { command, timeout: 10 },
+          });
+          expect(exitCodeFrom({ result }), JSON.stringify(result)).toBe(0);
+        }
+        expect(runGit(worktree, ["rev-parse", "HEAD^"])).toBe(
+          originalTopicHead,
+        );
+        expect(runGit(worktree, ["show", "HEAD:change.txt"])).toBe(
+          "linked change",
+        );
+        expect(
+          runGit(worktree, ["status", "--porcelain", "--", "change.txt"]),
+        ).toBe("");
+        expect(runGit(main, ["rev-parse", "HEAD"])).toBe(originalMainHead);
+
+        // User Bash shares the real sandbox but bypasses the LLM command gate.
+        // Probe opaque child-process effects there to prove metadata grants do
+        // not open sibling checkout files or waive protected secret reads.
+        for (const source of [
+          `require('fs').writeFileSync(${JSON.stringify(path.join(main, "outside-marker"))}, 'escaped')`,
+          "require('fs').writeFileSync('disclosed', require('fs').readFileSync('.npmrc'))",
+        ]) {
+          const command = node({ source });
+          const userBash = await harness.callUserBash({
+            cwd: worktree,
+            command,
+            excludeFromContext: false,
+          });
+          if (
+            !userBash ||
+            !("operations" in userBash) ||
+            !userBash.operations
+          ) {
+            throw new Error(
+              "Git mutation profile did not provide sandbox operations",
+            );
+          }
+          expect(
+            (
+              await userBash.operations.exec(command, worktree, {
+                onData: () => undefined,
+                timeout: 10,
+              })
+            ).exitCode,
+          ).not.toBe(0);
+        }
+        expect(fs.existsSync(path.join(main, "outside-marker"))).toBe(false);
+        expect(fs.existsSync(path.join(worktree, "disclosed"))).toBe(false);
+        expect(harness.errors).toEqual([]);
+      } finally {
+        await harness.shutdown();
+      }
+    },
+    30_000,
   );
 
   it("allows a committer rebase from a linked worktree whose shared metadata is elsewhere", async () => {
