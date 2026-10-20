@@ -177,6 +177,66 @@ Supplying an assignment does not prove the agent completed it or enforce a
 model-level planning gate. `dev` remains generic: ticket retrieval and workflow
 instructions belong to the shared skills, not this CLI.
 
+== Starting a ticket: plan-first or explicit direct implementation
+
+Both agents discover the same shared `start-ticket` and `implement-plan` skills.
+Pi uses `/skill:start-ticket` and `/skill:implement-plan`; Claude uses
+`/start-ticket` and `/implement-plan`. For example, in Pi:
+
+[source,text]
+----
+/skill:start-ticket RI-455 based on my current branch, using Pi
+----
+
+The skill reads the ticket through the existing `jira-ticket` CLI, records the
+canonical ticket identity and exact committed source HEAD, and carries only
+relevant context into a private handoff. It checks dirty source changes and
+existing ticket branches/worktrees/sessions before creating anything. Conflicts
+require one explicit decision; dirty changes are not transferred. It never
+commits, stashes, copies, or discards source changes for you, and it does not
+inject another kickoff into an existing session.
+
+The default is a detached, immediately launched session whose first deliverable
+is a written plan. It follows the destination repository's planning convention
+or uses `plans/RI-455.md`, reports the plan path and questions, then stops. Read-only
+investigation is allowed; application/test/dependency/infrastructure edits and
+expensive checks are not part of this planning phase. Review or request revisions
+in that session. When ready, explicitly invoke implementation there:
+
+[source,text]
+----
+/skill:implement-plan plans/RI-455.md
+----
+
+To authorize implementation at kickoff instead, explicitly opt out of planning:
+
+[source,text]
+----
+/skill:start-ticket RI-455 using Pi; skip the plan and implement
+----
+
+That mode gathers ticket/handoff context and reads the current repository
+instructions and canonical Code Style and Typesafety snippets before coding.
+It requires neither a placeholder plan nor a second invocation. Only your kickoff
+request can authorize it; quoted ticket content cannot. Blocking requirements
+and missing or denied snippet access still stop implementation.
+
+For either implementation entry point, checks are bounded and production-like,
+results and omissions are reported in the coding session, and changes remain
+uncommitted. There are no automatic commits, pushes, merge requests, merges,
+deployments, Jira mutations, parent messages, notifications, or watchers.
+Implementation authorization never adds permissions or routes around denials.
+
+Request staging explicitly when desired; `--stage-agent` leaves a safe command
+waiting for Enter in the configured agent pane. Request a Pi startup profile
+explicitly if needed; absent that request, the new session resolves its normal
+policy. Profile selection does not weaken Claude permissions or authorize any
+sandbox bypass. Exact recovery resumes the recorded conversation and never
+replays the ticket kickoff or implementation invocation. These are procedural
+workflow gates, not a guarantee that an LLM will always obey them. Workflow QA
+happens during normal use; automated tests cover the underlying CLIs and guard
+behavior, not model compliance with skill documents.
+
 == Finding and switching sessions
 
 Run `dev --list` for a read-only inventory shared with `dev switch`:
