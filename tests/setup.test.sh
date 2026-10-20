@@ -91,6 +91,14 @@ mkdir -p "$HOOK_BIN"
 cat >"$HOOK_BIN/tmux" <<'EOF'
 #!/usr/bin/env bash
 case "$1" in
+  new-session|new-window)
+    counter="$HOME/.setup-test-pane-counter"
+    count=0
+    if [ -f "$counter" ]; then read -r count <"$counter"; fi
+    count=$((count + 1))
+    printf '%s\n' "$count" >"$counter"
+    printf '%%%s\n' "$count"
+    ;;
   display-message)
     case "${!#}" in
       '#{pane_id}') echo '%1' ;;

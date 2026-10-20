@@ -23,15 +23,14 @@ Commands:
                               Connect to open sessions, exactly resume one saved
                               session, or run dev new for an available worktree.
                               Esc/Ctrl-C cancels without changing sessions.
-  new [--agent <name>] [path]
+  new [launch options] [path]
                               Open or create a dev tmux session for a path.
-  open [path]                Alias for `dev new`.
-  tree [--no-attach] [--agent <name>] [--stage-agent] <branch> [base]
+  open [launch options] [path]
+                              Alias for `dev new`.
+  tree [launch options] <branch> [base]
                               Create or open a worktree and its dev session.
                               A new branch starts from [base], or the current
-                              branch when omitted. --no-attach never prompts or
-                              attaches and prints only the worktree path.
-                              --stage-agent types the agent command unrun.
+                              branch when omitted.
   tree init [branch]         Re-run a linked worktree's startup script.
   close [branch|path]        Close a dev tmux session, retaining its checkout.
   kill [branch|path] [--force] [--yes]
@@ -43,6 +42,18 @@ Commands:
   home                       Change this shell to the active session's root.
                               Requires the installed zsh shell integration.
   help                       Show this help.
+
+Launch options (new, open, tree):
+  --agent <name>             Select the configured agent for a new session.
+  --prompt TEXT             Initial assignment for a fresh Pi or Claude session.
+  --prompt-file PATH        UTF-8 assignment file; exclusive with --prompt.
+  --agent-profile NAME      Pi-only pi-guard startup profile, with or without
+                              a prompt. Requires an enabled unfiltered local
+                              pi-guard package in Pi user settings.
+                              Prompt/profile options fail for existing sessions
+                              or unsupported configured launch commands.
+  --stage-agent             Type the agent command without starting it.
+  --no-attach               Never prompt or attach; print only the checkout path.
 
 EOF
 }

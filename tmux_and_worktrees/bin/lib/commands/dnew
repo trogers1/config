@@ -4,50 +4,22 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/../tmux_worktree.sh"
 
-nvim_command=""
-agent=""
-target_path="$(pwd)"
+. "$SCRIPT_DIR/../dev_launch.sh"
 
-while [ "$#" -gt 0 ]; do
-    case "$1" in
-        --help|-h)
-            echo "Usage: dev new [--agent <name>] [--nvim-command <command>] [path]"
-            echo "       dev open [arguments]  (alias for dev new)"
-            exit 0
-            ;;
-        --nvim-command)
-            if [ "$#" -lt 2 ]; then
-                echo "Missing value for --nvim-command"
-                exit 1
-            fi
-            nvim_command="$2"
-            shift 2
-            ;;
-        --agent)
-            if [ "$#" -lt 2 ] || [ -z "$2" ]; then
-                echo "Missing value for --agent"
-                exit 1
-            fi
-            agent="$2"
-            shift 2
-            ;;
-        --)
-            shift
-            break
-            ;;
-        -*)
-            echo "Unknown option: $1"
-            exit 1
-            ;;
-        *)
-            target_path="$1"
-            shift
-            ;;
-    esac
-done
+usage() {
+    echo 'Usage: dev new [--agent <name>] [--stage-agent] [--no-attach]'
+    echo '               [--prompt TEXT | --prompt-file PATH] [--agent-profile NAME] [--nvim-command <command>] [--] [path]'
+    echo '       dev open [arguments]  (alias for dev new)'
+}
 
-if [ "$#" -gt 0 ]; then
-    target_path="$1"
+tmux_worktree_parse_launch_options new "$@"
+if [ "${#positionals[@]}" -gt 1 ]; then
+    usage >&2
+    exit 1
+fi
+target_path="${positionals[0]:-$(pwd)}"
+if [ "$no_attach" = true ]; then
+    exec 3>&1 1>&2
 fi
 
 if [ ! -d "$target_path" ]; then
@@ -58,18 +30,36 @@ fi
 tmux_worktree_require_tmux
 
 project_path="$(tmux_worktree_resolve_project_path "$target_path")"
+launch_context_args=(--cwd="$project_path")
 preferred_session_name="$(tmux_worktree_preferred_local_session_name "$project_path")"
 session_name="$(tmux_worktree_find_session_for_worktree_path "$project_path" || true)"
-workspace_decision="$(tmux_worktree_registry prepare-workspace "$project_path" false)"
+tmux_worktree_reject_existing_launch "$session_name"
+if [ -z "$session_name" ]; then
+    windows="$(tmux_worktree_dev_config_windows_for_path "$project_path" "$agent")"
+    session_agent="$(tmux_worktree_dev_config_windows_for_path "$project_path" "$agent" --selected-agent)"
+    tmux_worktree_validate_launch
+fi
+workspace_decision="$(tmux_worktree_registry prepare-workspace "$project_path" "$no_attach")"
+if [ -z "$session_name" ]; then
+    tmux_worktree_prepare_launch
+fi
+
+finish() {
+    tmux_worktree_registry commit-workspace "$workspace_decision" "$project_path"
+    if [ "$no_attach" = true ]; then
+        printf '%s\n' "$project_path" >&3
+    else
+        tmux_worktree_attach_or_switch "$session_name"
+    fi
+}
 
 if [ -n "$session_name" ]; then
     tmux_worktree_set_session_metadata "$session_name" "$project_path"
     tmux_worktree_registry adopt "$session_name" "$project_path" ""
-    if [ -n "$agent" ]; then
-        echo "Reusing session $session_name; --agent $agent applies only to new sessions (dev close it to switch)" >&2
+    if [ -n "$agent" ] || [ "$stage_agent" = true ]; then
+        echo "Reusing session $session_name; --agent and --stage-agent apply only to new sessions (dev close it to switch)" >&2
     fi
-    tmux_worktree_registry commit-workspace "$workspace_decision" "$project_path"
-    tmux_worktree_attach_or_switch "$session_name"
+    finish
     exit 0
 fi
 
@@ -78,8 +68,5 @@ if tmux has-session -t "$session_name" 2>/dev/null; then
     session_name="$(tmux_worktree_make_session_name "${preferred_session_name}-$(tmux_worktree_path_checksum "$project_path")")"
 fi
 
-windows="$(tmux_worktree_dev_config_windows_for_path "$project_path" "$agent")"
-session_agent="$(tmux_worktree_dev_config_windows_for_path "$project_path" "$agent" --selected-agent)"
-tmux_worktree_create_standard_session "$session_name" "$project_path" "" "$nvim_command" "$windows" false "$session_agent"
-tmux_worktree_registry commit-workspace "$workspace_decision" "$project_path"
-tmux_worktree_attach_or_switch "$session_name"
+tmux_worktree_create_standard_session "$session_name" "$project_path" "" "$nvim_command" "$windows" "$stage_agent" "$session_agent" "$launch_manifest"
+finish

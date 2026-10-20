@@ -3,6 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/../tmux_worktree.sh"
+. "$SCRIPT_DIR/../dev_launch.sh"
 
 log() {
     printf "[dev tree] %s\n" "$*"
@@ -10,7 +11,8 @@ log() {
 
 usage() {
     cat <<'EOF'
-Usage: dev tree [--no-attach] [--agent <name>] [--stage-agent] [--] [branch] [base-branch]
+Usage: dev tree [--no-attach] [--agent <name>] [--stage-agent]
+                [--prompt TEXT | --prompt-file PATH] [--agent-profile NAME] [--] [branch] [base-branch]
        dev tree init [branch]
 
   --no-attach      Never prompt or attach. Create (or reuse) the worktree and
@@ -22,6 +24,14 @@ Usage: dev tree [--no-attach] [--agent <name>] [--stage-agent] [--] [branch] [ba
                    window opens as an empty shell.
   --stage-agent    Type the agent's command into its window without running
                    it, so it starts when you press Enter there.
+  --agent-profile NAME
+                   Pi-only pi-guard starting profile (with or without a prompt).
+                   Requires an enabled unfiltered user local pi-guard package.
+  --prompt TEXT   Initial assignment for a fresh Pi or Claude session.
+  --prompt-file PATH
+                   Read a UTF-8 initial assignment (exclusive with --prompt).
+                   Prompt launches require a supported agent command and fail
+                   if the destination already has a session.
 EOF
 }
 
@@ -129,48 +139,7 @@ if [ "${1:-}" = "init" ]; then
     exit 0
 fi
 
-no_attach=false
-agent=""
-stage_agent=false
-positionals=()
-while [ "$#" -gt 0 ]; do
-    case "$1" in
-        --no-attach)
-            no_attach=true
-            shift
-            ;;
-        --agent)
-            if [ "$#" -lt 2 ] || [ -z "$2" ]; then
-                echo "[dev tree] Missing value for --agent" >&2
-                exit 1
-            fi
-            agent="$2"
-            shift 2
-            ;;
-        --stage-agent)
-            stage_agent=true
-            shift
-            ;;
-        --)
-            shift
-            positionals+=("$@")
-            break
-            ;;
-        -h|--help)
-            usage
-            exit 0
-            ;;
-        -*)
-            echo "[dev tree] Unknown option: $1" >&2
-            usage >&2
-            exit 1
-            ;;
-        *)
-            positionals+=("$1")
-            shift
-            ;;
-    esac
-done
+tmux_worktree_parse_launch_options tree "$@"
 
 if [ "${#positionals[@]}" -gt 2 ]; then
     usage >&2
@@ -232,9 +201,16 @@ completed=false
 trap '
     status=$?
     if [ "$completed" = false ] && [ "$created_worktree" = true ]; then
-        git -C "$repo_root" worktree remove --force "$wt_path" || { echo "Failed to roll back new worktree: $wt_path" >&2; status=1; }
-        if [ "$created_branch" = true ]; then
-            git -C "$repo_root" branch -D "$branch" || { echo "Failed to roll back new branch: $branch" >&2; status=1; }
+        # Session creation restores its registry checkpoint on reversible
+        # failures. A retained record (or an unreadable registry) means agent
+        # dispatch may have occurred: never force-remove its checkout.
+        if retained_intent="$(tmux_worktree_registry checkpoint "$wt_path")" && [ "$retained_intent" = null ]; then
+            git -C "$repo_root" worktree remove --force "$wt_path" || { echo "Failed to roll back new worktree: $wt_path" >&2; status=1; }
+            if [ "$created_branch" = true ]; then
+                git -C "$repo_root" branch -D "$branch" || { echo "Failed to roll back new branch: $branch" >&2; status=1; }
+            fi
+        else
+            echo "Preserved worktree and recovery intent after possible agent dispatch: $wt_path" >&2
         fi
     fi
     exit "$status"
@@ -252,7 +228,37 @@ if [ "$no_attach" = true ] && [ -n "$existing_wt_path" ] &&
     exit 1
 fi
 
+# Reject prompt injection into a live destination before workspace decisions,
+# primary-checkout conversion, adoption, or metadata updates.
+preflight_path="${existing_wt_path:-$default_wt_path}"
+if [ "$existing_wt_path" = "$repo_root" ] && [ "$current_branch" = "$branch" ]; then
+    # Conversion launches in the linked destination, not the primary checkout.
+    # Validate its selected ref/settings before artifacts or primary checkout.
+    preflight_path="$default_wt_path"
+fi
+preflight_session="$(tmux_worktree_find_session_for_worktree_path "$preflight_path" || true)"
+tmux_worktree_reject_existing_launch "$preflight_session"
+launch_context_args=(--cwd="$preflight_path")
+if tmux_worktree_has_launch_options; then
+    if [ "$preflight_path" = "$existing_wt_path" ] || [ -d "$preflight_path" ]; then
+        windows="$(tmux_worktree_dev_config_windows_for_path "$preflight_path" "$agent")"
+        session_agent="$(tmux_worktree_dev_config_windows_for_path "$preflight_path" "$agent" --selected-agent)"
+    else
+        preflight_ref="$base_branch"
+        if git -C "$repo_root" show-ref --verify --quiet "refs/heads/$branch"; then
+            preflight_ref="refs/heads/$branch"
+        fi
+        launch_context_args+=(--settings-repo="$repo_root" --settings-ref="$preflight_ref")
+        windows="$(tmux_worktree_dev_config_windows_for_ref "$repo_root" "$preflight_ref" "$agent")"
+        session_agent="$(tmux_worktree_dev_config_windows_for_ref "$repo_root" "$preflight_ref" "$agent" --selected-agent)"
+    fi
+    tmux_worktree_validate_launch
+fi
+
 workspace_decision="$(tmux_worktree_registry prepare-workspace "branch $branch" "$no_attach")"
+if [ -n "$windows" ]; then
+    tmux_worktree_prepare_launch
+fi
 
 # A branch checked out in the primary checkout cannot also be added as a
 # worktree. Offer to move the primary checkout to its default branch first.
@@ -283,7 +289,6 @@ if [ -n "$existing_wt_path" ]; then
     wt_path="$existing_wt_path"
 else
     wt_path="$default_wt_path"
-    mkdir -p "$worktree_root"
 
     if [ -d "$wt_path" ]; then
         if [ "$no_attach" = true ]; then
@@ -336,6 +341,11 @@ else
 
         windows="$(tmux_worktree_dev_config_windows_for_ref "$repo_root" "$start_ref" "$agent")"
         session_agent="$(tmux_worktree_dev_config_windows_for_ref "$repo_root" "$start_ref" "$agent" --selected-agent)"
+        launch_context_args=(--cwd="$wt_path" --settings-repo="$repo_root" --settings-ref="$start_ref")
+        # Revalidate the actual chosen ref (a fetched remote may differ from
+        # the initial base), including command serialization, before checkout.
+        tmux_worktree_prepare_launch
+        mkdir -p "$worktree_root"
         git -C "$repo_root" worktree add "${add_args[@]}"
         created_worktree=true
         if [ "${add_args[0]}" = -b ] || [ "${add_args[0]}" = --track ]; then
@@ -348,6 +358,7 @@ preferred_session_name="$(tmux_worktree_preferred_worktree_session_name "$repo_n
 session_name="$(tmux_worktree_find_session_for_worktree_path "$wt_path" || true)"
 
 if [ -n "$session_name" ]; then
+    tmux_worktree_reject_existing_launch "$session_name"
     tmux_worktree_set_session_metadata "$session_name" "$wt_path" "$branch"
     tmux_worktree_registry adopt "$session_name" "$wt_path" "$branch"
     if [ -n "$agent" ] || [ "$stage_agent" = true ]; then
@@ -366,11 +377,13 @@ fi
 if [ -z "$windows" ]; then
     windows="$(tmux_worktree_dev_config_windows_for_path "$wt_path" "$agent")"
     session_agent="$(tmux_worktree_dev_config_windows_for_path "$wt_path" "$agent" --selected-agent)"
+    launch_context_args=(--cwd="$wt_path")
+    tmux_worktree_prepare_launch
 fi
 
 if [ "$created_worktree" = true ]; then
     run_startup_script "$repo_root" "$wt_path"
 fi
 
-tmux_worktree_create_standard_session "$session_name" "$wt_path" "$branch" "" "$windows" "$stage_agent" "$session_agent"
+tmux_worktree_create_standard_session "$session_name" "$wt_path" "$branch" "" "$windows" "$stage_agent" "$session_agent" "$launch_manifest"
 finish "$session_name"

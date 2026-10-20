@@ -96,6 +96,87 @@ Session reuse and cleanup are path-based first: `dev new`, `dev tree`,
 `DTREE_WORKTREE_PATH` before falling back to the preferred human-readable
 session name.
 
+== Fresh sessions with initial assignments
+
+`dev new`, `dev open`, and `dev tree` accept mutually exclusive
+`--prompt <text>` and `--prompt-file <path>` options. These always start a
+fresh Pi or Claude conversation; they never continue an unrelated conversation.
+`--no-attach` and `--stage-agent` are also available on all three commands.
+Launch is immediate unless `--stage-agent` is supplied.
+
+[source,sh]
+----
+# Use an exact, already-verified source commit rather than a moving branch.
+source_commit="$(git rev-parse HEAD)"
+dev tree --no-attach --agent pi --prompt-file ./handoff.md -- RI-455 "$source_commit"
+
+# Prepare an inert launch; press Enter in the configured agent pane to start.
+dev open --no-attach --agent claude --stage-agent --prompt 'Inspect the checkout and propose a plan.' .
+----
+
+Prompt-bearing launches support configured commands `pi`, `claude`, and the
+bundled `claude --continue || claude`. The bundled Claude expression is replaced
+with one fresh invocation, without a continue attempt or fallback retry. Other
+configured wrappers, flags, and shell expressions fail explicitly before a new
+checkout is created. Launches without prompt options retain their existing
+configured-command behavior, including the Claude continue/fallback command.
+A prompt requires one enabled, supported agent window and an installed executable;
+unknown agents do not silently produce an empty shell for this launch mode.
+An already-open session rejects prompt options rather than ignoring them.
+
+The assignment is snapshotted into a unique private directory under
+`${XDG_STATE_HOME:-$HOME/.local/state}/dev/launches`. Directories are `0700` and
+files are `0600`; the published manifest and prompt are validated before launch.
+Deleting or editing the original `--prompt-file` after staging does not change
+the assignment. Missing, empty, invalid UTF-8, or altered durable input fails
+explicitly. Staged shells contain only a safely quoted single-line helper
+command, never the raw prompt. Newlines, Unicode, and shell metacharacters in
+an assignment cannot execute shell commands during staging.
+
+Pi receives its documented `@file` initial input (including Pi's file-context
+framing); Claude receives the snapshot as a positional prompt. Neither adapter
+requires the model to read the state directory through a filesystem tool.
+Native Claude permissions remain unchanged. Without `--agent-profile`, Pi keeps
+its existing automatic profile selection; the launching session's active profile
+is not inherited as a new default. An explicit `--agent-profile <name>` is Pi-only
+and selects pi-guard's initial profile, not a permanent pin. Claude rejects it
+rather than translating it into a native permission mode. The flag works with
+or without a prompt. It is validated before checkout/session creation and again
+when a staged command is executed. Unknown profiles, unavailable integration,
+and conflicting authoritative subagent selection fail explicitly.
+
+The first implementation supports the enabled, unfiltered user-local pi-guard
+package installed by this repository's setup. Project guard overrides, remote
+npm/git installations, extension filters/autoload overrides, ambiguous aliases,
+and non-builtin top-level extension paths are rejected rather than guessed or
+silently enabled. All package declarations must use available explicit local
+paths; bare relative sources and remote package sources are rejected, including
+unrelated packages whose identities cannot be proved safely. Guard extension
+roots with ignore files, package entrypoints, or index entrypoints are also
+rejected because they can hide `guard.ts`. New-worktree preflight rejects committed project
+extensions and relative `PI_GUARD_PROFILE_CONFIG`; an absolute override can be
+validated before that checkout exists. Ordinary unrelated user auto-discovered
+extensions remain supported. No `-e` injection enables a disabled guard.
+See pi-guard's startup-option documentation for exact precedence and later
+profile switching.
+
+A never-attempted staged launch can be recovered with its original assignment.
+Before executing the agent, the helper durably records an attempt. If no exact
+conversation was recorded after an attempt, recovery fails instead of replaying
+the kickoff, even if startup failed. Once a conversation is recorded, recovery
+resumes only that conversation and does not need or replay the kickoff artifacts.
+Exact recovery does not reapply a kickoff's startup-profile override; normal
+session-profile persistence and directory selection govern the resumed process.
+Editor overrides apply only to ordinary editor windows, never an agent-role
+window, even if that agent window is named `nvim` (an intentional role-based
+behavior change).
+Closing sessions does not delete launch artifacts; retain them while a staged
+command depends on them. No automatic artifact garbage collection is provided.
+
+Supplying an assignment does not prove the agent completed it or enforce a
+model-level planning gate. `dev` remains generic: ticket retrieval and workflow
+instructions belong to the shared skills, not this CLI.
+
 == Finding and switching sessions
 
 Run `dev --list` for a read-only inventory shared with `dev switch`:
@@ -474,6 +555,12 @@ From the repository root, after installing bundled package dependencies:
 
 [source,bash]
 ----
+# Narrow launch/recovery or profile checks (each uses its own fake environment):
+DEV_TEST_FOCUSED_ONLY=true bash tests/dev.test.sh
+DEV_TEST_AGENT_PROFILE_ONLY=true bash tests/dev.test.sh
+node tests/generate-agent-config.test.mjs
+
+# Broader regressions (the full dev suite takes about 3–4 minutes):
 bash tests/dev.test.sh
 python3 tests/dev-picker.test.py
 python3 tests/dev-picker.fzf.test.py

@@ -10,6 +10,7 @@ import select
 import shutil
 import signal
 import subprocess
+import sys
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -23,6 +24,7 @@ os.environ["XDG_STATE_HOME"] = str(BASE / "state")
 os.environ["FAKE_TMUX_DIR"] = str(BASE / "tmux")
 FAKE = Path(os.environ["FAKE_TMUX_DIR"])
 (FAKE / "sessions").mkdir(parents=True)
+sys.path.insert(0, str(LIB.parent))
 spec = importlib.util.spec_from_file_location("registry", LIB)
 registry = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(registry)

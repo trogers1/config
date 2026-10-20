@@ -397,21 +397,34 @@ tmux_worktree_create_standard_session() (
     windows="$5"
     stage_agent="${6:-false}"
     selected_agent="${7:-}"
+    launch_manifest="${8:-}"
     agent_pane=""
     agent_enabled=false
     window_kind=""
     window_name=""
     window_command=""
-    first_window_name=""
+    first_pane=""
+    pane_targets=()
+    pane=""
+    pane_index=0
+    dispatched=false
+    kickoff_command=""
     created_first_window=false
     registered=false
     completed=false
     checkpoint=""
 
+    # Validate and substitute the manifest invocation before any tmux or
+    # registry mutation. Recovery supplies a manifest only without an exact
+    # recorded conversation, so an exact resume never replays its assignment.
+    if [ -n "$launch_manifest" ]; then
+        windows="$(printf '%s\n' "$windows" | python3 "$(dirname "${BASH_SOURCE[0]}")/dev_launch.py" windows "$launch_manifest")" || exit 1
+    fi
+
     checkpoint="$(tmux_worktree_registry checkpoint "$worktree_path")"
     trap '
         status=$?
-        if [ "$completed" = false ] && [ "$created_first_window" = true ]; then
+        if [ "$completed" = false ] && [ "$created_first_window" = true ] && [ "$dispatched" = false ]; then
             tmux kill-session -t "$session_name" || { echo "Failed to roll back partial session $session_name" >&2; status=1; }
             if [ "$registered" = true ]; then
                 tmux_worktree_registry restore "$worktree_path" "$checkpoint" || { echo "Failed to restore registry after creation failure: $worktree_path" >&2; status=1; }
@@ -428,42 +441,67 @@ tmux_worktree_create_standard_session() (
     while IFS=$'\t' read -r window_kind window_name window_command; do
         [ -n "$window_name" ] || continue
 
-        if [ -n "$nvim_command" ] && [ "$window_name" = "nvim" ]; then
+        # Editor overrides apply only to ordinary windows, never agent roles
+        # (including exact recovery, which deliberately has no launch manifest).
+        if [ -n "$nvim_command" ] && [ "$window_name" = "nvim" ] && [ "$window_kind" != agent ]; then
             window_command="$nvim_command"
         fi
 
         if [ "$created_first_window" = false ]; then
-            tmux_worktree_registry external tmux new-session -d -s "$session_name" -n "$window_name" -c "$worktree_path"
+            pane="$(tmux_worktree_registry external tmux new-session -d -s "$session_name" -n "$window_name" -c "$worktree_path" -P -F '#{pane_id}')"
             created_first_window=true
+            first_pane="$pane"
             tmux_worktree_set_session_metadata "$session_name" "$worktree_path" "$branch"
-            first_window_name="$window_name"
         else
-            tmux_worktree_registry external tmux new-window -t "$session_name:" -n "$window_name" -c "$worktree_path"
+            pane="$(tmux_worktree_registry external tmux new-window -t "$session_name:" -n "$window_name" -c "$worktree_path" -P -F '#{pane_id}')"
         fi
+        if [[ ! "$pane" =~ ^%[0-9]+$ ]]; then
+            echo "tmux did not return a pane ID for window $window_name" >&2
+            exit 1
+        fi
+        pane_targets+=("$pane")
 
         if [ "$window_kind" = agent ]; then
-            agent_pane="$(tmux display-message -p -t "$session_name:$window_name" '#{pane_id}')"
+            agent_pane="$pane"
             if [ -n "$window_command" ]; then agent_enabled=true; fi
         fi
     done <<<"$windows"
 
     registered=true
-    tmux_worktree_registry register "$session_name" "$worktree_path" "$branch" "$nvim_command" "$stage_agent" "$selected_agent" "$agent_enabled" "$agent_pane"
+    tmux_worktree_registry register "$session_name" "$worktree_path" "$branch" "$nvim_command" "$stage_agent" "$selected_agent" "$agent_enabled" "$agent_pane" "$launch_manifest"
 
+    # Finish all fallible setup before the initial agent dispatch. Pane IDs
+    # avoid tmux's numeric-index and target-pattern interpretation of names.
+    tmux select-window -t "$first_pane"
     while IFS=$'\t' read -r window_kind window_name window_command; do
-        if [ -n "$nvim_command" ] && [ "$window_name" = nvim ]; then window_command="$nvim_command"; fi
+        [ -n "$window_name" ] || continue
+        pane="${pane_targets[$pane_index]}"
+        pane_index=$((pane_index + 1))
+        if [ -n "$nvim_command" ] && [ "$window_name" = nvim ] && [ "$window_kind" != agent ]; then window_command="$nvim_command"; fi
         if [ -z "$window_command" ]; then
             :
-        elif [ "$window_kind" = agent ] && [ "$stage_agent" = true ]; then
-            # Typed at the prompt but not run, so the agent starts only when
-            # someone presses Enter in that window.
-            tmux send-keys -t "$session_name:$window_name" "$window_command"
+        elif [ "$window_kind" = agent ]; then
+            if [ -n "$launch_manifest" ]; then
+                tmux send-keys -t "$pane" -l -- "$window_command"
+            elif [ "$stage_agent" = true ]; then
+                tmux send-keys -t "$pane" "$window_command"
+            fi
+            kickoff_command="$window_command"
         else
-            tmux send-keys -t "$session_name:$window_name" "$window_command" C-m
+            tmux send-keys -t "$pane" "$window_command" C-m
         fi
     done <<<"$windows"
 
-    tmux select-window -t "$session_name:$first_window_name"
+    if [ "$stage_agent" != true ] && [ -n "$kickoff_command" ]; then
+        # A transport error can mean Enter arrived but its acknowledgement did
+        # not. From this point retain session + registry, including hook writes.
+        dispatched=true
+        if [ -n "$launch_manifest" ]; then
+            tmux send-keys -t "$agent_pane" Enter
+        else
+            tmux send-keys -t "$agent_pane" "$kickoff_command" C-m
+        fi
+    fi
     completed=true
 )
 

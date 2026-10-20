@@ -15,7 +15,9 @@ export HOME="$TMP_DIR/home" XDG_STATE_HOME="$TMP_DIR/state"
 mkdir -p "$HOME/bin"
 printf '#!/usr/bin/env bash\nexec "%s" "$@"\n' "$DEV" >"$HOME/bin/dev"
 chmod +x "$HOME/bin/dev"
-"$REPO_DIR/home/.pi/agent/packages/pi-guard-subagents/node_modules/.bin/tsc" -p "$REPO_DIR/tests/dev-session.tsconfig.json"
+if [ "${DEV_TEST_FOCUSED_ONLY:-false}" != true ] && [ "${DEV_TEST_AGENT_PROFILE_ONLY:-false}" != true ]; then
+    "$REPO_DIR/home/.pi/agent/packages/pi-guard-subagents/node_modules/.bin/tsc" -p "$REPO_DIR/tests/dev-session.tsconfig.json"
+fi
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 assert_exists() { [ -e "$1" ] || fail "expected $1 to exist"; }
@@ -48,7 +50,26 @@ for fd in range(3, 64):
 PY
         ;;
 esac
-printf '%s\n' "$*" >>"$dir/log"
+printf '%s\n' "$*" >>"$dir/raw-log"
+# Keep the legacy human-readable log while validating actual pane-ID targets.
+log_args=()
+skip=false
+for arg in "$@"; do
+    if [ "$skip" = true ]; then skip=false; continue; fi
+    case "$arg" in
+        -P) continue ;;
+        -F) skip=true; continue ;;
+        %*)
+            if [ "$1" = send-keys ] || [ "$1" = select-window ]; then
+                [ -f "$dir/panes/$arg" ] || { echo "Unknown pane: $arg" >&2; exit 1; }
+                IFS=$'\t' read -r s w <"$dir/panes/$arg"
+                arg="$s:$w"
+            fi
+            ;;
+    esac
+    log_args+=("$arg")
+done
+printf '%s\n' "${log_args[*]}" >>"$dir/log"
 if [ -f "$dir/fail-once" ] && [ "$(<"$dir/fail-once")" = "$1" ]; then
     rm "$dir/fail-once"
     echo "injected tmux transport failure: $1" >&2
@@ -73,6 +94,24 @@ case "$1" in
         if [ -f "$dir/next-pane" ]; then read -r count <"$dir/next-pane"; fi
         printf '%s\n' "$((count + 1))" >"$dir/next-pane"
         printf '%s\t%s\n' "$target" "$window" >"$dir/panes/%$count"
+        case " $* " in *' -P '*) printf '%%%s\n' "$count" ;; esac
+        ;;
+    send-keys)
+        if [ "${args[${#args[@]} - 1]}" = Enter ] && [ -f "$dir/dispatch-failure" ]; then
+            mode="$(<"$dir/dispatch-failure")"
+            rm "$dir/dispatch-failure"
+            if [ "$mode" != before-enter ]; then
+                # Real hook adapter, writing after the command may have run.
+                printf '{"agent":"pi","session_id":"dispatched","transcript_path":"%s"}' "$DEV_TEST_TRANSCRIPT" |
+                    TMUX=/fake/tmux,111,0 TMUX_PANE="$full_target" python3 "$TEST_REGISTRY_LIB/dev_registry.py" bind pi
+            fi
+            if [ "$mode" = late-commit ]; then
+                chmod a-w "$XDG_STATE_HOME/dev"
+            else
+                echo 'injected uncertain Enter transport failure' >&2
+                exit 1
+            fi
+        fi
         ;;
     display-message)
         pane=""
@@ -137,6 +176,16 @@ unset TMUX TMUX_PANE PI_SUBAGENT_DEPTH DEV_LIFECYCLE_LOCK_FD
 export GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=test@example.com
 export GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=test@example.com
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+
+export TEST_REGISTRY_LIB="$REPO_DIR/tmux_and_worktrees/bin/lib"
+if [ "${DEV_TEST_AGENT_PROFILE_ONLY:-false}" = true ]; then
+    python3 "$REPO_DIR/tests/dev-agent-profile.test.py"
+    exit
+fi
+if [ "${DEV_TEST_FOCUSED_ONLY:-false}" = true ]; then
+    python3 "$REPO_DIR/tests/dev-launch-blockers.test.py"
+    exit
+fi
 
 session_env() { cat "$FAKE_TMUX_DIR/sessions/$1/$2"; }
 reset_log() { : >"$FAKE_TMUX_DIR/log"; }
@@ -529,6 +578,7 @@ pids=()
 export TEST_REGISTRY_LIB="$REPO_DIR/tmux_and_worktrees/bin/lib"
 python3 - "$REGISTRY" <<'PY' &
 import importlib.util, json, os, sys, time
+sys.path.insert(0, os.environ["TEST_REGISTRY_LIB"])
 spec = importlib.util.spec_from_file_location("dev_registry", os.path.join(os.environ["TEST_REGISTRY_LIB"], "dev_registry.py"))
 registry = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(registry)
@@ -755,5 +805,109 @@ unrelated_pid=$!
 DEV_INITIALIZER_PID="$unrelated_pid" "$DEV" open "$DEV_TEST_LOCK_PLAIN" >/dev/null
 kill "$unrelated_pid"
 wait "$unrelated_pid" 2>/dev/null || true
+# Phase 1 fresh-launch inputs use public entrypoints, real Git and the same
+# fake tmux transport. Keep the legacy no-prompt assertions above unchanged.
+export XDG_STATE_HOME="$TMP_DIR/prompt-state" FAKE_TMUX_DIR="$TMP_DIR/prompt-tmux"
+export FAKE_TMUX_SERVER_ID=444
+mkdir -p "$FAKE_TMUX_DIR/sessions"
+REGISTRY="$XDG_STATE_HOME/dev/sessions.json"
+CHECK="$REPO_DIR/tests/fixtures/dev-launch-check.py"
+# Preflight checks executable availability, but fake tmux never starts agents.
+for agent in pi claude; do ln -s /usr/bin/false "$FAKE_BIN/$agent"; done
+PROMPT_REPO="$TMP_DIR/prompt-repo"
+config_repo prompt-repo '{"defaultAgent":"pi","agents":{"pi":"pi","claude":"claude --continue || claude"},"windows":[{"name":"cockpit","agent":true},{"name":"shell"}]}'
+printf '%s\n' '--hostile λ "quoted"' '$(touch SHOULD_NOT_RUN); not a shell command' >"$TMP_DIR/initial-prompt"
+printf ' \n\t' >"$TMP_DIR/empty-prompt"
+printf '\377' >"$TMP_DIR/invalid-utf8"
+printf 'hello\0world' >"$TMP_DIR/nul-prompt"
+printf 'unreadable assignment\n' >"$TMP_DIR/unreadable-prompt"
+chmod a-r "$TMP_DIR/unreadable-prompt"
+mkfifo "$TMP_DIR/prompt-fifo"
+reject_prompt() {
+    local entry="$1"; shift
+    reset_log
+    case "$entry" in
+        tree) if (cd "$PROMPT_REPO" && "$DEV" tree --no-attach "$@" rejected >/dev/null 2>"$TMP_DIR/err"); then fail 'invalid prompt tree succeeded'; fi ;;
+        *) if "$DEV" "$entry" --no-attach "$@" "$PROMPT_REPO" >/dev/null 2>"$TMP_DIR/err"; then fail "invalid prompt $entry succeeded"; fi ;;
+    esac
+    [ -s "$TMP_DIR/err" ] || fail 'prompt preflight failed without explanation'
+    if grep -Eq '^(new-session|new-window|send-keys|attach-session|switch-client)' "$FAKE_TMUX_DIR/log"; then fail 'invalid prompt mutated tmux'; fi
+    assert_absent "$TMP_DIR/prompt-repo-worktrees/rejected"
+    if git -C "$PROMPT_REPO" show-ref --verify --quiet refs/heads/rejected; then fail 'invalid prompt created a branch'; fi
+    assert_absent "$XDG_STATE_HOME/dev/launches"
+}
+for entry in new open tree; do
+    reject_prompt "$entry" --prompt one --prompt-file "$TMP_DIR/initial-prompt"
+    reject_prompt "$entry" --prompt ''
+    reject_prompt "$entry" --prompt-file "$TMP_DIR/missing-prompt"
+    reject_prompt "$entry" --prompt-file "$TMP_DIR/empty-prompt"
+    reject_prompt "$entry" --prompt-file "$TMP_DIR/unreadable-prompt"
+    reject_prompt "$entry" --prompt-file "$TMP_DIR/invalid-utf8"
+    reject_prompt "$entry" --prompt-file "$TMP_DIR/nul-prompt"
+    reject_prompt "$entry" --prompt-file "$TMP_DIR"
+    reject_prompt "$entry" --prompt-file "$TMP_DIR/prompt-fifo"
+    reject_prompt "$entry" --agent bogus --prompt assignment
+    reject_prompt "$entry" --agent-profile deferred --prompt assignment
+done
+mv "$FAKE_BIN/pi" "$FAKE_BIN/pi-unavailable"
+PATH="$FAKE_BIN:/usr/bin:/bin" reject_prompt tree --prompt assignment
+mv "$FAKE_BIN/pi-unavailable" "$FAKE_BIN/pi"
+# Custom shell expressions remain valid without prompts, but cannot silently
+# acquire fresh-input semantics. All rejected configs fail before Git mutation.
+for config in \
+    '{"defaultAgent":"pi","agents":{"pi":"pi --offline"},"windows":[{"name":"cockpit","agent":true}]}' \
+    '{"defaultAgent":"claude","agents":{"claude":"env claude"},"windows":[{"name":"cockpit","agent":true}]}' \
+    '{"windows":[{"name":"shell"}]}' \
+    '{"defaultAgent":"pi","agents":{"pi":"pi"},"windows":[{"name":"cockpit","agent":true},{"name":"cockpit"}]}'
+do
+    printf '%s\n' "$config" >"$PROMPT_REPO/devConfig.jsonc"
+    git -C "$PROMPT_REPO" add . && git -C "$PROMPT_REPO" commit -qm 'invalid launch config'
+    reject_prompt tree --prompt assignment
+done
+printf '%s\n' '{"defaultAgent":"pi","agents":{"pi":"pi","claude":"claude --continue || claude"},"windows":[{"name":"cockpit","agent":true},{"name":"shell"}]}' >"$PROMPT_REPO/devConfig.jsonc"
+git -C "$PROMPT_REPO" add . && git -C "$PROMPT_REPO" commit -qm 'supported launch config'
+reset_log
+out="$(cd "$PROMPT_REPO" && "$DEV" tree --no-attach --stage-agent --prompt-file "$TMP_DIR/initial-prompt" accepted 2>/dev/null)"
+assert_equals "$out" "$TMP_DIR/prompt-repo-worktrees/accepted"
+manifest="$(python3 "$CHECK" manifest "$REGISTRY" "$out" "$TMP_DIR/initial-prompt")"
+if grep -Fq -- '--hostile' "$FAKE_TMUX_DIR/log" || grep -Fq 'SHOULD_NOT_RUN' "$FAKE_TMUX_DIR/log"; then fail 'raw prompt leaked into tmux shell command'; fi
+grep -Eq '^send-keys -t prompt-repo-accepted:cockpit .*dev_launch.py.* run .*manifest.json$' "$FAKE_TMUX_DIR/log" || fail 'prompt helper was not staged in configured agent pane'
+if grep -Eq '^(attach-session|switch-client)' "$FAKE_TMUX_DIR/log"; then fail 'prompt tree attached'; fi
+cp "$TMP_DIR/initial-prompt" "$TMP_DIR/expected-initial-prompt"
+printf 'mutated source\n' >"$TMP_DIR/initial-prompt"
+rm "$TMP_DIR/initial-prompt"
+tmux kill-session -t prompt-repo-accepted
+reset_log
+"$DEV" resume-all >/dev/null
+assert_equals "$(python3 "$CHECK" manifest "$REGISTRY" "$out" "$TMP_DIR/expected-initial-prompt")" "$manifest"
+# Live-session options must not be reported as applied, or replace artifacts.
+cp "$REGISTRY" "$TMP_DIR/before-live-prompt.json"
+for entry in new open; do
+    if "$DEV" "$entry" --no-attach --prompt replacement "$out" >/dev/null 2>"$TMP_DIR/err"; then fail 'live session accepted ignored prompt'; fi
+    cmp "$REGISTRY" "$TMP_DIR/before-live-prompt.json" || fail 'live prompt replaced intent'
+done
+if (cd "$PROMPT_REPO" && "$DEV" tree --no-attach --prompt replacement accepted >/dev/null 2>"$TMP_DIR/err"); then fail 'live tree accepted ignored prompt'; fi
+cmp "$REGISTRY" "$TMP_DIR/before-live-prompt.json" || fail 'live tree prompt replaced intent'
+# Once lifecycle metadata exists, exact recovery is independent of launch
+# artifacts: never reread/replay the initial assignment on conversation resume.
+printf 'synthetic exact prompt conversation\n' >"$TMP_DIR/prompt-exact.jsonl"
+pi_event "$(pane_for prompt-repo-accepted cockpit)" "$TMP_DIR/prompt-exact.jsonl"
+rm -rf "$(dirname "$manifest")"
+tmux kill-session -t prompt-repo-accepted
+reset_log
+"$DEV" resume-all >/dev/null
+grep -Fq "then pi --session $TMP_DIR/prompt-exact.jsonl; else" "$FAKE_TMUX_DIR/log" || fail 'exact recovery depended on missing prompt artifacts'
+if grep -Fq 'dev_launch.py' "$FAKE_TMUX_DIR/log"; then fail 'exact conversation replayed kickoff'; fi
+(cd "$out" && "$DEV" close >/dev/null)
+# Agent/window roles, not a conventional name, decide where initial input goes.
+# An editor override cannot replace a prompt helper in an agent named nvim.
+config_repo prompt-nvim '{"defaultAgent":"pi","agents":{"pi":"pi"},"windows":[{"name":"nvim","agent":true},{"name":"shell"}]}'
+reset_log
+"$DEV" new --no-attach --stage-agent --nvim-command 'nvim bypass.md' --prompt assignment "$TMP_DIR/prompt-nvim" >/dev/null
+grep -Eq '^send-keys -t prompt-nvim-dev:nvim .*dev_launch.py.* run .*manifest.json$' "$FAKE_TMUX_DIR/log" || fail 'nvim override replaced the initial assignment'
+if grep -Fq 'nvim bypass.md' "$FAKE_TMUX_DIR/log"; then fail 'editor override ran in prompt agent pane'; fi
+(cd "$TMP_DIR/prompt-nvim" && "$DEV" close >/dev/null)
 python3 "$REPO_DIR/tests/dev-workspace.test.py"
+python3 "$REPO_DIR/tests/dev-launch-blockers.test.py"
+python3 "$REPO_DIR/tests/dev-agent-profile.test.py"
 printf 'dev tests passed\n'

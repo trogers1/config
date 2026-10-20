@@ -11,10 +11,11 @@ import subprocess
 import sys
 import tempfile
 
+from dev_launch import STATE, pending_launch_command
+
 LIB = Path(__file__).resolve().parent
-STATE = Path(os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local/state")) / "dev"
 REGISTRY = STATE / "sessions.json"
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 def empty_registry():
@@ -66,10 +67,11 @@ def load():
 
 def validate(*, data):
     if (not isinstance(data, dict) or type(data.get("version")) is not int
-            or data["version"] not in (1, 2, SCHEMA_VERSION) or not isinstance(data.get("sessions"), dict)):
+            or data["version"] not in (1, 2, 3, SCHEMA_VERSION) or not isinstance(data.get("sessions"), dict)):
         raise ValueError(f"Invalid registry schema: {REGISTRY}; restore its backup before retrying")
     # Old boot metadata no longer governs intent. Migrate without filtering or
     # reordering any records, even when that obsolete metadata is missing/stale.
+    migrating = data["version"] != SCHEMA_VERSION
     data = dict(data, version=SCHEMA_VERSION)
     data.pop("boot_id", None)
     for key, record in data["sessions"].items():
@@ -83,6 +85,15 @@ def validate(*, data):
         if "conversation" not in record:
             raise ValueError("registry.conversation is missing")
         conversation(value=record["conversation"])
+        if migrating:
+            record.setdefault("launch_manifest", None)
+        if "launch_manifest" not in record:
+            raise ValueError("registry.launch_manifest is missing")
+        manifest = record["launch_manifest"]
+        if manifest is not None:
+            text(value=manifest, name="registry.launch_manifest")
+            if not Path(manifest).is_absolute():
+                raise ValueError("registry.launch_manifest must be absolute")
     return data
 
 
@@ -124,18 +135,23 @@ def shell(*, script, args):
 
 
 def register(*, args):
-    name, path, branch, nvim, stage, agent, enabled, pane = args
+    if len(args) not in (8, 9):
+        raise ValueError("register requires eight arguments and an optional launch manifest")
+    name, path, branch, nvim, stage, agent, enabled, pane = args[:8]
+    manifest = args[8] if len(args) == 9 and args[8] else None
     binding = identity(target=pane or name)
     with locked(name="registry.lock"):
         data = load()
         previous = data["sessions"].get(path)
         # A retry/adoption of the same live pane must not erase its conversation.
         same = previous and all(previous[k] == binding[k] for k in ("pane", "server"))
+        preserving = previous is not None and (same or os.environ.get("DEV_RESUMING") == "true")
         data["sessions"][path] = {
             "name": name, "path": path, "branch": branch, "nvim_command": nvim,
             "stage_agent": stage == "true", "agent": agent, "agent_enabled": enabled == "true",
             "pane": binding["pane"] if pane else "", "server": binding["server"],
-            "conversation": previous["conversation"] if previous and (same or os.environ.get("DEV_RESUMING") == "true") else None,
+            "conversation": previous["conversation"] if preserving else None,
+            "launch_manifest": previous["launch_manifest"] if preserving else manifest,
         }
         save(data=data)
 
@@ -257,11 +273,17 @@ def resume_all(*, path=None):
             lines = [line.split("\t", 2) for line in windows.splitlines()]
             agent_lines = [line for line in lines if line[0] == "agent" and line[2]]
             recorded = conversation(value=record["conversation"])
+            recovery_manifest = None
             if record["agent_enabled"]:
                 if len(agent_lines) != 1:
                     raise ValueError("configured agent window is missing/disabled; restore devConfig.jsonc and retry")
                 if recorded is None:
-                    if not record["stage_agent"]:
+                    if record["launch_manifest"] is not None:
+                        if not record["stage_agent"]:
+                            raise ValueError("initial launch has no exact conversation and was not staged; refusing to replay its prompt/profile. Restore the exact conversation or dev close then start intentionally afresh")
+                        pending_launch_command(manifest_path=record["launch_manifest"])
+                        recovery_manifest = record["launch_manifest"]
+                    elif not record["stage_agent"]:
                         raise ValueError("exact agent conversation was never recorded; load the registry integration in the original agent, or dev close then dev new to intentionally start over")
                 else:
                     if recorded["agent"] != record["agent"]:
@@ -285,9 +307,13 @@ def resume_all(*, path=None):
                 for line in agent_lines:
                     line[2] = ""
             windows = "\n".join("\t".join(line) for line in lines)
-            shell(script='DEV_RESUMING=true tmux_worktree_create_standard_session "$@"',
-                  args=[name, path, record["branch"], record["nvim_command"], windows,
-                        str(record["stage_agent"]).lower(), record["agent"]])
+            arguments = [name, path, record["branch"], record["nvim_command"], windows,
+                         str(record["stage_agent"]).lower(), record["agent"]]
+            # Only pending launches receive the eighth argument: the shell
+            # adapter rewrites that window. Exact resumes must never be rewritten.
+            if recovery_manifest is not None:
+                arguments.append(recovery_manifest)
+            shell(script='DEV_RESUMING=true tmux_worktree_create_standard_session "$@"', args=arguments)
             print(f"Resumed detached: {name}")
         except (ValueError, OSError, subprocess.CalledProcessError) as error:
             detail = error.stderr.strip() if isinstance(error, subprocess.CalledProcessError) else str(error)
@@ -372,6 +398,7 @@ def main():
                     "name": name, "path": path, "branch": branch, "nvim_command": "",
                     "stage_agent": False, "agent": "", "agent_enabled": True,
                     "pane": "", "server": binding["server"], "conversation": None,
+                    "launch_manifest": None,
                 }
                 save(data=data)
     elif command == "bind":
