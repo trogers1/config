@@ -2,7 +2,10 @@ import fs from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type {
+  ExtensionAPI,
+  ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 import { isFocusable, type Component } from "@earendil-works/pi-tui";
 import permissionsExtension, {
   decideBash,
@@ -156,6 +159,8 @@ function createExtensionHarness() {
     }),
     appendEntry: vi.fn(),
     registerEntryRenderer: vi.fn(),
+    registerFlag: vi.fn<ExtensionAPI["registerFlag"]>(),
+    getFlag: () => undefined,
     getActiveTools: () => [...activeTools],
     getAllTools: () =>
       registeredTools.map((name) => ({

@@ -251,6 +251,7 @@ const inheritedSubagentPermissibleGlobs =
 export function createExtensionHarness(
   options: {
     contextCwd?: string;
+    flags?: ReadonlyMap<string, ReturnType<ExtensionAPI["getFlag"]>>;
     hasUI?: boolean;
     confirm?: boolean;
     editorResult?: string;
@@ -884,6 +885,9 @@ export function createExtensionHarness(
       );
     },
     registerEntryRenderer: vi.fn(),
+    registerFlag: vi.fn<ExtensionAPI["registerFlag"]>(),
+    // The real CLI can publish flags after factories finish loading.
+    getFlag: (name: string) => (started ? options.flags?.get(name) : undefined),
     getActiveTools: () => [...activeToolNames],
     getAllTools: () =>
       [...registeredToolNames].map((name) => {
@@ -914,6 +918,8 @@ export function createExtensionHarness(
     | "registerTool"
     | "appendEntry"
     | "registerEntryRenderer"
+    | "registerFlag"
+    | "getFlag"
     | "getActiveTools"
     | "getAllTools"
     | "setActiveTools"

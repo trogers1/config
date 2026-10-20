@@ -140,6 +140,10 @@ import { ruleSetRegistry, type RuleSetName } from "../modules/ruleSets.lib";
 import { parseSubagentPermissibleRules } from "../modules/subagentScopes";
 import { readRuntimePromptFile } from "../modules/profilePromptFile";
 import {
+  resolveStartupProfile,
+  startupProfileFlag,
+} from "../modules/startupProfile";
+import {
   clearSandboxCaches,
   resolveSandbox,
   type SandboxResolution,
@@ -369,6 +373,7 @@ type GuardExtensionAPI = Omit<
 };
 
 export default function (pi: GuardExtensionAPI) {
+  pi.registerFlag(startupProfileFlag.name, startupProfileFlag.options);
   const profileConfigPath =
     process.env.PI_GUARD_PROFILE_CONFIG?.trim() || undefined;
 
@@ -579,7 +584,7 @@ export default function (pi: GuardExtensionAPI) {
   // Tool source metadata may change when Pi rebuilds its tool registry. This
   // marker survives those rebuilds and identifies this registered wrapper.
   const packageBashOwnershipMarker = "\n[pi-guard sandbox wrapper]";
-  const subagentProfile = process.env.PI_SUBAGENT_PROFILE?.trim();
+  const subagentProfile = process.env.PI_SUBAGENT_PROFILE?.trim() || undefined;
   const subagentPermissibleRules = parseSubagentPermissibleRules({
     value: process.env.PI_SUBAGENT_PERMISSIBLE_GLOBS,
   });
@@ -590,10 +595,29 @@ export default function (pi: GuardExtensionAPI) {
     subagentProfile && !isProfileName(subagentProfile)
       ? formatInvalidSubagentProfileReason(subagentProfile)
       : undefined;
+  // Never throw from the factory: Pi drops failed extensions, which would
+  // remove the permission gate. Keep an immutable launch error in that gate.
+  let startupProfile: ProfileName | undefined;
+  let startupProfileErrorReason: string | undefined;
+  function initializeStartupProfile({}: Record<never, never>): void {
+    try {
+      startupProfile = resolveStartupProfile({
+        profile: pi.getFlag(startupProfileFlag.name),
+        config: policyConfig,
+        subagentProfile,
+      });
+      if (startupProfile && profileConfigErrorReason)
+        throw new Error(profileConfigErrorReason);
+    } catch (error) {
+      startupProfileErrorReason =
+        error instanceof Error ? error.message : String(error);
+    }
+  }
+  initializeStartupProfile({});
   let activeProfile: ProfileName =
     subagentProfile && isProfileName(subagentProfile)
       ? subagentProfile
-      : policyConfig.defaultProfile;
+      : (startupProfile ?? policyConfig.defaultProfile);
   let sandboxOverride: SandboxOverride = "inherit";
   // A refresh publishes a coherent policy/profile pair before it awaits
   // sandbox lifecycle work. Serialize refreshes so another guarded operation
@@ -607,7 +631,9 @@ export default function (pi: GuardExtensionAPI) {
   let pendingSandboxTransition:
     { readonly revision: string; readonly profile: ProfileName } | undefined;
   const configurationErrorReason = () =>
-    profileConfigErrorReason ?? subagentProfileErrorReason;
+    startupProfileErrorReason ??
+    profileConfigErrorReason ??
+    subagentProfileErrorReason;
 
   function effectiveSandboxProfile({
     profile,
@@ -764,6 +790,12 @@ export default function (pi: GuardExtensionAPI) {
     readonly ctx: ExtensionContext;
     readonly message?: string;
   }): Promise<void> {
+    if (subagentProfile && profile !== subagentProfile)
+      return Promise.reject(
+        new Error(
+          `Cannot switch to '${profile}': PI_SUBAGENT_PROFILE '${subagentProfile}' is authoritative.`,
+        ),
+      );
     const activation = profileActivationQueue.then(async () => {
       activeProfile = profile;
       // Subagent launchers inherit this process environment; update it with
@@ -899,6 +931,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
 
   type RefreshSelectionIntent =
     | { readonly kind: "preserve-current" }
+    | { readonly kind: "startup"; readonly intended: ProfileName }
     | {
         readonly kind: "post-save";
         readonly intended: ProfileName;
@@ -997,12 +1030,12 @@ The permissions gate remains loaded and will fail closed until the profile is co
       });
       return { kind: "failed" };
     }
-    // A durable save's selected user-owned profile takes precedence over
-    // directory/session selection in precisely the snapshot it wrote. The
-    // only stronger authority is a valid immutable subagent declaration.
+    // An explicit startup or durable save selection takes precedence over
+    // directory/session selection in this exact snapshot. The only stronger
+    // authority is a valid immutable subagent declaration.
     // Ordinary unchanged refreshes continue to preserve explicit selection.
     const selected =
-      selectionIntent.kind === "post-save"
+      selectionIntent.kind === "post-save" || selectionIntent.kind === "startup"
         ? (subagentProfile ?? selectionIntent.intended)
         : pendingSandboxTransition?.revision === snapshot.sourceRevision &&
             Object.hasOwn(
@@ -1137,8 +1170,37 @@ The permissions gate remains loaded and will fail closed until the profile is co
   }
 
   pi.on("session_start", async (event, ctx) => {
+    // The CLI may publish parsed flag values only after extension factories
+    // finish. Read again at its awaited, pre-prompt lifecycle boundary.
+    if (event.reason === "startup") initializeStartupProfile({});
     restoreActiveProfile(ctx);
-    if (!(await refreshOrPreserveConfiguration({ ctx }))) return;
+    // A CLI override belongs only to this process's initial startup, including
+    // an explicitly resumed session. Reload/new/resume/fork lifecycle events
+    // retain normal directory/session selection and must not re-pin the flag.
+    const initialSelection =
+      event.reason === "startup" && !configurationErrorReason()
+        ? startupProfile
+        : undefined;
+    if (initialSelection) activeProfile = initialSelection;
+    if (startupProfileErrorReason) {
+      ctx.ui.setStatus("permissions", "invalid-permissions");
+      throw new Error(startupProfileErrorReason);
+    }
+    if (
+      !(await refreshOrPreserveConfiguration({
+        ctx,
+        selectionIntent: initialSelection
+          ? { kind: "startup", intended: initialSelection }
+          : undefined,
+      }))
+    )
+      return;
+    if (initialSelection) {
+      pi.appendEntry(profileEntryType, {
+        profile: activeProfile,
+        timestamp: Date.now(),
+      });
+    }
 
     const errorReason = configurationErrorReason();
     if (errorReason) {

@@ -88,7 +88,7 @@ Finally, install the published versions into a clean Pi profile with
 `npm publish` until `npm pack --dry-run` contains only the runtime files listed
 in each package manifest.
 
-At runtime the extension loads the shipped profile registry, optionally composes the user JSONC config, selects a profile (subagent environment > directory binding > persisted session > configured default), then applies the policy to every tool call. Permissions are evaluated in this order:
+At runtime the extension loads the shipped profile registry, optionally composes the user JSONC config, selects a profile (subagent environment > explicit startup flag > directory binding > persisted session > configured default), then applies the policy to every tool call. Permissions are evaluated in this order:
 
 ```mermaid
 flowchart LR
@@ -169,8 +169,89 @@ explainer also reflects shell read-validation, ordinary path-rule denies/asks
 for operands, and the most-restrictive decision across compound commands. It
 does not reflect the `PI_SUBAGENT_PERMISSIBLE_GLOBS` subagent narrowing layer.
 
-Profile changes are persisted in the Pi session, so resumed sessions restore
-their last selected profile.
+Profile changes are persisted in the Pi session. On resume without a startup
+override, authoritative subagent selection and directory bindings still outrank
+the last saved profile (see [Directory-selected profiles](#directory-selected-profiles)).
+
+## Startup profile override
+
+```sh
+pi --guard-profile builtin:read-only
+pi --guard-profile my-project "Inspect this repository and write a plan."
+```
+
+`--guard-profile <name>` is a dedicated string flag registered by this extension;
+`pi --help` lists it when pi-guard is loaded. Names are exact, nonempty canonical
+built-in names or custom profile names. The flag chooses the initial policy
+before the first model tool call, including when the invocation explicitly
+resumes an existing session. It does not add permissions to the named policy,
+disable its sandbox, auto-approve ASK decisions, or inherit the launching
+process's `PI_GUARD_ACTIVE_PROFILE`.
+
+Startup precedence is:
+
+1. Authoritative `PI_SUBAGENT_PROFILE`.
+2. Explicit `--guard-profile` for this process's initial startup.
+3. Best directory binding for the immutable startup working directory.
+4. Last persisted session profile.
+5. Configured default (the shipped `builtin:default` when not customized).
+
+Omitting the flag leaves automatic selection unchanged. When both the flag and
+`PI_SUBAGENT_PROFILE` are present, they must name the same valid profile;
+conflicts and unknown authoritative selections fail closed, not by falling
+back to either requested policy. Authoritative subagents cannot switch to a
+different policy through `/profile-select` or the picker.
+
+For an ordinary top-level session the flag is **not a pin**: `/profile-select`
+works normally afterward, and both the initial choice and later switches use
+normal session persistence. It is not reapplied on `/reload`, `/new`, an
+in-process resume, or fork. A later process resumed **without** the flag uses
+the normal precedence: a directory binding can override the saved choice;
+without a matching binding the last persisted choice is restored. Supplying
+the flag again explicitly selects a new initial profile for that invocation.
+Normal configuration-reload selection and persisted sandbox overrides are
+unchanged.
+
+Invalid startup selections keep the permissions extension registered and block
+tools with the launch error; they cannot unload the guard or be repaired by
+switching to a different policy. Correct the launch arguments and restart.
+An unavailable/disabled extension leaves the flag unregistered: Pi rejects it
+as an unknown option rather than starting an unguarded run.
+
+### Launcher preflight (no agent process)
+
+A launcher can validate a requested profile without loading extensions, starting
+a model, reading credentials, or creating a Pi session:
+
+```sh
+node /path/to/pi-guard/guard-profile.mjs --profile my-project --cwd /path/to/project
+node /path/to/pi-guard/guard-profile.mjs --help
+```
+
+Success writes one JSON line, `{"profile":"my-project"}`, and exits 0. Invalid
+arguments, unreadable/invalid config, unknown profiles, authoritative subagent
+conflicts, or unavailable Node/Pi loader integration fail on stderr and exit 1.
+The runner uses the installed Pi peer's existing `jiti` loader; no separate
+runtime or loader installation is needed. It is also exported as
+`@trogers1/pi-guard/validate-startup`. The shared TypeScript API is
+`validateStartupProfile({ profile, configPath?, subagentProfile? })` from
+`@trogers1/pi-guard/startup`.
+
+`--cwd` establishes the launch working directory before validation. Config
+resolution is identical to the extension: trimmed `PI_GUARD_PROFILE_CONFIG`,
+otherwise `~/.pi/agent/pi-guard/profiles.jsonc` (not `PI_CODING_AGENT_DIR`). An
+initially missing optional config uses shipped profiles. Relative explicit
+config paths resolve from `--cwd`; `PI_SUBAGENT_PROFILE` remains authoritative.
+The API accepts explicit config/subagent inputs for embedding.
+
+This read-only preflight validates policy availability, **not resource enablement**.
+The launcher must separately verify that this package's guard extension is
+configured and enabled for the destination, including package filters, project
+trust, and disabling CLI options. It must reject unsupported/unavailable
+integration rather than inject `-e`, ignore the request, or change profiles to
+gain access. At launch, pass `--guard-profile NAME`; the extension revalidates
+the current configuration. Preflight is not a lock or a promise that the config
+cannot change before a staged command is executed.
 
 ## Sandbox execution
 
@@ -436,10 +517,12 @@ then the depth of the matched root, then the latest profile declaration. Thus a
 literal project binding outranks a broad wildcard; later declarations decide
 only an otherwise equal match.
 
-At startup or resume, selection priority is: `PI_SUBAGENT_PROFILE`, then the
-best `directoryGlobs` match for `startupCwd`, then the persisted session profile,
-then `defaultProfile`. A directory selection therefore overrides a saved session
-choice, and the subagent environment remains authoritative.
+At startup or resume without an explicit startup override, selection priority
+is: `PI_SUBAGENT_PROFILE`, then the best `directoryGlobs` match for `startupCwd`,
+then the persisted session profile, then `defaultProfile`. A directory selection
+therefore overrides a saved session choice. `--guard-profile` outranks these
+automatic choices only for the process's initial startup; the subagent
+environment remains authoritative (see [Startup profile override](#startup-profile-override)).
 
 The package ships portable profiles only. Add custom profiles and directory
 bindings in `~/.pi/agent/pi-guard/profiles.jsonc`. When this file does not

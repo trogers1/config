@@ -41,9 +41,12 @@
   },
   "exports": {
     "./config": "./modules/policyHelpers.ts",
-    "./profiles": "./modules/policy.ts"
+    "./profiles": "./modules/policy.ts",
+    "./startup": "./modules/startupProfile.ts",
+    "./validate-startup": "./guard-profile.mjs"
   },
   "files": [
+    "guard-profile.mjs",
     "extensions/",
     "modules/",
     "schemas/",
