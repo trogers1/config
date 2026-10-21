@@ -17,6 +17,7 @@ printf '#!/usr/bin/env bash\nexec "%s" "$@"\n' "$DEV" >"$HOME/bin/dev"
 chmod +x "$HOME/bin/dev"
 if [ "${DEV_TEST_FOCUSED_ONLY:-false}" != true ] && [ "${DEV_TEST_AGENT_PROFILE_ONLY:-false}" != true ]; then
     "$REPO_DIR/home/.pi/agent/packages/pi-guard-subagents/node_modules/.bin/tsc" -p "$REPO_DIR/tests/dev-session.tsconfig.json"
+    node "$REPO_DIR/tests/dev-session.lifecycle.test.mjs"
 fi
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }

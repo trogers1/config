@@ -642,6 +642,8 @@ From the repository root, after installing bundled package dependencies:
 DEV_TEST_FOCUSED_ONLY=true bash tests/dev.test.sh
 DEV_TEST_AGENT_PROFILE_ONLY=true bash tests/dev.test.sh
 node tests/generate-agent-config.test.mjs
+# Uses installed Pi (1.3+) SDK lifecycle, no LLM calls:
+node tests/dev-session.lifecycle.test.mjs
 
 # Broader regressions (the full dev suite takes about 3–4 minutes):
 bash tests/dev.test.sh

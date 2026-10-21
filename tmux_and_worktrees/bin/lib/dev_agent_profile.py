@@ -1,6 +1,6 @@
 """Conservative discovery of an enabled, locally installed pi-guard integration.
 
-Pi package-manager/resource-loader (0.99): project package identities replace
+Pi package-manager/resource-loader (1.3): project package identities replace
 user identities; autoload:false deltas and resource filters can disable code.
 We deliberately support only the unfiltered user local-package form. Do not
 approximate Pi globs, project trust, npm/git installs, or force-enable with -e.
