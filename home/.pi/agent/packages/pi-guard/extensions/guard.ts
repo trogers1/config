@@ -144,6 +144,11 @@ import {
   startupProfileFlag,
 } from "../modules/startupProfile";
 import {
+  readWorkerProfileAuthority,
+  writeWorkerProfileAuthority,
+  type WorkerProfileBinding,
+} from "../modules/workerProfileAuthority";
+import {
   clearSandboxCaches,
   resolveSandbox,
   type SandboxResolution,
@@ -483,6 +488,7 @@ export default function (pi: GuardExtensionAPI) {
         profile: selected,
         ctx,
         message: `Switched to profile: ${selected}`,
+        humanSelection: true,
       });
     }
   }
@@ -585,10 +591,21 @@ export default function (pi: GuardExtensionAPI) {
   // marker survives those rebuilds and identifies this registered wrapper.
   const packageBashOwnershipMarker = "\n[pi-guard sandbox wrapper]";
   const subagentProfile = process.env.PI_SUBAGENT_PROFILE?.trim() || undefined;
+  const workerId = process.env.PI_SUBAGENT_SESSION_ID || undefined;
+  const workerBinding: WorkerProfileBinding | undefined =
+    subagentProfile && workerId
+      ? {
+          workerId,
+          launchProfile: subagentProfile,
+          scope: process.env.PI_SUBAGENT_PERMISSIBLE_GLOBS ?? null,
+          startupCwd,
+        }
+      : undefined;
+  let humanWorkerProfile: ProfileName | undefined;
   const subagentPermissibleRules = parseSubagentPermissibleRules({
     value: process.env.PI_SUBAGENT_PERMISSIBLE_GLOBS,
   });
-  // Establish the immutable subagent profile before lifecycle callbacks run.
+  // Establish the immutable subagent launch profile before lifecycle callbacks run.
   // This keeps startup fail-closed even if Pi can begin processing an initial
   // prompt before the asynchronous session_start listener has completed.
   let subagentProfileErrorReason =
@@ -785,18 +802,34 @@ export default function (pi: GuardExtensionAPI) {
     profile,
     ctx,
     message,
+    humanSelection = false,
   }: {
     readonly profile: ProfileName;
     readonly ctx: ExtensionContext;
     readonly message?: string;
+    readonly humanSelection?: boolean;
   }): Promise<void> {
-    if (subagentProfile && profile !== subagentProfile)
+    if (subagentProfile && profile !== subagentProfile && !humanSelection)
       return Promise.reject(
         new Error(
           `Cannot switch to '${profile}': PI_SUBAGENT_PROFILE '${subagentProfile}' is authoritative.`,
         ),
       );
     const activation = profileActivationQueue.then(async () => {
+      if (subagentProfile && humanSelection) {
+        const errorReason = configurationErrorReason();
+        if (errorReason) throw new Error(errorReason);
+        if (!ctx.hasUI)
+          throw new Error(
+            "Worker profile selection requires a human UI command or picker.",
+          );
+        if (!workerBinding)
+          throw new Error(
+            "Worker profile selection requires PI_SUBAGENT_SESSION_ID.",
+          );
+        writeWorkerProfileAuthority({ binding: workerBinding, profile });
+        humanWorkerProfile = profile;
+      }
       activeProfile = profile;
       // Subagent launchers inherit this process environment; update it with
       // the committed profile before rebuilding its sandbox state.
@@ -866,16 +899,15 @@ The permissions gate remains loaded and will fail closed until the profile is co
     const directoryProfile = profileForDirectory(startupCwd);
     if (directoryProfile) activeProfile = directoryProfile;
 
-    // A subagent's declared profile is authoritative even when resuming a
-    // session that previously persisted a different interactive or directory
-    // selected profile.
+    // Ordinary session history cannot override a worker launch. A separately
+    // validated human worker choice is restored by the configuration refresh.
     if (subagentProfile) {
       if (!isProfileName(subagentProfile)) {
         subagentProfileErrorReason =
           formatInvalidSubagentProfileReason(subagentProfile);
         return;
       }
-      activeProfile = subagentProfile;
+      activeProfile = humanWorkerProfile ?? subagentProfile;
     }
   }
 
@@ -1030,12 +1062,26 @@ The permissions gate remains loaded and will fail closed until the profile is co
       });
       return { kind: "failed" };
     }
-    // An explicit startup or durable save selection takes precedence over
-    // directory/session selection in this exact snapshot. The only stronger
-    // authority is a valid immutable subagent declaration.
-    // Ordinary unchanged refreshes continue to preserve explicit selection.
+    try {
+      humanWorkerProfile = workerBinding
+        ? readWorkerProfileAuthority({ binding: workerBinding })
+        : undefined;
+    } catch (error) {
+      await adoptFailedConfiguration({
+        ctx,
+        state: {
+          status: profileStoreStatus.invalid,
+          error: error instanceof Error ? error : new Error(String(error)),
+        },
+      });
+      return { kind: "failed" };
+    }
+    // Only a validated human choice for this exact worker can supersede its
+    // launch selection. Ordinary session entries never carry that authority.
     const selected =
-      selectionIntent.kind === "post-save" || selectionIntent.kind === "startup"
+      humanWorkerProfile ??
+      (selectionIntent.kind === "post-save" ||
+      selectionIntent.kind === "startup"
         ? (subagentProfile ?? selectionIntent.intended)
         : pendingSandboxTransition?.revision === snapshot.sourceRevision &&
             Object.hasOwn(
@@ -1051,7 +1097,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
                 snapshot.directoryGlobDeclarations,
               )?.profile ??
               persistedSessionProfile({ ctx }) ??
-              snapshot.config.defaultProfile);
+              snapshot.config.defaultProfile));
     if (!Object.hasOwn(snapshot.config.profiles, selected)) {
       await adoptFailedConfiguration({
         ctx,
@@ -1389,7 +1435,8 @@ The permissions gate remains loaded and will fail closed until the profile is co
         submit: async ({ draft }) => {
           if (
             draft.mode === "edit" &&
-            subagentProfile === draft.originalName &&
+            (subagentProfile === draft.originalName ||
+              humanWorkerProfile === draft.originalName) &&
             draft.name !== draft.originalName
           )
             return {
@@ -1398,7 +1445,10 @@ The permissions gate remains loaded and will fail closed until the profile is co
                 {
                   section: "general",
                   code: "invalid-name",
-                  message: `Cannot rename '${draft.originalName}': authoritative PI_SUBAGENT_PROFILE still selects it. Update the parent or launcher and restart first.`,
+                  message:
+                    humanWorkerProfile === draft.originalName
+                      ? `Cannot rename '${draft.originalName}': saved human worker profile selection still selects it. Select another worker profile before renaming.`
+                      : `Cannot rename '${draft.originalName}': authoritative PI_SUBAGENT_PROFILE still selects it. Update the parent or launcher and restart first.`,
                 },
               ],
             };
@@ -1923,6 +1973,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
         profile: requested,
         ctx,
         message: `Switched to profile: ${requested}`,
+        humanSelection: true,
       });
     },
   });

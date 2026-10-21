@@ -169,9 +169,10 @@ explainer also reflects shell read-validation, ordinary path-rule denies/asks
 for operands, and the most-restrictive decision across compound commands. It
 does not reflect the `PI_SUBAGENT_PERMISSIBLE_GLOBS` subagent narrowing layer.
 
-Profile changes are persisted in the Pi session. On resume without a startup
-override, authoritative subagent selection and directory bindings still outrank
-the last saved profile (see [Directory-selected profiles](#directory-selected-profiles)).
+Profile changes are persisted in the Pi session. Human worker choices also use
+worker-bound user state (see below). On resume without a startup override,
+subagent launch selection and directory bindings still outrank an ordinary
+saved session profile (see [Directory-selected profiles](#directory-selected-profiles)).
 
 ## Startup profile override
 
@@ -190,7 +191,8 @@ process's `PI_GUARD_ACTIVE_PROFILE`.
 
 Startup precedence is:
 
-1. Authoritative `PI_SUBAGENT_PROFILE`.
+1. Authoritative `PI_SUBAGENT_PROFILE` (with a validated human choice for that
+   same worker restored only after launch validation).
 2. Explicit `--guard-profile` for this process's initial startup.
 3. Best directory binding for the immutable startup working directory.
 4. Last persisted session profile.
@@ -199,8 +201,9 @@ Startup precedence is:
 Omitting the flag leaves automatic selection unchanged. When both the flag and
 `PI_SUBAGENT_PROFILE` are present, they must name the same valid profile;
 conflicts and unknown authoritative selections fail closed, not by falling
-back to either requested policy. Authoritative subagents cannot switch to a
-different policy through `/profile-select` or the picker.
+back to either requested policy. After valid startup, a human can explicitly
+switch that worker through `/profile-select` or its keyboard picker; see
+[Human worker profile choices](#human-worker-profile-choices).
 
 For an ordinary top-level session the flag is **not a pin**: `/profile-select`
 works normally afterward, and both the initial choice and later switches use
@@ -582,7 +585,8 @@ The package consumes the environment variables exported by
 `pi-guard-subagents`:
 
 - `PI_SUBAGENT_PROFILE` selects the initial profile and overrides directory and
-  persisted profile selection in a resumed worker session. Use canonical built-in
+  ordinary persisted profile selection in a resumed worker session, unless that
+  same worker has an explicit human choice recorded below. Use canonical built-in
   or custom profile names such as `builtin:worker` or `client-work`; an unknown
   or unnamespaced old name like `worker` fails startup with the list of available
   profiles rather than silently granting the default policy.
@@ -601,6 +605,41 @@ caches and Vitest/Vite's exact `node_modules/.vite-temp` directory), plus
 pi-guard's private TMPDIR, remain available as operational roots; they do not
 expand workspace access. Pi's dedicated read tools retain the profile's normal
 read access.
+
+### Human worker profile choices
+
+A human-invoked `/profile-select <name>`, `/profile-select` picker, or keyboard
+profile picker may override a worker's launch profile. These are Pi commands
+and shortcuts, **not model-callable tools**; UI availability alone does not
+turn an agent tool call or a permission dialog into a profile selection.
+Worker selection requires a UI and a nonempty, valid `PI_SUBAGENT_SESSION_ID`.
+Other commands and profile-authoring saves do not acquire this override authority.
+
+The choice is stored atomically in an owner-only per-worker JSON file under
+`~/.pi/agent/pi-guard-worker-profiles/`. It is schema-validated and bound to the
+stable worker ID, original `PI_SUBAGENT_PROFILE`, exact permissible-scope value,
+and startup directory. The same worker keeps its choice through configuration
+refreshes, `/reload`, in-process session changes, parent-driven restarts,
+resume, and re-review. Sibling/fresh worker IDs and parent defaults are unaffected.
+A mismatched binding, invalid state file, or removed selected profile fails
+closed. Ordinary Pi session profile entries cannot override a worker launch.
+No legacy state migration is performed.
+
+Launch validation still runs first: invalid launch profiles and conflicting
+`--guard-profile` / `PI_SUBAGENT_PROFILE` values cannot be repaired by a saved
+human choice. New workers without a choice still start with their launcher
+profile. Choosing the launch profile again explicitly records that choice.
+`PI_SUBAGENT_PERMISSIBLE_GLOBS` is captured at launch and continues to narrow
+every selected profile; human selection does not widen it or rewrite the loadout.
+
+This private user-state location is intentionally outside normal task scopes;
+existing path gating and Bash sandboxing protect it in scoped workflows. It is
+not a new universal tamper-proof boundary: do not grant workers write access to
+this state directory or broad home-directory access. An explicitly unsandboxed
+Bash process (`sandbox: false`, `/sandbox-off`, or an allowed unavailable-backend
+fallback) or arbitrary custom tools can access files outside the analyzable
+path gate. Unix owner-only permissions do not isolate another process running
+as the same user. Those configurations must be trusted accordingly.
 
 Profile status metadata is configured per profile:
 
