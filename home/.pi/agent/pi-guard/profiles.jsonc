@@ -550,8 +550,28 @@
       },
       "tools": {
         "bash": [
+          // These installed helpers only read GitLab; refresh/render can write
+          // local exports, which remain subject to ordinary path permissions.
+          // Name each trusted script explicitly: never allow a wildcard script
+          // name or a copied helper elsewhere in the filesystem.
           {
-            "pattern": "bash **skills/address-comments/scripts/**",
+            "pattern": "bash ~/.agents/skills/address-comments/scripts/refresh-robot-comments-md.sh *",
+            "decision": "allow",
+          },
+          {
+            "pattern": "bash ~/.agents/skills/address-comments/scripts/refresh-all-comments-md.sh *",
+            "decision": "allow",
+          },
+          {
+            "pattern": "bash ~/.agents/skills/address-comments/scripts/fetch-mr-discussions.sh *",
+            "decision": "allow",
+          },
+          {
+            "pattern": "bash ~/.agents/skills/address-comments/scripts/enrich-discussions.sh *",
+            "decision": "allow",
+          },
+          {
+            "pattern": "bash ~/.agents/skills/address-comments/scripts/render-comments-md.sh *",
             "decision": "allow",
           },
           // preview-replies.sh rejects every flag after shell expansion, so it

