@@ -133,7 +133,8 @@ function Preflight {
   $nodeVersion = (& node --version | Select-Object -First 1)
   if (-not (Test-VersionAtLeast $nodeVersion '22.19.0')) { Fail "Node $nodeVersion is too old; Node 22.19.0 or newer is required." }
   $piVersion = (& pi --version | Select-Object -First 1)
-  if (-not (Test-VersionAtLeast $piVersion '0.85.0')) { Fail "Pi $piVersion is too old; Pi 0.85.0 or newer is required." }
+  $piMinimum = '1.3.0'
+  if (-not (Test-VersionAtLeast $piVersion $piMinimum)) { Fail "Pi $piVersion is too old; Pi $piMinimum or newer is required." }
   if (-not (Test-Path -LiteralPath $HomeDir -PathType Container)) { Fail "User profile directory does not exist: $HomeDir" }
   if (-not (Test-Path -LiteralPath (Join-Path $RepoDir 'home\.pi\agent') -PathType Container)) { Fail 'Missing bundled Pi configuration.' }
   Assert-SafeTargetAncestors

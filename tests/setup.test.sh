@@ -12,6 +12,13 @@ assert_exists() { [ -e "$1" ] || [ -L "$1" ] || fail "expected $1 to exist"; }
 assert_absent() { [ ! -e "$1" ] && [ ! -L "$1" ] || fail "expected $1 to be absent"; }
 assert_equals() { [ "$1" = "$2" ] || fail "expected '$2', got '$1'"; }
 
+# Probe the installers' declared minimum instead of duplicating it in fixtures.
+PI_MINIMUM="$(python3 -c 'import re,sys; print(re.search(r"pi_minimum=\"([^\"]+)\"", open(sys.argv[1]).read())[1])' "$REPO_DIR/setup.sh")"
+TMUX_MINIMUM="$(python3 -c 'import re,sys; print(re.search(r"tmux_minimum=\"([^\"]+)\"", open(sys.argv[1]).read())[1])' "$REPO_DIR/setup.sh")"
+python3 - "$REPO_DIR/setup.ps1" "$PI_MINIMUM" <<'PY'
+import re, sys
+assert re.search(r"\$piMinimum = '([^']+)'", open(sys.argv[1]).read())[1] == sys.argv[2]
+PY
 FAKE_BIN="$TMP_DIR/tool-bin"
 HOME_DIR="$TMP_DIR/home"
 mkdir -p "$FAKE_BIN" "$HOME_DIR"
@@ -20,7 +27,8 @@ for command_name in uname git python3 tmux pi node npm npx nvim lazygit; do
 #!/usr/bin/env bash
 case "$command_name" in
   uname) echo Darwin ;;
-  pi) echo 0.85.0 ;;
+  pi) echo "\${TEST_PI_VERSION:-$PI_MINIMUM}" ;;
+  tmux) echo "tmux \${TEST_TMUX_VERSION:-${TMUX_MINIMUM}a}" ;;
   node) echo v22.19.0 ;;
   *) exit 0 ;;
 esac
@@ -49,6 +57,12 @@ run_personal() {
 
 # Generated Claude/Pi agent config matches its shared sources.
 node "$REPO_DIR/scripts/generate-agent-config.mjs" --check
+
+# Version preflight fails before writing configuration.
+if TEST_PI_VERSION=0.85.0 run_shared >/dev/null 2>&1; then fail 'accepted obsolete Pi'; fi
+if TEST_PI_VERSION=1.2.9 run_shared >/dev/null 2>&1; then fail 'accepted Pi below minimum'; fi
+if TEST_TMUX_VERSION=3.4 run_shared >/dev/null 2>&1; then fail 'accepted tmux without CSI-u format'; fi
+assert_absent "$HOME_DIR/.pi"
 
 # Shared install owns only its explicit resources and preserves user profiles.
 mkdir -p "$HOME_DIR/.pi/agent/pi-guard" "$HOME_DIR/bin"
@@ -310,4 +324,6 @@ HOME="$EMPTY_HOME" "$MIGRATION_REPO/scripts/setup/migrate-legacy.sh" >/dev/null
 [ -f "$EMPTY_HOME/.pi/agent/pi-guard/profiles.jsonc" ] || fail 'empty profile file was lost'
 [ ! -s "$EMPTY_HOME/.pi/agent/pi-guard/profiles.jsonc" ] || fail 'empty profile file changed'
 
+bash "$REPO_DIR/tests/setup-managed-pi.test.sh"
+bash "$REPO_DIR/tests/managed-pi-path.test.sh"
 printf 'setup tests passed\n'

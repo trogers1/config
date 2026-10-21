@@ -11,7 +11,7 @@ Herein lies my configuration files 📜
 
 == Setup
 
-The two macOS entry points have deliberately different ownership boundaries.
+The shared macOS/Linux setup and personal macOS linker have deliberately different ownership boundaries.
 Run the safe, additive shared setup with:
 
 [source,bash]
@@ -50,7 +50,7 @@ marker blocks, and removes old `d*` wrappers only when their exact content
 matches an installer-generated wrapper. Normal `./setup.sh` detects known
 legacy state and exits before changing files.
 
-== Shared dev + Pi setup (macOS)
+== Shared dev + Pi setup (macOS/Linux)
 
 The safe shared Pi and non-writing tmux/worktree workflow is installed with:
 
@@ -59,7 +59,7 @@ The safe shared Pi and non-writing tmux/worktree workflow is installed with:
 ./setup.sh
 ----
 
-This macOS-only installer has an explicit, limited surface: it installs the
+This macOS/Linux installer has an explicit, limited surface: it installs the
 shared Pi configuration (packages, extensions, settings, and usage), the
 shared `~/.agents` skills and snippets, the Claude skills, subagents, and
 hooks (registered in a user-owned `~/.claude/settings.json` without changing
@@ -68,12 +68,54 @@ installer additionally links the complete Claude settings and the global
 `CLAUDE.md`/Pi `AGENTS.md` instructions. It does not install or link Cursor, Git, Ghostty,
 Neovim, OpenCode, or shell dotfiles. `wopen`, `wnew`, and `wclose` are excluded.
 
-Before changing files it requires existing `pi`, `tmux`, `git`, `python3`, and
-`node`/`npm` (Node 22.19+). Missing tools cause a nonzero exit before
+Before changing configuration it requires `tmux` (3.5+), `git`, `python3`, and
+`node`/`npm` (Node 22.19+). Existing Pi must be 1.3+. The managed tmux block uses `extended-keys on`
+and `extended-keys-format csi-u`, which requires tmux 3.5 or newer.
+Restart the tmux server after upgrading/configuring it (save work first);
+verify Shift+Enter inserts a newline and Enter submits inside Pi. Missing tools cause a nonzero exit before
 modification. Neovim and lazygit are optional, workflow-specific tools; setup
 does not require them, but warns when they are absent and shows the optional
 `brew install neovim` or `brew install lazygit` command.
-Pi itself is intentionally not installed by the script.
+When `pi` is missing, normal `./setup.sh` automatically downloads the official
+https://pi.dev/install.sh installer to a temporary directory and runs it with
+`sh`, after Node/npm and setup preflight pass. `curl` is required for this
+case; no separate install flag is needed. `--dry-run` only prints the plan.
+The downloaded script is cleaned up on success or failure.
+
+New installations use Pi's managed release layout under `~/.pi/agent/install`
+and its launcher at `~/.pi/agent/bin/pi`, which setup adds to its own PATH
+immediately. Unlike `npm install -g` under nvm, the Pi installation is not tied
+to one nvm Node version's global package directory. Node/npm must still be
+available for setup and Pi runtime/update operations. Ensure
+`~/.pi/agent/bin` remains on your shell PATH. The installed shared `.zshrc`
+block (and the personal zsh configuration) prefers
+`${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/bin` when its Pi launcher exists,
+including after directory changes and at prompts following nvm switches.
+Fresh interactive zsh shells therefore find managed Pi without personal
+dotfiles or inheriting setup's PATH. Node executable selection is unchanged.
+Update managed Pi with `pi update`.
+
+After migrating an existing npm installation, restart your shell and verify
+`command -v pi` selects the managed launcher and `pi --version` succeeds.
+Old nvm-global npm copies may remain: remove them manually, one Node version
+at a time, only after confirming they are no longer needed. Keep any copy
+used by a currently running Pi process until that process has exited; setup
+does not remove it automatically.
+
+Run `bash tests/setup.test.sh` for the setup gate (requires zsh for the
+personal PATH checks). It includes the network-free managed installer tests
+and `tests/managed-pi-path.test.sh`, which verifies managed Pi precedence
+across simulated nvm switches, deduplication, custom agent directories, and
+unchanged command resolution when managed Pi is absent.
+
+Existing working installations are preserved, regardless of installation
+method; setup never silently migrates, reinstalls, or uninstalls them. Outdated,
+broken, off-PATH, or partial installations fail with explicit repair/update
+instructions. Download/installer failures stop before shared configuration is
+installed; a partial upstream installation may need explicit repair before
+retrying. `--uninstall` removes shared configuration, not the Pi installation.
+Native Windows remains separate: use `setup.ps1` with an existing Pi 1.3+;
+the managed shell bootstrap is macOS/Linux only.
 
 The shared setup also installs the dev-session Pi extension and Claude
 `SessionStart` metadata hook. `dev new`/`open`/`tree` persist session intent;

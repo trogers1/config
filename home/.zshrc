@@ -50,6 +50,10 @@ load-nvmrc() {
 }
 add-zsh-hook chpwd load-nvmrc
 load-nvmrc
+# nvm prepends its bin directory on switches; keep managed Pi independent of it.
+add-zsh-hook chpwd prefer-managed-pi
+add-zsh-hook precmd prefer-managed-pi
+prefer-managed-pi
 
 # pyenv lazy loader (only initializes when first used)
 if command -v pyenv >/dev/null 2>&1; then

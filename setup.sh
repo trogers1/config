@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Safe, macOS-only installer for the shared Pi + tmux/worktree workflow.
+# Safe macOS/Linux installer for the shared Pi + tmux/worktree workflow.
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -74,7 +74,8 @@ Usage: ./setup.sh [--dry-run] [--non-interactive] [--bootstrap-pi-deps]
        ./setup.sh --uninstall [--dry-run]
 
 Installs only the shared Pi and Claude configuration and non-writing `dev`
-tmux/worktree workflow. It does not install system tools. Conflicting user files are backed
+tmux/worktree workflow. Installs managed Pi automatically only when missing;
+Node/npm and other system tools must already exist. Conflicting user files are backed
 up next to the target as <target>.bak after an interactive confirmation.
 EOF
 }
@@ -122,13 +123,47 @@ version_at_least() {
   done
   return 0
 }
+bootstrap_pi() {
+  [ "$PI_MISSING" -eq 1 ] || return 0
+  if [ "$DRY_RUN" -eq 1 ]; then
+    say "PLAN: download https://pi.dev/install.sh and install managed Pi into $PI_DIR (no existing Pi will be removed)"
+    return 0
+  fi
+  local temporary
+  temporary="$(mktemp -d)" || die "Could not create Pi installer temporary directory."
+  # Isolate cleanup and run without a controlling terminal: upstream otherwise
+  # offers interactive actions and can launch Pi before setup is finished.
+  if ! (
+    trap 'rm -rf "$temporary"' EXIT
+    trap 'exit 130' INT TERM
+    curl --fail --show-error --silent --location https://pi.dev/install.sh --output "$temporary/install.sh" || exit 1
+    export PATH="$PI_DIR/bin:$PATH" PI_CODING_AGENT_DIR="$PI_DIR" PI_LEGACY_INSTALL=0
+    unset PI_MANAGED_INSTALL_ROOT PI_INSTALLER_API_BASE
+    python3 - "$temporary/install.sh" <<'PY'
+import subprocess, sys
+raise SystemExit(subprocess.run(["sh", sys.argv[1]], stdin=subprocess.DEVNULL, start_new_session=True).returncode)
+PY
+  ); then
+    die "Official Pi managed installation failed. No existing Pi was removed; inspect any partial installation before retrying."
+  fi
+  export PATH="$PI_DIR/bin:$PATH"
+  hash -r
+  [ -x "$PI_DIR/bin/pi" ] && [ -f "$PI_DIR/install/managed-install.json" ] && [ -f "$PI_DIR/install/current-version" ] || die "Pi installer did not produce the expected managed launcher and installation markers in $PI_DIR."
+  check_pi_version
+}
+
+check_pi_version() {
+  local pi_version pi_minimum="1.3.0"
+  pi_version="$(pi --version)" || die "Existing Pi cannot run ($(command -v pi)); repair it explicitly. Nothing was uninstalled."
+  version_at_least "${pi_version%%$'\n'*}" "$pi_minimum" || die "Pi $pi_version is too old; Pi $pi_minimum or newer is required. Update it explicitly (managed installs: pi update); setup will not replace or uninstall it."
+}
+
 preflight() {
-  [ "$(uname -s)" = "Darwin" ] || die "This installer supports macOS only."
+  case "$(uname -s)" in Darwin|Linux) ;; *) die "This installer supports macOS and Linux only; use setup.ps1 for native Windows." ;; esac
   require_command bash "Install the current macOS Bash or run from a Bash-compatible shell."
   require_command git "Install Xcode Command Line Tools: xcode-select --install"
   require_command python3 "Install Python 3: https://www.python.org/downloads/macos/"
   require_command tmux "Install tmux: brew install tmux"
-  require_command pi "Install Pi: https://pi.dev/"
   require_command node "Install Node.js 22.19 or newer: https://nodejs.org/"
   require_command npm "Install Node.js 22.19 or newer: https://nodejs.org/"
 
@@ -137,7 +172,22 @@ preflight() {
   command -v jira-ticket >/dev/null 2>&1 || warn "Optional tool 'jira-ticket' (used by the jira-ticket-management skill) is not installed. Install it if wanted with: uv tool install $REPO_DIR/home/.agents/skills/jira-ticket-management"
 
   version_at_least "$(node --version)" "22.19.0" || die "Node $(node --version) is too old; Node 22.19.0 or newer is required."
-  version_at_least "$(pi --version | head -n1)" "0.85.0" || die "Pi $(pi --version | head -n1) is too old; Pi 0.85.0 or newer is required."
+  local tmux_minimum="3.5" tmux_version
+  tmux_version="$(tmux -V | cut -d' ' -f2)"
+  tmux_version="${tmux_version%%[a-z]*}"
+  PI_MISSING=0
+  if command -v pi >/dev/null 2>&1; then
+    check_pi_version
+  else
+    local candidate
+    for candidate in "$PI_DIR/bin/pi" "$PI_DIR/install" "$HOME_DIR/.local/bin/pi" "$HOME_DIR/bin/pi"; do
+      [ ! -e "$candidate" ] && [ ! -L "$candidate" ] || die "Pi exists outside PATH or is broken: $candidate. Fix PATH or repair/remove it explicitly; setup will not replace it."
+    done
+    PI_MISSING=1
+    require_command curl "Install curl to download the official Pi installer."
+    require_command sh "A POSIX shell is required by the official Pi installer."
+  fi
+  version_at_least "$tmux_version" "$tmux_minimum" || die "tmux $tmux_minimum or newer is required for extended-keys-format csi-u."
 
   [ -w "$HOME_DIR" ] || die "HOME is not writable: $HOME_DIR"
   [ -d "$REPO_DIR/home/.pi/agent" ] || die "Missing bundled Pi configuration."
@@ -642,6 +692,7 @@ install_all() {
   preflight
   legacy_state_present && die "Legacy installer state detected; no files were changed. Run ./scripts/setup/migrate-legacy.sh, then rerun ./setup.sh."
   preflight_conflicts
+  bootstrap_pi
   if [ "$BOOTSTRAP" -eq 1 ]; then bootstrap_dependencies; fi
 
   for item in "${PI_LINKS[@]}"; do
