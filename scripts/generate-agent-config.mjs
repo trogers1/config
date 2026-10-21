@@ -6,12 +6,12 @@
 //   home/.agents/agents/<name>.md -> home/.claude/agents/<name>.md
 //                                 -> home/.pi/agent/packages/pi-guard-subagents/agents/<name>.md
 //
-// Every file under the output roots is generated. Run with --check to fail
-// when the committed output differs from what the sources produce.
+// Only entries recorded in the generated ownership manifest are owned; siblings may be
+// synchronized externally. Run --check to detect stale owned output.
 // Repeat --skill <name> to generate/check only those shared skill links,
 // preserving unrelated outputs (including externally synced resources).
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { basename, dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadSnippets, parseFrontmatter } from "../home/.claude/hooks/snippets.mjs";
 
@@ -20,7 +20,34 @@ const SHARED_DIR = join(REPO_DIR, "home/.agents");
 const CLAUDE_SKILLS_DIR = join(REPO_DIR, "home/.claude/skills");
 const CLAUDE_AGENTS_DIR = join(REPO_DIR, "home/.claude/agents");
 const PI_AGENTS_DIR = join(REPO_DIR, "home/.pi/agent/packages/pi-guard-subagents/agents");
+const OWNERSHIP_PATH = join(REPO_DIR, "scripts/generated-agent-config-ownership.json");
 const OUTPUT_ROOTS = [CLAUDE_SKILLS_DIR, CLAUDE_AGENTS_DIR, PI_AGENTS_DIR];
+
+// Persist portable repository paths even when native filesystem paths use \\.
+function repositoryPath({ path }) {
+  return relative(REPO_DIR, path).split(sep).join("/");
+}
+
+function readOwnership() {
+  const stat = lstatSync(OWNERSHIP_PATH, { throwIfNoEntry: false });
+  if (!stat) return [];
+  if (!stat.isFile()) throw new Error(`Generated ownership manifest must be a regular file: ${OWNERSHIP_PATH}`);
+  const paths = JSON.parse(readFileSync(OWNERSHIP_PATH, "utf8"));
+  if (!Array.isArray(paths) || paths.some((path) => {
+    if (typeof path !== "string") return true;
+    return !OUTPUT_ROOTS.some((root) => {
+      const prefix = `${repositoryPath({ path: root })}/`;
+      if (!path.startsWith(prefix)) return false;
+      const name = path.slice(prefix.length);
+      return root === CLAUDE_SKILLS_DIR
+        ? /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name)
+        : /^[a-z0-9]+(?:-[a-z0-9]+)*\.md$/.test(name);
+    });
+  }) || new Set(paths).size !== paths.length) {
+    throw new Error(`Invalid generated ownership manifest: ${OWNERSHIP_PATH}`);
+  }
+  return paths.map((path) => join(REPO_DIR, path));
+}
 
 // Pi runs OpenAI models and Claude runs Anthropic models from the same agent prompts.
 const MODEL_TIERS = {
@@ -116,7 +143,13 @@ for (let index = 0; index < args.length; index++) {
   } else throw new Error(`Unknown option: ${arg}`);
 }
 const expected = expectedOutputs({ skillNames });
-const roots = skillNames.length ? [...expected.keys()] : OUTPUT_ROOTS;
+const previousRoots = readOwnership();
+const currentRoots = [...new Set([...expected.keys()].map((path) => basename(path) === "SKILL.md" ? dirname(path) : path))];
+// A scoped operation only changes selected entries; keep all other ownership.
+const nextRoots = skillNames.length ? [...new Set([...previousRoots, ...currentRoots])] : currentRoots;
+const manifest = JSON.stringify(nextRoots.map((path) => repositoryPath({ path })).sort(), null, 2) + "\n";
+expected.set(OWNERSHIP_PATH, { content: manifest });
+const roots = [...new Set([...(skillNames.length ? currentRoots : [...previousRoots, ...currentRoots]), OWNERSHIP_PATH])];
 if (check) {
   const actual = actualOutputs({ roots });
   const stale = [...new Set([...expected.keys(), ...actual.keys()])].filter(
@@ -124,11 +157,13 @@ if (check) {
   );
   if (stale.length > 0) {
     const selection = skillNames.map((name) => ` --skill ${name}`).join("");
-    console.error(`Generated agent config is stale; run scripts/generate-agent-config.mjs${selection}:\n${stale.map((p) => `  ${relative(REPO_DIR, p)}`).join("\n")}`);
+    console.error(`Generated agent config is stale; run scripts/generate-agent-config.mjs${selection}:\n${stale.map((path) => `  ${repositoryPath({ path })}`).join("\n")}`);
     process.exit(1);
   }
 } else {
-  for (const root of roots) rmSync(root, { recursive: true, force: true });
+  for (const root of roots) {
+    if (root !== OWNERSHIP_PATH) rmSync(root, { recursive: true, force: true });
+  }
   for (const [path, output] of expected) {
     mkdirSync(dirname(path), { recursive: true });
     if (output.symlink) symlinkSync(output.symlink, path);

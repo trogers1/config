@@ -40,10 +40,20 @@ belongs in a skill or snippet, which the file points to rather than repeats.
 
 == Generated config
 
-`scripts/generate-agent-config.mjs` renders every file under
+`scripts/generate-agent-config.mjs` renders owned entries under
 `home/.claude/skills`, `home/.claude/agents`, and
-`home/.pi/agent/packages/pi-guard-subagents/agents`. Rerun it after changing a
-skill, snippet, or agent; `setup.sh` and `tests/setup.test.sh` refuse stale output.
+`home/.pi/agent/packages/pi-guard-subagents/agents`, not the entire roots.
+External siblings (including `home/.claude/skills/synced`) are ignored by
+checks and preserved by writes. Rerun it after changing a skill, snippet,
+or agent; `setup.sh` and `tests/setup.test.sh` refuse stale output.
+The tracked `scripts/generated-agent-config-ownership.json` is generated from
+the expected output entries; do not maintain a separate list of resource names.
+Checks and writes consider both that previous ownership and current sources,
+so removing a source still detects and cleans its previously generated entry.
+Commit the updated manifest alongside generated outputs. Its repository-relative
+paths always use `/`, including when generated or checked on native Windows.
+External siblings are never adopted merely because they exist. `--skill <name>` restricts either
+operation to selected shared skill links and preserves unrelated ownership.
 
 [source,bash]
 ----
