@@ -1,4 +1,5 @@
 import path from "node:path";
+import { Value } from "typebox/value";
 import {
   extractShellCommands,
   matchesCommandPattern,
@@ -24,7 +25,7 @@ import {
 import { validateReadCommands } from "../modules/shell/readCommands";
 import { askPermissionChoices } from "../modules/profileUpdate";
 import {
-  createBashTool,
+  createBashToolDefinition,
   isToolCallEventType,
   type ExtensionAPI,
   type ExtensionContext,
@@ -586,7 +587,7 @@ export default function (pi: GuardExtensionAPI) {
   // Capture Pi's standard local Bash implementation once; the registered
   // override delegates to it whenever sandboxing is disabled or explicitly
   // configured to fall back with a warning.
-  const packageBashTool = createBashTool(startupCwd);
+  const packageBashTool = createBashToolDefinition(startupCwd);
   // Tool source metadata may change when Pi rebuilds its tool registry. This
   // marker survives those rebuilds and identifies this registered wrapper.
   const packageBashOwnershipMarker = "\n[pi-guard sandbox wrapper]";
@@ -714,21 +715,36 @@ export default function (pi: GuardExtensionAPI) {
   }
 
   function sandboxUnavailableResult(reason: string) {
-    return {
+    const result = {
       content: [
         { type: "text" as const, text: `Bash sandbox unavailable: ${reason}` },
       ],
+      isError: true,
+      structuredContent: {
+        output: `Bash sandbox unavailable: ${reason}`,
+        truncated: false,
+        exit_code: 126,
+        wall_time_seconds: 0,
+      },
       details: {
+        truncation: undefined,
         exitCode: 126,
         durationMs: 0,
         output: `Bash sandbox unavailable: ${reason}`,
       },
     };
+    if (!isBashToolResult(result))
+      throw new Error("Invalid sandbox-unavailable Bash result");
+    return result;
   }
 
-  type BashToolResult = AgentToolResult<Record<string, unknown>>;
+  type BashToolResult = AgentToolResult<Record<string, unknown>> & {
+    structuredContent: { exit_code: number };
+  };
   type BashExecutionResult = AgentToolResult<
-    Record<string, unknown> & { exitCode: number }
+    NonNullable<
+      Awaited<ReturnType<typeof packageBashTool.execute>>["details"]
+    > & { exitCode: number }
   >;
 
   function isBashToolResult(value: unknown): value is BashToolResult {
@@ -736,7 +752,16 @@ export default function (pi: GuardExtensionAPI) {
       return false;
     const content = readProperty(value, "content");
     const details = readProperty(value, "details");
+    const structured = readProperty(value, "structuredContent");
     return (
+      typeof structured === "object" &&
+      structured !== null &&
+      packageBashTool.outputSchema !== undefined &&
+      Value.Check(
+        packageBashTool.outputSchema,
+        readProperty(value, "structuredContent"),
+      ) &&
+      typeof readProperty(structured, "exit_code") === "number" &&
       Array.isArray(content) &&
       content.every(
         (item: unknown) =>
@@ -757,6 +782,7 @@ export default function (pi: GuardExtensionAPI) {
   }: {
     readonly execute: () => Promise<unknown>;
   }): Promise<BashExecutionResult> {
+    const startedAt = performance.now();
     try {
       const result = await execute();
       if (!isBashToolResult(result))
@@ -766,22 +792,27 @@ export default function (pi: GuardExtensionAPI) {
         ...result,
         details: {
           ...details,
-          exitCode: typeof details.exitCode === "number" ? details.exitCode : 0,
+          exitCode: result.structuredContent.exit_code,
         },
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const match = message.match(/Command exited with code (\d+)/);
-      const exitCode = match
-        ? Number(match[1])
-        : /timed out|aborted/i.test(message)
-          ? 124
-          : undefined;
+      const exitCode = /timed out|aborted/i.test(message) ? 124 : undefined;
       if (exitCode === undefined) throw error;
-      return {
+      const result = {
         content: [{ type: "text", text: message }],
         details: { exitCode },
+        isError: true,
+        structuredContent: {
+          output: message,
+          truncated: false,
+          exit_code: exitCode,
+          wall_time_seconds: (performance.now() - startedAt) / 1000,
+        },
       };
+      if (!isBashToolResult(result))
+        throw new Error("Invalid interrupted Bash result");
+      return result;
     }
   }
 
@@ -2128,11 +2159,12 @@ The permissions gate remains loaded and will fail closed until the profile is co
       if (resolution.kind === "none") {
         return await executeBashWithExitCode({
           execute: () =>
-            createBashTool(ctx.cwd ?? startupCwd).execute(
+            createBashToolDefinition(ctx.cwd ?? startupCwd).execute(
               toolCallId,
               params,
               signal,
               onUpdate,
+              ctx,
             ),
         });
       }
@@ -2144,11 +2176,12 @@ The permissions gate remains loaded and will fail closed until the profile is co
           }
           return await executeBashWithExitCode({
             execute: () =>
-              createBashTool(ctx.cwd ?? startupCwd).execute(
+              createBashToolDefinition(ctx.cwd ?? startupCwd).execute(
                 toolCallId,
                 params,
                 signal,
                 onUpdate,
+                ctx,
               ),
           });
         }
@@ -2157,12 +2190,12 @@ The permissions gate remains loaded and will fail closed until the profile is co
       }
 
       ensureBashToolOwnership();
-      const sandboxedBash = createBashTool(ctx.cwd ?? startupCwd, {
+      const sandboxedBash = createBashToolDefinition(ctx.cwd ?? startupCwd, {
         operations: resolution.prepared.operations,
       });
       return await executeBashWithExitCode({
         execute: () =>
-          sandboxedBash.execute(toolCallId, params, signal, onUpdate),
+          sandboxedBash.execute(toolCallId, params, signal, onUpdate, ctx),
       });
     },
   });

@@ -31,11 +31,12 @@
 	],
 	"scripts": {
 		"check:all": "npm test",
+		"check:sdk": "node ../check-pi-sdk.mjs",
 		"check:deps": "depcruise extensions tests vitest.config.ts --config .dependency-cruiser.cjs",
 		"check:knip": "knip",
 		"check:lint": "eslint .",
 		"check:prettier": "prettier --check .",
-		"check:static": "npm run check:types && npm run check:lint && npm run check:deps && npm run check:knip && npm run check:prettier",
+		"check:static": "npm run check:sdk && npm run check:types && npm run check:lint && npm run check:deps && npm run check:knip && npm run check:prettier",
 		"check:types": "tsc --noEmit",
 		"fix:all": "npm run fix:prettier",
 		"fix:prettier": "prettier --write .",
@@ -76,9 +77,10 @@
 		}
 	},
 	"devDependencies": {
-		"@earendil-works/pi-ai": "^0.87.1",
-		"@earendil-works/pi-coding-agent": "^0.87.1",
-		"@earendil-works/pi-tui": "^0.87.1",
+		"@earendil-works/pi-ai": "1.3.0",
+		"@earendil-works/pi-coding-agent": "1.3.0",
+		"@earendil-works/pi-tui": "1.3.0",
+		"typebox": "1.3.27",
 		"@types/node": "^26.1.1",
 		"dependency-cruiser": "^18.1.0",
 		"eslint": "^10.7.0",

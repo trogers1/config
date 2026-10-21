@@ -6,6 +6,8 @@ import {
   type ExtensionAPI,
   type ExtensionCommandContext,
   type ExtensionContext,
+  type ExtensionToolContext,
+  type AgentToolResult,
   type ExtensionHandler,
   type RegisteredCommand,
   type SessionEntry as SdkSessionEntry,
@@ -19,6 +21,7 @@ import {
   type UserBashEventResult,
 } from "@earendil-works/pi-coding-agent";
 import { afterEach, expect, vi, type Mock } from "vitest";
+import { Value } from "typebox/value";
 import {
   KeybindingsManager,
   TUI_KEYBINDINGS,
@@ -63,6 +66,7 @@ class HarnessTerminal implements Terminal {
   clearScreen(): void {}
   setTitle(): void {}
   setProgress(): void {}
+  setProgramStatus(): void {}
 }
 
 type CommandRegistration = Omit<RegisteredCommand, "name" | "sourceInfo">;
@@ -829,7 +833,12 @@ export function createExtensionHarness(
     options.sessionManager ??
     ({
       getEntries: () => entries,
-    } satisfies Pick<ExtensionContext["sessionManager"], "getEntries">);
+      getSessionId: () => "guard-harness-session",
+      getSessionFile: () => undefined,
+    } satisfies Pick<
+      ExtensionContext["sessionManager"],
+      "getEntries" | "getSessionId" | "getSessionFile"
+    >);
 
   const context = {
     cwd: contextCwd,
@@ -1047,16 +1056,61 @@ export function createExtensionHarness(
     name: string;
     params: unknown;
     options?: { signal?: AbortSignal };
-  }) {
+  }): Promise<AgentToolResult<unknown>> {
     ensureStarted("executeRegisteredTool");
     const tool = tools.get(name);
     if (!tool) throw new Error(`Tool not registered: ${name}`);
+    if (!Value.Check(tool.parameters, params))
+      throw new Error(`Invalid arguments for ${name}`);
     return await tool.execute(
       "test-tool-call",
       params,
       options.signal,
       undefined,
-      extensionContext,
+      {
+        ...extensionContext,
+        tools: [...tools.values()].map((registered) => ({
+          ...registered,
+          execute: async (_id, input, signal) =>
+            await executeRegisteredTool({
+              name: registered.name,
+              params: input,
+              options: { signal },
+            }),
+        })),
+        executeTool: async (name, input, nestedOptions) => {
+          if (
+            typeof input !== "object" ||
+            input === null ||
+            Array.isArray(input)
+          )
+            throw new Error("Nested tool input must be an object");
+          const args = { ...input };
+          const blocked = await dispatchToolCall({
+            type: "tool_call",
+            toolCallId: "test-tool-call/1",
+            parentToolCallId: "test-tool-call",
+            toolName: name,
+            input: args,
+          });
+          if (blocked?.block) throw new Error(blocked.reason);
+          const result = await executeRegisteredTool({
+            name,
+            params: args,
+            options: nestedOptions,
+          });
+          return {
+            toolCall: {
+              type: "toolCall",
+              id: "test-tool-call/1",
+              name,
+              arguments: args,
+            },
+            result,
+            isError: result.isError ?? false,
+          };
+        },
+      } satisfies ExtensionToolContext,
     );
   }
 
@@ -1467,17 +1521,25 @@ export function createExtensionHarness(
     },
     async beforeAgent({
       systemPrompt = "Base system prompt",
+      message,
     }: {
       systemPrompt?: string;
+      message?: Extract<
+        BeforeAgentStartEvent,
+        { messageType: "custom" }
+      >["message"];
     } = {}) {
       ensureStarted("beforeAgent");
       return await dispatchBeforeAgentStart({
         type: "before_agent_start",
-        prompt: "test prompt",
+        ...(message
+          ? { messageType: "custom" as const, message }
+          : { messageType: "user" as const, prompt: "test prompt" }),
         systemPrompt,
         systemPromptOptions: {
           cwd: contextCwd,
           selectedTools: [],
+          hiddenTools: [],
           toolSnippets: {},
           toolGuidelines: {},
           promptGuidelines: [],

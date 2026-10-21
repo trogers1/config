@@ -2,6 +2,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createBashToolDefinition } from "@earendil-works/pi-coding-agent";
+import { Value } from "typebox/value";
 import {
   clearSandboxCaches,
   resolveSandbox,
@@ -152,12 +154,20 @@ describe("sandbox unavailable-backend lifecycle", () => {
     expect(toolCallResult).toMatchObject({ block: true });
     expect(toolCallResult?.reason).toContain("Bash sandbox unavailable");
     expect(harness.ui.custom).not.toHaveBeenCalled();
-    expect(
-      (await harness.executeTool({
-        name: "bash",
-        params: { command: "echo must-not-run" },
-      })) as unknown,
-    ).toMatchObject({ details: { exitCode: 126 } });
+    const unavailableResult = await harness.executeTool({
+      name: "bash",
+      params: { command: "echo must-not-run" },
+    });
+    const outputSchema = createBashToolDefinition(process.cwd()).outputSchema;
+    if (!outputSchema) throw new Error("Host Bash output schema missing");
+    expect(Value.Check(outputSchema, unavailableResult.structuredContent)).toBe(
+      true,
+    );
+    expect(unavailableResult).toMatchObject({
+      isError: true,
+      details: { exitCode: 126 },
+      structuredContent: { exit_code: 126, truncated: false },
+    });
     expect(
       (await harness.callUserBash({
         cwd: process.cwd(),

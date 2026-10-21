@@ -37,7 +37,8 @@ module.exports = {
       comment:
         "Pi runtime code must not depend on packages declared only for development.",
       from: { path: "^(extensions|modules)/", pathNot: "\\.test\\.ts$" },
-      to: { dependencyTypes: ["npm-dev"] },
+      // Host-provided peers also have exact dev pins for local SDK checks.
+      to: { dependencyTypes: ["npm-dev"], dependencyTypesNot: ["npm-peer"] },
     },
     {
       name: "modules-do-not-import-extension-entrypoints",

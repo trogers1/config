@@ -21,7 +21,8 @@ flowchart TD
 
 The sandbox contains:
 
-- LLM `bash` tool calls after they pass the permission gate.
+- LLM `bash` tool calls after they pass the permission gate, including nested
+  calls from codemode through Pi's `ctx.executeTool()`.
 - User-authored `!` and `!!` Bash through Pi's `user_bash` integration, subject
   to Pi handler ordering.
 - Child processes, command substitutions, package scripts, compilers, and
@@ -31,6 +32,19 @@ It does **not** contain Pi's in-process `read`, `write`, `edit`, `grep`,
 `find`, or `ls` tools, arbitrary custom tools, or execution initiated by other
 extensions. Those remain governed by the normal permission gate. For a whole
 agent boundary, run Pi itself in a container or VM.
+
+## Bash result contract (Pi 1.3)
+
+Guard preserves Pi's Bash output schema and structured result fields, including
+`output`, `truncated`, `full_output_path`, `exit_code`, and
+`wall_time_seconds`. A nonzero command exit returns `isError: true` for the
+model while retaining structured data for codemode callers. Guard also exposes
+`details.exitCode` for compatibility with existing consumers.
+
+When execution times out or is aborted, Guard returns an error result with exit
+code 124 and schema-compatible structured content. An unavailable sandbox with
+`onUnavailable: "block"` returns exit code 126 without executing the command.
+Unexpected host result shapes fail loudly rather than being treated as success.
 
 ## Profile configuration
 
