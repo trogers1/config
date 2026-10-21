@@ -37,6 +37,7 @@ jira-ticket --help
 jira-ticket --version        # offline
 jira-ticket create --help
 jira-ticket get --help
+jira-ticket sprints --help
 jira-ticket update --help
 jira-ticket draft-example --update  # offline partial-update example
 jira-ticket draft-example    # offline JSON format example, NOT an approved ticket
@@ -47,7 +48,7 @@ If the command is missing, install it and follow uv's shell instructions. If con
 
 ### Agent guard policy
 
-Installation does not change Pi guard profiles. Profiles must permit executing the installed `jira-ticket` command and reading the saved draft; sandboxed live operations also need network access and process access to the configured jiratui settings. Treat help, version, example, doctor, types, statuses, link-types, get, preflight and update --dry-run as read-only operations. Keep mutation approval for `create` and `update` rather than broadly authorizing Python or arbitrary inline API scripts. A guard denial is a policy issue, not a reason to choose another interpreter or bypass the CLI.
+Installation does not change Pi guard profiles. Profiles must permit executing the installed `jira-ticket` command and reading the saved draft; sandboxed live operations also need network access and process access to the configured jiratui settings. Treat help, version, example, doctor, types, statuses, link-types, sprints, get, preflight and update --dry-run as read-only operations. Keep mutation approval for `create` and `update` rather than broadly authorizing Python or arbitrary inline API scripts. A guard denial is a policy issue, not a reason to choose another interpreter or bypass the CLI.
 
 ## Configuration and safety
 
@@ -57,7 +58,7 @@ Only Jira Cloud Basic auth and verified HTTPS are supported. Configured CA bundl
 
 **Only explicit `create` or `update` without `--dry-run` authorizes writes.** GET, preflight, discovery, dry-runs and doctor are read-only. Review and approve the complete final draft first. There are no automatic retries of any mutation (including issue/estimate PUTs and create/transition/link POSTs), no deletion/cleanup and no test-ticket mode. Never create a ticket to test the workflow.
 
-## Read and partially update an existing ticket (0.3.0)
+## Read and partially update an existing ticket (0.4.0)
 
 ```sh
 jira-ticket get RI-123                 # read-only, no mutation approval needed
@@ -71,7 +72,7 @@ jira-ticket update RI-123 --draft changes.json
 
 `get` returns `outcome: issue`, `read_only: true`, immutable `id`, canonical `key`, HTTPS browser `link`, and `details`: summary, full ADF description, project, type, status, assignee, reporter, parent, exact story points, and oriented existing links. Identity details contain account IDs/display names, not authentication or raw configuration. Unassigned/no-parent/no-estimate may be null on **read**; null is never an update instruction. Description is read in full even if its existing ADF uses nodes outside the writable subset. GET never requests approval; its output is private ticket content. Invalid keys/IDs fail locally before configuration discovery.
 
-A partial draft uses the **same allowed keys as create**, but none is required individually. Supply at least one key. Omit everything not approved to change. There are **no create-time defaults**: no configured project, `/myself`, assignee/reporter replacement, status reset, estimate reset or implicit parent removal. Unknown/duplicate keys, nulls, booleans, empty content, numeric strings for points, unsupported ADF and malformed links fail before configuration/network access. `story_points: "unset"` and `links: []` are valid no-ops, never clearing/removal; an empty object is invalid. An already-equal request can produce `unchanged` with no writes.
+A partial draft uses the **create keys plus update-only `sprint`**, but none is required individually. Supply at least one key. Omit everything not approved to change. There are **no create-time defaults**: no configured project, `/myself`, assignee/reporter replacement, status reset, estimate reset or implicit parent removal. Unknown/duplicate keys, nulls, booleans, empty content, numeric strings for points, unsupported ADF and malformed links fail before configuration/network access. `story_points: "unset"` and `links: []` are valid no-ops, never clearing/removal; an empty object is invalid. An already-equal request can produce `unchanged` with no writes.
 
 Example (only if all listed changes are explicitly approved):
 
@@ -98,20 +99,42 @@ Example (only if all listed changes are explicitly approved):
 | `reporter` | Omitted defaults to authenticated user | Omitted unchanged; explicit active unique identity, edit writability/allowed values. No `/myself` default |
 | `parent` | Optional immediate same-project hierarchy parent; required for subtask | Supplied immediate hierarchy and resulting-project check. Existing parent revalidated on actual project/type change; no implicit removal. Subtasks need a verified parent |
 | `story_points` | Required number or `"unset"` | Optional finite nonnegative JSON number; `"unset"` no-op. Exact numeric `customfield_10004` catalog validation; inline edit if writable, otherwise only verified Agile estimator |
-| `board` | Optional numeric string for Agile numeric estimate | Context only; requires requested numeric points, only when Agile fallback needed. Not itself a ticket field |
+| `board` | Optional numeric string for Agile numeric estimate | Context only; allowed for sprint selection without points, shared with numeric estimation. Without sprint, only Agile estimate fallback. Not a ticket field |
+| `sprint` | Not supported | Exact object `{"action":"add" or "remove","id":"VERIFIED_ACTIVE_SPRINT_ID"}`; active sprints only, closed history preserved, no extra active/future displacement |
 | `links` | Optional array of existing-target additions | Additions only, same exact type/direction/issue schema; direction from **current target ticket** perspective. `[]` no-op; no link deletion/replacement |
 
 All requested inline edits require matching schemas, an advertised `set` operation and any allowed values on **GET issue/ID/editmeta**. This endpoint returns an **unpaginated fields object**, not create-field pages. Additional required edit fields are not filled or defaulted: existing nonempty values are respected; absent required values fail closed. Unsupported moves, fields, clearing, deletion, labels, priority and dates need a separately approved Jira UI/supported extension workflow; never invent ad-hoc API calls.
 
-The dry-run displays the complete `current` target context, canonical ID/key/link, `requested_fields`, changed-only `payload.fields`, optional `estimate`, `requested_status`, direct `transition`, and `links` with natural relationship labels and verified/pending progress. Review the complete target context and approved **changes/plan**, not a synthetic create draft. Updating repeats all read-only preparation from live state/metadata; a prior dry-run is not a cached authorization or frozen snapshot.
+The dry-run displays the complete `current` target context, canonical ID/key/link, `requested_fields`, changed-only `payload.fields`, optional `estimate` and `sprint`, `requested_status`, direct `transition`, and `links` with natural relationship labels and verified/pending progress. Review the complete target context and approved **changes/plan**, not a synthetic create draft. Updating repeats all read-only preparation from live state/metadata; a prior dry-run is not a cached authorization or frozen snapshot.
 
-Numeric estimates retain the exact Story Points Estimates field/catalog/board validation described below. Inline points require edit-screen writability. Otherwise, preparation verifies the exact project board estimator **and existing issue Agile estimation field/membership/readback**, before any write. Existing Agile and issue values must agree. No generic edit bypass or alternate estimate field. Inline edit, optional Agile estimate, optional direct transition, then links execute sequentially. Supplied transition availability/ambiguity/required-field checks happen **before even the inline PUT** and are checked again before transition execution if preceding writes changed state. Supplied project/type edits cannot silently discard an existing parent or reset an omitted status; current parent consistency and omitted status membership in the resulting type are checked first.
+Numeric estimates retain the exact Story Points Estimates field/catalog/board validation described below. Inline points require edit-screen writability. Otherwise, preparation verifies the exact project board estimator **and existing issue Agile estimation field/membership/readback**, before any write. Existing Agile and issue values must agree. No generic edit bypass or alternate estimate field. Inline edit, optional Agile estimate, optional direct transition, optional exact sprint operation, then links execute sequentially. Supplied transition availability/ambiguity/required-field checks happen **before even the inline PUT** and are checked again before transition execution if preceding writes changed state. Supplied project/type edits cannot silently discard an existing parent or reset an omitted status; current parent consistency and omitted status membership in the resulting type are checked first.
 
 Updates use the immutable issue **ID** for issue/editmeta/estimate/transition/readback requests and link POST endpoints, even if editing the project changes the key. Canonical readbacks refresh the key/browser URL and relationship labels. Links reuse verified metadata, dedup automation-supplied exact relationships, reject self-links anywhere in the plan **before all writes**, and verify exact type/direction/target ID and key after each addition. Targets' canonical keys are refreshed by ID before writing.
 
 `updated` means performed writes and verified **only supplied fields**, estimate/status and requested links. `unchanged` means no writes needed; omission/`unset` is not claimed empty. Both retain ID/key/link and `verified_fields`. Update never POSTs an issue, never reports `created`, and never retries a PUT/POST.
 
 Any execution failure stops later writes and returns `partial_failure` for the **established existing issue**, with ID/key/link, `failed_step`, precise `remaining_action`, and each link's `verified` / `unverified` / `pending` progress. `uncertain_operation` identifies an attempted mutation not yet verified (including timeout/HTTP error); it may have succeeded. A best-effort read-only canonical refresh can follow failure but never resumes writes. If that refresh fails, the last verified key/link remain; no unknown-key/create outcome. Report the clickable link, reconcile the uncertain operation first, then manually finish only missing approved changes. Do not blindly rerun update or repeat any uncertain mutation. Live workflows are not atomic: metadata/automation may change after preparation; verified readbacks detect mismatches but cannot prevent every concurrent change.
+
+### Existing-ticket active sprint changes
+
+```sh
+jira-ticket sprints RI-123                 # read-only: existing issue's project, not configured default
+jira-ticket sprints RI-123 --board VERIFIED_BOARD_ID  # narrow to a verified project Scrum board
+# Save changes.json: {"sprint":{"action":"add","id":"VERIFIED_ACTIVE_SPRINT_ID"}}
+# Or remove: {"sprint":{"action":"remove","id":"VERIFIED_ACTIVE_SPRINT_ID"}}
+# Include optional "board":"VERIFIED_BOARD_ID" in the saved draft when board selection is ambiguous.
+jira-ticket update RI-123 --draft changes.json --dry-run
+# Approve the exact target, sprint ID, board and full displayed mutation plan first:
+jira-ticket update RI-123 --draft changes.json
+```
+
+Use discovered numeric ID strings in place of placeholders. Discovery lists eligible Scrum boards and **all** their active sprints with paginated live metadata; it does not choose the first. Updates require one eligible board, or an explicit verified `board`. Parallel active sprints are supported only by selecting an exact ID uniquely present in that board's active metadata. No `current` alias or automatic rollover: the unchanged draft binds approval to **that exact active sprint ID**. If it closes/disappears, rediscover, preview and obtain fresh approval. Create drafts reject `sprint`. An actual project/type move must be completed separately before sprint discovery/update.
+
+The Sprint custom field is discovered by Jira Software schema identity, never by its name or a fixed customfield ID. Only documented structured membership arrays (or null for no memberships) are supported; legacy serialized sprint strings fail closed. Sprint uses Agile assignment/backlog endpoints, not generic editmeta field writes. An add posts once to `sprint/ID/issue`; removal posts once to **issue-wide backlog**, which could remove all active/future assignments. Therefore any needed operation that would remove/displace another active/future assignment **stops before any writes**, even with other changes in the draft. Reconcile that planning separately with approval. Already-added/already-absent requests skip the sprint POST; closed history must remain intact.
+
+The preview's `sprint` plan shows exact ID/action, verified board, prior memberships, expected IDs, endpoint/body, side effects and whether a write is needed. Before its step the CLI rereads board activity and membership state; drift stops execution, never retargets. Readback and final verification check the exact membership outcome and preserved closed history. Optional board context also works with inline points, or must independently satisfy the existing exact estimator contract for Agile points.
+
+Failures use existing `partial_failure`, canonical clickable link and remaining-action reporting. `sprint.status` is `pending` (not attempted), `unverified` (attempted or previously observed outcome no longer verifiable), or `verified`. Failed steps are `sprint_precheck`, `sprint_update`, or `sprint_verification`; `uncertain_operation: sprint_update` means a POST may have succeeded. Later writes stop; no retries, rollback, compensation or automatic recovery. Reconcile membership read-only first, then preview and approve only remaining work. Metadata can still change between the last read and POST; this is not atomic concurrency control.
 
 ## Creation workflow
 
@@ -200,12 +223,13 @@ Status belongs to the selected project's type, but typically cannot be set in th
 
 ## Outcomes and reporting
 
-All operational results are JSON. Exit 0 means `doctor_ok`, `types`, `statuses`, `link_types`, `issue`, `dry_run`, `created`, `updated` or `unchanged`; failures exit 1. Help/version/example exit 0; argparse usage errors exit 2.
+All operational results are JSON. Exit 0 means `doctor_ok`, `types`, `statuses`, `link_types`, `sprints`, `issue`, `dry_run`, `created`, `updated` or `unchanged`; failures exit 1. Help/version/example exit 0; argparse usage errors exit 2.
 
 - `doctor_ok`: local configuration passed; `connectivity` is `not_checked` or explicitly `verified`. No settings or account ID printed.
 - `doctor_failed`: safe diagnostic only; no mutations.
 - `types` / `statuses`: live IDs/names and selected project/type.
 - `link_types`: live verified `link_types` array with ID/name/inward/outward labels; read-only.
+- `sprints`: canonical existing issue/project and eligible Scrum boards with all active sprint IDs/names/states; read-only.
 - `dry_run`: no writes; `payload`, `requested_status` and any `post_create_estimate` / `post_create_links` plans.
 - `issue`: read-only existing-ticket details with canonical ID/key/link.
 - `updated` / `unchanged`: existing-ticket supplied changes verified, with writes / without writes.
@@ -225,4 +249,4 @@ uv run --locked python -m unittest discover -s tests -v
 uv build
 ```
 
-The unittest suite uses `httpx.MockTransport` and fake effective config; no actual config or Jira is read. It covers the retained creation workflow, exact estimator and pagination safety, identities, required fields/parents, transition/verification/unknown outcomes, public CLI validation, help/version/example discovery, doctor redaction, read-only aliases and no mutation retries. Link tests cover catalog/schema validation, existing cross-project targets, canonical duplicates, both Jira orientations, sequential and automation-supplied relationships, fail-closed readback, uncertain writes and per-link partial recovery. Existing-ticket tests additionally cover public get/update key/ID/canonical context, offline discovery, partial local validation before config, omitted/default preservation, no-op unset, literal/ADF replacement, explicit identities, exact inline/Agile estimates, editmeta object shape, required existing fields, parent/project/type edit restrictions, transition preflight before mutation, canonical IDs across key moves, read-only full plans, link additions/dedup/self-link safety, supplied-only verification, timeout/HTTP partial outcomes with progress and no retries/later writes, revalidation and no issue POST. Never use live tickets to verify packaging.
+The unittest suite uses `httpx.MockTransport` and fake effective config; no actual config or Jira is read. It covers the retained creation workflow, exact estimator and pagination safety, identities, required fields/parents, transition/verification/unknown outcomes, public CLI validation, help/version/example discovery, doctor redaction, read-only aliases and no mutation retries. Link tests cover catalog/schema validation, existing cross-project targets, canonical duplicates, both Jira orientations, sequential and automation-supplied relationships, fail-closed readback, uncertain writes and per-link partial recovery. Existing-ticket tests additionally cover public get/update key/ID/canonical context, offline discovery, partial local validation before config, omitted/default preservation, no-op unset, literal/ADF replacement, explicit identities, exact inline/Agile estimates, editmeta object shape, required existing fields, parent/project/type edit restrictions, transition preflight before mutation, canonical IDs across key moves, read-only full plans, link additions/dedup/self-link safety, supplied-only verification, timeout/HTTP partial outcomes with progress and no retries/later writes, revalidation and no issue POST. Sprint tests cover read-only discovery/pagination, exact-ID add/remove/no-ops, board ambiguity, malformed schema/memberships, closed history, extra-assignment rejection, rollover/drift, shared estimates and sequential operations, local create rejection, redaction and uncertain POST/readback recovery without retries. Never use live tickets to verify packaging.

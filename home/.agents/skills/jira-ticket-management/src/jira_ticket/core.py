@@ -144,6 +144,13 @@ def validate_links(links):
     return links
 
 
+def metadata_id(*, value: object) -> str:
+    if (not isinstance(value, (str, int)) or isinstance(value, bool) or
+            not str(value).isascii() or not str(value).isdigit()):
+        raise Failure('Sprint/board metadata requires numeric IDs.')
+    return str(value)
+
+
 class Creator:
     def __init__(self, client, browser_url=None):
         self.client = client
@@ -159,14 +166,36 @@ class Creator:
             raise Failure(f'{method} {path.split("?")[0]} failed: HTTP {response.status_code}.')
         return response.json() if response.content else {}
 
-    def pages(self, path, key, *, params=None, agile=False):
+    def pages(self, path, key, *, params=None, agile=False, strict=False):
         results, start = [], 0
+        seen, expected_total = set(), None
         while True:
             data = self.request('GET', path, agile=agile,
                                 params={**(params or {}), 'startAt': start, 'maxResults': 100})
+            if not isinstance(data, dict):
+                raise Failure('Unexpected metadata page shape.')
             page = data.get(key)
             if not isinstance(page, list):
                 raise Failure('Unexpected metadata page shape.')
+            if strict:
+                if ('startAt' in data and (type(data['startAt']) is not int or data['startAt'] != start)
+                        or 'isLast' in data and type(data['isLast']) is not bool
+                        or 'total' in data and (type(data['total']) is not int or data['total'] < 0)
+                        or 'maxResults' in data and (type(data['maxResults']) is not int or data['maxResults'] < 1 or len(page) > data['maxResults'])
+                        or expected_total is not None and 'total' not in data):
+                    raise Failure('Malformed sprint metadata pagination.')
+                if 'total' in data:
+                    if expected_total is not None and expected_total != data['total']:
+                        raise Failure('Sprint metadata pagination total changed.')
+                    expected_total = data['total']
+                    end = start + len(page)
+                    if end > expected_total or ('isLast' in data and data['isLast'] != (end == expected_total)):
+                        raise Failure('Contradictory sprint metadata pagination.')
+                for item in page:
+                    identity = metadata_id(value=item.get('id') if isinstance(item, dict) else None)
+                    if identity in seen:
+                        raise Failure('Repeated sprint metadata ID; pagination cannot be trusted.')
+                    seen.add(identity)
             results.extend(page)
             start += len(page)
             if data.get('isLast') is True or ('total' in data and start >= data['total']):

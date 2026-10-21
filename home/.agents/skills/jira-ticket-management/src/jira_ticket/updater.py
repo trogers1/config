@@ -6,6 +6,7 @@ never retried, and use the established immutable issue ID, not its mutable key.
 from decimal import Decimal
 
 from .core import Creator, Failure, issue_reference, points_value
+from . import sprints
 
 
 FIELD_SCHEMA = {'project': 'project', 'issuetype': 'issuetype', 'summary': 'string',
@@ -160,6 +161,8 @@ class Updater(Creator):
             # A move/type edit must not implicitly move/reset omitted status.
             if 'status' not in draft and not any(str(s.get('id')) == str(old['status']['id']) for s in groups[0]['statuses']):
                 raise Failure('Resulting project/type cannot preserve the omitted current status; no implicit status reset is permitted.')
+        if 'sprint' in draft and (project_id != str(old['project']['id']) or type_id != str(old['issuetype']['id'])):
+            raise Failure('Sprint updates cannot be combined with an actual project/type move. Complete and verify the move separately, then rediscover and approve the sprint.')
         if 'project' in draft:
             requested['project'] = {'id': project_id}
         if 'type' in draft:
@@ -208,7 +211,7 @@ class Updater(Creator):
             if field and field.get('schema', {}).get('type') != 'number':
                 raise Failure('Estimate edit-field schema must be numeric.')
             if field and 'set' in field.get('operations', []):
-                if 'board' in draft:
+                if 'board' in draft and 'sprint' not in draft:
                     raise Failure('--board is only applicable when Agile estimate fallback is needed.')
             else:
                 board = self.estimate_board(project['key'], draft.get('board'))
@@ -241,6 +244,8 @@ class Updater(Creator):
             status = {'id': str(target['id']), 'name': target['name']}
             if status['id'] != str(old['status']['id']):
                 transition = self.direct_transition(issue_id, status)
+        sprint = sprints.prepare(api=self, issue_id=issue_id, project_id=project_id,
+                                 request=sprints.validate_request(value=draft['sprint']), board_id=draft.get('board')) if 'sprint' in draft else None
         links = self.prepare_links(draft['links']) if draft.get('links') else []
         if links:
             if any(link['issue']['id'] == issue_id or link['issue']['key'].casefold() == current['key'].casefold() for link in links):
@@ -253,7 +258,8 @@ class Updater(Creator):
                 'current': self.details(current)['details'], 'requested_fields': requested,
                 'payload': {'fields': payload}, 'estimate': estimate, 'requested_status': status,
                 'transition': transition, 'links': links,
-                'note': 'Omitted fields unchanged. No clearing/removal. Execution: inline edit, estimate, direct status transition, then link additions. All preparation is read-only; update revalidates this plan on every invocation.'}
+                **({'sprint': sprint} if sprint else {}),
+                'note': 'Omitted fields unchanged. No generic clearing. Execution: inline edit, estimate, direct status transition, optional exact sprint operation, then link additions. All preparation is read-only; update revalidates live metadata on every invocation. Sprint approval binds the exact supplied ID, never a rollover.'}
 
     def refresh(self, result):
         current = self.read_issue(result['id'])
@@ -299,6 +305,9 @@ class Updater(Creator):
         fields = prepared['payload']['fields']
         estimate = prepared['estimate']
         target = prepared['requested_status']
+        sprint = prepared.get('sprint')
+        if sprint:
+            result['sprint'] = {**sprint, 'status': 'pending'}
         try:
             if fields:
                 result['failed_step'] = 'field_update'
@@ -341,6 +350,24 @@ class Updater(Creator):
                     if str(actual['status']['id']) != target['id']:
                         raise Failure('Requested status failed verification.')
                     result.pop('uncertain_operation', None)
+            if sprint:
+                result['failed_step'] = 'sprint_precheck'
+                current = self.read_issue(result['id'])
+                if (str(current['fields']['project']['id']) != str(prepared['current']['project']['id']) or
+                        str(current['fields']['issuetype']['id']) != str(prepared['current']['type']['id'])):
+                    raise Failure('Issue project/type changed after sprint preparation; stop and rediscover.')
+                sprints.precheck(api=self, issue_id=result['id'], project_id=str(current['fields']['project']['id']), plan=sprint)
+                if sprint['write_needed']:
+                    result['failed_step'] = 'sprint_update'
+                    result['sprint']['status'] = 'unverified'
+                    result['uncertain_operation'] = 'sprint_update'
+                    result['writes'] += 1
+                    self.request('POST', sprint['path'], agile=True, json=sprint['body'])
+                result['failed_step'] = 'sprint_verification'
+                result['sprint']['status'] = 'unverified'
+                sprints.verify(api=self, issue_id=result['id'], plan=sprint)
+                result['sprint']['status'] = 'verified'
+                result.pop('uncertain_operation', None)
             result['failed_step'] = 'final_verification'
             actual = self.refresh(result)
             for name, value in prepared['requested_fields'].items():
@@ -348,11 +375,19 @@ class Updater(Creator):
                     raise Failure(f'Requested field {name} failed verification.')
             if target and str(actual['status']['id']) != target['id']:
                 raise Failure('Requested status failed verification.')
+            if sprint:
+                result['failed_step'] = 'sprint_verification'
+                result['sprint']['status'] = 'unverified'
+                if sprint['write_needed']:
+                    result['uncertain_operation'] = 'sprint_update'
+                sprints.verify(api=self, issue_id=result['id'], plan=sprint)
+                result['sprint']['status'] = 'verified'
+                result.pop('uncertain_operation', None)
             if result['links']:
                 self.apply_update_links(result)
             result['outcome'] = 'updated' if result['writes'] else 'unchanged'
             result.pop('failed_step', None)
-            result['verified_fields'] = list(prepared['requested_fields']) + (['status'] if target else [])
+            result['verified_fields'] = list(prepared['requested_fields']) + (['status'] if target else []) + (['sprint'] if sprint else [])
         except Failure as exc:
             result['message'] = str(exc)
         except Exception:
@@ -371,6 +406,8 @@ class Updater(Creator):
             actions = [f'{name}={value}' for name, value in prepared['requested_fields'].items()]
             if target:
                 actions.append('status=' + target['name'])
+            if sprint:
+                actions.append('sprint=' + sprint['action'] + ' exact ID ' + sprint['id'] + ' [' + result['sprint']['status'] + ']')
             actions.extend(link['relationship'] + ' [' + link['status'] + ']' for link in result['links'])
             result['remaining_action'] = ('Open the linked existing ticket; reconcile failed step ' + result['failed_step'] +
                                           ' before any further mutation. Verify requested changes: ' + '; '.join(actions) +

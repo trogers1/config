@@ -1,6 +1,6 @@
 ---
 name: jira-ticket-management
-description: Manage live Jira tickets with the jira-ticket CLI. Use when reading ticket details, creating tickets, changing existing tickets, setting status or estimates, or adding relationships to existing tickets. Discover supported operations and draft formats through CLI help; clarify ambiguous intent and obtain approval before mutations.
+description: Manage live Jira tickets with the jira-ticket CLI. Use when reading ticket details, creating tickets, changing existing tickets, setting status or estimates, adding/removing active sprint assignment, or adding relationships to existing tickets. Discover supported operations and draft formats through CLI help; clarify ambiguous intent and obtain approval before mutations.
 disable-model-invocation: true
 ---
 
@@ -23,6 +23,7 @@ jira-ticket --help
 jira-ticket get --help
 jira-ticket create --help
 jira-ticket update --help
+jira-ticket sprints --help
 jira-ticket draft-example --help
 ```
 
@@ -35,7 +36,8 @@ If the command is missing, consult `README.md` and ask before installing depende
 | User intent | CLI workflow |
 | --- | --- |
 | Read a ticket | `get KEY_OR_NUMERIC_ID` |
-| Discover live choices | `types`, `statuses`, `link-types` (consult their help) |
+| Discover live choices | `types`, `statuses`, `link-types`, `sprints TARGET [--board ID]` (consult their help) |
+| Add/remove active sprint assignment | Discover `sprints TARGET`; save exact approved `sprint: {"action":"add" or "remove","id":"VERIFIED_ACTIVE_SPRINT_ID"}` and optional numeric-string `board` in a partial draft; preview, approve, update |
 | Create a ticket | `draft-example`, then `preflight --draft FILE`, then approved `create --draft FILE` |
 | Change an existing ticket | `get TARGET`, `draft-example --update`, then `update TARGET --draft FILE --dry-run`, then approved `update TARGET --draft FILE` |
 | Add relationships | Discover `link-types`; include approved additions in a create or partial-update draft |
@@ -49,6 +51,7 @@ Reads, discovery and dry runs do not require mutation approval. Report only the 
 - Discover live types, statuses and relationship labels instead of assuming standard names or using snapshots. Explain relationships in natural language from the ticket being created/updated, with the linked ticket's canonical key and summary. Links target **existing tickets only**; parent hierarchy is separate.
 - For creation, propose the effective configured project unless overridden; show it and the authenticated-user assignee/reporter defaults for explicit approval, never as assumed user preferences. Resolve type, status, points and optional metadata as approved values or explicitly approved omission/Jira defaults. Use `assets/description-template.md` when drafting a new description; do not publish unresolved placeholders.
 - For updates, clarify **only requested changes**. Omitted fields stay untouched; never apply create-time defaults or demand all create-required fields. A supplied description replaces the entire description, so preserve existing content unless its removal is approved. `story_points: "unset"` and `links: []` are update no-ops, not clearing/removal. Links are additions only.
+- For sprint updates, discover the existing issue's project Scrum boards and active sprint IDs. Resolve board ambiguity explicitly; select an exact active ID even on parallel-sprint boards. Approval binds **that exact ID**, never a future rollover. Show memberships and all side effects. Backlog removal is issue-wide: the CLI stops if another active/future assignment would be removed/displaced (also for add). Closed history must be preserved. Sprint is update-only, not a generic Sprint field edit, and cannot accompany an actual project/type move. If the sprint closes or membership drifts, stop, rediscover, preview and obtain fresh approval—do not silently replace the ID.
 - Check help/README for unsupported fields, clearing/removal, formatting, moves or transitions. Discuss a supported alternative; never silently drop content, switch types, substitute an estimate field, weaken TLS or use ad-hoc API workarounds to bypass validation.
 
 ## Preview, approve, execute
@@ -56,7 +59,7 @@ Reads, discovery and dry runs do not require mutation approval. Report only the 
 1. For updates, read the existing ticket first and establish its canonical identity and relevant current context.
 2. Save the requested content in a UTF-8 JSON draft using the CLI's documented format. Keep credentials out of drafts, command arguments, logs and committed files. Pass file paths safely rather than interpolating ticket content into shell commands.
 3. Run creation `preflight` or update `--dry-run`. Resolve errors with the user. A dry run is read-only validation, not a completed mutation or a guarantee of later permissions/automation.
-4. Show the complete new-ticket draft, or the existing target and precise requested changes, together with the displayed mutation plan—including defaults, omissions, estimate, status and link operations. Ask one final approval question and wait for an explicit answer before writing. Never treat silence, uncertainty or an unresolved question as approval. Revisions require renewed approval.
+4. Show the complete new-ticket draft, or the existing target and precise requested changes, together with the displayed mutation plan—including defaults, omissions, estimate, status, exact sprint ID/action and side effects, and link operations. Ask one final approval question and wait for an explicit answer before writing. Never treat silence, uncertainty or an unresolved question as approval. Revisions require renewed approval.
 5. Execute with the **same unchanged draft** using explicit `create` or `update` without `--dry-run`. Never create a ticket to test the tool. Do not automatically repeat any mutation, including after a timeout.
 
 ## Interpret outcomes and recover safely
@@ -67,7 +70,7 @@ Read the JSON outcome, not just the exit code; consult README for its full contr
 - `dry_run`: no mutation; report the preview, not success.
 - `created`, `updated`, `unchanged`: report the verified result with its **clickable canonical browser link**. Distinguish creation, updates and no-op requests.
 - `preflight_failed`: no writes attempted; resolve the failure before proceeding.
-- `partial_failure`: the ticket exists. Always report its clickable link, `failed_step`, remaining action and any `uncertain_operation`. For links, distinguish verified, unverified (may have succeeded) and pending. Stop and reconcile read-only before manually completing approved missing work; never create a duplicate or blindly rerun an update/link write.
+- `partial_failure`: the ticket exists. Always report its clickable link, `failed_step`, remaining action and any `uncertain_operation`. For sprint and links, distinguish verified, unverified (may have succeeded or outcome cannot be verified) and pending. A sprint POST is never retried or rolled back; reconcile its exact assignment and closed history read-only before considering any further write. Stop and reconcile read-only before manually completing approved missing work; never create a duplicate or blindly rerun an update/link write.
 - `unknown`: creation may have succeeded but no key/link was established. State that explicitly; do not fabricate either. Reconcile with Jira and the user before any further mutation.
 
 Never claim omitted fields were cleared or unchanged by all Jira automation; verification covers the CLI's reported supplied fields and relationships. Do not delete or undo tickets/links without explicit authorization.
