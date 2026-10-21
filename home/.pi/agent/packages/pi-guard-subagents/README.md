@@ -80,8 +80,9 @@ Forked from pi's `examples/extensions/subagent` with additions:
   the tool refuses to delegate from inside a worker, so costs can't fan out
   recursively.
 - **Guarded interactive lifecycle.** Children run in dedicated tmux panes,
-  report activity and terminal state through atomic sidecars, can park on one
-  `ask_question`, and auto-close after normal completion. Parent watchers remain
+  report activity and terminal state through atomic sidecars, can ask sequential
+  parent questions with `ask_question` (one unanswered at a time), and auto-close
+  after normal completion. Parent watchers remain
   active for the lifetime of the launching parent; restart/reload recovery is not supported.
 - **Premature-exit detection.** A worker that exits 0 but whose last message
   ended mid-turn (`toolUse`) or truncated (`length`) is reported as failed,
@@ -165,10 +166,45 @@ subagent({
 By default, calls resolve builtin and user agents (`agentScope: "user"`). To
 use repository-defined `.pi/agents`, explicitly set `agentScope: "project"` or
 `"all"`; those agents require confirmation by default. To steer a live child,
-answer its question, or safely resume a completed child, call
-`subagent_message({ name, message })` with the persistent name from its launch
-or result. Do not poll or sleep after launching: child questions and terminal
+or safely resume a completed child, call `subagent_message({ name, message })`
+with the persistent name from its launch or result. To answer a question, also
+include the notification's `questionId`: `subagent_message({ name, message, questionId })`. Do not poll or sleep after launching: child questions and terminal
 results are delivered automatically.
+
+### Parent questions
+
+A worker may call `ask_question({ question })` repeatedly in one attempt, waiting
+for each answer before asking the next. Concurrent unanswered questions are
+rejected. Each question notification includes a durable `questionId`; reply with
+`subagent_message({ name, message, questionId })` to bind the answer to that exact
+question. A stale ID fails without steering or resuming the worker. Omitting
+`questionId` is only for steering/resuming: if a question is pending, the message
+is rejected rather than implicitly answering it.
+
+The latest question is discoverable at `<loadout>.question.json`. Each new question
+also has a separate `<loadout>.questions/<questionId>.json` record and matching
+`.json.reply` file, retained across further questions and warm resumes. Replies
+must match both attempt and question IDs, so an earlier reply cannot unblock a
+later question. The child marks the record answered after consuming the reply;
+the durable reply itself is sufficient for the live watcher to recover an answer
+if the parent's registry update was interrupted. Delivery claims and retries are
+scoped to each question, not the whole attempt. Failed parent notifications
+retain `questionDeliveryFailure` in the registry until delivery succeeds. Warm resume clears the latest
+pointer and registry question state but preserves these history files.
+
+**Breaking API/protocol change:** answers now require `questionId`. Question
+and reply records use protocol version 2; version-1 or ID-less sidecars are
+invalid and are not migrated or interpreted as the new protocol. Stop existing workers before upgrading, then reload/restart the
+parent and launch fresh workers. Parent and child runtimes must be upgraded
+together; a running child retains the code it originally loaded. There is no
+compatibility fallback. This does not add parent restart/reload reconciliation:
+watchers still belong to the launching live parent. Mismatched or malformed reply
+records fail loudly rather than being ignored or satisfying another question.
+
+For integrations using the exported watcher helper, `watchRegistry` now takes
+one options object (`{ file, onCompletion, onQuestion, intervalMs }`). Its callbacks
+also take one event object: `{ child, signal, registry }` for completion and
+`{ child, question, registry }` for a question.
 
 Every result ends with metadata lines the orchestrator uses:
 

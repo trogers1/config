@@ -7,7 +7,15 @@ import {
 	parseOrThrow,
 	TerminalSignalSchema,
 	QuestionSchema,
+	questionPointerPath,
+	CHILD_STATES,
+	QUESTION_ERRORS,
+	QUESTION_REPLY_STATES,
+	QuestionDeliverySchema,
+	readQuestionReply,
+	type QuestionDelivery,
 	type ChildRecord,
+	type Question,
 	type Registry,
 	type TerminalSignal,
 } from "./types.ts";
@@ -16,17 +24,27 @@ function isMissingFile(error: unknown): boolean {
 	return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }
 const terminalPath = (child: ChildRecord) => `${child.loadoutPath}.terminal.json`;
-function readTerminal(child: ChildRecord): TerminalSignal | undefined {
+function readCurrentTerminal({ child }: { child: ChildRecord }): TerminalSignal | undefined {
 	try {
-		return parseOrThrow(
+		const signal = parseOrThrow(
 			TerminalSignalSchema,
 			JSON.parse(fs.readFileSync(terminalPath(child), "utf8")),
 			"terminal signal",
 		);
+		return signal.attemptId === child.attemptId ? signal : undefined;
 	} catch (error) {
 		if (isMissingFile(error)) return;
 		throw error;
 	}
+}
+export function questionAttemptOpen({ child }: { child: ChildRecord }): boolean {
+	const terminal = readCurrentTerminal({ child });
+	return (
+		child.state !== CHILD_STATES.completed &&
+		child.state !== CHILD_STATES.failed &&
+		terminal === undefined &&
+		(child.paneId === null || paneExists(child.paneId))
+	);
 }
 function terminalPatch(signal: TerminalSignal): Partial<ChildRecord> {
 	return {
@@ -112,36 +130,77 @@ function releaseCompletionClaim(file: string, name: string, token: string): void
 	const current = loadRegistry(file).children.find((v) => v.name === name);
 	if (current?.deliveryClaim?.token === token) updateChild(file, name, { deliveryClaim: undefined });
 }
-function claimQuestion(file: string, child: ChildRecord, question: string): string | undefined {
+function claimQuestion({
+	file,
+	child,
+	question,
+}: {
+	file: string;
+	child: ChildRecord;
+	question: Question;
+}): string | undefined {
 	const claimed = claimChild(
 		file,
 		child.name,
-		(current) => !current.questionDelivered && (!current.questionClaim || stale(current.questionClaim.claimedAt)),
+		(current) =>
+			current.attemptId === question.attemptId &&
+			questionAttemptOpen({ child: current }) &&
+			(current.questionId !== question.questionId ||
+				(!current.questionDelivered && (!current.questionClaim || stale(current.questionClaim.claimedAt)))),
 		{
-			state: "waiting",
-			question,
+			state: CHILD_STATES.waiting,
+			question: question.question,
+			questionId: question.questionId,
+			questionAnswered: false,
+			questionDelivered: false,
+			questionDeliveryFailure: undefined,
 			questionClaim: { token: randomUUID(), claimedAt: new Date().toISOString() },
 		},
 	);
 	return claimed?.questionClaim?.token;
 }
-function ackQuestion(file: string, name: string, token: string): void {
-	const current = loadRegistry(file).children.find((v) => v.name === name);
-	if (current?.questionClaim?.token === token)
-		updateChild(file, name, { questionDelivered: true, questionClaim: undefined });
+function ackQuestion({
+	file,
+	name,
+	token,
+}: {
+	file: string;
+	name: ChildRecord["name"];
+	token: NonNullable<ChildRecord["questionClaim"]>["token"];
+}): void {
+	claimChild(file, name, (current) => current.questionClaim?.token === token, {
+		questionDelivered: true,
+		questionClaim: undefined,
+		questionDeliveryFailure: undefined,
+	});
 }
-function releaseQuestionClaim(file: string, name: string, token: string): void {
-	const current = loadRegistry(file).children.find((v) => v.name === name);
-	if (current?.questionClaim?.token === token) updateChild(file, name, { questionClaim: undefined });
+function releaseQuestionClaim({
+	file,
+	name,
+	token,
+	failure,
+}: {
+	file: string;
+	name: ChildRecord["name"];
+	token: NonNullable<ChildRecord["questionClaim"]>["token"];
+	failure: NonNullable<ChildRecord["questionDeliveryFailure"]>;
+}): void {
+	claimChild(file, name, (current) => current.questionClaim?.token === token, {
+		questionClaim: undefined,
+		questionDeliveryFailure: failure,
+	});
 }
 
+export type WatchRegistryOptions = {
+	file: string;
+	onCompletion?: (event: { child: ChildRecord; signal: TerminalSignal; registry: Registry }) => void;
+	onQuestion?: (event: { child: QuestionDelivery; question: Question["question"]; registry: Registry }) => void;
+	intervalMs?: number;
+};
 /** Watches only children launched by this live parent; there is intentionally no restart/reload reconciler. */
-export function watchRegistry(
-	file: string,
-	onCompletion?: (child: ChildRecord, signal: TerminalSignal, registry: Registry) => void,
-	onQuestion?: (child: ChildRecord, question: string, registry: Registry) => void,
-	intervalMs = 250,
-): { stop(): void } {
+export function watchRegistry({ file, onCompletion, onQuestion, intervalMs = 250 }: WatchRegistryOptions): {
+	stop(): void;
+} {
 	let stopped = false;
 	const tick = () => {
 		if (stopped || !fs.existsSync(file)) return;
@@ -153,29 +212,86 @@ export function watchRegistry(
 		}
 		for (const child of registry.children) {
 			if ((child.state === "completed" || child.state === "failed") && child.delivered) continue;
-			const questionFile = `${child.loadoutPath}.question.json`;
+			const questionFile = questionPointerPath({ loadoutPath: child.loadoutPath });
 			let terminal: TerminalSignal | undefined;
+			try {
+				terminal = readCurrentTerminal({ child });
+			} catch (error) {
+				terminal = {
+					status: CHILD_STATES.failed,
+					attemptId: child.attemptId,
+					result: "",
+					failure: `Invalid terminal sidecar: ${String(error)}`,
+				} satisfies TerminalSignal;
+				atomicJsonWrite(terminalPath(child), terminal);
+			}
+			if (!terminal && child.paneId && !paneExists(child.paneId)) {
+				terminal = {
+					status: CHILD_STATES.failed,
+					attemptId: child.attemptId,
+					result: "(no output)",
+					failure: "Child pane disappeared before completion",
+				} satisfies TerminalSignal;
+				// Persist pane loss so completion delivery can retry after paneId is cleared.
+				atomicJsonWrite(terminalPath(child), terminal);
+			}
 			try {
 				const question = parseOrThrow(
 					QuestionSchema,
 					JSON.parse(fs.readFileSync(questionFile, "utf8")),
 					"question sidecar",
 				);
-				if (question.attemptId === child.attemptId && !question.answered) {
-					const token = claimQuestion(file, child, question.question);
+				const replyState = readQuestionReply({ loadoutPath: child.loadoutPath, question });
+				if (question.answered && replyState.status !== QUESTION_REPLY_STATES.answered)
+					throw new Error(QUESTION_ERRORS.missingReply);
+				const replied = question.attemptId === child.attemptId && replyState.status === QUESTION_REPLY_STATES.answered;
+				if (!terminal && replied) {
+					// Recover a reply persisted before the parent could update its registry.
+					claimChild(
+						file,
+						child.name,
+						(current) =>
+							current.attemptId === question.attemptId &&
+							questionAttemptOpen({ child: current }) &&
+							[CHILD_STATES.starting, CHILD_STATES.active, CHILD_STATES.waiting].some(
+								(state) => state === current.state,
+							) &&
+							(current.questionId !== question.questionId || !current.questionAnswered),
+						{
+							state: CHILD_STATES.active,
+							questionId: question.questionId,
+							question: undefined,
+							questionAnswered: true,
+							questionDelivered: true,
+							questionDeliveryFailure: undefined,
+							questionClaim: undefined,
+						},
+					);
+				} else if (!terminal && question.attemptId === child.attemptId && !question.answered && onQuestion) {
+					const token = claimQuestion({ file, child, question });
 					if (token) {
 						const current = loadRegistry(file);
 						try {
 							const currentChild = current.children.find((v) => v.name === child.name);
 							if (!currentChild) throw new Error(`Question child disappeared: ${child.name}`);
-							onQuestion?.(currentChild, question.question, current);
-							ackQuestion(file, child.name, token);
-						} catch {
-							releaseQuestionClaim(file, child.name, token);
+							if (
+								currentChild.questionClaim?.token !== token ||
+								currentChild.attemptId !== question.attemptId ||
+								currentChild.questionId !== question.questionId ||
+								!questionAttemptOpen({ child: currentChild })
+							)
+								throw new Error(QUESTION_ERRORS.claimChanged);
+							onQuestion({
+								child: parseOrThrow(QuestionDeliverySchema, currentChild, "question delivery child"),
+								question: question.question,
+								registry: current,
+							});
+							ackQuestion({ file, name: child.name, token });
+						} catch (error) {
+							releaseQuestionClaim({ file, name: child.name, token, failure: String(error) });
 							/* live claim retries on the next watcher tick */
 						}
 					}
-					continue;
 				}
 			} catch (error) {
 				if (!isMissingFile(error)) {
@@ -191,21 +307,6 @@ export function watchRegistry(
 					atomicJsonWrite(terminalPath(child), terminal);
 				}
 			}
-			if (!terminal)
-				try {
-					terminal = readTerminal(child);
-				} catch (error) {
-					terminal = {
-						status: "failed",
-						attemptId: child.attemptId,
-						result: "",
-						failure: `Invalid terminal sidecar: ${String(error)}`,
-						observedPaths: [],
-						permissionBlocks: [],
-						toolCalls: [],
-					};
-					atomicJsonWrite(terminalPath(child), terminal);
-				}
 			if (terminal && terminal.attemptId === child.attemptId) {
 				if (child.paneId && paneExists(child.paneId)) closePane(child.paneId);
 				const claimed = claimCompletion(file, child, terminal);
@@ -214,28 +315,9 @@ export function watchRegistry(
 				updateChild(file, child.name, { handoffPath });
 				const delivered = loadRegistry(file).children.find((entry) => entry.name === child.name) ?? claimed;
 				try {
-					onCompletion?.(delivered, terminal, loadRegistry(file));
+					onCompletion?.({ child: delivered, signal: terminal, registry: loadRegistry(file) });
 					// A completion is acknowledged only after the required parent
 					// delivery callback accepts it.
-					ackCompletion(file, child.name, claimed.deliveryClaim.token, handoffPath);
-				} catch {
-					releaseCompletionClaim(file, child.name, claimed.deliveryClaim.token);
-					/* Parent delivery failed; retry on the next watcher tick. */
-				}
-			} else if (child.paneId && !paneExists(child.paneId)) {
-				const signal: TerminalSignal = {
-					status: "failed",
-					result: "(no output)",
-					failure: "Child pane disappeared before completion",
-					attemptId: child.attemptId ?? "",
-				};
-				const claimed = claimCompletion(file, child, signal);
-				if (!claimed?.deliveryClaim) continue;
-				const handoffPath = writeHandoff(claimed, signal);
-				updateChild(file, child.name, { handoffPath });
-				const delivered = loadRegistry(file).children.find((entry) => entry.name === child.name) ?? claimed;
-				try {
-					onCompletion?.(delivered, signal, loadRegistry(file));
 					ackCompletion(file, child.name, claimed.deliveryClaim.token, handoffPath);
 				} catch {
 					releaseCompletionClaim(file, child.name, claimed.deliveryClaim.token);

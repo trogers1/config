@@ -13,6 +13,19 @@ export const REQUIRED_GUARD_EXTENSION_PATH = path.resolve(
 export const REQUIRED_CHILD_RUNTIME_PATH = path.resolve(interactiveExtensionRoot, "child-runtime.ts");
 
 const NullableString = Type.Union([Type.String(), Type.Null()]);
+export const QUESTION_ID_PATTERN = "^[a-f0-9-]{36}$";
+const QuestionIdSchema = Type.String({ pattern: QUESTION_ID_PATTERN });
+export const QUESTION_REPLY_INSTRUCTION = "Reply with subagent_message using questionId: ";
+export const QUESTION_ERRORS = Object.freeze({
+	pending: "A parent question is already awaiting a reply",
+	idRequired: "Answering a pending question requires its questionId; message not delivered.",
+	stale: "Question is no longer awaiting a reply; message not delivered.",
+	alreadyReplied: "This question already has a durable reply.",
+	identityMismatch: "Question reply does not match the pending attempt and question IDs",
+	missingReply: "An answered question is missing its durable reply",
+	claimChanged: "Question delivery claim changed before notification",
+	cancelled: "Question cancelled",
+});
 const ClaimSchema = Type.Object({ token: Type.String(), claimedAt: Type.String() });
 const GuardedInteractiveLoadoutSchema = Type.Object({
 	version: Type.Literal(1),
@@ -38,13 +51,21 @@ const GuardedInteractiveLoadoutSchema = Type.Object({
 });
 export type GuardedInteractiveLoadout = Static<typeof GuardedInteractiveLoadoutSchema>;
 
+export const CHILD_STATES = Object.freeze({
+	starting: "starting",
+	active: "active",
+	waiting: "waiting",
+	completed: "completed",
+	failed: "failed",
+	stalled: "stalled",
+});
 const ChildStateSchema = Type.Union([
-	Type.Literal("starting"),
-	Type.Literal("active"),
-	Type.Literal("waiting"),
-	Type.Literal("completed"),
-	Type.Literal("failed"),
-	Type.Literal("stalled"),
+	Type.Literal(CHILD_STATES.starting),
+	Type.Literal(CHILD_STATES.active),
+	Type.Literal(CHILD_STATES.waiting),
+	Type.Literal(CHILD_STATES.completed),
+	Type.Literal(CHILD_STATES.failed),
+	Type.Literal(CHILD_STATES.stalled),
 ]);
 const ModeSchema = Type.Union([Type.Literal("single"), Type.Literal("parallel"), Type.Literal("chain")]);
 const TaskSchema = Type.Object({
@@ -69,12 +90,14 @@ export const ChildRecordSchema = Type.Object({
 	authorityPath: Type.String(),
 	state: ChildStateSchema,
 	question: Type.Optional(Type.String()),
+	questionId: Type.Optional(QuestionIdSchema),
 	questionAnswered: Type.Optional(Type.Boolean()),
 	handoffPath: Type.Optional(Type.String()),
 	delivered: Type.Optional(Type.Boolean()),
 	deliveryClaim: Type.Optional(ClaimSchema),
 	deliveryId: Type.Optional(Type.String()),
 	questionClaim: Type.Optional(ClaimSchema),
+	questionDeliveryFailure: Type.Optional(Type.String()),
 	handoffDir: Type.Optional(Type.String()),
 	handoffName: Type.Optional(Type.String()),
 	mode: Type.Optional(ModeSchema),
@@ -132,7 +155,7 @@ export const UsageSchema = Type.Object({
 });
 export const TerminalSignalSchema = Type.Object({
 	version: Type.Optional(Type.Literal(1)),
-	status: Type.Union([Type.Literal("completed"), Type.Literal("failed")]),
+	status: Type.Union([Type.Literal(CHILD_STATES.completed), Type.Literal(CHILD_STATES.failed)]),
 	attemptId: Type.String(),
 	result: Type.String(),
 	failure: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -145,11 +168,82 @@ export const TerminalSignalSchema = Type.Object({
 });
 export type TerminalSignal = Static<typeof TerminalSignalSchema>;
 export const QuestionSchema = Type.Object({
+	version: Type.Literal(2),
 	attemptId: Type.String(),
+	questionId: QuestionIdSchema,
+	childSessionId: Type.String(),
 	question: Type.String(),
 	answered: Type.Boolean(),
+	at: Type.String(),
+	answeredAt: Type.Optional(Type.String()),
 });
-export const ReplySchema = Type.Object({ attemptId: Type.String(), answer: Type.String() });
+export type Question = Static<typeof QuestionSchema>;
+export const QuestionDeliverySchema = Type.Intersect([
+	ChildRecordSchema,
+	Type.Object({ questionId: QuestionSchema.properties.questionId }),
+]);
+export type QuestionDelivery = Static<typeof QuestionDeliverySchema>;
+export const ReplySchema = Type.Object({
+	version: QuestionSchema.properties.version,
+	attemptId: QuestionSchema.properties.attemptId,
+	questionId: QuestionSchema.properties.questionId,
+	answer: Type.String(),
+});
+export type Reply = Static<typeof ReplySchema>;
+export const SubagentMessageParameters = Type.Object({
+	name: ChildRecordSchema.properties.name,
+	message: Type.String(),
+	questionId: Type.Optional(QuestionIdSchema),
+});
+export const QUESTION_REPLY_STATES = Object.freeze({ pending: "pending", answered: "answered" });
+const QuestionReplyStateSchema = Type.Union([
+	Type.Object({ status: Type.Literal(QUESTION_REPLY_STATES.pending) }),
+	Type.Object({ status: Type.Literal(QUESTION_REPLY_STATES.answered), reply: ReplySchema }),
+]);
+type QuestionReplyState = Static<typeof QuestionReplyStateSchema>;
+export function questionPointerPath({ loadoutPath }: { loadoutPath: ChildRecord["loadoutPath"] }): string {
+	return `${loadoutPath}.question.json`;
+}
+export function questionRecordPath({
+	loadoutPath,
+	questionId,
+}: {
+	loadoutPath: ChildRecord["loadoutPath"];
+	questionId: Question["questionId"];
+}): string {
+	parseOrThrow(QuestionIdSchema, questionId, "question ID");
+	return path.join(`${loadoutPath}.questions`, `${questionId}.json`);
+}
+export function readQuestionReply({
+	loadoutPath,
+	question,
+}: {
+	loadoutPath: ChildRecord["loadoutPath"];
+	question: Pick<Question, "attemptId" | "questionId">;
+}): QuestionReplyState {
+	let value: unknown;
+	try {
+		value = JSON.parse(
+			fs.readFileSync(`${questionRecordPath({ loadoutPath, questionId: question.questionId })}.reply`, "utf8"),
+		);
+	} catch (error) {
+		if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT")
+			return parseOrThrow(
+				QuestionReplyStateSchema,
+				{ status: QUESTION_REPLY_STATES.pending } satisfies QuestionReplyState,
+				"question reply state",
+			);
+		throw error;
+	}
+	const reply = parseOrThrow(ReplySchema, value, "question reply");
+	if (reply.attemptId !== question.attemptId || reply.questionId !== question.questionId)
+		throw new Error(QUESTION_ERRORS.identityMismatch);
+	return parseOrThrow(
+		QuestionReplyStateSchema,
+		{ status: QUESTION_REPLY_STATES.answered, reply } satisfies QuestionReplyState,
+		"question reply state",
+	);
+}
 export const SteeringMessageSchema = Type.Object({
 	version: Type.Literal(1),
 	attemptId: Type.String(),

@@ -8,6 +8,7 @@ import { Text } from "@earendil-works/pi-tui";
 import { Type, type Static } from "typebox";
 import {
 	ensureRegistry,
+	claimChild,
 	findChildBySessionRegistry,
 	findChildRegistry,
 	loadRegistry,
@@ -23,11 +24,20 @@ import {
 	validateResumeLoadout,
 } from "./interactive/launcher.ts";
 import { hasTmux, paneExists } from "./interactive/tmux.ts";
-import { watchRegistry } from "./interactive/recovery.ts";
+import { questionAttemptOpen, watchRegistry } from "./interactive/recovery.ts";
 import {
 	atomicJsonWrite,
 	parseOrThrow,
 	QuestionSchema,
+	questionPointerPath,
+	questionRecordPath,
+	readQuestionReply,
+	QUESTION_ERRORS,
+	QUESTION_REPLY_STATES,
+	CHILD_STATES,
+	QUESTION_REPLY_INSTRUCTION,
+	SubagentMessageParameters,
+	type Reply,
 	REQUIRED_CHILD_RUNTIME_PATH,
 	REQUIRED_GUARD_EXTENSION_PATH,
 	snapshotBackingExtensions,
@@ -334,9 +344,9 @@ export function attachParentRegistry({
 			}
 		}
 	};
-	const watcher = watchRegistry(
+	const watcher = watchRegistry({
 		file,
-		(child, signal) => {
+		onCompletion: ({ child, signal }) => {
 			// Persist chain advancement before fallible notification/UI work.
 			let decision: ChainDeliveryDecision;
 			try {
@@ -360,18 +370,18 @@ export function attachParentRegistry({
 				notify(deliveredChild, deliveredSignal);
 			}
 		},
-		(child, question) => {
+		onQuestion: ({ child, question }) => {
 			sendMessage(
 				{
 					customType: "subagent_question",
-					content: `${child.name} asks: ${question}`,
+					content: `${child.name} asks: ${question}\n${QUESTION_REPLY_INSTRUCTION}${child.questionId}`,
 					display: true,
-					details: { name: child.name, question },
+					details: { name: child.name, question, questionId: child.questionId, attemptId: child.attemptId },
 				},
 				{ deliverAs: "followUp", triggerTurn: true },
 			);
 		},
-	);
+	});
 	watchers.add(watcher);
 }
 
@@ -404,9 +414,10 @@ export default function (pi: ExtensionAPI) {
 		name: "subagent_message",
 		label: "Message subagent",
 		description:
-			"Message a running child or safely resume a completed child. After delivery, end the turn instead of sleeping or polling; child activity is delivered automatically.",
-		parameters: Type.Object({ name: Type.String(), message: Type.String() }),
-		async execute(_id, p, _signal, _update, ctx) {
+			"Answer a child question using name, message, and the notification's questionId. Without questionId, steer a running child (unless it has a pending question) or safely resume a completed child. End the turn instead of sleeping or polling; child activity is delivered automatically.",
+		parameters: SubagentMessageParameters,
+		async execute(_id, params, _signal, _update, ctx) {
+			const p = parseOrThrow(SubagentMessageParameters, params, "subagent_message parameters");
 			if (process.env.PI_SUBAGENT_DEPTH)
 				return { content: [{ type: "text", text: "Nested delegation is disabled." }], details: {}, isError: true };
 			const found = findChildRegistry(ctx.cwd, ctx.sessionManager.getSessionId(), p.name);
@@ -419,7 +430,8 @@ export default function (pi: ExtensionAPI) {
 			const child = found.registry.children.find((c) => c.name === p.name);
 			if (!child)
 				return { content: [{ type: "text", text: `Subagent disappeared: ${p.name}` }], details: {}, isError: true };
-			const questionFile = `${child.loadoutPath}.question.json`;
+			const attemptOpen = questionAttemptOpen({ child });
+			const questionFile = questionPointerPath({ loadoutPath: child.loadoutPath });
 			let answered = false;
 			try {
 				const question = parseOrThrow(
@@ -427,25 +439,60 @@ export default function (pi: ExtensionAPI) {
 					JSON.parse(fs.readFileSync(questionFile, "utf8")),
 					"question sidecar",
 				);
-				if (question.attemptId === child.attemptId && !question.answered) {
-					atomicJsonWrite(`${questionFile}.reply`, { attemptId: child.attemptId, answer: p.message });
-					atomicJsonWrite(questionFile, { ...question, answered: true, answeredAt: new Date().toISOString() });
-					updateChild(found.file, child.name, {
-						questionAnswered: true,
-						question: undefined,
-						state: "active",
-					});
-					answered = true;
+				if (attemptOpen && question.attemptId === child.attemptId && !question.answered && p.questionId === undefined)
+					return { content: [{ type: "text", text: QUESTION_ERRORS.idRequired }], details: {}, isError: true };
+				if (
+					attemptOpen &&
+					question.attemptId === child.attemptId &&
+					!question.answered &&
+					p.questionId === question.questionId
+				) {
+					const replyFile = `${questionRecordPath({ loadoutPath: child.loadoutPath, questionId: question.questionId })}.reply`;
+					if (readQuestionReply({ loadoutPath: child.loadoutPath, question }).status === QUESTION_REPLY_STATES.answered)
+						return {
+							content: [{ type: "text", text: QUESTION_ERRORS.alreadyReplied }],
+							details: {},
+							isError: true,
+						};
+					const claimed = claimChild(
+						found.file,
+						child.name,
+						(current) => {
+							if (current.attemptId !== child.attemptId || !questionAttemptOpen({ child: current })) return false;
+							// Persist the reply only while the current attempt is eligible under
+							// the registry lock. Never reactivate an already-terminal attempt.
+							atomicJsonWrite(replyFile, {
+								version: question.version,
+								attemptId: current.attemptId,
+								questionId: question.questionId,
+								answer: p.message,
+							} satisfies Reply);
+							return true;
+						},
+						{
+							questionId: question.questionId,
+							questionAnswered: true,
+							question: undefined,
+							state: CHILD_STATES.active,
+						},
+					);
+					answered = claimed !== undefined;
 				}
 			} catch (error) {
 				if (!isMissingFile(error))
 					return {
-						content: [{ type: "text", text: `Invalid question sidecar for ${p.name}.` }],
+						content: [{ type: "text", text: `Invalid question sidecar for ${p.name}: ${String(error)}` }],
 						details: {},
 						isError: true,
 					};
 			}
-			if (!answered && child.paneId && paneExists(child.paneId)) {
+			if (!answered && p.questionId !== undefined)
+				return {
+					content: [{ type: "text", text: QUESTION_ERRORS.stale }],
+					details: {},
+					isError: true,
+				};
+			if (!answered && attemptOpen && child.paneId && paneExists(child.paneId)) {
 				atomicJsonWrite(`${child.loadoutPath}.message-${crypto.randomUUID()}.json`, {
 					version: 1,
 					attemptId: child.attemptId,

@@ -1,5 +1,6 @@
 /** Child-only control runtime. Loaded explicitly by guarded panes. */
 import * as fs from "node:fs";
+import { randomUUID } from "node:crypto";
 import * as os from "node:os";
 import * as path from "node:path";
 import type {
@@ -16,7 +17,13 @@ import {
 	atomicJsonWrite,
 	parseOrThrow,
 	QuestionSchema,
-	ReplySchema,
+	questionPointerPath,
+	questionRecordPath,
+	readQuestionReply,
+	QUESTION_ERRORS,
+	QUESTION_REPLY_STATES,
+	type Question,
+	type Reply,
 	SteeringMessageSchema,
 	UsageSchema,
 	validateLoadout,
@@ -223,78 +230,80 @@ export default function childRuntime(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "ask_question",
 		label: "Ask parent",
-		description: "Ask the parent one question and wait for its durable reply.",
+		description:
+			"Ask the parent a question and wait for its durable reply. Further questions may be asked sequentially.",
 		parameters: AskQuestionParameters,
 		async execute(_id, params, signal) {
 			const question = parseOrThrow(AskQuestionParameters, params, "ask_question parameters").question.trim();
 			if (!question) throw new Error("question must not be empty");
-			const questionFile = `${loadoutPath}.question.json`;
+			if (waiting) throw new Error(QUESTION_ERRORS.pending);
+			const questionFile = questionPointerPath({ loadoutPath });
 			try {
-				// Each child attempt has one durable question channel. Do not allow a
-				// later turn to overwrite the question/answer pair already observed by
-				// the parent watcher.
+				// This is only the discovery pointer; question records and replies
+				// have unique paths that are retained across subsequent questions.
 				const prior = parseOrThrow(
 					QuestionSchema,
 					JSON.parse(fs.readFileSync(questionFile, "utf8")),
 					"question sidecar",
 				);
-				if (prior.question) throw new Error("Only one parent question is allowed per child attempt");
+				if (prior.attemptId === attemptId && !prior.answered) throw new Error(QUESTION_ERRORS.pending);
 			} catch (error) {
 				if (!isMissingFile(error)) throw error;
 			}
-			waiting = true;
-			recordActivity(activity, "question", question);
-			atomicJsonWrite(questionFile, {
-				version: 1,
+			const questionId = randomUUID();
+			const recordFile = questionRecordPath({ loadoutPath, questionId });
+			const record = {
+				version: QuestionSchema.properties.version.const,
 				attemptId,
+				questionId,
 				question,
 				answered: false,
 				childSessionId,
 				at: new Date().toISOString(),
-			});
+			} satisfies Question;
+			waiting = true;
 			try {
-				await new Promise<void>((resolve, reject) => {
+				recordActivity(activity, "question", question);
+				atomicJsonWrite(recordFile, record);
+				atomicJsonWrite(questionFile, record);
+				const answer = await new Promise<Reply>((resolve, reject) => {
 					let settled = false;
-					const finish = (error?: Error) => {
+					const finish = ({ error, reply }: { error?: Error; reply?: Reply }) => {
 						if (settled) return;
 						settled = true;
 						clearInterval(timer);
 						signal?.removeEventListener("abort", onAbort);
 						if (error) reject(error);
-						else resolve();
+						else if (reply) resolve(reply);
+						else reject(new Error("Question finished without a reply"));
 					};
 					const timer = setInterval(() => {
 						try {
-							const reply = parseOrThrow(
-								ReplySchema,
-								JSON.parse(fs.readFileSync(`${questionFile}.reply`, "utf8")),
-								"question reply",
-							);
-							if (reply.attemptId === attemptId) finish();
+							const state = readQuestionReply({ loadoutPath, question: record });
+							if (state.status === QUESTION_REPLY_STATES.answered) finish({ reply: state.reply });
 						} catch (error) {
-							if (isMissingFile(error)) return;
 							const failure = error instanceof Error ? error.message : String(error);
-							waiting = false;
-							terminal("failed", "", failure);
-							finish(new Error(failure));
+							finish({ error: new Error(failure) });
 						}
 					}, 100);
-					const onAbort = () => finish(new Error("Question cancelled"));
+					const onAbort = () => finish({ error: new Error(QUESTION_ERRORS.cancelled) });
 					signal?.addEventListener("abort", onAbort, { once: true });
 					if (signal?.aborted) onAbort();
 				});
+				const answered = { ...record, answered: true, answeredAt: new Date().toISOString() } satisfies Question;
+				atomicJsonWrite(recordFile, answered);
+				atomicJsonWrite(questionFile, answered);
+				return {
+					content: [{ type: "text", text: `Parent answered: ${answer.answer}` }],
+					details: { questionId },
+					isError: false,
+				};
 			} catch (error) {
-				waiting = false;
 				terminal("failed", "", error instanceof Error ? error.message : String(error));
 				throw error;
+			} finally {
+				waiting = false;
 			}
-			waiting = false;
-			const answer = parseOrThrow(
-				ReplySchema,
-				JSON.parse(fs.readFileSync(`${questionFile}.reply`, "utf8")),
-				"question reply",
-			);
-			return { content: [{ type: "text", text: `Parent answered: ${answer.answer}` }], details: {}, isError: false };
 		},
 	});
 }

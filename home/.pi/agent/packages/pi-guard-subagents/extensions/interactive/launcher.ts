@@ -6,6 +6,7 @@ import { createPane, paneExists, requireTmux } from "./tmux.ts";
 import { addChild, loadRegistry, registryPath, updateChild } from "./registry.ts";
 import {
 	atomicJsonWrite,
+	questionPointerPath,
 	validateLoadout,
 	type ChildRecord,
 	type GuardedInteractiveLoadout,
@@ -236,9 +237,11 @@ export function resumeChild(options: LaunchChildOptions & { sessionId: string; l
 			paneId: null,
 			state: "starting",
 			questionAnswered: false,
+			questionId: undefined,
 			question: undefined,
 			questionDelivered: false,
 			questionClaim: undefined,
+			questionDeliveryFailure: undefined,
 			delivered: false,
 			deliveryClaim: undefined,
 			result: undefined,
@@ -249,8 +252,8 @@ export function resumeChild(options: LaunchChildOptions & { sessionId: string; l
 			toolCalls: undefined,
 			handoffPath: undefined,
 		});
-		for (const suffix of [".terminal.json", ".question.json", ".question.json.reply"])
-			fs.rmSync(`${options.loadoutPath}${suffix}`, { force: true });
+		fs.rmSync(`${options.loadoutPath}.terminal.json`, { force: true });
+		fs.rmSync(questionPointerPath({ loadoutPath: options.loadoutPath }), { force: true });
 	} else addChild(file, child, options.parentSession);
 	try {
 		const paneId = createPane(

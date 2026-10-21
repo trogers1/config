@@ -71,7 +71,7 @@ export function formatAgentCatalog(agents: readonly AgentConfig[], scope: AgentS
 		'- Parallel independent work: `subagent({ tasks: [{ agent: "worker", task: "…", writes: ["src/auth"] }, { agent: "reviewer", task: "…" }] })`.',
 		'- Ordered work: `subagent({ chain: [{ agent: "scout", task: "…" }, { agent: "planner", task: "Plan from: {previous}" }] })`.',
 		'- To include repository-defined agents, set `agentScope: "project"` or `"all"`; project agents require confirmation unless explicitly disabled by the caller.',
-		"- Children are interactive tmux panes. Launches return immediately: do not poll or sleep. Child questions and final results arrive automatically. Use `subagent_message({ name, message })` only to steer a running child, answer its question, or resume a completed child.",
+		"- Children are interactive tmux panes. Launches return immediately: do not poll or sleep. Child questions and final results arrive automatically. Use `subagent_message({ name, message })` to steer a running child or resume a completed child. To answer a question, use `subagent_message({ name, message, questionId })` with the notification's exact questionId; missing or stale IDs are rejected.",
 	].join("\n");
 }
 

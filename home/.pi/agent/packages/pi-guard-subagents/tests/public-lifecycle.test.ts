@@ -14,7 +14,20 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadRegistry } from "../extensions/interactive/registry.ts";
-import { parseOrThrow, TerminalSignalSchema } from "../extensions/interactive/types.ts";
+import {
+	parseOrThrow,
+	QuestionSchema,
+	ReplySchema,
+	TerminalSignalSchema,
+	QUESTION_ERRORS,
+	QUESTION_REPLY_INSTRUCTION,
+	QUESTION_ID_PATTERN,
+	CHILD_STATES,
+	questionPointerPath,
+	questionRecordPath,
+	type Question,
+	type ChildRecord,
+} from "../extensions/interactive/types.ts";
 import markerExtension from "./fixtures/marker-extension.ts";
 
 function shellQuote(value: string): string {
@@ -154,6 +167,17 @@ function configureProjectAgent(work: string): void {
 		join(directory, "worker.md"),
 		"---\nname: worker\ndescription: deterministic integration worker\ntools: read, write, edit, bash\nmodel: local/deterministic\nprofile: builtin:worker\n---\nRun the requested integration scenario.\n",
 	);
+}
+
+function captureQuestionAttempt({ child, questionId }: { child: ChildRecord; questionId: Question["questionId"] }) {
+	const recordFile = questionRecordPath({ loadoutPath: child.loadoutPath, questionId });
+	return {
+		child,
+		pointer: readFileSync(questionPointerPath({ loadoutPath: child.loadoutPath }), "utf8"),
+		record: readFileSync(recordFile, "utf8"),
+		terminal: readFileSync(`${child.loadoutPath}.terminal.json`, "utf8"),
+		hasReply: existsSync(`${recordFile}.reply`),
+	};
 }
 
 const sessions: Array<{ socket: string; session: string }> = [];
@@ -561,10 +585,15 @@ describe("installed Pi public orchestration lifecycle", () => {
 		}
 	}, 35_000);
 
-	it("parks for a real child question, answers through subagent_message, and resumes the same child safely", async () => {
+	it("answers sequential child questions durably without accepting a stale reply for the next question", async () => {
 		const work = mkdtempSync(join(tmpdir(), "pi-guard-question-"));
 		configureProjectAgent(work);
-		let questionObserved = false;
+		const answeredIds: Array<Question["questionId"]> = [];
+		let unscopedReplySent = false;
+		let unscopedReplyRejected = false;
+		let staleReplySent = false;
+		let staleReplyRejected = false;
+		let resumeRequested = false;
 		const providerRequests: unknown[] = [];
 		const server = createServer(async (request, response) => {
 			try {
@@ -574,16 +603,64 @@ describe("installed Pi public orchestration lifecycle", () => {
 				const tools = toolNames(body);
 				if (tools.includes("subagent")) {
 					if (!serialized.includes("PUBLIC_QUESTION")) return text(response, "parent idle");
-					if (serialized.includes(" asks: ")) {
-						questionObserved = true;
+					const questionIds = [
+						...serialized.matchAll(
+							new RegExp(`${QUESTION_REPLY_INSTRUCTION}(${QUESTION_ID_PATTERN.slice(1, -1)})`, "g"),
+						),
+					];
+					const questionId = questionIds.at(-1)?.[1];
+					if (questionId && !answeredIds.includes(questionId)) {
 						const match = serialized.match(/worker-1-[a-f0-9]+/);
 						if (!match) throw new Error("question notification omitted persistent child name");
-						await new Promise((resolve) => setTimeout(resolve, 300));
+						if (answeredIds.length === 1 && !staleReplySent) {
+							staleReplySent = true;
+							return toolCall(
+								response,
+								"subagent_message",
+								{
+									name: match[0],
+									message: "STALE_ANSWER_MUST_NOT_REACH_CHILD",
+									questionId: answeredIds[0],
+								},
+								"stale-answer",
+							);
+						}
+						if (staleReplySent) staleReplyRejected = serialized.includes(QUESTION_ERRORS.stale);
+						if (answeredIds.length === 2 && !unscopedReplySent) {
+							unscopedReplySent = true;
+							return toolCall(
+								response,
+								"subagent_message",
+								{
+									name: match[0],
+									message: "UNSCOPED_ANSWER_MUST_NOT_REACH_CHILD",
+								},
+								"unscoped-answer",
+							);
+						}
+						if (unscopedReplySent) unscopedReplyRejected = serialized.includes(QUESTION_ERRORS.idRequired);
+						await new Promise((resolve) => setTimeout(resolve, 400));
+						answeredIds.push(questionId);
 						return toolCall(
 							response,
 							"subagent_message",
-							{ name: match[0], message: "approved answer" },
-							"answer-question",
+							{
+								name: match[0],
+								message: `approved answer ${answeredIds.length}`,
+								questionId,
+							},
+							`answer-question-${answeredIds.length}`,
+						);
+					}
+					if (serialized.includes("question scenario complete") && !resumeRequested) {
+						const match = serialized.match(/worker-1-[a-f0-9]+/);
+						if (!match) throw new Error("completion omitted persistent child name");
+						resumeRequested = true;
+						return toolCall(
+							response,
+							"subagent_message",
+							{ name: match[0], message: "CHILD_QUESTION_RESUME" },
+							"resume-question-child",
 						);
 					}
 					if (toolResultCount(body) === 0)
@@ -604,10 +681,23 @@ describe("installed Pi public orchestration lifecycle", () => {
 					return text(response, "parent waiting");
 				}
 				if (!serialized.includes("CHILD_QUESTION")) return text(response, "unexpected child scenario");
-				if (toolResultCount(body) === 0)
-					return toolCall(response, "ask_question", { question: "continue integration?" }, "child-question");
-				if (!serialized.includes("approved answer")) return text(response, "wrong answer");
-				return text(response, "question scenario complete");
+				const resumed = serialized.includes("CHILD_QUESTION_RESUME");
+				if (toolResultCount(body) < (resumed ? 3 : 2))
+					return toolCall(
+						response,
+						"ask_question",
+						{ question: "continue integration?" },
+						`child-question-${toolResultCount(body)}`,
+					);
+				if (
+					!serialized.includes("approved answer 1") ||
+					!serialized.includes("approved answer 2") ||
+					serialized.includes("STALE_ANSWER_MUST_NOT_REACH_CHILD") ||
+					serialized.includes("UNSCOPED_ANSWER_MUST_NOT_REACH_CHILD")
+				)
+					return text(response, "wrong answer");
+				if (resumed && !serialized.includes("approved answer 3")) return text(response, "wrong resumed answer");
+				return text(response, resumed ? "resumed question scenario complete" : "question scenario complete");
 			} catch (error) {
 				response.writeHead(500, { "content-type": "text/plain" });
 				response.end(String(error));
@@ -648,15 +738,55 @@ describe("installed Pi public orchestration lifecycle", () => {
 			const completed = await waitFor(
 				() => {
 					const child = loadRegistry(registryFile).children[0];
-					return child?.state === "completed" && child.delivered && child.handoffPath ? child : undefined;
+					return child?.state === CHILD_STATES.completed &&
+						child.delivered &&
+						child.handoffPath &&
+						child.result?.includes("resumed question scenario complete")
+						? child
+						: undefined;
 				},
-				"answered child completion",
+				"answered and resumed child completion",
 				25_000,
 			);
-			expect(questionObserved).toBe(true);
+			expect(answeredIds).toHaveLength(3);
+			expect(new Set(answeredIds).size).toBe(3);
+			expect(staleReplyRejected).toBe(true);
+			expect(unscopedReplyRejected).toBe(true);
 			expect(completed.questionAnswered).toBe(true);
-			const question = JSON.parse(readFileSync(`${completed.loadoutPath}.question.json`, "utf8"));
-			expect(isRecord(question) && question.answered === true).toBe(true);
+			const question = parseOrThrow(
+				QuestionSchema,
+				JSON.parse(readFileSync(questionPointerPath({ loadoutPath: completed.loadoutPath }), "utf8")),
+				"latest question",
+			);
+			expect(question.answered).toBe(true);
+			expect(question.questionId).toBe(answeredIds[2]);
+			const historyDirectory = `${completed.loadoutPath}.questions`;
+			const history = readdirSync(historyDirectory).filter((file) => file.endsWith(".json"));
+			expect(history).toHaveLength(3);
+			const attempts: Array<Question["attemptId"]> = [];
+			for (const [index, questionId] of answeredIds.entries()) {
+				const recordFile = questionRecordPath({ loadoutPath: completed.loadoutPath, questionId });
+				const record = parseOrThrow(
+					QuestionSchema,
+					JSON.parse(readFileSync(recordFile, "utf8")),
+					"historical question",
+				);
+				const reply = parseOrThrow(
+					ReplySchema,
+					JSON.parse(readFileSync(`${recordFile}.reply`, "utf8")),
+					"historical reply",
+				);
+				attempts.push(record.attemptId);
+				expect(record).toMatchObject({ questionId, answered: true });
+				expect(reply).toMatchObject({
+					attemptId: record.attemptId,
+					questionId,
+					answer: `approved answer ${index + 1}`,
+				});
+			}
+			expect(attempts[0]).toBe(attempts[1]);
+			expect(attempts[2]).toBe(completed.attemptId);
+			expect(attempts[0]).not.toBe(attempts[2]);
 			const handoffPath = completed.handoffPath;
 			if (!handoffPath) throw new Error("question child omitted handoff");
 			expect(readFileSync(handoffPath, "utf8")).toContain("question scenario complete");
@@ -680,6 +810,169 @@ describe("installed Pi public orchestration lifecycle", () => {
 			if (passed) rmSync(work, { recursive: true, force: true });
 		}
 	}, 35_000);
+
+	it.each(["cancel", "pane loss"])(
+		"closes a parked question after %s and safely resumes with a new question",
+		async (operation) => {
+			const work = mkdtempSync(join(tmpdir(), "pi-guard-closed-question-"));
+			configureProjectAgent(work);
+			const socket = `pi-guard-closed-question-${operation.replaceAll(" ", "-")}-${process.pid}`;
+			const session = socket;
+			let registryFile: string | undefined;
+			let parkedQuestion: Question | undefined;
+			let failureSnapshot: ReturnType<typeof captureQuestionAttempt> | undefined;
+			let terminated = false;
+			let oldAnswerSent = false;
+			let resumed = false;
+			let answered = false;
+			const server = createServer(async (request, response) => {
+				try {
+					const body = await readJsonBody(request);
+					const serialized = JSON.stringify(messages(body));
+					if (toolNames(body).includes("subagent")) {
+						if (toolResultCount(body) === 0)
+							return toolCall(
+								response,
+								"subagent",
+								{
+									agent: "worker",
+									task: "CHILD_CLOSED_QUESTION",
+									cwd: work,
+									agentScope: "project",
+									confirmProjectAgents: false,
+								},
+								"launch-parked-child",
+							);
+						const file = await waitFor(() => registryFile, "parked child registry");
+						const child = loadRegistry(file).children[0];
+						if (!child) throw new Error("parked child disappeared");
+						if (!terminated && serialized.includes(QUESTION_REPLY_INSTRUCTION)) {
+							parkedQuestion = parseOrThrow(
+								QuestionSchema,
+								JSON.parse(readFileSync(questionPointerPath({ loadoutPath: child.loadoutPath }), "utf8")),
+								"parked question",
+							);
+							if (!child.paneId) throw new Error("parked child has no pane");
+							terminated = true;
+							if (operation === "cancel")
+								execFileSync("tmux", ["-L", socket, "send-keys", "-t", child.paneId, "Escape"]);
+							else execFileSync("tmux", ["-L", socket, "kill-pane", "-t", child.paneId]);
+							return text(response, "parent awaiting terminal failure");
+						}
+						if (child.state === CHILD_STATES.failed && child.delivered && !oldAnswerSent) {
+							if (!parkedQuestion) throw new Error("failed child omitted its parked question");
+							failureSnapshot = captureQuestionAttempt({ child, questionId: parkedQuestion.questionId });
+							oldAnswerSent = true;
+							return toolCall(
+								response,
+								"subagent_message",
+								{
+									name: child.name,
+									message: "must not answer a closed attempt",
+									questionId: parkedQuestion.questionId,
+								},
+								"answer-closed-question",
+							);
+						}
+						if (oldAnswerSent && !resumed) {
+							if (!parkedQuestion || !failureSnapshot) throw new Error("missing closed-attempt snapshot");
+							expect(serialized).toContain(QUESTION_ERRORS.stale);
+							expect(captureQuestionAttempt({ child, questionId: parkedQuestion.questionId })).toEqual(failureSnapshot);
+							resumed = true;
+							return toolCall(
+								response,
+								"subagent_message",
+								{ name: child.name, message: "RESUME_CLOSED_QUESTION" },
+								"resume-closed-child",
+							);
+						}
+						if (resumed && !answered && child.state === CHILD_STATES.waiting) {
+							const question = parseOrThrow(
+								QuestionSchema,
+								JSON.parse(readFileSync(questionPointerPath({ loadoutPath: child.loadoutPath }), "utf8")),
+								"resumed question",
+							);
+							if (!parkedQuestion) throw new Error("missing original parked question");
+							expect(question.attemptId).not.toBe(parkedQuestion.attemptId);
+							answered = true;
+							return toolCall(
+								response,
+								"subagent_message",
+								{ name: child.name, message: "resume approved", questionId: question.questionId },
+								"answer-resumed-question",
+							);
+						}
+						return text(response, "parent waiting");
+					}
+					if (!serialized.includes("CHILD_CLOSED_QUESTION")) throw new Error("unexpected child request");
+					if (serialized.includes("resume approved")) return text(response, "closed question resumed successfully");
+					return toolCall(
+						response,
+						"ask_question",
+						{ question: "May I continue?" },
+						`parked-question-${toolResultCount(body)}`,
+					);
+				} catch (error) {
+					response.writeHead(500, { "content-type": "text/plain" });
+					response.end(String(error));
+				}
+			});
+			await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+			const address = server.address();
+			if (!address || typeof address === "string") throw new Error("local provider did not bind");
+			const agentDir = configureAgentDir(work, address.port);
+			sessions.push({ socket, session });
+			const command = [
+				`cd ${shellQuote(work)} &&`,
+				`PI_CODING_AGENT_DIR=${shellQuote(agentDir)}`,
+				`PI_GUARD_ACTIVE_PROFILE=${shellQuote("builtin:worker")}`,
+				"pi --no-extensions",
+				`-e ${shellQuote(join(process.cwd(), "extensions", "index.ts"))}`,
+				"--model local/deterministic --tools subagent,subagent_message",
+				shellQuote("PUBLIC_CLOSED_QUESTION"),
+			].join(" ");
+			try {
+				execFileSync("tmux", ["-L", socket, "-f", "/dev/null", "new-session", "-d", "-s", session, "sh"]);
+				execFileSync("tmux", ["-L", socket, "send-keys", "-t", session, "-l", command]);
+				execFileSync("tmux", ["-L", socket, "send-keys", "-t", session, "Enter"]);
+				registryFile = await waitFor(() => {
+					const root = join(work, ".pi", "orchestration");
+					if (!existsSync(root)) return undefined;
+					for (const entry of readdirSync(root, { withFileTypes: true })) {
+						const candidate = join(root, entry.name, "registry.json");
+						if (entry.isDirectory() && existsSync(candidate)) return candidate;
+					}
+					return undefined;
+				}, "closed-question registry");
+				const file = registryFile;
+				const completed = await waitFor(
+					() => {
+						const child = loadRegistry(file).children[0];
+						return child?.state === CHILD_STATES.completed &&
+							child.delivered &&
+							child.result?.includes("closed question resumed successfully")
+							? child
+							: undefined;
+					},
+					"cancelled child warm resume",
+					25_000,
+				);
+				expect(answered).toBe(true);
+				if (!parkedQuestion || !failureSnapshot) throw new Error("missing failed-attempt evidence");
+				expect(completed.sessionId).toBe(failureSnapshot.child.sessionId);
+				const oldRecordFile = questionRecordPath({
+					loadoutPath: completed.loadoutPath,
+					questionId: parkedQuestion.questionId,
+				});
+				expect(readFileSync(oldRecordFile, "utf8")).toBe(failureSnapshot.record);
+				expect(existsSync(`${oldRecordFile}.reply`)).toBe(false);
+			} finally {
+				await closeProvider(server);
+				rmSync(work, { recursive: true, force: true });
+			}
+		},
+		35_000,
+	);
 
 	it("resumes a completed named child through subagent_message with its snapshotted loadout", async () => {
 		const work = mkdtempSync(join(tmpdir(), "pi-guard-resume-"));
