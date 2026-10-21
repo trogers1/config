@@ -29,6 +29,7 @@ import {
 	type ChildRecord,
 } from "../extensions/interactive/types.ts";
 import markerExtension from "./fixtures/marker-extension.ts";
+import reloadMarker from "./fixtures/reload-marker.ts";
 
 function shellQuote(value: string): string {
 	return `'${value.replaceAll("'", "'\\''")}'`;
@@ -585,7 +586,7 @@ describe("installed Pi public orchestration lifecycle", () => {
 		}
 	}, 35_000);
 
-	it("answers sequential child questions durably without accepting a stale reply for the next question", async () => {
+	it("reattaches after parent /reload and delivers sequential resumed questions without duplicates", async () => {
 		const work = mkdtempSync(join(tmpdir(), "pi-guard-question-"));
 		configureProjectAgent(work);
 		const answeredIds: Array<Question["questionId"]> = [];
@@ -652,7 +653,7 @@ describe("installed Pi public orchestration lifecycle", () => {
 							`answer-question-${answeredIds.length}`,
 						);
 					}
-					if (serialized.includes("question scenario complete") && !resumeRequested) {
+					if (serialized.includes("RESUME_AFTER_PARENT_RELOAD") && !resumeRequested) {
 						const match = serialized.match(/worker-1-[a-f0-9]+/);
 						if (!match) throw new Error("completion omitted persistent child name");
 						resumeRequested = true;
@@ -663,6 +664,8 @@ describe("installed Pi public orchestration lifecycle", () => {
 							"resume-question-child",
 						);
 					}
+					if (serialized.includes("question scenario complete") && !resumeRequested)
+						return text(response, "parent ready for reload");
 					if (toolResultCount(body) === 0)
 						return toolCall(
 							response,
@@ -709,15 +712,19 @@ describe("installed Pi public orchestration lifecycle", () => {
 		const agentDir = configureAgentDir(work, address.port);
 		const socket = `pi-guard-question-${process.pid}`;
 		const session = `pi-guard-question-${process.pid}`;
+		const reloadMarkerFile = join(work, "parent-reload-events.txt");
+		expect(reloadMarker).toBeTypeOf("function");
 		sessions.push({ socket, session });
 		const extension = join(process.cwd(), "extensions", "index.ts");
 		const command = [
 			`cd ${shellQuote(work)} &&`,
 			`PI_CODING_AGENT_DIR=${shellQuote(agentDir)}`,
 			`PI_GUARD_ACTIVE_PROFILE=${shellQuote("builtin:worker")}`,
+			`PI_GUARD_TEST_RELOAD_MARKER=${shellQuote(reloadMarkerFile)}`,
 			"pi --no-extensions",
 			`-e ${shellQuote(extension)}`,
 			"--model local/deterministic --tools subagent,subagent_message",
+			`-e ${shellQuote(join(process.cwd(), "tests", "fixtures", "reload-marker.ts"))}`,
 			shellQuote("PUBLIC_QUESTION"),
 		].join(" ");
 		let passed = false;
@@ -735,6 +742,30 @@ describe("installed Pi public orchestration lifecycle", () => {
 				}
 				return undefined;
 			}, "question registry");
+			await waitFor(() => {
+				const child = loadRegistry(registryFile).children[0];
+				return child?.state === CHILD_STATES.completed && child.delivered ? child : undefined;
+			}, "initial question attempt completion");
+			await waitFor(() => {
+				const pane = execFileSync("tmux", ["-L", socket, "capture-pane", "-p", "-S", "-100", "-t", session], {
+					encoding: "utf8",
+				});
+				return pane.includes("parent ready for reload") ? true : undefined;
+			}, "parent finished its initial completion follow-up");
+			execFileSync("tmux", ["-L", socket, "send-keys", "-t", session, "-l", "/reload"]);
+			execFileSync("tmux", ["-L", socket, "send-keys", "-t", session, "Enter"]);
+			await waitFor(() => {
+				const events = readFileSync(reloadMarkerFile, "utf8");
+				return events === "start\nshutdown\nstart\n" ? true : undefined;
+			}, "old parent shutdown and fresh extension session start");
+			await waitFor(() => {
+				const pane = execFileSync("tmux", ["-L", socket, "capture-pane", "-p", "-S", "-100", "-t", session], {
+					encoding: "utf8",
+				});
+				return pane.includes("Reloaded keybindings") ? true : undefined;
+			}, "reload finished and parent editor restored");
+			execFileSync("tmux", ["-L", socket, "send-keys", "-t", session, "-l", "RESUME_AFTER_PARENT_RELOAD"]);
+			execFileSync("tmux", ["-L", socket, "send-keys", "-t", session, "Enter"]);
 			const completed = await waitFor(
 				() => {
 					const child = loadRegistry(registryFile).children[0];
@@ -752,6 +783,21 @@ describe("installed Pi public orchestration lifecycle", () => {
 			expect(new Set(answeredIds).size).toBe(3);
 			expect(staleReplyRejected).toBe(true);
 			expect(unscopedReplyRejected).toBe(true);
+			// Repeated subagent_message calls (resume, rejected unscoped reply,
+			// explicit answer) must not install duplicate run watchers or sends.
+			await waitFor(() => {
+				const parentRequest = [...providerRequests]
+					.reverse()
+					.find(
+						(body) =>
+							toolNames(body).includes("subagent") &&
+							JSON.stringify(messages(body)).includes("resumed question scenario complete"),
+					);
+				if (!parentRequest) return undefined;
+				const transcript = JSON.stringify(messages(parentRequest));
+				expect(transcript.split(QUESTION_REPLY_INSTRUCTION)).toHaveLength(answeredIds.length + 1);
+				return true;
+			}, "parent transcript with one notification per question");
 			expect(completed.questionAnswered).toBe(true);
 			const question = parseOrThrow(
 				QuestionSchema,

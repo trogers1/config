@@ -197,7 +197,7 @@ export type WatchRegistryOptions = {
 	onQuestion?: (event: { child: QuestionDelivery; question: Question["question"]; registry: Registry }) => void;
 	intervalMs?: number;
 };
-/** Watches only children launched by this live parent; there is intentionally no restart/reload reconciler. */
+/** Watches one explicitly attached run; callers enforce parent ownership. No automatic startup scan. */
 export function watchRegistry({ file, onCompletion, onQuestion, intervalMs = 250 }: WatchRegistryOptions): {
 	stop(): void;
 } {

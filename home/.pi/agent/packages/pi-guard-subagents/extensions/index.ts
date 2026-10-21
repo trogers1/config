@@ -136,7 +136,7 @@ type ParentContext = Pick<ExtensionContext, "hasUI" | "cwd"> & {
 	readonly sessionManager: Pick<ExtensionContext["sessionManager"], "getSessionId">;
 	readonly ui: Pick<ExtensionContext["ui"], "notify">;
 };
-type ParentWatcher = { stop(): void };
+type ParentWatchers = Map<string, ReturnType<typeof watchRegistry>>;
 function profile(agent: AgentConfig): string | null {
 	return process.env[PARENT_PROFILE]?.trim() || agent.profile || null;
 }
@@ -309,10 +309,12 @@ export function attachParentRegistry({
 	readonly file: string;
 	readonly ctx: ParentContext;
 	readonly sendMessage: ExtensionAPI["sendMessage"];
-	readonly watchers: Set<ParentWatcher>;
+	readonly watchers: ParentWatchers;
 }): void {
 	const registry = loadRegistry(file);
 	if (registry.parentSession !== ctx.sessionManager.getSessionId()) return;
+	const key = path.resolve(file);
+	if (watchers.has(key)) return;
 	const notify = (child: ChildRecord, signal: TerminalSignal): void => {
 		// This is the required parent delivery. Let sendMessage throw so the
 		// registry watcher can retain its claim and retry instead of silently
@@ -382,16 +384,16 @@ export function attachParentRegistry({
 			);
 		},
 	});
-	watchers.add(watcher);
+	watchers.set(key, watcher);
 }
 
-export function stopParentRegistryWatchers({ watchers }: { readonly watchers: Set<ParentWatcher> }): void {
-	for (const watcher of watchers) watcher.stop();
+export function stopParentRegistryWatchers({ watchers }: { readonly watchers: ParentWatchers }): void {
+	for (const watcher of watchers.values()) watcher.stop();
 	watchers.clear();
 }
 
 export default function (pi: ExtensionAPI) {
-	const watchers = new Set<ParentWatcher>();
+	const watchers: ParentWatchers = new Map();
 	function isMissingFile(error: unknown): boolean {
 		return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 	}
@@ -427,7 +429,10 @@ export default function (pi: ExtensionAPI) {
 					details: {},
 					isError: true,
 				};
-			const child = found.registry.children.find((c) => c.name === p.name);
+			// Reload replaces the extension's in-memory watchers. Reattach the
+			// owned run before answering, steering, or resuming an existing child.
+			attachParentRegistry({ file: found.file, ctx, sendMessage: pi.sendMessage, watchers });
+			const child = loadRegistry(found.file).children.find((c) => c.name === p.name);
 			if (!child)
 				return { content: [{ type: "text", text: `Subagent disappeared: ${p.name}` }], details: {}, isError: true };
 			const attemptOpen = questionAttemptOpen({ child });

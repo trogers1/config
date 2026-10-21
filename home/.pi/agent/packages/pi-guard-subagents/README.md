@@ -82,8 +82,11 @@ Forked from pi's `examples/extensions/subagent` with additions:
 - **Guarded interactive lifecycle.** Children run in dedicated tmux panes,
   report activity and terminal state through atomic sidecars, can ask sequential
   parent questions with `ask_question` (one unanswered at a time), and auto-close
-  after normal completion. Parent watchers remain
-  active for the lifetime of the launching parent; restart/reload recovery is not supported.
+  after normal completion. Parent watchers remain active until session shutdown.
+  After a parent reload/restart in the same session, `subagent_message`
+  reattaches the child's run watcher when answering, steering, or resuming it;
+  `subagent` session resumes also attach a watcher. There is no automatic
+  startup scan or recovery across different parent sessions.
 - **Premature-exit detection.** A worker that exits 0 but whose last message
   ended mid-turn (`toolUse`) or truncated (`length`) is reported as failed,
   not completed, so the orchestrator resumes the session instead of trusting
@@ -197,9 +200,13 @@ and reply records use protocol version 2; version-1 or ID-less sidecars are
 invalid and are not migrated or interpreted as the new protocol. Stop existing workers before upgrading, then reload/restart the
 parent and launch fresh workers. Parent and child runtimes must be upgraded
 together; a running child retains the code it originally loaded. There is no
-compatibility fallback. This does not add parent restart/reload reconciliation:
-watchers still belong to the launching live parent. Mismatched or malformed reply
-records fail loudly rather than being ignored or satisfying another question.
+compatibility fallback. After parent reload/restart, interacting with an existing
+child via `subagent_message` reattaches its owned run watcher idempotently, so
+pending questions and terminal outcomes can be delivered automatically again.
+This is interaction-triggered reattachment, not automatic startup reconciliation;
+untouched runs remain unwatched, and another parent session cannot adopt them.
+Mismatched or malformed reply records fail loudly rather than being ignored or
+satisfying another question.
 
 For integrations using the exported watcher helper, `watchRegistry` now takes
 one options object (`{ file, onCompletion, onQuestion, intervalMs }`). Its callbacks

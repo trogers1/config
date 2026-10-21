@@ -55,14 +55,23 @@ describe("parent subagent widget lifecycle", () => {
 
 		const setWidget = vi.fn();
 		const sendMessage = vi.fn<ExtensionAPI["sendMessage"]>();
-		const watchers = new Set<{ stop(): void }>();
+		const watchers: Parameters<typeof attachParentRegistry>[0]["watchers"] = new Map();
 		const context = {
 			hasUI: true,
 			cwd,
 			sessionManager: { getSessionId: () => sessionId },
 			ui: { notify: vi.fn(), setWidget },
 		};
+		attachParentRegistry({
+			file,
+			ctx: { ...context, sessionManager: { getSessionId: () => "another-parent" } },
+			sendMessage,
+			watchers,
+		});
+		expect(watchers.size).toBe(0);
 		attachParentRegistry({ file, ctx: context, sendMessage, watchers });
+		attachParentRegistry({ file, ctx: context, sendMessage, watchers });
+		expect(watchers.size).toBe(1);
 
 		updateChild(file, child.name, { state: "waiting" });
 		await wait({ milliseconds: 300 });
