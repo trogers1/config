@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { assertPiShape, toolUsageMessageSchema } from './pi-context';
 import path from 'node:path';
 import readline from 'node:readline';
 import { buildUsageRecord, type ModelLookup } from './accounting';
@@ -129,16 +130,16 @@ async function importFile({
 		}
 
 		activeModel = modelForEntry({ entry, previous: activeModel });
-		const record = usageRecordFromEntry({
-			entry,
-			sessionFile: file,
-			accounting,
-			cwd: headerCwd,
-			model: activeModel,
-		});
-		if (!record) continue;
-		summary.eventsFound++;
 		try {
+			const record = usageRecordFromEntry({
+				entry,
+				sessionFile: file,
+				accounting,
+				cwd: headerCwd,
+				model: activeModel,
+			});
+			if (!record) continue;
+			summary.eventsFound++;
 			const result = recordUsage({ record });
 			summary[result]++;
 			onProgress?.({ currentFileLines: lineCount });
@@ -242,7 +243,9 @@ export function usageRecordFromEntry({
 function messageWithUsage({ entry, model }: { entry: any; model?: UsageModel }): any | undefined {
 	if (entry?.type === 'message') {
 		const message = entry.message;
-		return message?.role === 'assistant' && message.usage ? message : undefined;
+		return (message?.role === 'assistant' || message?.role === 'toolResult') && message.usage
+			? message
+			: undefined;
 	}
 	if (entry?.type !== 'compaction' && entry?.type !== 'branch_summary') return undefined;
 	if (!entry.usage) return undefined;
@@ -299,6 +302,14 @@ export function usageRecordFromMessage({
 }): UsageRecord | undefined {
 	const usage = message?.usage;
 	if (!usage) return undefined;
+	const isTool = message.role === 'toolResult';
+	if (isTool) {
+		assertPiShape({
+			value: message,
+			schema: toolUsageMessageSchema,
+			boundary: 'tool result usage',
+		});
+	}
 	const input = number({ value: usage.input });
 	const output = number({ value: usage.output });
 	const cacheRead = number({ value: usage.cacheRead });
@@ -306,8 +317,9 @@ export function usageRecordFromMessage({
 	const event: UsageEvent = {
 		source: options.source,
 		timestampMs: number({ value: message.timestamp }) || options.entryTimestamp || Date.now(),
-		provider: string({ value: message.provider }) || 'unknown',
-		model: string({ value: message.model }) || 'unknown',
+		// Tool usage is an aggregate, potentially spanning models and providers.
+		provider: isTool ? 'tools' : string({ value: message.provider }) || 'unknown',
+		model: isTool ? message.toolName : string({ value: message.model }) || 'unknown',
 		api: string({ value: message.api }) || null,
 		inputTokens: input,
 		outputTokens: output,
@@ -335,8 +347,8 @@ export function usageRecordFromMessage({
 	return buildUsageRecord({
 		event,
 		storedCost,
-		modelLookup: accounting.modelLookup,
-		config: accounting.config,
+		modelLookup: isTool ? () => undefined : accounting.modelLookup,
+		config: isTool ? { ...accounting.config, rateCards: {} } : accounting.config,
 	});
 }
 

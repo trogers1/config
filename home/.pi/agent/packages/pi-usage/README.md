@@ -1,6 +1,6 @@
 # pi-usage
 
-Tracks pi assistant token usage and derived accounting meters in a local SQLite database.
+Tracks Pi assistant, summary, and tool model usage and derived accounting meters in a local SQLite database.
 
 ## Commands
 
@@ -147,7 +147,10 @@ Configuration and runtime errors are rendered in red in the limits footer rather
 - Current model-registry rates override stale costs stored in session JSONL.
 - If a model cannot be resolved, a non-zero cost stored in the session is retained as a fallback.
 - One usage event can produce multiple charge meters without adding provider-specific database columns.
-- Assistant responses plus Pi 0.81+ compaction and branch-summary model calls are recorded. Normal local tool executions are not separate provider charges.
+- Assistant responses plus compaction and branch-summary model calls are recorded. Normal local tool executions without usage are not separate provider charges.
+- Pi 1.3 codemode classifier and image calls are counted from the finalized tool result's aggregate `usage`, including billable work before a script fails. Nested tools are already included by Pi; their execution events and renderer details are never counted separately.
+- Tool aggregates appear under provider `tools` and model equal to the tool name (for example, `codemode`). Pi does not attach per-model attribution to these aggregates. Their stored USD cost is preserved, without chat-model repricing or custom token rate cards; token totals and unfiltered limits include them.
+- Persisted live messages are reconciled after the agent run, when session entry IDs are available, so subsequent history imports do not duplicate them.
 - Imported summary calls use the most recently recorded model selection (or assistant response) to resolve provider/model pricing; live summary calls use Pi's active model.
 - Re-importing after a rate change deterministically recalculates existing charges.
 - Local amounts are estimates; provider billing dashboards remain authoritative.

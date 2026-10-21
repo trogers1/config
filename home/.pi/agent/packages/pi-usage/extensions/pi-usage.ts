@@ -19,6 +19,7 @@ import { readUsageConfig } from './config';
 import {
 	assertPiShape,
 	assistantUsageMessageSchema,
+	toolUsageMessageSchema,
 	liveMessageContextSchema,
 	shutdownContextSchema,
 	usageCommandContextSchema,
@@ -27,6 +28,7 @@ import {
 export default function piUsageExtension(pi: ExtensionAPI) {
 	let liveInsertCount = 0;
 	const processInstanceId = crypto.randomUUID();
+	const pendingMessages: unknown[] = [];
 
 	pi.on('session_start', (_event, ctx: ExtensionContext) => {
 		// Pi waits for session_start handlers before it enables normal input handling.
@@ -36,21 +38,23 @@ export default function piUsageExtension(pi: ExtensionAPI) {
 		updateLimitsStatus(ctx);
 	});
 
-	pi.on('message_end', async (event: unknown, ctx: ExtensionContext) => {
+	const recordMessage = async (event: unknown, ctx: ExtensionContext) => {
 		const message =
 			event && typeof event === 'object' ? (event as { message?: unknown }).message : undefined;
 		if (
 			!message ||
 			typeof message !== 'object' ||
-			(message as { role?: unknown }).role !== 'assistant'
+			!['assistant', 'toolResult'].includes(String((message as { role?: unknown }).role))
 		)
 			return;
 
+		const isTool = (message as { role?: unknown }).role === 'toolResult';
+		if (isTool && !(message as { usage?: unknown }).usage) return;
 		try {
 			const usageMessage = assertPiShape({
 				value: message,
-				schema: assistantUsageMessageSchema,
-				boundary: 'assistant message',
+				schema: isTool ? toolUsageMessageSchema : assistantUsageMessageSchema,
+				boundary: isTool ? 'tool result usage' : 'assistant message',
 			});
 			const liveContext = assertPiShape({
 				value: ctx,
@@ -60,6 +64,12 @@ export default function piUsageExtension(pi: ExtensionAPI) {
 			const sessionFile = liveContext.sessionManager.getSessionFile();
 			const sessionId = readSessionId(ctx);
 			const entryId = findEntryIdForMessage(liveContext, usageMessage);
+			// Pi dispatches message_end before appending the finalized message. Wait
+			// for agent_end so live and imported events share the persisted entry ID.
+			if (sessionFile && !entryId) {
+				pendingMessages.push(event);
+				return;
+			}
 			const usageRecord = usageRecordFromMessage({
 				message: usageMessage,
 				accounting: accountingFor(liveContext),
@@ -83,6 +93,10 @@ export default function piUsageExtension(pi: ExtensionAPI) {
 				process.stderr.write(`pi-usage: failed to record usage: ${errorMessage}\n`);
 			}
 		}
+	};
+	pi.on('message_end', recordMessage);
+	pi.on('agent_end', async (_event, ctx) => {
+		for (const event of pendingMessages.splice(0)) await recordMessage(event, ctx);
 	});
 
 	pi.on('session_compact', async (event: unknown, ctx: ExtensionContext) => {
@@ -293,7 +307,7 @@ function findEntryIdForMessage(ctx: ExtensionContext, message: any): string | un
 	for (let i = entries.length - 1; i >= 0; i--) {
 		const entry = entries[i] as any;
 		if (entry?.type !== 'message') continue;
-		if (entry.message?.role !== 'assistant') continue;
+		if (entry.message?.role !== message.role) continue;
 		if (entry.message === message) return string(entry.id);
 		if (messagesMatch(entry.message, message)) return string(entry.id);
 	}
@@ -304,6 +318,7 @@ function messagesMatch(a: any, b: any): boolean {
 	if (!a || !b) return false;
 	return (
 		a.role === b.role &&
+		a.toolCallId === b.toolCallId &&
 		a.provider === b.provider &&
 		a.model === b.model &&
 		number(a.timestamp) === number(b.timestamp) &&

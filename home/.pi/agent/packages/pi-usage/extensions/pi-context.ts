@@ -1,3 +1,4 @@
+import type { ToolResultMessage, Usage } from '@earendil-works/pi-ai';
 import { Type, type Static, type TSchema } from 'typebox';
 import { Check, Errors } from 'typebox/value';
 
@@ -40,21 +41,34 @@ const storedCostSchema = Type.Object({
 	cacheRead: finiteNumber,
 	cacheWrite: finiteNumber,
 	total: finiteNumber,
-});
+} satisfies Record<keyof Usage['cost'], TSchema>);
+
+const usageSchema = Type.Object({
+	input: finiteNumber,
+	output: finiteNumber,
+	cacheRead: finiteNumber,
+	cacheWrite: finiteNumber,
+	totalTokens: finiteNumber,
+	cost: storedCostSchema,
+} satisfies Record<keyof Omit<Usage, 'cacheWrite1h' | 'reasoning'>, TSchema>);
+
+export const toolUsageMessageSchema = Type.Object({
+	role: Type.Literal('toolResult'),
+	toolCallId: Type.String({ minLength: 1 }),
+	toolName: Type.String({ minLength: 1 }),
+	timestamp: finiteNumber,
+	usage: usageSchema,
+} satisfies Record<
+	keyof Pick<ToolResultMessage, 'role' | 'toolCallId' | 'toolName' | 'timestamp' | 'usage'>,
+	TSchema
+>);
 
 export const assistantUsageMessageSchema = Type.Object({
 	role: Type.Literal('assistant'),
 	provider: Type.String({ minLength: 1 }),
 	model: Type.String({ minLength: 1 }),
 	timestamp: finiteNumber,
-	usage: Type.Object({
-		input: finiteNumber,
-		output: finiteNumber,
-		cacheRead: finiteNumber,
-		cacheWrite: finiteNumber,
-		totalTokens: finiteNumber,
-		cost: storedCostSchema,
-	}),
+	usage: usageSchema,
 });
 
 export function assertPiShape<Schema extends TSchema, TValue>({

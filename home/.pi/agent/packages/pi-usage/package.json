@@ -6,7 +6,8 @@
 		"pi-package"
 	],
 	"scripts": {
-		"pretest": "npm run check:types && npm run check:lint && npm run check:prettier && npm run check:deps && npm run check:knip",
+		"check:sdk": "node ../check-pi-sdk.mjs",
+		"pretest": "npm run check:sdk && npm run check:types && npm run check:lint && npm run check:prettier && npm run check:deps && npm run check:knip",
 		"test": "vitest run",
 		"test:watch": "vitest",
 		"check:types": "tsc --noEmit",
@@ -15,6 +16,9 @@
 		"check:deps": "depcruise --config .dependency-cruiser.js extensions",
 		"check:knip": "knip --config knip.jsonc",
 		"fix:prettier": "prettier --write ."
+	},
+	"engines": {
+		"node": ">=22.19.0"
 	},
 	"pi": {
 		"extensions": [
@@ -32,6 +36,9 @@
 		"typebox": "*"
 	},
 	"devDependencies": {
+		"@earendil-works/pi-ai": "1.3.0",
+		"@earendil-works/pi-coding-agent": "1.3.0",
+		"typebox": "1.3.27",
 		"@eslint/js": "^10.0.1",
 		"dependency-cruiser": "^18.0.0",
 		"eslint": "^10.7.0",

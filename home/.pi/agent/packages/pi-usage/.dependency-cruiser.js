@@ -111,8 +111,9 @@ module.exports = {
 			to: {
 				moreThanOneDependencyType: true,
 				// as it's common to use a devDependency for type-only imports: don't
-				// consider type-only dependencyTypes for this rule
-				dependencyTypesNot: ['type-only'],
+				// consider type-only dependencyTypes for this rule. Pi's runtime peers
+				// intentionally also have exact dev pins for SDK parity.
+				dependencyTypesNot: ['type-only', 'npm-peer'],
 			},
 		},
 
@@ -147,7 +148,8 @@ module.exports = {
 				dependencyTypes: ['npm-dev'],
 				// type only dependencies are not a problem as they don't end up in the
 				// production code or are ignored by the runtime.
-				dependencyTypesNot: ['type-only'],
+				// Pi supplies peers at runtime; exact dev pins only support local checks.
+				dependencyTypesNot: ['type-only', 'npm-peer'],
 				pathNot: ['node_modules/@types/'],
 			},
 		},
