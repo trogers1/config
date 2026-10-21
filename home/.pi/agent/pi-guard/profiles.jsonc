@@ -711,9 +711,23 @@
             "pattern": "-v jiratui",
             "decision": "allow",
           },
+          // Require approval for the general Jira clients; save narrower
+          // allow/deny decisions as needed. jira-ticket keeps its own rules.
+          {
+            "pattern": "jira",
+            "decision": "ask",
+          },
+          {
+            "pattern": "jira *",
+            "decision": "ask",
+          },
+          {
+            "pattern": "jiratui",
+            "decision": "ask",
+          },
           {
             "pattern": "jiratui *",
-            "decision": "allow",
+            "decision": "ask",
           },
           {
             "pattern": "jira-ticket *",
