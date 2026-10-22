@@ -24,6 +24,7 @@ import {
 } from "../modules/shell/searchPolicy";
 import { validateReadCommands } from "../modules/shell/readCommands";
 import { askPermissionChoices } from "../modules/profileUpdate";
+import { withPermissionInteraction } from "../modules/permissionUi";
 import {
   createBashToolDefinition,
   isToolCallEventType,
@@ -228,6 +229,7 @@ type RememberDecision = ({
 }: {
   readonly patterns?: readonly string[];
   readonly pathTraces?: readonly BashPathReferenceTrace[];
+  readonly ctx?: ExtensionContext;
 }) => Promise<Approval>;
 type RefreshAfterUiAwait = () => Promise<"unchanged" | "changed" | "failed">;
 
@@ -1728,7 +1730,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
 
   function rememberRule({
     draft,
-    ctx,
+    ctx: originalContext,
     pathTraces = [],
   }: {
     readonly draft: PendingRuleChangeDraft;
@@ -1737,7 +1739,11 @@ The permissions gate remains loaded and will fail closed until the profile is co
   }): RememberDecision {
     let retainedRows: EditableRuleRow[] | undefined;
     let pruneRetainedOnNextInvocation = false;
-    return async ({ patterns, pathTraces: suppliedPathTraces }) => {
+    return async ({
+      patterns,
+      pathTraces: suppliedPathTraces,
+      ctx = originalContext,
+    }) => {
       if (!Object.hasOwn(rawProfileConfig?.profiles ?? {}, activeProfile)) {
         ctx.ui.notify(
           `Cannot save a permission decision: active profile '${activeProfile}' is not user-owned. Switch to a user-owned profile first.`,
@@ -3181,8 +3187,9 @@ export async function gateBash({
         !hasNonAuthorableAsk &&
         (decisions.some(({ decision }) => decision === "ask") ||
           askPaths.length > 0)
-          ? () =>
+          ? ({ ctx }) =>
               remember({
+                ctx,
                 patterns: commands.filter(
                   (_item, index) => decisions[index]?.decision === "ask",
                 ),
@@ -3234,8 +3241,9 @@ export async function gateBash({
       }),
       remember:
         parseErrors.length === 0 && remember
-          ? () =>
+          ? ({ ctx }) =>
               remember({
+                ctx,
                 patterns: commands.filter(
                   (_item, index) => decisions[index]?.decision === "ask",
                 ),
@@ -3994,7 +4002,17 @@ function toolPath(toolName: string, input: unknown): string | undefined {
     : undefined;
 }
 
-async function confirmOrBlock({
+async function confirmOrBlock(
+  options: Parameters<typeof showPermissionInteraction>[0],
+): Promise<Approval> {
+  if (!options.ctx.hasUI) return { approved: false };
+  return await withPermissionInteraction({
+    ctx: options.ctx,
+    run: ({ ctx }) => showPermissionInteraction({ ...options, ctx }),
+  });
+}
+
+async function showPermissionInteraction({
   ctx,
   title,
   message: _message,
@@ -4096,6 +4114,7 @@ async function confirmOrBlock({
         };
       },
     );
+    ctx.signal?.throwIfAborted();
     const refreshResult = refreshAfterUiAwait
       ? await refreshAfterUiAwait()
       : "unchanged";
@@ -4110,9 +4129,9 @@ async function confirmOrBlock({
     }
     if (choice === yesChoice) return { approved: true };
     if (choice === updateProfileChoice && remember) {
-      const result = await remember({});
+      const result = await remember({ ctx });
       if (result.back)
-        return await confirmOrBlock({
+        return await showPermissionInteraction({
           ctx,
           title,
           message: _message,
@@ -4172,12 +4191,14 @@ async function collectGuidance({
   if (beforeDisplay === "failed")
     return { approved: false, stale: true, refreshFailed: true };
   if (beforeDisplay === "changed") return { approved: false, stale: true };
+  ctx.signal?.throwIfAborted();
   const input =
     typeof ctx.ui.editor === "function"
       ? await ctx.ui.editor(prompt, "")
       : typeof ctx.ui.input === "function"
-        ? await ctx.ui.input(prompt, "")
+        ? await ctx.ui.input(prompt, "", { signal: ctx.signal })
         : undefined;
+  ctx.signal?.throwIfAborted();
   const afterInput = refreshAfterUiAwait
     ? await refreshAfterUiAwait()
     : "unchanged";
