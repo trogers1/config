@@ -32,9 +32,6 @@ interface LaunchChildOptions {
 	chainStep?: number;
 }
 
-function shellQuote(value: string): string {
-	return `'${value.replace(/'/g, `'"'"'`)}'`;
-}
 function safeName(name: string): string {
 	if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(name)) throw new Error(`Invalid interactive child name: ${name}`);
 	return name;
@@ -69,13 +66,19 @@ export function readApprovedChainLoadout(runId: string, step: number, loadout: G
 }
 
 /** Build a child invocation exclusively from the persisted, validated loadout. */
-export function buildChildCommand(
-	loadout: GuardedInteractiveLoadout,
-	sessionId: string,
-	task: string,
-	loadoutPath: string,
+export function buildChildCommand({
+	loadout,
+	sessionId,
+	task,
+	loadoutPath,
 	pi = "pi",
-): string {
+}: {
+	loadout: GuardedInteractiveLoadout;
+	sessionId: string;
+	task: string;
+	loadoutPath: string;
+	pi?: string | undefined;
+}): string[] {
 	const args = [pi, "--session-id", sessionId, "--no-extensions", "--tools", loadout.toolAllowlist.join(",")];
 	for (const extension of [loadout.guardExtensionPath, loadout.childRuntimePath, ...loadout.backingExtensionPaths])
 		args.push("-e", extension);
@@ -85,7 +88,11 @@ export function buildChildCommand(
 	// Current Pi resolves the agent directory from PI_CODING_AGENT_DIR/configuration;
 	// it does not expose an --agent-dir CLI option.
 	args.push(task);
+	const parentPath = process.env.PATH;
+	if (!parentPath) throw new Error("Cannot launch a child without the parent PATH");
 	const env: Record<string, string> = {
+		// tmux may retain a stale PATH; use the running parent's executable search path.
+		PATH: parentPath,
 		PI_SUBAGENT_DEPTH: "1",
 		PI_SUBAGENT_SESSION_ID: sessionId,
 		PI_SUBAGENT_PROFILE: loadout.profile ?? "",
@@ -95,9 +102,7 @@ export function buildChildCommand(
 	if (loadout.codingAgentDir !== null) env.PI_CODING_AGENT_DIR = loadout.codingAgentDir;
 	// Omitted scope must not become an empty guard override (deny-all).
 	if (loadout.writes !== null) env.PI_SUBAGENT_PERMISSIBLE_GLOBS = loadout.writes.join(",");
-	return `${Object.entries(env)
-		.map(([key, value]) => `${key}=${shellQuote(value)}`)
-		.join(" ")} ${args.map(shellQuote).join(" ")}`;
+	return ["/usr/bin/env", ...Object.entries(env).map(([key, value]) => `${key}=${value}`), ...args];
 }
 function persistLaunchFailure(loadoutPath: string, attemptId: string, error: unknown): string {
 	const failure = `Child pane launch failed: ${String(error)}`;
@@ -158,10 +163,10 @@ export function launchChild(options: LaunchChildOptions): ChildRecord {
 	const addResult = addChild(file, child, options.parentSession);
 	if (!addResult.added) return addResult.child;
 	try {
-		const paneId = createPane(
-			buildChildCommand(loadout, sessionId, options.task, loadoutPath, options.piCommand),
-			options.cwd,
-		);
+		const paneId = createPane({
+			command: buildChildCommand({ loadout, sessionId, task: options.task, loadoutPath, pi: options.piCommand }),
+			cwd: options.cwd,
+		});
 		updateChild(file, name, { paneId, state: "active" });
 		child.paneId = paneId;
 		child.state = "active";
@@ -256,10 +261,16 @@ export function resumeChild(options: LaunchChildOptions & { sessionId: string; l
 		fs.rmSync(questionPointerPath({ loadoutPath: options.loadoutPath }), { force: true });
 	} else addChild(file, child, options.parentSession);
 	try {
-		const paneId = createPane(
-			buildChildCommand(freshLoadout, options.sessionId, options.task, options.loadoutPath, options.piCommand),
-			options.cwd,
-		);
+		const paneId = createPane({
+			command: buildChildCommand({
+				loadout: freshLoadout,
+				sessionId: options.sessionId,
+				task: options.task,
+				loadoutPath: options.loadoutPath,
+				pi: options.piCommand,
+			}),
+			cwd: options.cwd,
+		});
 		updateChild(file, child.name, { paneId, state: "active" });
 		child.paneId = paneId;
 		child.state = "active";

@@ -40,10 +40,12 @@ function rebalancePanes(hintPane?: string): void {
 		}
 	}, REBALANCE_DELAY_MS);
 }
-export function createPane(command: string, cwd: string): string {
+export function createPane({ command, cwd }: { command: readonly string[]; cwd: string }): string {
+	// tmux interprets a single command string with a shell. Require direct exec argv.
+	if (command.length < 2) throw new Error("Child pane command must include an executable and arguments");
 	const args = ["split-window", "-d", "-h"];
 	if (process.env.TMUX_PANE) args.push("-t", process.env.TMUX_PANE);
-	args.push("-P", "-F", "#{pane_id}", "-c", cwd, "sh", "-lc", command);
+	args.push("-P", "-F", "#{pane_id}", "-c", cwd, ...command);
 	const id = tmux(args);
 	rebalancePanes(id);
 	return id;

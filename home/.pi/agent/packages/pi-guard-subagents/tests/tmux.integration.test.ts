@@ -9,10 +9,6 @@ import { buildChildCommand } from "../extensions/interactive/launcher.ts";
 import { parseOrThrow, TerminalSignalSchema, type GuardedInteractiveLoadout } from "../extensions/interactive/types.ts";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-function shellQuote(value: string): string {
-	return `'${value.replaceAll("'", "'\\''")}'`;
-}
-
 /**
  * Real-process availability smoke harness. This deliberately does not mock
  * tmux or Pi: npm test must fail when either runtime is unavailable. It loads
@@ -69,7 +65,7 @@ describe("real Pi/tmux availability smoke", () => {
 });
 
 describe("installed Pi guarded child lifecycle", () => {
-	it("runs the unchanged generated command in a real tmux pane and writes terminal metadata", async () => {
+	it("runs generated argv directly in a real tmux pane and writes terminal metadata", async () => {
 		const work = mkdtempSync(join(tmpdir(), "pi-guard-subagents-child-"));
 		const socket = `pi-guard-child-${process.pid}`;
 		const session = `pi-guard-child-${process.pid}`;
@@ -133,11 +129,12 @@ describe("installed Pi guarded child lifecycle", () => {
 				stdio: "ignore",
 			});
 			execFileSync("tmux", ["-L", socket, "set-option", "-t", session, "remain-on-exit", "off"], { stdio: "ignore" });
-			const command = buildChildCommand(loadout, sessionId, "respond with the deterministic result", loadoutPath);
-			const childCommand = `PI_CODING_AGENT_DIR=${shellQuote(join(work, "agent-config"))} OPENAI_API_KEY=${shellQuote("local")} OPENAI_BASE_URL=${shellQuote(`http://127.0.0.1:${address.port}/v1`)} ${command}`;
+			const literalMarker = join(work, "must-not-be-created");
+			const task = `respond with the deterministic result; $(touch ${literalMarker}) '$HOME'\nKeep this literal.`;
+			const command = buildChildCommand({ loadout, sessionId, task, loadoutPath });
 			const pane = execFileSync(
 				"tmux",
-				["-L", socket, "split-window", "-d", "-P", "-F", "#{pane_id}", "-t", session, "-h", "sh", "-lc", childCommand],
+				["-L", socket, "split-window", "-d", "-P", "-F", "#{pane_id}", "-t", session, "-h", ...command],
 				{ encoding: "utf8" },
 			).trim();
 			const until = Date.now() + 5_000;
@@ -165,6 +162,7 @@ describe("installed Pi guarded child lifecycle", () => {
 			expect(terminal.usage.totalTokens).toBeGreaterThan(0);
 			expect(providerRequests).toBeGreaterThan(0);
 			expect(terminal.result).toBe("deterministic child complete");
+			expect(fs.existsSync(literalMarker)).toBe(false);
 			const panes = execFileSync(
 				"tmux",
 				["-L", socket, "list-panes", "-t", session, "-F", "#{pane_id} #{pane_active} #{pane_dead}"],

@@ -76,16 +76,38 @@ describe("interactive child loadout boundary", () => {
 	});
 
 	it("builds a default-deny child command with immutable guard and scope env", () => {
-		const command = buildChildCommand(validLoadout(), "child-session", "Inspect src", "/tmp/loadout.json", "pi");
+		const task = "Inspect 'quoted' paths; keep $HOME and $(printf literal) unchanged\nsecond line";
+		const approved = validLoadout();
+		const command = buildChildCommand({
+			loadout: approved,
+			sessionId: "child-session",
+			task,
+			loadoutPath: "/tmp/loadout.json",
+		});
+		expect(command[0]).toBe("/usr/bin/env");
+		expect(command).toContain(`PATH=${process.env.PATH}`);
 		expect(command).toContain("--no-extensions");
 		expect(command).toContain("-e");
-		expect(command).toContain("PI_SUBAGENT_PROFILE='builtin:worker'");
-		expect(command).toContain("PI_SUBAGENT_PERMISSIBLE_GLOBS='src'");
-		expect(command).toContain("PI_SUBAGENT_DEPTH='1'");
-		const match = command.match(/'--tools' '([^']+)'/);
-		if (!match?.[1]) throw new Error("generated command omitted --tools");
-		expect(match[1].split(",").filter((tool) => tool === "ask_question")).toHaveLength(1);
+		expect(command).toContain(`PI_SUBAGENT_PROFILE=${approved.profile}`);
+		expect(command).toContain(`PI_SUBAGENT_PERMISSIBLE_GLOBS=${approved.writes?.join(",")}`);
+		expect(command).toContain("PI_SUBAGENT_DEPTH=1");
+		expect(command[command.indexOf("--tools") + 1]).toBe(approved.toolAllowlist.join(","));
 		expect(command).toContain("--session-id");
+		expect(command.at(-1)).toBe(task);
+		expect(command).not.toContain("sh");
+		expect(command).not.toContain("-lc");
+	});
+
+	it("preserves omitted versus explicitly empty write scope without shell quoting", () => {
+		for (const writes of [null, []]) {
+			const command = buildChildCommand({
+				loadout: validLoadout({ writes }),
+				sessionId: "scope-session",
+				task: "Inspect",
+				loadoutPath: "/tmp/loadout.json",
+			});
+			expect(command.includes("PI_SUBAGENT_PERMISSIBLE_GLOBS=")).toBe(writes !== null);
+		}
 	});
 
 	it("writes JSON sidecars atomically", () => {
