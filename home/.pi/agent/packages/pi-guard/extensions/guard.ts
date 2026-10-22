@@ -2976,6 +2976,52 @@ function evaluateBashGate(
   };
 }
 
+function formatBashAskMessage({
+  command,
+  evaluation,
+  implicitAskDecision,
+}: {
+  command: string;
+  evaluation: BashGateEvaluation;
+  implicitAskDecision: ImplicitAskDecision;
+}): string {
+  const reasons: string[] = [];
+  if (implicitAskDecision !== "allow") {
+    reasons.push(
+      ...evaluation.parseErrors.map(
+        (error) =>
+          `- Parse uncertainty at offset ${error.pos}: ${error.message}`,
+      ),
+      ...evaluation.nonAuthorableAsks.map(
+        (reference) => `- Dynamic or opaque filesystem reference: ${reference}`,
+      ),
+    );
+  }
+  evaluation.commandDecisions.forEach(({ decision, rule }, index) => {
+    if (decision !== "ask") return;
+    reasons.push(
+      `- Command ${evaluation.commands[index] ?? "(no parsed command)"}: ${
+        rule
+          ? `matched ASK rule: ${rule.pattern}`
+          : "no command rule matched (default ASK)"
+      }`,
+    );
+  });
+  reasons.push(
+    ...evaluation.pathTraces
+      .filter((trace) => trace.decision === "ask")
+      .map(
+        (trace) =>
+          `- ${trace.kind} path · context ${trace.context}: ${trace.path}\n  Matched: ${trace.matchPath}`,
+      ),
+  );
+  const segments = evaluation.commandDecisions.map(
+    ({ decision }, index) =>
+      `${index + 1}. [${formatDecision(decision)}] ${evaluation.commands[index] ?? "(no parsed command)"}`,
+  );
+  return `Overall decision: ASK\n\nReasons approval is required:\n${reasons.join("\n")}\n\nRaw command:\n${command}\n\nCommand-rule decisions only:\n${segments.join("\n") || "(no parsed command segments)"}`;
+}
+
 export async function gateBash({
   command,
   startupCwd,
@@ -3074,7 +3120,11 @@ export async function gateBash({
     const approval = await confirmOrBlock({
       ctx,
       title: parseErrorBashPermissionTitle,
-      message: `The command could not be classified completely.\n\n${details}\n\nRaw command:\n${command}`,
+      message: formatBashAskMessage({
+        command,
+        evaluation,
+        implicitAskDecision,
+      }),
       refreshAfterUiAwait,
     });
     if (approval.refreshFailed)
@@ -3118,20 +3168,11 @@ export async function gateBash({
     const approval = await confirmOrBlock({
       ctx,
       title: explicitBashPermissionTitle,
-      message: `Raw command:\n${command}\n\nParsed command segments:\n${formatParsedCommands(command, activePolicy)}${
-        askPaths.length > 0
-          ? `\n\nGated paths:\n${askPaths
-              .map(
-                (trace) =>
-                  `- ${trace.kind} path · context ${trace.context}: ${trace.path}\n  Matched: ${trace.matchPath}`,
-              )
-              .join("\n")}`
-          : ""
-      }${
-        hasNonAuthorableAsk
-          ? `\n\nNon-authorable path uncertainty:\n${evaluation.nonAuthorableAsks.join("\n")}`
-          : ""
-      }`,
+      message: formatBashAskMessage({
+        command,
+        evaluation,
+        implicitAskDecision,
+      }),
       remember:
         parseErrors.length === 0 &&
         remember &&
@@ -3186,7 +3227,11 @@ export async function gateBash({
     const approval = await confirmOrBlock({
       ctx,
       title: "Allow bash command?",
-      message: `Raw command:\n${command}\n\nParsed command segments:\n${formatParsedCommands(command, activePolicy)}`,
+      message: formatBashAskMessage({
+        command,
+        evaluation,
+        implicitAskDecision,
+      }),
       remember:
         parseErrors.length === 0 && remember
           ? () =>

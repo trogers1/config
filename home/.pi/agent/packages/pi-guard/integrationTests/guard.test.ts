@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
+import { stripVTControlCharacters } from "node:util";
 import { describe, expect, it, vi } from "vitest";
 import type {
   ExtensionAPI,
@@ -317,6 +318,256 @@ describe("shell policy parser", () => {
     expect(result).toBeUndefined();
     expect(vi.mocked(ctx.ui.custom)).toHaveBeenCalledTimes(1);
   });
+
+  it.each([
+    { commandDecision: "allow", pathDecision: "ask" },
+    { commandDecision: "ask", pathDecision: "allow" },
+    { commandDecision: "ask", pathDecision: "ask" },
+  ] as const)(
+    "shows overall ASK for command $commandDecision and path $pathDecision",
+    async ({ commandDecision, pathDecision }) => {
+      const directory = fs.mkdtempSync(path.join(tmpdir(), "pi-guard-"));
+      const configPath = path.join(directory, "profiles.jsonc");
+      const previousConfigPath = process.env.PI_GUARD_PROFILE_CONFIG;
+      let harness:
+        ReturnType<typeof createInteractiveExtensionHarness> | undefined;
+      fs.writeFileSync(
+        configPath,
+        JSON.stringify({
+          defaultProfile: "permission-display",
+          profiles: {
+            "permission-display": {
+              description:
+                "Separates command-rule results from the overall decision.",
+              extends: ["builtin:default"],
+              sandbox: false,
+              tools: {
+                bash: [{ pattern: "ls *", decision: commandDecision }],
+              },
+              writePaths: [{ pattern: directory, decision: pathDecision }],
+            },
+          },
+        }),
+      );
+      try {
+        process.env.PI_GUARD_PROFILE_CONFIG = configPath;
+        harness = createInteractiveExtensionHarness({ interactiveUi: true });
+        await harness.start();
+        const pending = harness.callTool({
+          toolName: "bash",
+          input: { command: `ls '${directory}'; ls '${directory}'` },
+        });
+        const modal = await harness.ui.waitForCustomModal();
+        const displayed = stripVTControlCharacters(
+          modal.render(240).join("\n"),
+        );
+        modal.type(askPermissionChoices[0]);
+        modal.press("Enter");
+        await expect(pending).resolves.toMatchObject({ block: true });
+        expect(displayed).toContain("Overall decision: ASK");
+        expect(displayed).toContain("Command-rule decisions only:");
+        expect(displayed).toContain(`[${commandDecision}]`);
+        expect(displayed).not.toContain("Parsed command segments:");
+        if (pathDecision === "ask") {
+          expect(displayed).toContain("Reasons approval is required:");
+          expect(displayed).toContain("Matched:");
+          expect(displayed).toContain(directory);
+        } else {
+          expect(displayed).not.toContain("Matched:");
+        }
+      } finally {
+        await harness?.dispose();
+        if (previousConfigPath === undefined)
+          delete process.env.PI_GUARD_PROFILE_CONFIG;
+        else process.env.PI_GUARD_PROFILE_CONFIG = previousConfigPath;
+        fs.rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each([
+    { command: "inspect", rules: [], paths: "allow", reasons: ["default ASK"] },
+    {
+      command: "cd ./visible",
+      rules: [{ pattern: "cd *", decision: "allow" }],
+      paths: "allow",
+      readDecision: "ask",
+      reasons: ["read path · context ls:", "Matched:"],
+    },
+    {
+      command: "inspect",
+      rules: [{ pattern: "inspect", decision: "ask" }],
+      paths: "allow",
+      reasons: ["matched ASK rule: inspect"],
+    },
+    {
+      command: 'inspect "$TARGET"',
+      rules: [{ pattern: "inspect *", decision: "allow" }],
+      paths: "deny",
+      reasons: ["Dynamic or opaque filesystem reference:"],
+    },
+    {
+      command: "git status; 'unterminated",
+      rules: [{ pattern: "git status", decision: "ask" }],
+      paths: "allow",
+      reasons: ["Parse uncertainty", "matched ASK rule: git status"],
+    },
+    {
+      command: 'inspect ./visible "$TARGET"',
+      rules: [{ pattern: "inspect *", decision: "ask" }],
+      paths: "ask",
+      reasons: [
+        "matched ASK rule: inspect *",
+        "Matched:",
+        "Dynamic or opaque filesystem reference:",
+      ],
+    },
+    {
+      command: "test -n value",
+      rules: [{ pattern: "test *", decision: "allow" }],
+      paths: "allow",
+      reasons: ["Dynamic or opaque filesystem reference:"],
+    },
+    {
+      command: 'inspect ./visible "$TARGET"; \'unterminated',
+      rules: [{ pattern: "inspect *", decision: "ask" }],
+      paths: "ask",
+      reasons: [
+        "Parse uncertainty",
+        "matched ASK rule: inspect *",
+        "Matched:",
+        "Dynamic or opaque filesystem reference:",
+      ],
+    },
+    {
+      command: 'inspect ./visible "$TARGET"',
+      rules: [{ pattern: "inspect *", decision: "allow" }],
+      paths: "ask",
+      transforms: ["transform:allow-asks"],
+      reasons: ["Matched:"],
+      absent: ["Dynamic or opaque filesystem reference:"],
+    },
+    {
+      command: "inspect .env; 'unterminated",
+      rules: [{ pattern: "inspect *", decision: "ask" }],
+      paths: "ask",
+      reasons: [],
+      blocked: true,
+    },
+    {
+      command: "inspect; 'unterminated",
+      rules: [{ pattern: "inspect", decision: "deny" }],
+      paths: "allow",
+      reasons: [],
+      blocked: true,
+    },
+    {
+      command: "inspect ./visible; 'unterminated",
+      rules: [{ pattern: "inspect *", decision: "ask" }],
+      paths: "deny",
+      reasons: [],
+      blocked: true,
+    },
+    {
+      command: 'inspect "$TARGET"',
+      rules: [{ pattern: "inspect *", decision: "ask" }],
+      paths: "deny",
+      transforms: ["transform:allow-asks"],
+      reasons: ["matched ASK rule: inspect *"],
+      absent: ["Dynamic or opaque filesystem reference:"],
+    },
+    {
+      command: 'inspect "$TARGET"',
+      rules: [{ pattern: "inspect *", decision: "allow" }],
+      paths: "deny",
+      transforms: ["transform:deny-asks"],
+      reasons: [],
+      blocked: true,
+    },
+  ] satisfies {
+    command: string;
+    rules: NonNullable<ProfilePolicy["tools"]["bash"]>;
+    paths: ProfilePolicy["writePaths"][number]["decision"];
+    readDecision?: ProfilePolicy["readPaths"][number]["decision"];
+    reasons: string[];
+    blocked?: boolean;
+    transforms?: string[];
+    absent?: string[];
+  }[])(
+    "explains effective Bash approval for $command ($paths, $transforms)",
+    async ({
+      command,
+      rules,
+      paths,
+      readDecision,
+      reasons,
+      blocked,
+      transforms,
+      absent,
+    }) => {
+      const directory = fs.mkdtempSync(path.join(tmpdir(), "pi-guard-"));
+      const configPath = path.join(directory, "profiles.jsonc");
+      const previousConfigPath = process.env.PI_GUARD_PROFILE_CONFIG;
+      let harness:
+        ReturnType<typeof createInteractiveExtensionHarness> | undefined;
+      fs.writeFileSync(
+        configPath,
+        JSON.stringify({
+          defaultProfile: "display",
+          profiles: {
+            display: {
+              description: "Approval reasons",
+              extends: rules.length === 0 ? undefined : ["builtin:default"],
+              sandbox: false,
+              transforms,
+              tools: { bash: rules },
+              readPaths: [{ pattern: "*", decision: readDecision ?? "allow" }],
+              writePaths: [{ pattern: "*", decision: paths }],
+            },
+          },
+        }),
+      );
+      try {
+        process.env.PI_GUARD_PROFILE_CONFIG = configPath;
+        harness = createInteractiveExtensionHarness({ interactiveUi: true });
+        await harness.start();
+        const pending = harness.callTool({
+          toolName: "bash",
+          input: { command },
+        });
+        if (blocked) {
+          await expect(pending).resolves.toMatchObject({ block: true });
+          expect(harness.ui.custom).not.toHaveBeenCalled();
+        } else {
+          const modal = await Promise.race([
+            harness.ui.waitForCustomModal(),
+            pending.then((result) => {
+              throw new Error(
+                `Expected approval, received ${JSON.stringify(result)}`,
+              );
+            }),
+          ]);
+          const displayed = stripVTControlCharacters(
+            modal.render(300).join("\n"),
+          );
+          modal.type(askPermissionChoices[0]);
+          modal.press("Enter");
+          await expect(pending).resolves.toMatchObject({ block: true });
+          expect(displayed).toContain("Overall decision: ASK");
+          expect(displayed).toContain("Command-rule decisions only:");
+          for (const reason of reasons) expect(displayed).toContain(reason);
+          for (const text of absent ?? [])
+            expect(displayed).not.toContain(text);
+        }
+      } finally {
+        await harness?.dispose();
+        if (previousConfigPath === undefined)
+          delete process.env.PI_GUARD_PROFILE_CONFIG;
+        else process.env.PI_GUARD_PROFILE_CONFIG = previousConfigPath;
+        fs.rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("preserves a local command ASK when allow-asks resolves parse uncertainty", async () => {
     const directory = fs.mkdtempSync(path.join(tmpdir(), "pi-guard-"));
