@@ -1,7 +1,8 @@
 ---
 name: flow-review
 description: >-
-  Review the current branch with a through, thoughtful, comprehensive code review.
+  Review the current branch comprehensively and explain its changes through a
+  conversational, theme-led HTML review with concrete examples and optional deep dives.
 ---
 
 
@@ -19,7 +20,7 @@ By default, delegate each review to **two independent reviewer agents running in
 parallel** over the same change, acceptance criteria, and comparison baseline.
 Give both the same repository instructions and review constraints. Reviewers are
 read-only: neither edits the implementation. The orchestrator owns shared review
-artifacts such as `flow.md` and `flow.html`; reviewers report proposed corrections
+artifacts such as `flow.json` and `flow.html`; reviewers report proposed corrections
 rather than concurrently editing those files. If two reviewers are unavailable,
 report that limitation and ask before substituting a single review.
 
@@ -45,7 +46,7 @@ When given a Jira ticket key or URL, read the ticket with the read-only `jira-ti
 jira-ticket get <KEY>
 ```
 
-The description comes back as Atlassian Document Format JSON. Pipe it through `jq -r '.. | objects | select(.type=="text") | .text'` to get readable text. Never use `jira-ticket update` or `create`. If the CLI fails, run `jira-ticket doctor` and tell the user, rather than falling back to the MR description silently. Fetching the ticket counts as inspecting the change, so it may come before `flow.md`. In `flow.md`, map each AC item to its status (met, not met, or partial) and to the code or test that covers it.
+The description comes back as Atlassian Document Format JSON. Pipe it through `jq -r '.. | objects | select(.type=="text") | .text'` to get readable text. Never use `jira-ticket update` or `create`. If the CLI fails, run `jira-ticket doctor` and tell the user, rather than falling back to the MR description silently. Fetching the ticket counts as inspecting the change, so it may come before `flow.json`. In the review's deep-dive sections, map each AC item to its status (met, not met, or partial) and to the code or test that covers it.
 
 ## GitLab merge requests
 
@@ -53,7 +54,7 @@ When given a GitLab MR URL, use the `address-comments` skill scripts (installed 
 
 ### Read existing review comments first
 
-Before reviewing, export every human discussion on the MR to a scratch file and read it, so the review builds on what reviewers already said instead of repeating it. This counts as inspecting the change, so it may come before `flow.md`:
+Before reviewing, export every human discussion on the MR to a scratch file and read it, so the review builds on what reviewers already said instead of repeating it. This counts as inspecting the change, so it may come before `flow.json`:
 
 ```sh
 bash ~/.agents/skills/address-comments/scripts/refresh-all-comments-md.sh <mr-url> <scratch-dir>/mr-comments.md
@@ -75,34 +76,167 @@ After the review, draft each finding Taylor might want on the MR as a `Thread �
 - Take line numbers from the MR's diff, and confirm the local branch matches the MR's latest pushed commit; otherwise use `general` drafts that name the file and line in the body. Anchors are checked against the live diff only when an approved block is previewed.
 - Only draft; never mark a block `APPROVED`. Run `bash ~/.agents/skills/address-comments/scripts/preview-replies.sh <mr-url> comments.md` to confirm the file still parses, and list the drafts you added in the final response.
 
-## Required first step: map the branch flow
+## First understand the story, then review the details
 
-Before evaluating the implementation, looking for findings, or writing the review, first create or replace `flow.md` at the repository root. The only review work that should precede it is identifying the comparison branch and inspecting the diff and source needed to understand and write the artifact. Build it from the complete branch diff against the selected comparison branch (normally remote `staging`), not just the latest commit.
+Inspect the complete branch diff against the selected baseline (normally remote
+`staging`), plus enough surrounding source to understand its consequences. Do not
+limit the review to the latest commit. Before evaluating findings, create an
+initial `flow.json` at the repository root as a working explanation. It is expected
+to evolve: update it as the independent reviews establish facts, gaps, and findings.
+Do not present unverified assumptions as conclusions or tests as passed before running them.
 
-Treat `flow.md` as the working map for the subsequent review: use it to trace behavior, identify affected boundaries, and guide test and implementation analysis. Update it if the review reveals that the initial flow map was incomplete or inaccurate. This artifact is required even when the review has no findings.
+**Explain the change before mapping the system.** Write for a developer who knows
+programming but is unfamiliar with this change. Comprehensive inspection does not
+require a comprehensive walkthrough. Never make the explanation more elaborate
+than the change. Many changed files may implement one simple idea.
 
-Write `flow.md` for a developer who is unfamiliar with the change. It must include:
+### Start with a conversational narrative
 
-1. **Overview** — the purpose of the branch and the user-visible or system-visible behavior it changes.
-2. **End-to-end code flow** — trace each important execution path from its entry point through validation, business logic, persistence or external calls, and returned result or side effects. Include alternate and failure paths when meaningful.
-3. **Data and state flow** — VERY IMPORTANT. We care A LOT about the datamodel and the interfaces--just as much as the flow of the code. Describe important inputs, outputs, type transformations, state transitions, configuration, schemas, migrations, and external boundaries.
-4. **Test flow** — map tests to the behaviors and paths they exercise, including important gaps discovered during review.
-5. **Changed-file map** — group relevant changed files by responsibility. For each file, explain what changed, why it participates in the feature, and give concise pseudocode for its new or modified behavior. Call out deleted and renamed files. Generated files may be summarized as a group.
+The first screen should explain, without requiring clicks:
 
-Use concrete symbol and file names, links such as ``[`path/to/file.ts`](path/to/file.ts)``, and readable pseudocode rather than copying implementation. Add Mermaid diagrams when they make a non-trivial interaction or state transition easier to understand. Keep the document branch-specific and omit unrelated pre-existing architecture.
+- What this change is really about and why it is needed.
+- Where it fits in the existing system: who calls the affected code, who consumes
+  its results, and which boundaries matter to understanding the change.
+- What observably changes and what stays the same (only where verified).
+- How the main edits connect into one coherent story.
 
-Use mermaid diagrams liberally to help illustrate code-flow (both of the entire change set and for complicated subsystems within it). A combination of pseudo-code and diagrams (with links to actual implementation) is very helpful when reviewing and understanding.
+Use specific, ordinary language. Prefer “Stop rounding production results; compare
+floats tolerantly in tests” over “Numeric normalization pipeline refactoring.”
+Separate confirmed behavior from inferred motivation. Explain unfamiliar domain
+terms before introducing implementation symbols.
 
-`flow.md` is the canonical, agent-editable review map. After its final update, generate `flow.html` from it for local human review. Do not edit `flow.html` manually.
+### Organize around change themes, not layers or files
 
-Before completing the review, verify that every relevant file in the branch diff is represented in `flow.md` either individually or in an explicitly named group.
+Give each theme an informative title, a short explanation, and concrete evidence.
+Do not force themes into validation/business-logic/persistence buckets. Explain
+why related edits belong together, not just what each file does.
 
-## Human-readable review map
+For each theme:
 
-`flow.md` is the canonical, agent-editable review map. After its final update, generate its human-readable companion with the bundled portable renderer (run the script relative to this skill directory):
+1. Explain the idea and its observable consequence in conversational language.
+2. Show a small actual before/after excerpt, or a focused addition or deletion,
+   taken from the inspected baseline and branch. Put evidence near the explanation.
+3. Include source paths and revision/line references so readers can verify it.
+4. For large implementations use explicitly labeled pseudocode, not a wall of code.
+   Never present invented code as an actual excerpt. Illustrative inputs and outputs
+   must also be labeled, and should demonstrate the behavioral difference.
+
+For a simple float-comparison change, two themes may be enough: removing production
+rounding and introducing significant-figure comparisons in tests. A representative
+deleted rounding call, the significant part of the real comparison helper, and one
+changed assertion may explain the entire change. Do not invent an architecture
+walkthrough or diagram to make that review look more substantial.
+
+### Progressive depth, not mandatory ceremony
+
+Keep the overview and theme explanations visible; put code evidence in expandable
+examples and longer traces in optional deep-dive sections. Simple changes should
+produce short documents. Complex changes may need boundary, data-model, failure-path,
+and state-transition explanations. Include those where relevant, not as empty
+mandatory headings. Important risks and unresolved disagreements must not be buried
+in collapsed architecture appendices; surface their significance in the narrative.
+
+Review data models, schemas, inputs, outputs, configuration and transformations as
+carefully as execution paths, even when their explanation fits in one sentence.
+Explain meaningful test changes and gaps alongside the behavior they concern.
+Put AC mapping, detailed test coverage, verification results and supplementary
+execution traces in the deep dive when they would otherwise interrupt the story.
+Distinguish agreed findings, unresolved reviewer disagreements, and checks not run.
+
+### Optional diagrams: explain the delta
+
+Include a compact visual orientation when it helps readers locate the change in
+the surrounding flow. Prefer a small before/after pair for a removed or bypassed
+step. Even simple changes can benefit from that visual; omit it only when it adds
+no useful context. Keep diagrams subordinate to the conversational story, not a
+replacement for it. Use the renderer's structured nodes and edges; do not embed
+Mermaid, HTML, SVG or JavaScript in review data.
+
+- Label each node ADDED, MODIFIED, REMOVED or UNCHANGED. Status must remain clear
+  without color. Unchanged nodes provide only the context necessary for the story.
+- Use removed nodes only in clearly described before/comparison diagrams, never
+  imply deleted behavior still executes in the new path. Separate before/after
+  diagrams are often clearer than an overloaded combined diagram.
+- Set `status` on changed edges as well as nodes. Added paths are green, modified
+  paths amber, removed paths red/dashed, and unchanged context muted. Edges with
+  no status default to unchanged; do not infer edge status from endpoint status.
+  The renderer includes status labels and a legend, not color alone.
+- Connect changed nodes to example IDs so selecting a node reveals its evidence.
+  Large changes may link to explicitly labeled pseudocode rather than full code.
+- Keep graphs small. Label edges and explain what the diagram is showing. Do not
+  map the entire ecosystem merely because the branch touches part of it.
+
+### Coverage is an appendix, not the narrative
+
+Represent every relevant changed file in `coverage`, individually or in an
+explicitly named group of paths. Explain its responsibility briefly; call out
+renames and deletions. Generated files may share an entry. Compare the coverage
+list with the full branch diff before finishing: the renderer validates shape and
+references, but cannot establish whether coverage or claims match the repository.
+Do not require per-file pseudocode or repeat theme explanations in this inventory.
+
+## Canonical data and generated HTML
+
+`flow.json` is the single agent-editable source of truth. `flow.html` is its
+human-facing companion. There is no separately maintained `flow.md`. Do not edit
+the HTML manually or generate a custom application for each review.
+
+Read the authoritative schema and the illustrative example before writing data:
+
+- `scripts/schema.ts` — authoritative TypeBox definitions; runtime types and validation
+  derive from these. `scripts/flow.schema.json` is the generated agent-readable copy.
+- `examples/float-comparisons.flow.json` — fictional, explicitly labeled example
+  showing a proportional narrative; not evidence from a real MR.
+
+Use the exact schema rather than copying an assumed shape from memory. Narrative
+fields are plain text with preserved whitespace, not Markdown or HTML. Put code in
+example fields. Set each example's `language` (for example `typescript`, `python`,
+`json`, or `bash`) for highlight.js syntax coloring; omit it for plain text.
+Highlighting happens during generation and works offline and without browser JS.
+Unsupported language names fail explicitly. Mark pseudocode separately even when
+using a language grammar for its coloring. Provide `before` and `after` snippets
+for a unified code diff with red deletions, green additions, and stronger word-level
+change emphasis. A lone `before` is a deletion; a lone `after` is an addition. Use
+`code` for unchanged explanatory code. Do not manually add diff prefixes to snippets.
+Source paths and revision/line references are displayed as evidence
+labels, not browser links; the relevant snippets are embedded in the page. Stable
+theme/example IDs connect navigation and diagrams. Use `sections` for optional deep
+dives and AC mapping. Record findings as `agreed` or `disputed` and keep verification
+status explicit (`passed`, `failed`, or `not-run`).
+
+### Use the installed tool; do not bootstrap it during a review
+
+This skill's private TypeScript package is a shared, preinstalled tool—not a
+package in the reviewed repository or worktree. A normal review must not run
+`npm ci`, `npm install`, or a build in the skill directory. Do not switch profiles
+or request elevated permissions to bootstrap it. `npm ci` replaces the shared
+`node_modules` directory and can disrupt other worktrees using the same tool.
+
+Run the installed renderer directly by absolute skill path so input/output remain
+in the reviewed repository. A different worktree does not need its own installation:
 
 ```sh
-node scripts/render_markdown_html.mjs flow.md flow.html
+node ~/.agents/skills/flow-review/dist/scripts/render_flow_html.js flow.json flow.html
 ```
 
-Do not edit `flow.html` manually; regenerate it from `flow.md` after material changes. Keep `flow.html` beside `flow.md` so repository-relative source links continue to work. The renderer fetches pinned Marked from jsDelivr at generation time, so generation requires network access. The generated page embeds rendered HTML for the document and table of contents, which remain readable offline or with JavaScript disabled. Only Mermaid diagrams load a module from jsDelivr when opened; network or diagram errors leave diagram source visible without reverting the document to Markdown. Mention both `flow.md` and `flow.html` in the final response.
+If the command reports a missing build, missing dependency, or another installation
+problem, stop artifact generation and report the exact error to Taylor. Do not
+attempt an automatic repair, retry as root/Administrator, or install dependencies
+in the reviewed application. Installation and rebuilds belong to an explicitly
+authorized config-maintenance task; see this package's `README.md` for that workflow.
+Do not edit compiled JavaScript. Source changes require a maintenance rebuild.
+
+Validate without generating HTML with:
+
+```sh
+node ~/.agents/skills/flow-review/dist/scripts/render_flow_html.js --validate flow.json
+```
+
+The renderer fails on malformed data and dangling references. Generation and the
+resulting page work offline, without CDN dependencies. The page includes the prose
+and code evidence, not just links that require local source browsing. Native
+expandable sections and anchor links provide a readable no-JavaScript fallback;
+JavaScript enhances evidence navigation. Keep both artifacts at the repository
+root, regenerate after material changes, and mention both in the final response.
+Old `flow.md` artifacts are not authoritative; do not silently reuse them as current
+review evidence. Do not delete unrelated or user-authored files during migration.

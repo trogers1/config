@@ -1,0 +1,482 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Narrative flow review",
+  "description": "All prose is plain text, not Markdown or HTML. Paths are displayed as labels, never executed or linked. IDs are globally unique. Diagram endpoints refer to local nodes; example references refer to examples. Changed nodes require exampleId.",
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "title",
+    "summary",
+    "context",
+    "baseline",
+    "themes",
+    "coverage"
+  ],
+  "properties": {
+    "title": {
+      "minLength": 1,
+      "pattern": "\\S",
+      "type": "string"
+    },
+    "summary": {
+      "minLength": 1,
+      "pattern": "\\S",
+      "type": "string"
+    },
+    "context": {
+      "minLength": 1,
+      "pattern": "\\S",
+      "type": "string"
+    },
+    "baseline": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "base",
+        "head"
+      ],
+      "properties": {
+        "base": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "head": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "type": "string"
+        }
+      }
+    },
+    "themes": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "explanation",
+          "examples"
+        ],
+        "properties": {
+          "id": {
+            "pattern": "^[a-z][a-z0-9-]*$",
+            "type": "string"
+          },
+          "title": {
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "explanation": {
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "examples": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "additionalProperties": false,
+              "anyOf": [
+                {
+                  "required": [
+                    "before"
+                  ]
+                },
+                {
+                  "required": [
+                    "after"
+                  ]
+                },
+                {
+                  "required": [
+                    "code"
+                  ]
+                }
+              ],
+              "type": "object",
+              "required": [
+                "id",
+                "title",
+                "sources"
+              ],
+              "properties": {
+                "id": {
+                  "pattern": "^[a-z][a-z0-9-]*$",
+                  "type": "string"
+                },
+                "title": {
+                  "minLength": 1,
+                  "pattern": "\\S",
+                  "type": "string"
+                },
+                "explanation": {
+                  "minLength": 1,
+                  "pattern": "\\S",
+                  "type": "string"
+                },
+                "before": {
+                  "minLength": 1,
+                  "pattern": "\\S",
+                  "type": "string"
+                },
+                "after": {
+                  "minLength": 1,
+                  "pattern": "\\S",
+                  "type": "string"
+                },
+                "code": {
+                  "minLength": 1,
+                  "pattern": "\\S",
+                  "type": "string"
+                },
+                "language": {
+                  "minLength": 1,
+                  "pattern": "\\S",
+                  "type": "string"
+                },
+                "pseudocode": {
+                  "type": "boolean"
+                },
+                "sources": {
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "path"
+                    ],
+                    "properties": {
+                      "path": {
+                        "minLength": 1,
+                        "pattern": "\\S",
+                        "type": "string"
+                      },
+                      "revision": {
+                        "minLength": 1,
+                        "pattern": "\\S",
+                        "type": "string"
+                      },
+                      "lines": {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "start"
+                        ],
+                        "properties": {
+                          "start": {
+                            "minimum": 1,
+                            "type": "integer"
+                          },
+                          "end": {
+                            "minimum": 1,
+                            "type": "integer"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "coverage": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "paths",
+          "explanation"
+        ],
+        "properties": {
+          "paths": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            }
+          },
+          "explanation": {
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          }
+        }
+      }
+    },
+    "diagrams": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "nodes",
+          "edges"
+        ],
+        "properties": {
+          "id": {
+            "pattern": "^[a-z][a-z0-9-]*$",
+            "type": "string"
+          },
+          "title": {
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "explanation": {
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "nodes": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "additionalProperties": false,
+              "anyOf": [
+                {
+                  "properties": {
+                    "status": {
+                      "enum": [
+                        "unchanged"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "required": [
+                    "exampleId"
+                  ]
+                }
+              ],
+              "type": "object",
+              "required": [
+                "id",
+                "label",
+                "status"
+              ],
+              "properties": {
+                "id": {
+                  "pattern": "^[a-z][a-z0-9-]*$",
+                  "type": "string"
+                },
+                "label": {
+                  "minLength": 1,
+                  "pattern": "\\S",
+                  "type": "string"
+                },
+                "status": {
+                  "anyOf": [
+                    {
+                      "const": "added",
+                      "type": "string"
+                    },
+                    {
+                      "const": "modified",
+                      "type": "string"
+                    },
+                    {
+                      "const": "removed",
+                      "type": "string"
+                    },
+                    {
+                      "const": "unchanged",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "exampleId": {
+                  "pattern": "^[a-z][a-z0-9-]*$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "edges": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "from",
+                "to"
+              ],
+              "properties": {
+                "from": {
+                  "pattern": "^[a-z][a-z0-9-]*$",
+                  "type": "string"
+                },
+                "to": {
+                  "pattern": "^[a-z][a-z0-9-]*$",
+                  "type": "string"
+                },
+                "label": {
+                  "minLength": 1,
+                  "pattern": "\\S",
+                  "type": "string"
+                },
+                "status": {
+                  "anyOf": [
+                    {
+                      "const": "added",
+                      "type": "string"
+                    },
+                    {
+                      "const": "modified",
+                      "type": "string"
+                    },
+                    {
+                      "const": "removed",
+                      "type": "string"
+                    },
+                    {
+                      "const": "unchanged",
+                      "type": "string"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "sections": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "explanation"
+        ],
+        "properties": {
+          "id": {
+            "pattern": "^[a-z][a-z0-9-]*$",
+            "type": "string"
+          },
+          "title": {
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "explanation": {
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          }
+        }
+      }
+    },
+    "verification": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "command",
+          "status",
+          "explanation"
+        ],
+        "properties": {
+          "command": {
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "const": "passed",
+                "type": "string"
+              },
+              {
+                "const": "failed",
+                "type": "string"
+              },
+              {
+                "const": "not-run",
+                "type": "string"
+              }
+            ]
+          },
+          "explanation": {
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          }
+        }
+      }
+    },
+    "findings": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "explanation",
+          "status",
+          "exampleIds"
+        ],
+        "properties": {
+          "id": {
+            "pattern": "^[a-z][a-z0-9-]*$",
+            "type": "string"
+          },
+          "title": {
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "explanation": {
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "const": "agreed",
+                "type": "string"
+              },
+              {
+                "const": "disputed",
+                "type": "string"
+              }
+            ]
+          },
+          "exampleIds": {
+            "minItems": 1,
+            "uniqueItems": true,
+            "type": "array",
+            "items": {
+              "pattern": "^[a-z][a-z0-9-]*$",
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

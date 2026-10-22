@@ -1,0 +1,27 @@
+{
+  "name": "@taylor/flow-review",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Narrative code-review data rendered as standalone offline HTML",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc && node dist/scripts/generate_schema.js",
+    "typecheck": "tsc --noEmit",
+    "render": "node dist/scripts/render_flow_html.js",
+    "validate": "node dist/scripts/render_flow_html.js --validate",
+    "example": "node dist/scripts/render_flow_html.js examples/float-comparisons.flow.json /tmp/float-comparisons.flow.html",
+    "test": "npm run build && node --test dist/tests/render.test.js"
+  },
+  "dependencies": {
+    "@sinclair/typebox": "0.34.52",
+    "diff": "9.0.0",
+    "highlight.js": "11.11.1"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.5",
+    "typescript": "7.0.2"
+  }
+}

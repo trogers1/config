@@ -1,0 +1,86 @@
+{
+  "title": "Keep production values; compare floats in tests",
+  "summary": "Illustrative example only—not a review of a real MR. We remove rounding from production and let tests handle floating-point comparison tolerance instead. These edits belong together: the application should not change its results merely to satisfy a test assertion.",
+  "context": "In this fictional service, a calculation produces a numeric result consumed by an API caller. Previously the return boundary rounded that result. The calculation and API shape stay the same; the caller now receives the unrounded value. Tests compare significant figures instead of expecting exact float equality.",
+  "baseline": { "base": "fictional-before", "head": "fictional-after" },
+  "diagrams": [
+    {
+      "id": "before-rounding",
+      "title": "Before: production rounds the result",
+      "explanation": "Illustrative old path. The red box and arrows identify the rounding behavior being removed—not behavior that remains in the new path. Click the rounding box to inspect the deletion.",
+      "nodes": [
+        { "id": "old-calculation", "label": "Calculate numeric result", "status": "unchanged" },
+        { "id": "old-rounding", "label": "Round before returning", "status": "removed", "exampleId": "remove-rounding" },
+        { "id": "old-caller", "label": "API caller", "status": "unchanged" }
+      ],
+      "edges": [
+        { "from": "old-calculation", "to": "old-rounding", "label": "Calculated value", "status": "removed" },
+        { "from": "old-rounding", "to": "old-caller", "label": "Rounded value", "status": "removed" }
+      ]
+    },
+    {
+      "id": "after-rounding",
+      "title": "After: preserve values; compare tolerantly in tests",
+      "explanation": "The green arrow bypasses the deleted rounding step. The new green test helper compares the result without changing the API response. Grey boxes are existing context. Select a colored box to see its code example.",
+      "nodes": [
+        { "id": "new-calculation", "label": "Calculate numeric result", "status": "unchanged" },
+        { "id": "new-return", "label": "Return unrounded value", "status": "modified", "exampleId": "remove-rounding" },
+        { "id": "new-comparison", "label": "Tests compare significant figures", "status": "added", "exampleId": "comparison-helper" }
+      ],
+      "edges": [
+        { "from": "new-calculation", "to": "new-return", "label": "No rounding step", "status": "added" },
+        { "from": "new-return", "to": "new-comparison", "label": "Test assertion only", "status": "modified" }
+      ]
+    }
+  ],
+  "themes": [
+    {
+      "id": "production-values",
+      "title": "Return the calculated value without rounding",
+      "explanation": "The production change is a deletion, not a new processing stage. Removing the rounding step preserves the calculated value. For example, a calculated 1.234567 would previously return 1.2346 and now returns 1.234567. Both the code and numbers here are illustrative.",
+      "examples": [
+        {
+          "id": "remove-rounding",
+          "title": "Delete rounding at the return boundary",
+          "explanation": "Illustrative pseudocode, not an excerpt from MR !332. The calculation is unchanged; only rounding is removed.",
+          "before": "value = calculate(input)\nreturn round(value, 4)",
+          "after": "value = calculate(input)\nreturn value",
+          "pseudocode": true,
+          "language": "python",
+          "sources": [{ "path": "fictional/service.ts", "revision": "fictional-before → fictional-after" }]
+        }
+      ]
+    },
+    {
+      "id": "test-comparisons",
+      "title": "Move comparison tolerance into the tests",
+      "explanation": "The tests still check the expected number, but no longer require exact binary floating-point equality. A significant-figure comparison is a test policy, not a transformation of the API response. Choosing the precision remains important: too few significant figures could hide a real regression.",
+      "examples": [
+        {
+          "id": "comparison-helper",
+          "title": "Compare at the declared significant figures",
+          "explanation": "Illustrative pseudocode only. A real review should quote the actual helper and assertion, explain its precision, and check zero, signs, very small values, and non-finite values where relevant.",
+          "before": "expect(actual).toEqual(expected)",
+          "after": "compareSignificantFigures({ actual, expected, figures: precision })\n\ncompareSignificantFigures({ actual, expected, figures }):\n  assert actual and expected are finite\n  assert actual.toPrecision(figures) == expected.toPrecision(figures)",
+          "pseudocode": true,
+          "language": "python",
+          "sources": [{ "path": "fictional/service.test.ts", "revision": "fictional-after" }]
+        }
+      ]
+    }
+  ],
+  "sections": [
+    {
+      "id": "review-depth",
+      "title": "What a real review would verify",
+      "explanation": "Confirm the full diff removes all intended rounding, that consumers can accept unrounded values, and that the tests still catch meaningful numeric errors. Map any supplied acceptance criteria to code and test evidence. The optional before/after diagrams illustrate the delta without mapping unrelated architecture. This example is not evidence that any real MR meets those criteria."
+    }
+  ],
+  "verification": [
+    { "command": "Repository-specific numeric behavior tests", "status": "not-run", "explanation": "Fictional example; no application or tests were executed." }
+  ],
+  "coverage": [
+    { "paths": ["fictional/service.ts"], "explanation": "Remove return-value rounding." },
+    { "paths": ["fictional/service.test.ts"], "explanation": "Introduce significant-figure comparisons and update numeric assertions." }
+  ]
+}
