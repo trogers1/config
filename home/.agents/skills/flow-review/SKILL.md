@@ -111,13 +111,33 @@ Give each theme an informative title, a short explanation, and concrete evidence
 Do not force themes into validation/business-logic/persistence buckets. Explain
 why related edits belong together, not just what each file does.
 
+The `themes` array is the intended reading order. Arrange it as a coherent story:
+context and purpose first, then the main behavior, its supporting mechanisms,
+verification and any separate supporting work. These are editorial topics, not
+execution steps. Do not mix an unrelated fix into a theme merely because it shares
+files. Introduce each theme's relationship to what came before. The renderer numbers
+the themes and provides previous/next navigation; diagram arrows are not a tour
+through those numbered themes and need not cover every theme.
+
 For each theme:
 
 1. Explain the idea and its observable consequence in conversational language.
-2. Show a small actual before/after excerpt, or a focused addition or deletion,
-   taken from the inspected baseline and branch. Put evidence near the explanation.
-3. Include source paths and revision/line references so readers can verify it.
-4. For large implementations use explicitly labeled pseudocode, not a wall of code.
+2. Give every example a required `explanation` describing what the code changes
+   and why it belongs to this theme. This is visible beside the collapsed code;
+   a title alone is not enough. Explain the affected input, transformation or
+   consequence, without requiring the reader to expand the sample.
+3. Show an actual before/after excerpt, or a focused addition or deletion, taken
+   from the inspected baseline and branch. Include enough surrounding code to
+   orient the reader: normally the enclosing function signature and 3–8 relevant
+   context lines showing inputs, callers, validation or the returned result.
+   Prefer a complete small function to an isolated expression. Roughly 15–35 lines
+   is often useful; do not turn that into a quota or paste unrelated class bodies.
+   Preserve unchanged lines on both sides of a diff so they appear as context,
+   not green additions. Use `code` for current context when its baseline change
+   has not been verified. Mark pseudocode omissions explicitly.
+4. Include source paths and revision/line references so readers can verify it.
+   Update line ranges when expanding an excerpt; never invent surrounding code.
+5. For large implementations use explicitly labeled pseudocode, not a wall of code.
    Never present invented code as an actual excerpt. Illustrative inputs and outputs
    must also be labeled, and should demonstrate the behavioral difference.
 
@@ -129,8 +149,11 @@ walkthrough or diagram to make that review look more substantial.
 
 ### Progressive depth, not mandatory ceremony
 
-Keep the overview and theme explanations visible; put code evidence in expandable
-examples and longer traces in optional deep-dive sections. Simple changes should
+Keep the overview, theme explanations and individual example explanations visible;
+collapse only the code and deeper breakdowns. Every `sections` entry requires a
+short `summary` visible outside its expandable full `explanation`. File coverage
+and verification also have visible previews. Readers should understand the point
+of every expandable section before deciding whether to open it. Simple changes should
 produce short documents. Complex changes may need boundary, data-model, failure-path,
 and state-transition explanations. Include those where relevant, not as empty
 mandatory headings. Important risks and unresolved disagreements must not be buried
@@ -161,7 +184,10 @@ Mermaid, HTML, SVG or JavaScript in review data.
   paths amber, removed paths red/dashed, and unchanged context muted. Edges with
   no status default to unchanged; do not infer edge status from endpoint status.
   The renderer includes status labels and a legend, not color alone.
-- Connect changed nodes to example IDs so selecting a node reveals its evidence.
+- Connect changed nodes to example IDs so selecting a node opens its evidence in
+  a dialog without losing the reader's place. Each linked box identifies the
+  example's numbered theme. Explain that these are optional cross-references,
+  not a sequence for reading the document; some themes may not appear in the graph.
   Large changes may link to explicitly labeled pseudocode rather than full code.
 - Keep graphs small. Label edges and explain what the diagram is showing. Do not
   map the entire ecosystem merely because the branch touches part of it.
@@ -188,7 +214,9 @@ Read the authoritative schema and the illustrative example before writing data:
 - `examples/float-comparisons.flow.json` — fictional, explicitly labeled example
   showing a proportional narrative; not evidence from a real MR.
 
-Use the exact schema rather than copying an assumed shape from memory. Narrative
+Use the exact schema rather than copying an assumed shape from memory. Older review JSON may
+need authored example explanations and deep-dive summaries before regeneration;
+do not synthesize empty placeholders just to pass validation. Narrative
 fields are plain text with preserved whitespace, not Markdown or HTML. Put code in
 example fields. Set each example's `language` (for example `typescript`, `python`,
 `json`, or `bash`) for highlight.js syntax coloring; omit it for plain text.

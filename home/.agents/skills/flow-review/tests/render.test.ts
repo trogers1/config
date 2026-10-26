@@ -40,6 +40,11 @@ test('public CLI validates and renders the review, colored flows, syntax and cod
     for (const example of theme.examples) assert.ok(html.includes(`id="item-${example.id}"`));
   }
   assert.match(html, /<svg\b/);
+  assert.match(html, /id="doc-reading-order"/);
+  assert.match(html, /id="doc-evidence"/);
+  assert.match(html, /data-evidence/);
+  assert.match(html, /Inspect code and sources/);
+  assert.match(html, /Read full breakdown/);
   assert.match(html, /class="flow-connection added"/);
   assert.match(html, /class="diff-line diff-removed"/);
   assert.match(html, /class="diff-line diff-added"/);

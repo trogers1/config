@@ -31,7 +31,7 @@ const SourceSchema = Type.Object({
 export const ExampleSchema = Type.Object({
   id: IdSchema,
   title: TextSchema,
-  explanation: Type.Optional(TextSchema),
+  explanation: TextSchema,
   before: Type.Optional(TextSchema),
   after: Type.Optional(TextSchema),
   code: Type.Optional(TextSchema),
@@ -93,6 +93,7 @@ export const ReviewSchema = Type.Object({
   sections: Type.Optional(Type.Array(Type.Object({
     id: IdSchema,
     title: TextSchema,
+    summary: TextSchema,
     explanation: TextSchema,
   }, { additionalProperties: false }), { minItems: 1 })),
   verification: Type.Optional(Type.Array(Type.Object({

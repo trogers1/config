@@ -43,7 +43,17 @@ node ~/.agents/skills/flow-review/dist/scripts/render_flow_html.js flow.json flo
 ## Authoring
 
 - Lead with the conversational story and its ecosystem context, then group edits
-  into themes with concrete code examples.
+  into themes with concrete code examples. The `themes` array is the intended
+  reading order: the renderer numbers it, lists it in a reading guide, and adds
+  previous/next links. Themes are editorial topics, not execution steps.
+- Every example requires an `explanation` visible outside its collapsed code.
+  Every optional `sections` entry requires a short visible `summary` in addition
+  to its expandable full `explanation`. Older JSON needs authored summaries added
+  before regeneration, not empty placeholders.
+- Include surrounding source: the enclosing function signature and a few relevant
+  lines showing inputs, validation and results. Preserve unchanged lines in both
+  sides of a diff. Use `code` for current context without a verified baseline;
+  don't color the entire surrounding function green just to show one new argument.
 - Use `before` and `after` for unified diffs; a lone `before` is a deletion, a lone
   `after` an addition. Use `code` for unchanged explanatory excerpts. Do not add
   manual diff prefixes. Red/green lines and stronger changed-word shading show
@@ -53,6 +63,10 @@ node ~/.agents/skills/flow-review/dist/scripts/render_flow_html.js flow.json flo
 - Small diagrams show explicit status on both nodes and edges: added (green),
   modified (amber), removed (red/dashed), and unchanged (muted). Changed nodes link
   to evidence examples. Edges default to unchanged unless explicitly labeled.
+  Diagram links are optional cross-references, not a theme-reading sequence.
+  Selecting a box opens a dialog with the example's theme, explanation and code;
+  closing it returns to the same reading position. No-JS links remain ordinary
+  anchors to the full example in the document.
 - Prose is plain text, not HTML or Markdown. Code and prose are escaped. Native
   disclosure sections work offline, with JavaScript enhancing evidence navigation.
 

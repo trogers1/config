@@ -73,6 +73,7 @@
     {
       "id": "review-depth",
       "title": "What a real review would verify",
+      "summary": "Check that removing rounding preserves the intended API contract and that the new comparison precision still catches meaningful numeric errors.",
       "explanation": "Confirm the full diff removes all intended rounding, that consumers can accept unrounded values, and that the tests still catch meaningful numeric errors. Map any supplied acceptance criteria to code and test evidence. The optional before/after diagrams illustrate the delta without mapping unrelated architecture. This example is not evidence that any real MR meets those criteria."
     }
   ],

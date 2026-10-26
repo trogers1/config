@@ -101,6 +101,7 @@
               "required": [
                 "id",
                 "title",
+                "explanation",
                 "sources"
               ],
               "properties": {
@@ -365,6 +366,7 @@
         "required": [
           "id",
           "title",
+          "summary",
           "explanation"
         ],
         "properties": {
@@ -373,6 +375,11 @@
             "type": "string"
           },
           "title": {
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "summary": {
             "minLength": 1,
             "pattern": "\\S",
             "type": "string"
