@@ -827,6 +827,13 @@
             "read"
           ]
         },
+        {
+          "pattern": "/Users/taylor.rogers/.pi/**",
+          "decision": "allow",
+          "contexts": [
+            "read"
+          ]
+        },
       ],
       "writePaths": [
         {
