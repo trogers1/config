@@ -31,7 +31,6 @@ export const readCommandDenialReasons = {
   forwarding: "eval and xargs can forward unvalidated filenames",
   interpreter: "shell interpreter execution cannot be statically validated",
   loop: "shell loops can forward computed filenames",
-  pipeline: "piped input is not an approved read source",
 } as const;
 
 const forwardingCommands = new Set(["eval", "xargs"]);
@@ -232,8 +231,8 @@ export function validateReadCommands({
 }): string | undefined {
   const composition = shellComposition({ command });
 
-  // Do not attempt data-flow analysis across pipelines, loops, interpreters,
-  // eval, or xargs when they can execute a reader. Unknown executable-producing
+  // Do not attempt data-flow analysis across loops, interpreters, eval, or
+  // xargs when they can execute a reader. Unknown executable-producing
   // wrappers are read-relevant by definition and therefore fail closed.
   const unknownExecutable = hasUnknownExecutable({ composition });
   if (!unknownExecutable && !hasReader({ composition })) return undefined;
@@ -242,7 +241,6 @@ export function validateReadCommands({
   if (unknownExecutable || hasShellInterpreterExecution({ composition }))
     return readCommandDenialReasons.interpreter;
 
-  if (composition.hasPipeline) return readCommandDenialReasons.pipeline;
   if (composition.hasLoop) return readCommandDenialReasons.loop;
 
   for (const segment of commandSegments) {

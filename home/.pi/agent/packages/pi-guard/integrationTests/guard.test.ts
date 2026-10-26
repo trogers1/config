@@ -219,8 +219,6 @@ describe("shell policy parser", () => {
     } satisfies ProfilePolicy;
 
     for (const [command, reason] of [
-      ["printf README.md | cat README.md", readCommandDenialReasons.pipeline],
-      ["printf README.md |& cat README.md", readCommandDenialReasons.pipeline],
       [
         "xargs sh -c 'cat README.md' placeholder",
         readCommandDenialReasons.forwarding,
@@ -239,6 +237,77 @@ describe("shell policy parser", () => {
       });
       expect(result, command).toMatchObject({ block: true });
       expect(result?.reason, command).toContain(reason);
+    }
+  });
+
+  it("allows pipes through the extension while checking every command and protected operand", async () => {
+    const directory = fs.mkdtempSync(path.join(tmpdir(), "pi-guard-pipes-"));
+    const configPath = path.join(directory, "profiles.jsonc");
+    const previousConfigPath = process.env.PI_GUARD_PROFILE_CONFIG;
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        defaultProfile: "pipes",
+        profiles: {
+          pipes: {
+            description: "Pipeline command and path checks",
+            extends: ["builtin:default"],
+            sandbox: false,
+            tools: {
+              bash: [
+                { pattern: "*", decision: "allow" },
+                { pattern: "forbidden", decision: "deny" },
+              ],
+            },
+          },
+        },
+      }),
+    );
+    process.env.PI_GUARD_PROFILE_CONFIG = configPath;
+    const harness = createInteractiveExtensionHarness({ hasUI: false });
+    try {
+      await harness.start();
+      for (const command of [
+        "printf safe | cat",
+        "printf safe |& head -n 1",
+        "cat README.md | sort | head -n 1",
+      ]) {
+        await expect(
+          harness.callTool({ toolName: "bash", input: { command } }),
+          command,
+        ).resolves.toBeUndefined();
+      }
+      for (const command of [
+        "forbidden | cat",
+        "printf safe | forbidden | cat",
+      ]) {
+        const result = await harness.callTool({
+          toolName: "bash",
+          input: { command },
+        });
+        expect(result, command).toMatchObject({ block: true });
+        expect(result?.reason).toContain("Command denied by explicit rule");
+      }
+      for (const command of [
+        "cat .env | head -n 1",
+        "printf safe | cat .env",
+        "cat < .env | head -n 1",
+        "printf safe | cat > .env",
+      ]) {
+        const result = await harness.callTool({
+          toolName: "bash",
+          input: { command },
+        });
+        expect(result, command).toMatchObject({ block: true });
+        expect(result?.reason).toContain("protected");
+      }
+      expect(harness.ui.custom).not.toHaveBeenCalled();
+    } finally {
+      await harness.dispose();
+      if (previousConfigPath === undefined)
+        delete process.env.PI_GUARD_PROFILE_CONFIG;
+      else process.env.PI_GUARD_PROFILE_CONFIG = previousConfigPath;
+      fs.rmSync(directory, { recursive: true, force: true });
     }
   });
 

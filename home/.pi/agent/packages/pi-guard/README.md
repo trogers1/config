@@ -821,7 +821,9 @@ Supported shell readers are allowed only when their adapters can identify their
 filesystem operands. Static operands are evaluated against `writePaths` using
 the Bash context. Ambiguous or dynamic filesystem operands require confirmation
 when an interactive UI is available and are blocked non-interactively.
-Separately, unsupported reader compositions—such as unbounded globs, pipelines,
+Pipelines (`|` and `|&`) may feed supported readers through stdin; every command,
+explicit filesystem operand, and redirection still receives its normal policy
+checks. Separately, unsupported reader compositions—such as unbounded globs,
 substitutions, loops, `xargs`, `eval`, and shell-interpreter `-c` forms—may be
 rejected directly when they cannot be analyzed safely. Use Pi's dedicated
 `read`, `grep`, or `find` tools when broader read behavior is needed.

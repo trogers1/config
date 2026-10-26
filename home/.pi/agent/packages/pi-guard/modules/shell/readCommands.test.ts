@@ -61,14 +61,6 @@ describe("shell read commands", () => {
   it("rejects readers with unsafe composition", () => {
     const prohibitedCompositions = [
       {
-        command: "printf README.md | cat",
-        reason: readCommandDenialReasons.pipeline,
-      },
-      {
-        command: "printf README.md |& cat",
-        reason: readCommandDenialReasons.pipeline,
-      },
-      {
         command: "eval 'cat README.md'",
         reason: readCommandDenialReasons.forwarding,
       },

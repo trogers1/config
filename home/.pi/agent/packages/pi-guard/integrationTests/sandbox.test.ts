@@ -787,6 +787,29 @@ describe("sandbox full-harness OS acceptance", () => {
     }
   });
 
+  it.each([true, false])(
+    "executes reader pipelines with sandbox enabled=%s",
+    async (sandboxEnabled) => {
+      const root = fixture();
+      for (const [command, expected] of [
+        ["printf streamed | cat > allowed/pipeline-output", "streamed"],
+        [
+          "printf combined 2>&1 | head -n 1 > allowed/pipeline-output",
+          "combined",
+        ],
+        [
+          "cat allowed/ordinary | sort | head -n 1 > allowed/pipeline-output",
+          "ordinary\n",
+        ],
+      ]) {
+        expect(await runThroughPi({ root, command, sandboxEnabled })).toBe(0);
+        expect(
+          fs.readFileSync(path.join(root, "allowed/pipeline-output"), "utf8"),
+        ).toBe(expected);
+      }
+    },
+  );
+
   it("reads an ordinary allowed fixture", async () => {
     const root = fixture();
     expect(await runThroughPi({ root, command: "cat allowed/ordinary" })).toBe(
