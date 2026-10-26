@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { RuleSetName } from "../modules/ruleSets.lib/index";
+import type { ProfileConfigFile } from "../modules/policyHelpers";
 import { createExtensionHarness } from "./support/extensionHarness";
 
 const tempDirectories: string[] = [];
@@ -96,8 +97,7 @@ function runGit(cwd: string, args: string[]): string {
 
 function linkedWorktreeFixture(): { main: string; worktree: string } {
   const root = fs.mkdtempSync(
-    // Keep sibling checkouts outside the custom profile's package-write grant.
-    path.join(import.meta.dirname, "../../../../../..", ".linked-worktree-"),
+    path.join(import.meta.dirname, ".linked-worktree-"),
   );
   tempDirectories.push(root);
   const main = path.join(root, "main");
@@ -1240,7 +1240,7 @@ func main() {
     },
   );
 
-  it.each(["builtin:committer", "builtin:git-full", "mcp-git-full"])(
+  it.each(["builtin:committer", "builtin:git-full", "composed-git-full"])(
     "%s creates branches and commits in a linked worktree without opening its sibling checkout",
     async (profile) => {
       const { main, worktree } = linkedWorktreeFixture();
@@ -1253,15 +1253,27 @@ func main() {
       );
       fs.mkdirSync(path.join(worktree, ".ssh"));
       fs.writeFileSync(path.join(worktree, ".ssh", "secret"), "secret\n");
-      // Exercise the actual custom profile and its inherited parent asks as
-      // well as the portable shipped policies, without editing user config.
-      process.env.PI_GUARD_PROFILE_CONFIG =
-        profile === "mcp-git-full"
-          ? path.resolve(
-              import.meta.dirname,
-              "../../../pi-guard/profiles.jsonc",
-            )
-          : path.join(worktree, "absent.jsonc");
+      // Exercise multiple-parent composition and partial sandbox overrides
+      // without depending on any personal profile configuration.
+      const configPath = path.join(worktree, "profiles.jsonc");
+      fs.writeFileSync(
+        configPath,
+        JSON.stringify({
+          profiles: {
+            "workflow-base": {
+              description: "General workflow with an extra runtime write root",
+              extends: ["builtin:default-with-net"],
+              sandbox: { extraWritePaths: ["runtime-state"] },
+            },
+            "composed-git-full": {
+              description: "Git mutation layered over a workflow profile",
+              extends: ["workflow-base", "builtin:git-full"],
+              sandbox: { allowLocalBinding: true },
+            },
+          },
+        } satisfies ProfileConfigFile),
+      );
+      process.env.PI_GUARD_PROFILE_CONFIG = configPath;
       delete process.env.PI_SUBAGENT_PROFILE;
       delete process.env.PI_SUBAGENT_PERMISSIBLE_GLOBS;
       const previousCwd = process.cwd();
