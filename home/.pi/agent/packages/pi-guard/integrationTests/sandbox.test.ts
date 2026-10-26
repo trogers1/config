@@ -96,7 +96,8 @@ function runGit(cwd: string, args: string[]): string {
 
 function linkedWorktreeFixture(): { main: string; worktree: string } {
   const root = fs.mkdtempSync(
-    path.join(import.meta.dirname, ".linked-worktree-"),
+    // Keep sibling checkouts outside the custom profile's package-write grant.
+    path.join(import.meta.dirname, "../../../../../..", ".linked-worktree-"),
   );
   tempDirectories.push(root);
   const main = path.join(root, "main");
@@ -1239,8 +1240,8 @@ func main() {
     },
   );
 
-  it.each(["builtin:committer", "builtin:git-full"])(
-    "%s stages and commits in a linked worktree without opening its sibling checkout",
+  it.each(["builtin:committer", "builtin:git-full", "mcp-git-full"])(
+    "%s creates branches and commits in a linked worktree without opening its sibling checkout",
     async (profile) => {
       const { main, worktree } = linkedWorktreeFixture();
       const originalMainHead = runGit(main, ["rev-parse", "HEAD"]);
@@ -1250,8 +1251,17 @@ func main() {
         path.join(worktree, ".npmrc"),
         "//registry.example.test/:_authToken=secret\n",
       );
-      // No user configuration: exercise only the portable shipped policies.
-      process.env.PI_GUARD_PROFILE_CONFIG = path.join(worktree, "absent.jsonc");
+      fs.mkdirSync(path.join(worktree, ".ssh"));
+      fs.writeFileSync(path.join(worktree, ".ssh", "secret"), "secret\n");
+      // Exercise the actual custom profile and its inherited parent asks as
+      // well as the portable shipped policies, without editing user config.
+      process.env.PI_GUARD_PROFILE_CONFIG =
+        profile === "mcp-git-full"
+          ? path.resolve(
+              import.meta.dirname,
+              "../../../pi-guard/profiles.jsonc",
+            )
+          : path.join(worktree, "absent.jsonc");
       delete process.env.PI_SUBAGENT_PROFILE;
       delete process.env.PI_SUBAGENT_PERMISSIBLE_GLOBS;
       const previousCwd = process.cwd();
@@ -1278,6 +1288,61 @@ func main() {
           input: { command: "git push", timeout: 10 },
         });
         expect(push?.block === true).toBe(profile === "builtin:committer");
+        const branchCommand = "git branch shared-metadata-branch";
+        const branchGate = await harness.callTool({
+          toolName: "bash",
+          input: { command: branchCommand, timeout: 10 },
+        });
+        // The committer tier can commit but cannot create branches directly.
+        expect(branchGate?.block === true, branchGate?.reason).toBe(
+          profile === "builtin:committer",
+        );
+        if (profile !== "builtin:committer") {
+          const branchResult = await harness.executeTool({
+            name: "bash",
+            params: { command: branchCommand, timeout: 10 },
+          });
+          expect(
+            exitCodeFrom({ result: branchResult }),
+            JSON.stringify(branchResult),
+          ).toBe(0);
+          expect(runGit(main, ["rev-parse", "shared-metadata-branch"])).toBe(
+            originalTopicHead,
+          );
+        }
+
+        // Like dev, an opaque child invokes Git without exposing its metadata
+        // operands to the gate. It must get the same kernel write capability.
+        const opaqueCommand = node({
+          source:
+            "require('child_process').execFileSync('git', ['branch', 'opaque-child-branch'])",
+        });
+        const opaqueBash = await harness.callUserBash({
+          cwd: worktree,
+          command: opaqueCommand,
+          excludeFromContext: false,
+        });
+        if (
+          !opaqueBash ||
+          !("operations" in opaqueBash) ||
+          !opaqueBash.operations
+        ) {
+          throw new Error(
+            "Git mutation profile did not provide sandbox operations",
+          );
+        }
+        const opaqueResult = await opaqueBash.operations.exec(
+          opaqueCommand,
+          worktree,
+          {
+            onData: () => undefined,
+            timeout: 10,
+          },
+        );
+        expect(opaqueResult.exitCode).toBe(0);
+        expect(runGit(main, ["rev-parse", "opaque-child-branch"])).toBe(
+          originalTopicHead,
+        );
         // Retain dependency guards, protected metadata/secrets, and outside-
         // workspace asks (blocked without a UI).
         for (const command of [
@@ -1325,7 +1390,7 @@ func main() {
         // not open sibling checkout files or waive protected secret reads.
         for (const source of [
           `require('fs').writeFileSync(${JSON.stringify(path.join(main, "outside-marker"))}, 'escaped')`,
-          "require('fs').writeFileSync('disclosed', require('fs').readFileSync('.npmrc'))",
+          "require('fs').writeFileSync('disclosed', require('fs').readFileSync('.ssh/secret'))",
         ]) {
           const command = node({ source });
           const userBash = await harness.callUserBash({
