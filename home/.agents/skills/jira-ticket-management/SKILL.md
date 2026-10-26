@@ -54,6 +54,69 @@ Reads, discovery and dry runs do not require mutation approval. Report only the 
 - For sprint updates, discover the existing issue's project Scrum boards and active sprint IDs. Resolve board ambiguity explicitly; select an exact active ID even on parallel-sprint boards. Approval binds **that exact ID**, never a future rollover. Show memberships and all side effects. Backlog removal is issue-wide: the CLI stops if another active/future assignment would be removed/displaced (also for add). Closed history must be preserved. Sprint is update-only, not a generic Sprint field edit, and cannot accompany an actual project/type move. If the sprint closes or membership drifts, stop, rediscover, preview and obtain fresh approval—do not silently replace the ID.
 - Check help/README for unsupported fields, clearing/removal, formatting, moves or transitions. Discuss a supported alternative; never silently drop content, switch types, substitute an estimate field, weaken TLS or use ad-hoc API workarounds to bypass validation.
 
+## RI workflow snapshot — removable when the workflow changes
+
+**Observed 2026-10-26 on RI Task [RI-512](https://lightcast-io.atlassian.net/browse/RI-512), using the authenticated user's permissions.** This entire section is a disposable operational snapshot, not CLI logic or a universal Jira rule. Remove or replace it when RI's workflow changes. Other issue types, permissions, conditions and automation may differ; live previews always take precedence.
+
+### Main restriction: starting development requires Ready For Dev
+
+**Do not request `SOLUTIONING → In Development` in one update.** Its preview fails with `No unique direct transition to requested status; no intermediate transitions attempted.` The working route, verified by actual updates and readbacks, is:
+
+```text
+Backlog → SOLUTIONING → Ready For Dev → In Development → QA
+        → Ready For PM Demo → Ready For Release
+```
+
+Each arrow is a separate status-only update. `statuses --type Task` lists statuses belonging to the workflow, **not transitions available from the current status**. The CLI does not discover/execute multi-hop routes automatically; creation's requested status also requires a direct post-create transition unless already at that status. Create in an approved reachable initial status, then perform separately approved intermediate updates. Never repeat creation to recover a failed status step.
+
+For an existing ticket in SOLUTIONING, save these two partial drafts (replace the example key below with the real target):
+
+`ready-for-dev.json`:
+
+```json
+{"status":"Ready For Dev"}
+```
+
+`in-development.json`:
+
+```json
+{"status":"In Development"}
+```
+
+```sh
+jira-ticket get RI-123
+jira-ticket update RI-123 --draft ready-for-dev.json --dry-run
+# Obtain approval for the route, intermediate state and both status-only changes.
+jira-ticket update RI-123 --draft ready-for-dev.json
+# Only after verified success at Ready For Dev:
+jira-ticket update RI-123 --draft in-development.json --dry-run
+# Confirm this preview matches the approved route; otherwise stop and reapprove.
+jira-ticket update RI-123 --draft in-development.json
+```
+
+The second hop cannot preview successfully while the ticket is still in SOLUTIONING. Explain this in the approval plan; do not present that expected failure as an impossible overall request. Intermediate statuses can trigger Jira automation/notifications. Keep unrelated field edits out of these status-only drafts, and stop/reconcile read-only after any uncertain write rather than rerunning it.
+
+### Other observed restrictions and routes
+
+The table lists **all distinct destination statuses whose status-only previews succeeded** from each tested source. Same-status requests are no-ops and omitted. These are preview results, not claims that every listed edge was executed; the forward chain above, `SOLUTIONING → Backlog`, and `Ready For Release → Cancel` were actually executed and verified. All other distinct destinations failed the CLI's unique-direct-transition check. That error does not distinguish missing transitions from ambiguous ones.
+
+| Current status | Destinations accepted by direct-transition preview |
+| --- | --- |
+| Backlog | SOLUTIONING, Released, Cancel |
+| SOLUTIONING | Backlog, Ready For Dev, Released, Cancel |
+| Ready For Dev | Backlog, SOLUTIONING, In Development, Released, Cancel |
+| In Development | Backlog, SOLUTIONING, QA, Released, Cancel |
+| QA | Backlog, SOLUTIONING, In Development, Ready For PM Demo, Released, Cancel |
+| Ready For PM Demo | Backlog, SOLUTIONING, In Development, Ready For Release, Released, Cancel |
+| Ready For Release | Backlog, SOLUTIONING, Cancel |
+| Cancel | Backlog, SOLUTIONING, Released |
+
+- **Backlog cannot jump to Ready For Dev or In Development:** go through SOLUTIONING, then Ready For Dev.
+- **In Development cannot return directly to Ready For Dev:** previews support `In Development → SOLUTIONING → Ready For Dev`; re-preview and approve both hops if needed.
+- **QA / Ready For PM Demo can return directly to In Development.** Ready For PM Demo cannot return directly to QA; previews support going through In Development first.
+- **Ready For Release cannot transition directly to Released** with the tested CLI/account, nor directly back to In Development, QA or Ready For PM Demo. It can return to SOLUTIONING; previews support restarting the normal chain from there. Do not use an earlier status's Released shortcut to bypass release controls. For an intended release, ask the workflow owner about the supported release action/permissions or a separately approved UI workflow; do not guess fields or use direct API writes.
+- **Released outgoing transitions were not tested.** Released was a preview-only destination; the probe ended in Cancel. Availability of a shortcut to Released is not authorization to use it.
+
 ## Preview, approve, execute
 
 1. For updates, read the existing ticket first and establish its canonical identity and relevant current context.
