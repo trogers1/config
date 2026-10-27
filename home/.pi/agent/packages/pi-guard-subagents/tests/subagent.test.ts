@@ -1,6 +1,8 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { createEventBus } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import { resolveChildTools } from "../extensions/index.ts";
 import { buildChildCommand } from "../extensions/interactive/launcher.ts";
 import {
@@ -8,15 +10,17 @@ import {
 	parseOrThrow,
 	snapshotBackingExtensions,
 	validateLoadout,
+	REQUIRED_GUARD_EXTENSION_PATH,
+	REQUIRED_CHILD_RUNTIME_PATH,
 	type GuardedInteractiveLoadout,
 } from "../extensions/interactive/types.ts";
-import { Type } from "typebox";
+import { CLAUDE_BRIDGE_PROVIDER, resolveProviderExtensions } from "../extensions/interactive/provider-extensions.ts";
+import { LOCAL_PROVIDER_MODEL_ID } from "./fixtures/local-provider.ts";
 import { makeTmpDir } from "./helpers.ts";
 
-const guard = resolve(process.cwd(), "../pi-guard/extensions/guard.ts");
-const runtime = resolve(new URL("../extensions/interactive/child-runtime.ts", import.meta.url).pathname);
-
-function loadout(overrides: Record<string, unknown> = {}): unknown {
+function loadout({
+	overrides = {},
+}: { overrides?: Partial<GuardedInteractiveLoadout> } = {}): GuardedInteractiveLoadout {
 	return {
 		version: 1,
 		attemptId: "attempt-1",
@@ -24,10 +28,11 @@ function loadout(overrides: Record<string, unknown> = {}): unknown {
 		profile: "builtin:worker",
 		writes: ["src"],
 		toolAllowlist: ["read", "write", "edit", "ask_question"],
-		guardExtensionPath: guard,
-		childRuntimePath: runtime,
+		guardExtensionPath: REQUIRED_GUARD_EXTENSION_PATH,
+		childRuntimePath: REQUIRED_CHILD_RUNTIME_PATH,
 		backingExtensionPaths: [],
 		backingExtensionDigests: [],
+		providerExtensions: [],
 		model: null,
 		thinking: null,
 		systemPromptMode: null,
@@ -37,47 +42,64 @@ function loadout(overrides: Record<string, unknown> = {}): unknown {
 		codingAgentDir: null,
 		autoExit: true,
 		...overrides,
-	};
-}
-
-function validLoadout(overrides: Record<string, unknown> = {}): GuardedInteractiveLoadout {
-	return validateLoadout(loadout(overrides));
+	} satisfies GuardedInteractiveLoadout;
 }
 
 describe("interactive child loadout boundary", () => {
-	it("fails closed when required runtime paths are unavailable", () => {
-		expect(() => validateLoadout(loadout({ guardExtensionPath: "/missing/guard.ts" }))).toThrow(
-			/required guard\/runtime path is unavailable/,
+	it("requires a live reviewed adapter without changing other models", () => {
+		const events = createEventBus();
+		expect(resolveProviderExtensions({ model: "unreviewed/model", events })).toEqual([]);
+		expect(resolveProviderExtensions({ model: null, events })).toEqual([]);
+		const model = `${CLAUDE_BRIDGE_PROVIDER}/${LOCAL_PROVIDER_MODEL_ID}`;
+		expect(() => resolveProviderExtensions({ model, events })).toThrow(/active parent-approved adapter/);
+		expect(() => validateLoadout({ value: loadout({ overrides: { model } }) })).toThrow(
+			/does not match explicit model/,
 		);
+		expect(() => resolveProviderExtensions({ model: CLAUDE_BRIDGE_PROVIDER, events })).toThrow(/explicit/);
+	});
+
+	it("rejects old loadouts instead of supplying an implicit provider approval", () => {
+		const { providerExtensions, ...oldLoadout } = loadout();
+		expect(providerExtensions).toEqual([]);
+		expect(() => validateLoadout({ value: oldLoadout })).toThrow(/Invalid guarded interactive loadout/);
+	});
+
+	it("fails closed when required runtime paths are unavailable", () => {
+		expect(() =>
+			validateLoadout({ value: loadout({ overrides: { guardExtensionPath: "/missing/guard.ts" } }) }),
+		).toThrow(/required guard\/runtime path is unavailable/);
 	});
 
 	it("fails closed when the child protocol tool is missing", () => {
-		expect(() => validateLoadout(loadout({ toolAllowlist: ["read"] }))).toThrow(/missing required security fields/);
+		expect(() => validateLoadout({ value: loadout({ overrides: { toolAllowlist: ["read"] } }) })).toThrow(
+			/missing required security fields/,
+		);
 	});
 
 	it("adds ask_question exactly once for default and custom child tools", () => {
 		for (const tools of [resolveChildTools(undefined), resolveChildTools(["read", "ask_question", "read"])]) {
 			expect(tools.tools.filter((tool) => tool === "ask_question")).toHaveLength(1);
-			expect(tools.backingExtensionPaths).not.toContain(runtime);
+			expect(tools.backingExtensionPaths).not.toContain(REQUIRED_CHILD_RUNTIME_PATH);
 		}
 	});
 
 	it("refuses resume after an approved backing extension changes", () => {
 		const extension = resolve(makeTmpDir("backing-extension-"), "tool.ts");
 		writeFileSync(extension, "export default function approved() {}\n");
-		const approved = snapshotBackingExtensions([extension]);
-		expect(
-			validateLoadout(loadout({ backingExtensionPaths: [extension], backingExtensionDigests: approved })),
-		).toBeDefined();
+		const value = loadout({
+			overrides: {
+				backingExtensionPaths: [extension],
+				backingExtensionDigests: snapshotBackingExtensions({ paths: [extension] }),
+			},
+		});
+		expect(validateLoadout({ value })).toBeDefined();
 		writeFileSync(extension, "export default function replaced() {}\n");
-		expect(() =>
-			validateLoadout(loadout({ backingExtensionPaths: [extension], backingExtensionDigests: approved })),
-		).toThrow(/backing extension content changed/);
+		expect(() => validateLoadout({ value })).toThrow(/backing extension content changed/);
 	});
 
 	it("builds a default-deny child command with immutable guard and scope env", () => {
 		const task = "Inspect 'quoted' paths; keep $HOME and $(printf literal) unchanged\nsecond line";
-		const approved = validLoadout();
+		const approved = validateLoadout({ value: loadout() });
 		const command = buildChildCommand({
 			loadout: approved,
 			sessionId: "child-session",
@@ -106,7 +128,7 @@ describe("interactive child loadout boundary", () => {
 	it("preserves omitted versus explicitly empty write scope without shell quoting", () => {
 		for (const writes of [null, []]) {
 			const command = buildChildCommand({
-				loadout: validLoadout({ writes }),
+				loadout: loadout({ overrides: { writes } }),
 				sessionId: "scope-session",
 				task: "Inspect",
 				loadoutPath: "/tmp/loadout.json",
@@ -116,14 +138,11 @@ describe("interactive child loadout boundary", () => {
 	});
 
 	it("writes JSON sidecars atomically", () => {
-		const dir = makeTmpDir("sidecar-");
-		const file = resolve(dir, "nested", "registry.json");
-		atomicJsonWrite(file, { version: 1, children: [] });
-		expect(existsSync(file)).toBe(true);
+		const file = resolve(makeTmpDir("sidecar-"), "nested", "registry.json");
 		const schema = Type.Object({ version: Type.Literal(1), children: Type.Array(Type.Unknown()) });
-		expect(parseOrThrow(schema, JSON.parse(readFileSync(file, "utf8")), "atomic sidecar")).toEqual({
-			version: 1,
-			children: [],
-		});
+		const value = parseOrThrow(schema, { version: 1, children: [] }, "atomic sidecar fixture");
+		atomicJsonWrite(file, value);
+		expect(existsSync(file)).toBe(true);
+		expect(parseOrThrow(schema, JSON.parse(readFileSync(file, "utf8")), "atomic sidecar")).toEqual(value);
 	});
 });

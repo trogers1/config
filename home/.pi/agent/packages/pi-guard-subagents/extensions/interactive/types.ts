@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Type, type Static, type TSchema } from "typebox";
 import { Value } from "typebox/value";
+import { ExtensionIdentitySchema, ProviderExtensionSchema, validateProviderExtensions } from "./provider-extensions.ts";
 
 const interactiveExtensionRoot = path.dirname(fileURLToPath(import.meta.url));
 export const REQUIRED_GUARD_EXTENSION_PATH = path.resolve(
@@ -37,9 +38,8 @@ const GuardedInteractiveLoadoutSchema = Type.Object({
 	guardExtensionPath: Type.String(),
 	childRuntimePath: Type.String(),
 	backingExtensionPaths: Type.Array(Type.String()),
-	backingExtensionDigests: Type.Array(
-		Type.Object({ path: Type.String(), sha256: Type.String({ pattern: "^[a-f0-9]{64}$" }) }),
-	),
+	backingExtensionDigests: Type.Array(ExtensionIdentitySchema),
+	providerExtensions: Type.Array(ProviderExtensionSchema),
 	model: NullableString,
 	thinking: NullableString,
 	systemPromptMode: Type.Union([Type.Literal("append"), Type.Null()]),
@@ -287,9 +287,11 @@ export function readJson<T extends TSchema>(file: string, schema: T, label: stri
 	return parseOrThrow(schema, value, label);
 }
 
-export function snapshotBackingExtensions(
-	paths: readonly string[],
-): GuardedInteractiveLoadout["backingExtensionDigests"] {
+export function snapshotBackingExtensions({
+	paths,
+}: {
+	paths: readonly string[];
+}): GuardedInteractiveLoadout["backingExtensionDigests"] {
 	return paths.map((extension) => ({
 		path: path.resolve(extension),
 		sha256: crypto.createHash("sha256").update(fs.readFileSync(extension)).digest("hex"),
@@ -297,8 +299,9 @@ export function snapshotBackingExtensions(
 }
 
 /* Runtime schemas are the source of truth for all persisted records. */
-export function validateLoadout(value: unknown): GuardedInteractiveLoadout {
+export function validateLoadout({ value }: { value: unknown }): GuardedInteractiveLoadout {
 	const loadout = parseOrThrow(GuardedInteractiveLoadoutSchema, value, "guarded interactive loadout");
+	validateProviderExtensions({ model: loadout.model, extensions: loadout.providerExtensions });
 	if (!loadout.toolAllowlist.includes("ask_question"))
 		throw new Error("Invalid guarded interactive loadout: missing required security fields (ask_question)");
 	const guardExtensionPath = loadout.guardExtensionPath;

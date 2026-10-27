@@ -1,5 +1,11 @@
 {
 	"$schema": "https://unpkg.com/knip@6/schema.json",
-	"entry": ["extensions/index.ts", "tests/*.test.ts", "tests/fixtures/init-marker.ts"],
+	"entry": [
+		"extensions/index.ts",
+		"tests/*.test.ts",
+		"tests/fixtures/init-marker.ts",
+		"tests/fixtures/local-provider.ts",
+		"tests/fixtures/provider-approval-probe.ts"
+	],
 	"project": ["extensions/**/*.ts", "tests/**/*.ts", "*.config.js"]
 }

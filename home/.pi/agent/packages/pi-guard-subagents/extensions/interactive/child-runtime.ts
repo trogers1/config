@@ -75,7 +75,7 @@ function finalText(event: AgentEndEvent): string {
 export default function childRuntime(pi: ExtensionAPI): void {
 	const loadoutPath = process.env.PI_SUBAGENT_LOADOUT;
 	if (!loadoutPath) return;
-	const loadout = validateLoadout(JSON.parse(fs.readFileSync(loadoutPath, "utf8")));
+	const loadout = validateLoadout({ value: JSON.parse(fs.readFileSync(loadoutPath, "utf8")) });
 	const childSessionId = process.env.PI_SUBAGENT_SESSION_ID ?? path.basename(loadoutPath, ".json");
 	const attemptId = process.env.PI_SUBAGENT_ATTEMPT_ID ?? loadout.attemptId;
 	const root = path.dirname(loadoutPath);
@@ -127,7 +127,14 @@ export default function childRuntime(pi: ExtensionAPI): void {
 		recordActivity(activity, status === "completed" ? "complete" : "shutdown", failure ?? result);
 	};
 
+	// Explicitly loaded providers must not widen the parent's tool approval.
+	pi.on("tool_call", (event) => {
+		if (!loadout.toolAllowlist.includes(event.toolName))
+			return { block: true, reason: `Tool is outside the parent-approved child allowlist: ${event.toolName}` };
+		return undefined;
+	});
 	pi.on("session_start", (_event, ctx) => {
+		pi.setActiveTools(loadout.toolAllowlist);
 		uiContext = ctx;
 		recordActivity(activity, "start", `${loadout.agent} on ${os.hostname()}`);
 		renderWidget();

@@ -48,6 +48,8 @@ import {
 } from "./interactive/types.ts";
 import { discoverAgents, formatAgentCatalog, type AgentConfig, type AgentScope } from "./agents.ts";
 import { ensureRunDir, slugify } from "./handoff.ts";
+import { resolveProviderExtensions } from "./interactive/provider-extensions.ts";
+import { setPromptSection } from "../../pi-guard/modules/promptSections.ts";
 
 export {
 	authorityPath,
@@ -140,12 +142,19 @@ type ParentWatchers = Map<string, ReturnType<typeof watchRegistry>>;
 function profile(agent: AgentConfig): string | null {
 	return process.env[PARENT_PROFILE]?.trim() || agent.profile || null;
 }
-function childLoadout(
-	agent: AgentConfig,
-	request: { cwd?: string; writes?: string[] },
-	cwd: string,
-	runId: string,
-): GuardedInteractiveLoadout {
+function childLoadout({
+	agent,
+	request,
+	cwd,
+	runId,
+	events,
+}: {
+	agent: AgentConfig;
+	request: { cwd?: string; writes?: string[] };
+	cwd: string;
+	runId: string;
+	events: ExtensionAPI["events"];
+}): GuardedInteractiveLoadout {
 	const guard = REQUIRED_GUARD_EXTENSION_PATH;
 	const runtime = REQUIRED_CHILD_RUNTIME_PATH;
 	const childTools = resolveChildTools(agent.tools);
@@ -167,7 +176,8 @@ function childLoadout(
 		guardExtensionPath: guard,
 		childRuntimePath: runtime,
 		backingExtensionPaths: childTools.backingExtensionPaths,
-		backingExtensionDigests: snapshotBackingExtensions(childTools.backingExtensionPaths),
+		backingExtensionDigests: snapshotBackingExtensions({ paths: childTools.backingExtensionPaths }),
+		providerExtensions: resolveProviderExtensions({ model: agent.model ?? null, events }),
 		model: agent.model ?? null,
 		thinking: null,
 		systemPromptMode: identity ? "append" : null,
@@ -177,7 +187,7 @@ function childLoadout(
 		codingAgentDir: process.env.PI_CODING_AGENT_DIR?.trim() || null,
 		autoExit: true,
 	};
-	return validateLoadout(value);
+	return validateLoadout({ value });
 }
 function modeOf(p: ParamsType): Details["mode"] {
 	return p.chain?.length ? "chain" : p.tasks?.length ? "parallel" : "single";
@@ -197,12 +207,19 @@ function requests(p: ParamsType): TaskRequest[] {
 }
 
 type ChainDeliveryDecision = { notifyParent: boolean; failure?: string };
-function sharedChainCompletion(
-	file: string,
-	child: ChildRecord,
-	signal: TerminalSignal,
-	ctx: ParentContext,
-): ChainDeliveryDecision {
+function sharedChainCompletion({
+	file,
+	child,
+	signal,
+	ctx,
+	events,
+}: {
+	file: string;
+	child: ChildRecord;
+	signal: TerminalSignal;
+	ctx: ParentContext;
+	events: ExtensionAPI["events"];
+}): ChainDeliveryDecision {
 	if (child.mode !== "chain") return { notifyParent: true };
 	const chain = loadRegistry(file).chain;
 	if (!chain) return { notifyParent: true };
@@ -266,6 +283,7 @@ function sharedChainCompletion(
 			: undefined;
 		if (step.sessionId && !prior) throw new Error(`saved child session ${step.sessionId} is unavailable`);
 		const launchOptions = {
+			events,
 			parentCwd: ctx.cwd,
 			runId: loadRegistry(file).runId,
 			parentSession: ctx.sessionManager.getSessionId(),
@@ -303,11 +321,13 @@ function sharedChainCompletion(
 export function attachParentRegistry({
 	file,
 	ctx,
+	events,
 	sendMessage,
 	watchers,
 }: {
 	readonly file: string;
 	readonly ctx: ParentContext;
+	readonly events: ExtensionAPI["events"];
 	readonly sendMessage: ExtensionAPI["sendMessage"];
 	readonly watchers: ParentWatchers;
 }): void {
@@ -352,7 +372,7 @@ export function attachParentRegistry({
 			// Persist chain advancement before fallible notification/UI work.
 			let decision: ChainDeliveryDecision;
 			try {
-				decision = sharedChainCompletion(file, child, signal, ctx);
+				decision = sharedChainCompletion({ file, child, signal, ctx, events });
 			} catch (error) {
 				decision = {
 					notifyParent: true,
@@ -405,7 +425,7 @@ export default function (pi: ExtensionAPI) {
 	pi.on("before_agent_start", (event, ctx) => {
 		const scope: AgentScope = "user";
 		const { agents } = discoverAgents(ctx.cwd, scope);
-		return { systemPrompt: `${event.systemPrompt}\n\n${formatAgentCatalog(agents, scope)}` };
+		setPromptSection({ event, name: "pi_guard_subagents", content: formatAgentCatalog(agents, scope) });
 	});
 
 	pi.on("session_shutdown", () => {
@@ -431,7 +451,7 @@ export default function (pi: ExtensionAPI) {
 				};
 			// Reload replaces the extension's in-memory watchers. Reattach the
 			// owned run before answering, steering, or resuming an existing child.
-			attachParentRegistry({ file: found.file, ctx, sendMessage: pi.sendMessage, watchers });
+			attachParentRegistry({ file: found.file, ctx, events: pi.events, sendMessage: pi.sendMessage, watchers });
 			const child = loadRegistry(found.file).children.find((c) => c.name === p.name);
 			if (!child)
 				return { content: [{ type: "text", text: `Subagent disappeared: ${p.name}` }], details: {}, isError: true };
@@ -512,8 +532,9 @@ export default function (pi: ExtensionAPI) {
 						details: {},
 						isError: true,
 					};
-				const loadout = validateResumeLoadout(child.loadoutPath);
+				const loadout = validateResumeLoadout({ file: child.loadoutPath });
 				resumeChild({
+					events: pi.events,
 					parentCwd: ctx.cwd,
 					runId: found.registry.runId,
 					parentSession: ctx.sessionManager.getSessionId(),
@@ -634,9 +655,15 @@ export default function (pi: ExtensionAPI) {
 						? loadRegistry(file).children.find((entry) => entry.sessionId === request.sessionId)
 						: undefined;
 					if (!prior) throw new Error(`Refusing resume: session ${request.sessionId} has no saved loadout`);
-					return validateResumeLoadout(prior.loadoutPath);
+					return validateResumeLoadout({ file: prior.loadoutPath });
 				}
-				return childLoadout(requireItem(resolvedAgents, i, "resolved agent"), request, ctx.cwd, runId);
+				return childLoadout({
+					agent: requireItem(resolvedAgents, i, "resolved agent"),
+					request,
+					cwd: ctx.cwd,
+					runId,
+					events: pi.events,
+				});
 			});
 			if (mode === "chain")
 				preflightLoadouts.forEach((loadout, step) => persistApprovedChainLoadout(runId, step, loadout));
@@ -661,7 +688,7 @@ export default function (pi: ExtensionAPI) {
 				);
 			// Attach before launching so an earlier child remains monitored if a
 			// later parallel pane fails to start.
-			attachParentRegistry({ file, ctx, sendMessage: pi.sendMessage, watchers });
+			attachParentRegistry({ file, ctx, events: pi.events, sendMessage: pi.sendMessage, watchers });
 			const children: ChildRecord[] = [];
 			for (const [i, request] of req.entries()) {
 				const agent = requireItem(resolvedAgents, i, "resolved agent");
@@ -674,6 +701,7 @@ export default function (pi: ExtensionAPI) {
 				children.push(
 					prior
 						? resumeChild({
+								events: pi.events,
 								parentCwd: ctx.cwd,
 								runId,
 								parentSession: ctx.sessionManager.getSessionId(),
@@ -688,6 +716,7 @@ export default function (pi: ExtensionAPI) {
 								chainStep: mode === "chain" ? i : undefined,
 							})
 						: launchChild({
+								events: pi.events,
 								parentCwd: ctx.cwd,
 								runId,
 								parentSession: ctx.sessionManager.getSessionId(),

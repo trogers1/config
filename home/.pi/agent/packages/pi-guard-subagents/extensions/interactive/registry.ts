@@ -71,7 +71,7 @@ function validChild(c: unknown): c is ChildRecord {
 		typeof child.authorityPath === "string" &&
 		(() => {
 			try {
-				validateLoadout(child.loadoutSnapshot);
+				validateLoadout({ value: child.loadoutSnapshot });
 				return child.attemptId === child.loadoutSnapshot.attemptId;
 			} catch {
 				return false;

@@ -1,22 +1,28 @@
 import { execFileSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
+import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import {
+	cpSync,
 	existsSync,
 	mkdirSync,
 	mkdtempSync,
 	readFileSync,
 	readdirSync,
+	realpathSync,
 	rmSync,
 	symlinkSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
+import { Type, type Static } from "typebox";
 import { loadRegistry } from "../extensions/interactive/registry.ts";
 import {
 	parseOrThrow,
+	RegistrySchema,
 	QuestionSchema,
 	ReplySchema,
 	TerminalSignalSchema,
@@ -31,6 +37,29 @@ import {
 } from "../extensions/interactive/types.ts";
 import markerExtension from "./fixtures/marker-extension.ts";
 import reloadMarker from "./fixtures/reload-marker.ts";
+import { runPrintCommand } from "./support/print-command.ts";
+import {
+	CLAUDE_BRIDGE_PROVIDER,
+	PROVIDER_DOCUMENTATION_BASENAMES,
+} from "../extensions/interactive/provider-extensions.ts";
+import type * as Launcher from "../extensions/interactive/launcher.ts";
+import type * as LoadoutTypes from "../extensions/interactive/types.ts";
+import {
+	LOCAL_PROVIDER_MODEL_ID,
+	OTHER_EXTENSION_SECTION,
+	LocalProviderFixtureSchema,
+} from "./fixtures/local-provider.ts";
+import {
+	ApprovalProbeConfigSchema,
+	ApprovalProbeResultSchema,
+	REMOVE_PROVIDER_COMMAND,
+} from "./fixtures/provider-approval-probe.ts";
+
+const ProviderRequestSchema = Type.Object({
+	model: Type.String(),
+	messages: Type.Array(Type.Object({ role: Type.String() })),
+	tools: Type.Optional(Type.Array(Type.Object({ function: Type.Object({ name: Type.String() }) }))),
+});
 
 function shellQuote(value: string): string {
 	return `'${value.replaceAll("'", "'\\''")}'`;
@@ -180,6 +209,151 @@ function captureQuestionAttempt({ child, questionId }: { child: ChildRecord; que
 		terminal: readFileSync(`${child.loadoutPath}.terminal.json`, "utf8"),
 		hasReply: existsSync(`${recordFile}.reply`),
 	};
+}
+
+async function readProviderRequest({ request }: { request: IncomingMessage }) {
+	return parseOrThrow(ProviderRequestSchema, await readJsonBody(request), "local provider request");
+}
+
+function configureProviderPackages({ work, port }: { work: string; port: number }) {
+	// Node resolves imported modules through real paths (notably /var ->
+	// /private/var on macOS). Match the installed module's canonical paths.
+	const packages = join(realpathSync(work), "packages");
+	const subagents = join(packages, "pi-guard-subagents");
+	const guard = join(packages, "pi-guard");
+	cpSync(join(process.cwd(), "extensions"), join(subagents, "extensions"), { recursive: true });
+	cpSync(join(process.cwd(), "agents"), join(subagents, "agents"), { recursive: true });
+	symlinkSync(join(process.cwd(), "node_modules"), join(subagents, "node_modules"), "dir");
+	cpSync(resolve(process.cwd(), "../pi-guard"), guard, {
+		recursive: true,
+		filter: (source) => !source.split("/").includes("node_modules"),
+	});
+	symlinkSync(resolve(process.cwd(), "../pi-guard/node_modules"), join(guard, "node_modules"), "dir");
+	const adapterRoot = join(packages, "pi-claude");
+	const adapter = join(adapterRoot, "extensions/index.ts");
+	mkdirSync(join(adapterRoot, "extensions"), { recursive: true });
+	writeFileSync(
+		join(adapterRoot, "package.json"),
+		JSON.stringify({
+			name: "deterministic-provider-fixture",
+			pi: { extensions: [`./${relative(adapterRoot, adapter).split(sep).join("/")}`] },
+		}),
+	);
+	writeFileSync(join(adapterRoot, "package-lock.json"), JSON.stringify({ lockfileVersion: 3 }));
+	const fixtures = join(subagents, "tests/fixtures");
+	mkdirSync(fixtures, { recursive: true });
+	for (const file of ["local-provider.ts", "provider-approval-probe.ts"]) {
+		cpSync(join(process.cwd(), "tests/fixtures", file), join(fixtures, file));
+	}
+	const config = parseOrThrow(
+		LocalProviderFixtureSchema,
+		{ baseUrl: `http://127.0.0.1:${port}/v1` },
+		"local provider fixture",
+	);
+	writeFileSync(join(fixtures, "local-provider.json"), JSON.stringify(config));
+	const reconstructionDirectory = join(adapterRoot, "extensions/reconstruction");
+	mkdirSync(reconstructionDirectory, { recursive: true });
+	const reconstructionModule = join(reconstructionDirectory, "identity-fixture.ts");
+	writeFileSync(reconstructionModule, "export const reconstructionReady = true;\n");
+	const documentationName = PROVIDER_DOCUMENTATION_BASENAMES[0];
+	if (!documentationName) throw new Error("Provider documentation allowlist is empty");
+	const reconstructionDocumentation = join(reconstructionDirectory, documentationName);
+	writeFileSync(reconstructionDocumentation, "# Reconstruction fixture\n");
+	writeFileSync(
+		adapter,
+		[
+			'import { reconstructionReady } from "./reconstruction/identity-fixture.ts";',
+			'if (!reconstructionReady) throw new Error("Reconstruction fixture unavailable");',
+			'export { default } from "../../pi-guard-subagents/tests/fixtures/local-provider.ts";',
+			"",
+		].join("\n"),
+	);
+	return { subagents, guard, adapter, reconstructionModule, reconstructionDirectory, reconstructionDocumentation };
+}
+
+function approvedChildLoadout({
+	installed,
+	agentDir,
+	extensions,
+	work,
+}: {
+	installed: Pick<ReturnType<typeof configureProviderPackages>, "guard" | "subagents">;
+	agentDir: string;
+	extensions: LoadoutTypes.GuardedInteractiveLoadout["providerExtensions"];
+	work: string;
+}) {
+	return {
+		version: 1,
+		attemptId: randomUUID(),
+		agent: "worker",
+		profile: "builtin:worker",
+		writes: null,
+		toolAllowlist: ["read", "ask_question"],
+		guardExtensionPath: join(installed.guard, "extensions/guard.ts"),
+		childRuntimePath: join(installed.subagents, "extensions/interactive/child-runtime.ts"),
+		backingExtensionPaths: [],
+		backingExtensionDigests: [],
+		providerExtensions: extensions,
+		model: `${CLAUDE_BRIDGE_PROVIDER}/${LOCAL_PROVIDER_MODEL_ID}`,
+		thinking: null,
+		systemPromptMode: null,
+		identity: null,
+		cwd: work,
+		agentDir: null,
+		codingAgentDir: agentDir,
+		autoExit: true,
+	} satisfies LoadoutTypes.GuardedInteractiveLoadout;
+}
+
+function runApprovalProbe({
+	subagents,
+	adapter,
+	agentDir,
+	work,
+	remove = false,
+	sourceChange,
+}: {
+	subagents: string;
+	adapter?: string;
+	agentDir: string;
+	work: string;
+	remove?: boolean;
+	sourceChange?: Static<typeof ApprovalProbeConfigSchema>["sourceChange"];
+}) {
+	const output = join(work, `approval-${randomUUID()}.jsonl`);
+	const settings = join(agentDir, "settings.json");
+	const config = parseOrThrow(
+		ApprovalProbeConfigSchema,
+		{
+			model: `${CLAUDE_BRIDGE_PROVIDER}/${LOCAL_PROVIDER_MODEL_ID}`,
+			output,
+			settings,
+			...(sourceChange ? { sourceChange } : {}),
+		},
+		"approval probe config",
+	);
+	writeFileSync(settings, JSON.stringify({ extensions: adapter ? [adapter] : [] }));
+	writeFileSync(join(subagents, "tests/fixtures/provider-approval-probe.json"), JSON.stringify(config));
+	const args = ["--no-session", "-e", join(subagents, "tests/fixtures/provider-approval-probe.ts")];
+	if (remove) args.push("--print", `/${REMOVE_PROVIDER_COMMAND}`);
+	else args.push("--mode", "rpc");
+	execFileSync("pi", args, {
+		cwd: work,
+		input: remove ? "" : '{"type":"get_state"}\n',
+		encoding: "utf8",
+		timeout: 15_000,
+		env: {
+			...process.env,
+			PI_CODING_AGENT_DIR: agentDir,
+			PI_SUBAGENT_DEPTH: "",
+			PI_SUBAGENT_LOADOUT: "",
+			PI_SUBAGENT_PROVIDER_EXTENSIONS: JSON.stringify([CLAUDE_BRIDGE_PROVIDER]),
+		},
+	});
+	return readFileSync(output, "utf8")
+		.trim()
+		.split("\n")
+		.map((line) => parseOrThrow(ApprovalProbeResultSchema, JSON.parse(line), "approval probe result"));
 }
 
 const sessions: Array<{ socket: string; session: string }> = [];
@@ -1829,6 +2003,402 @@ describe("installed Pi public orchestration lifecycle", () => {
 			expect(terminal.permissionBlocks?.[0]?.toolName).toBe("write");
 			expect(terminal.permissionBlocks?.[0]?.text).not.toContain("PI_SUBAGENT_PERMISSIBLE_GLOBS");
 			expect(existsSync(join(work, "notes.md"))).toBe(false);
+		} finally {
+			await closeProvider(server);
+			rmSync(work, { recursive: true, force: true });
+		}
+	}, 35_000);
+
+	it("requires a live adapter despite inherited approval names, revokes on reload, and binds activation content", () => {
+		for (const scenario of ["inherited", "remove", "changed-entry", "changed-module", "changed-documentation"]) {
+			const work = mkdtempSync(join(tmpdir(), "pi-guard-provider-authority-"));
+			try {
+				const installed = configureProviderPackages({ work, port: 12345 });
+				const agentDir = configureAgentDir(work, 12345);
+				const changedFile =
+					scenario === "changed-entry"
+						? installed.adapter
+						: scenario === "changed-module"
+							? installed.reconstructionModule
+							: scenario === "changed-documentation"
+								? installed.reconstructionDocumentation
+								: undefined;
+				const results = runApprovalProbe({
+					...installed,
+					agentDir,
+					work,
+					adapter: scenario === "inherited" ? undefined : installed.adapter,
+					remove: scenario === "remove",
+					...(changedFile ? { sourceChange: { kind: "append", file: changedFile } } : {}),
+				});
+				if (scenario === "changed-documentation") {
+					expect(results.map((result) => result.status)).toEqual(["approved"]);
+					continue;
+				}
+				if (scenario === "remove") expect(results.map((result) => result.status)).toEqual(["approved", "refused"]);
+				else expect(results.map((result) => result.status)).toEqual(["refused"]);
+				const refusal = results.at(-1);
+				if (refusal?.status !== "refused") throw new Error("Inactive or changed adapter retained authority");
+				expect(refusal.reason).toMatch(
+					changedFile ? /changed since parent activation/ : /active parent-approved adapter/,
+				);
+			} finally {
+				rmSync(work, { recursive: true, force: true });
+			}
+		}
+	}, 35_000);
+
+	it("refuses persisted child resume after non-entry production modules change or are added", async () => {
+		const work = mkdtempSync(join(tmpdir(), "pi-guard-provider-resume-tree-"));
+		try {
+			const installed = configureProviderPackages({ work, port: 12345 });
+			const agentDir = configureAgentDir(work, 12345);
+			const approval = runApprovalProbe({ ...installed, agentDir, work })[0];
+			if (approval?.status !== "approved") throw new Error("Live parent adapter did not approve the child provider");
+			const launcher: typeof Launcher = await import(
+				pathToFileURL(join(installed.subagents, "extensions/interactive/launcher.ts")).href
+			);
+			const value = approvedChildLoadout({ installed, agentDir, extensions: approval.extensions, work });
+			const loadoutPath = join(work, "loadout.json");
+			writeFileSync(loadoutPath, JSON.stringify(value));
+			expect(launcher.validateResumeLoadout({ file: loadoutPath })).toEqual(value);
+			writeFileSync(
+				installed.reconstructionDocumentation,
+				"# Documentation changed without changing executable code\n",
+			);
+			expect(launcher.validateResumeLoadout({ file: loadoutPath })).toEqual(value);
+			for (const file of [installed.reconstructionModule, join(installed.reconstructionDirectory, "added-module.ts")]) {
+				const original = existsSync(file) ? readFileSync(file, "utf8") : undefined;
+				writeFileSync(file, `${original ?? "export const addedModule = true;"}\n// changed after approval\n`);
+				expect(() => launcher.validateResumeLoadout({ file: loadoutPath })).toThrow(
+					/provider extension content changed/,
+				);
+				if (original === undefined) rmSync(file);
+				else writeFileSync(file, original);
+				expect(launcher.validateResumeLoadout({ file: loadoutPath })).toEqual(value);
+			}
+		} finally {
+			rmSync(work, { recursive: true, force: true });
+		}
+	}, 20_000);
+
+	it("rejects symlinks and unexpected file types anywhere in the provider production tree", () => {
+		for (const scenario of ["file-link", "directory-link", "documentation-link", "unexpected"]) {
+			const work = mkdtempSync(join(tmpdir(), "pi-guard-provider-tree-"));
+			try {
+				const installed = configureProviderPackages({ work, port: 12345 });
+				if (scenario === "documentation-link") rmSync(installed.reconstructionDocumentation);
+				const sourceChange =
+					scenario === "unexpected"
+						? ({
+								kind: "unexpected-file",
+								file: join(installed.reconstructionDirectory, "unexpected.json"),
+							} satisfies NonNullable<Static<typeof ApprovalProbeConfigSchema>["sourceChange"]>)
+						: ({
+								kind: "symlink",
+								file:
+									scenario === "documentation-link"
+										? installed.reconstructionDocumentation
+										: join(installed.reconstructionDirectory, "linked.ts"),
+								target:
+									scenario === "directory-link" ? installed.reconstructionDirectory : installed.reconstructionModule,
+							} satisfies NonNullable<Static<typeof ApprovalProbeConfigSchema>["sourceChange"]>);
+				const refusal = runApprovalProbe({
+					...installed,
+					agentDir: configureAgentDir(work, 12345),
+					work,
+					sourceChange,
+				})[0];
+				if (refusal?.status !== "refused") throw new Error("Invalid provider production source retained authority");
+				expect(refusal.reason).toMatch(/directories and regular non-symlink .ts files/);
+			} finally {
+				rmSync(work, { recursive: true, force: true });
+			}
+		}
+	}, 35_000);
+
+	it("preserves guard, agent catalog, and other extension prompt sections across real Pi turns", async () => {
+		const work = mkdtempSync(join(tmpdir(), "pi-guard-prompt-sections-"));
+		const requests: Static<typeof ProviderRequestSchema>[] = [];
+		const server = createServer(async (request, response) => {
+			requests.push(await readProviderRequest({ request }));
+			text(response, "prompt sections received");
+		});
+		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+		const address = server.address();
+		if (!address || typeof address === "string") throw new Error("local provider did not bind");
+		try {
+			const { subagents, guard, adapter } = configureProviderPackages({ work, port: address.port });
+			const agentDir = configureAgentDir(work, address.port);
+			const sessionId = randomUUID();
+			const diagnostics: Awaited<ReturnType<typeof runPrintCommand>>[] = [];
+			for (const task of ["first prompt", "second prompt"]) {
+				const command = [
+					"/usr/bin/env",
+					`PI_CODING_AGENT_DIR=${agentDir}`,
+					"pi",
+					"--no-extensions",
+					"-e",
+					join(guard, "extensions/guard.ts"),
+					"-e",
+					join(subagents, "extensions/index.ts"),
+					"-e",
+					adapter,
+					"--model",
+					`${CLAUDE_BRIDGE_PROVIDER}/${LOCAL_PROVIDER_MODEL_ID}`,
+					"--session-id",
+					sessionId,
+					"--tools",
+					"read",
+					task,
+				];
+				diagnostics.push(await runPrintCommand({ command, cwd: work }));
+			}
+			const diagnosticContext = JSON.stringify(diagnostics);
+			expect(requests.length, diagnosticContext).toBe(2);
+			for (const body of requests) {
+				const prompt = JSON.stringify(
+					messages(body).filter((message) => isRecord(message) && message.role === "system"),
+				);
+				expect(prompt.includes(OTHER_EXTENSION_SECTION.content), diagnosticContext).toBe(true);
+				expect((prompt.match(/# Active profile:/g) ?? []).length, diagnosticContext).toBe(1);
+				expect((prompt.match(/<pi_guard_subagents>/g) ?? []).length, diagnosticContext).toBe(1);
+			}
+		} finally {
+			await closeProvider(server);
+			rmSync(work, { recursive: true, force: true });
+		}
+	}, 35_000);
+
+	it("runs an approved provider through the real generated child command without credentials", async () => {
+		const work = mkdtempSync(join(tmpdir(), "pi-guard-provider-command-"));
+		const requests: Static<typeof ProviderRequestSchema>[] = [];
+		const server = createServer(async (request, response) => {
+			requests.push(await readProviderRequest({ request }));
+			text(response, "local approved provider available");
+		});
+		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+		const address = server.address();
+		if (!address || typeof address === "string") throw new Error("local provider did not bind");
+		try {
+			const { subagents, guard, adapter, reconstructionModule } = configureProviderPackages({
+				work,
+				port: address.port,
+			});
+			const launcher: typeof Launcher = await import(
+				pathToFileURL(join(subagents, "extensions/interactive/launcher.ts")).href
+			);
+			const types: typeof LoadoutTypes = await import(
+				pathToFileURL(join(subagents, "extensions/interactive/types.ts")).href
+			);
+			const agentDir = configureAgentDir(work, address.port);
+			const approval = runApprovalProbe({ subagents, adapter, agentDir, work })[0];
+			if (approval?.status !== "approved") throw new Error("Live parent adapter did not approve the child provider");
+			const value = approvedChildLoadout({
+				installed: { guard, subagents },
+				agentDir,
+				extensions: approval.extensions,
+				work,
+			});
+			const loadout = types.validateLoadout({ value });
+			const loadoutPath = join(work, "loadout.json");
+			writeFileSync(loadoutPath, JSON.stringify(loadout));
+			const command = launcher.buildChildCommand({
+				loadout,
+				sessionId: randomUUID(),
+				task: "respond once",
+				loadoutPath,
+			});
+			expect(command).toContain("--no-extensions");
+			const diagnostics = await runPrintCommand({ command, cwd: work });
+			const diagnosticContext = JSON.stringify({ ...diagnostics, localRequests: requests.length });
+			const terminal = parseOrThrow(
+				TerminalSignalSchema,
+				JSON.parse(readFileSync(`${loadoutPath}.terminal.json`, "utf8")),
+				"provider command terminal",
+			);
+			expect(terminal.status, diagnosticContext).toBe("completed");
+			expect(terminal.result === "local approved provider available", diagnosticContext).toBe(true);
+			expect(requests.length, diagnosticContext).toBe(1);
+			expect(toolNames(requests[0]).sort(), diagnosticContext).toEqual([...loadout.toolAllowlist].sort());
+			const prompt = JSON.stringify(messages(requests[0]));
+			expect(prompt.includes("# Active profile: builtin:worker"), diagnosticContext).toBe(true);
+			expect(prompt.includes(OTHER_EXTENSION_SECTION.content), diagnosticContext).toBe(true);
+			for (const file of [adapter, reconstructionModule]) {
+				const approvedSource = readFileSync(file, "utf8");
+				writeFileSync(file, `${approvedSource}\n// changed after approval\n`);
+				expect(() => launcher.validateResumeLoadout({ file: loadoutPath })).toThrow(
+					/provider extension content changed/,
+				);
+				expect(() =>
+					launcher.buildChildCommand({ loadout, sessionId: randomUUID(), task: "must not run", loadoutPath }),
+				).toThrow(/provider extension content changed/);
+				writeFileSync(file, approvedSource);
+				expect(launcher.validateResumeLoadout({ file: loadoutPath })).toEqual(loadout);
+			}
+		} finally {
+			await closeProvider(server);
+			rmSync(work, { recursive: true, force: true });
+		}
+	}, 25_000);
+
+	it("loads only the approved provider in a real child and refuses resume after its code changes", async () => {
+		const work = realpathSync(mkdtempSync(join(tmpdir(), "pi-guard-approved-provider-")));
+		// A disposable installed layout exercises the real canonical mapping without
+		// replacing the actual sibling adapter or contacting its billable provider.
+		configureProjectAgent(work);
+		const agentFile = join(work, ".pi/agents/worker.md");
+		writeFileSync(
+			agentFile,
+			readFileSync(agentFile, "utf8").replace(
+				"local/deterministic",
+				`${CLAUDE_BRIDGE_PROVIDER}/${LOCAL_PROVIDER_MODEL_ID}`,
+			),
+		);
+		let parentRequests = 0;
+		let launchRequested = false;
+		let resumeRequested = false;
+		let resumeRejected = false;
+		let serverFailure: Error | undefined;
+		let observedChild: Pick<ChildRecord, "name" | "state" | "failure" | "paneId"> | undefined;
+		let approvedTools: string[] = [];
+		let approvedProfile: string | null = null;
+		const childRequests: Static<typeof ProviderRequestSchema>[] = [];
+		const parentPrompts: string[] = [];
+		const parentToolResults: unknown[] = [];
+		const server = createServer(async (request, response) => {
+			try {
+				const body = await readProviderRequest({ request });
+				if (body.model === LOCAL_PROVIDER_MODEL_ID) {
+					childRequests.push(body);
+					if (toolResultCount(body) === 0) return toolCall(response, "read", { path: agentFile }, "approved-read");
+					return text(response, "approved provider child complete");
+				}
+				parentPrompts.push(
+					JSON.stringify(messages(body).filter((message) => isRecord(message) && message.role === "system")),
+				);
+				parentToolResults.push(...messages(body).filter((message) => isRecord(message) && message.role === "tool"));
+				parentRequests++;
+				if (!launchRequested) {
+					launchRequested = true;
+					return toolCall(
+						response,
+						"subagent",
+						{
+							agent: "worker",
+							task: "read the agent file",
+							cwd: work,
+							agentScope: "project",
+							confirmProjectAgents: false,
+						},
+						"launch-approved-provider",
+					);
+				}
+				if (!resumeRequested) {
+					resumeRequested = true;
+					const child = await waitFor(() => {
+						const root = join(work, ".pi/orchestration");
+						if (!existsSync(root)) return undefined;
+						for (const entry of readdirSync(root)) {
+							const registry = join(root, entry, "registry.json");
+							if (!existsSync(registry)) continue;
+							// Observe the disposable installation's persisted contract, rather
+							// than authorizing it with this installation's canonical paths.
+							const record = parseOrThrow(
+								RegistrySchema,
+								JSON.parse(readFileSync(registry, "utf8")),
+								"installed fixture orchestration registry",
+							).children[0];
+							if (record) {
+								observedChild = {
+									name: record.name,
+									state: record.state,
+									failure: record.failure,
+									paneId: record.paneId,
+								};
+							}
+							if (record?.state === "completed" || record?.state === "failed") return record;
+						}
+						return undefined;
+					}, "approved provider child completion");
+					expect(child.state, child.failure).toBe("completed");
+					expect(child.loadoutSnapshot.providerExtensions[0]?.provider).toBe(CLAUDE_BRIDGE_PROVIDER);
+					expect(child.loadoutSnapshot.backingExtensionPaths).toEqual([]);
+					approvedTools = child.loadoutSnapshot.toolAllowlist;
+					approvedProfile = child.loadoutSnapshot.profile;
+					writeFileSync(adapter, `${readFileSync(adapter, "utf8")}\n// changed after parent approval\n`);
+					return toolCall(
+						response,
+						"subagent_message",
+						{ name: child.name, message: "must not resume changed provider" },
+						"rejectchangedprovider",
+					);
+				}
+				// Public resume rejects the registry whose saved provider identity
+				// changed. Lower-level command tests assert the content-change cause.
+				// Correlate the refusal with this resume call, not unrelated turns.
+				resumeRejected = messages(body).some((message) => {
+					if (!isRecord(message) || message.role !== "tool" || message.tool_call_id !== "rejectchangedprovider")
+						return false;
+					return message.content === "Invalid interactive orchestration registry";
+				});
+				return text(response, resumeRejected ? "changed provider resume rejected" : "waiting for child");
+			} catch (error) {
+				serverFailure = error instanceof Error ? error : new Error(String(error));
+				response.destroy();
+			}
+		});
+		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+		const address = server.address();
+		if (!address || typeof address === "string") throw new Error("local provider did not bind");
+		const agentDir = configureAgentDir(work, address.port);
+		const installed = configureProviderPackages({ work, port: address.port });
+		const adapter = installed.adapter;
+		const { subagents, guard } = installed;
+		const socket = `pi-guard-provider-${process.pid}`;
+		const session = `pi-guard-provider-${process.pid}`;
+		sessions.push({ socket, session });
+		const command = [
+			`cd ${shellQuote(work)} &&`,
+			`PI_CODING_AGENT_DIR=${shellQuote(agentDir)}`,
+			"pi --no-extensions",
+			`-e ${shellQuote(join(guard, "extensions/guard.ts"))}`,
+			`-e ${shellQuote(join(subagents, "extensions/index.ts"))}`,
+			`-e ${shellQuote(adapter)}`,
+			"--model local/deterministic --tools subagent,subagent_message",
+			shellQuote("APPROVED_PROVIDER_LIFECYCLE"),
+		].join(" ");
+		try {
+			execFileSync("tmux", ["-L", socket, "-f", "/dev/null", "new-session", "-d", "-s", session, "sh"]);
+			execFileSync("tmux", ["-L", socket, "send-keys", "-t", session, "-l", command]);
+			execFileSync("tmux", ["-L", socket, "send-keys", "-t", session, "Enter"]);
+			await waitFor(() => serverFailure ?? (resumeRejected || undefined), "changed provider resume rejection", 25_000);
+			if (serverFailure) throw serverFailure;
+			expect(childRequests).toHaveLength(2);
+			for (const body of childRequests) {
+				expect(toolNames(body).sort()).toEqual([...approvedTools].sort());
+				const prompt = JSON.stringify(messages(body));
+				expect(prompt).toContain(`# Active profile: ${approvedProfile}`);
+				expect(prompt).toContain(OTHER_EXTENSION_SECTION.content);
+				expect(prompt.match(/# Active profile:/g)).toHaveLength(1);
+			}
+			for (const prompt of parentPrompts) {
+				expect(prompt).toContain("pi_guard_subagents");
+				expect(prompt).toContain(OTHER_EXTENSION_SECTION.content);
+				expect(prompt.match(/# Active profile:/g)).toHaveLength(1);
+			}
+		} catch (error) {
+			const panes = execFileSync("tmux", ["-L", socket, "list-panes", "-a", "-F", "#{pane_id}"], { encoding: "utf8" })
+				.trim()
+				.split("\n")
+				.map((pane) =>
+					execFileSync("tmux", ["-L", socket, "capture-pane", "-p", "-t", pane, "-S", "-40"], {
+						encoding: "utf8",
+					}).slice(-6000),
+				);
+			throw new Error(
+				`${String(error)}\n${JSON.stringify({ observedChild, parentRequests, childRequests: childRequests.length, parentToolResults: parentToolResults.slice(-4), panes })}`,
+			);
 		} finally {
 			await closeProvider(server);
 			rmSync(work, { recursive: true, force: true });

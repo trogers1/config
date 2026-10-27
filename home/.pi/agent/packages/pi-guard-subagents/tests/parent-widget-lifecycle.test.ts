@@ -1,7 +1,7 @@
 import { writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { createEventBus, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { attachParentRegistry, stopParentRegistryWatchers } from "../extensions/index.ts";
 import { addChild, ensureRegistry, updateChild } from "../extensions/interactive/registry.ts";
 import { atomicJsonWrite, type ChildRecord } from "../extensions/interactive/types.ts";
@@ -32,6 +32,7 @@ describe("parent subagent widget lifecycle", () => {
 				childRuntimePath: resolve("../pi-guard-subagents/extensions/interactive/child-runtime.ts"),
 				backingExtensionPaths: [],
 				backingExtensionDigests: [],
+				providerExtensions: [],
 				model: null,
 				thinking: null,
 				systemPromptMode: null,
@@ -62,15 +63,17 @@ describe("parent subagent widget lifecycle", () => {
 			sessionManager: { getSessionId: () => sessionId },
 			ui: { notify: vi.fn(), setWidget },
 		};
+		const events = createEventBus();
 		attachParentRegistry({
 			file,
 			ctx: { ...context, sessionManager: { getSessionId: () => "another-parent" } },
+			events,
 			sendMessage,
 			watchers,
 		});
 		expect(watchers.size).toBe(0);
-		attachParentRegistry({ file, ctx: context, sendMessage, watchers });
-		attachParentRegistry({ file, ctx: context, sendMessage, watchers });
+		attachParentRegistry({ file, ctx: context, events, sendMessage, watchers });
+		attachParentRegistry({ file, ctx: context, events, sendMessage, watchers });
 		expect(watchers.size).toBe(1);
 
 		updateChild(file, child.name, { state: "waiting" });

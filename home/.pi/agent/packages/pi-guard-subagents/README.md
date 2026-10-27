@@ -7,9 +7,9 @@ inheriting the main session's defaults.
 
 ## Install
 
-> **Security:** a subagent receives your Pi extensions and credentials. Review
-> agent prompts, use trusted packages only, and treat project-local agents as
-> repository-controlled code.
+> **Security:** a subagent can use your provider credentials, but receives only
+> explicitly approved extensions. Review agent prompts, use trusted packages
+> only, and treat project-local agents as repository-controlled code.
 
 Install pi-guard first to enforce worker profiles and declared write scopes,
 then install this companion package:
@@ -398,9 +398,33 @@ unless the session was interrupted.
 
 ## Security notes
 
-- Workers are spawned with `--no-extensions` and an explicit allowlist
-  containing only pi-guard, the child runtime, and permitted backing
-  extensions. Agent frontmatter cannot broaden that loadout.
+- Workers retain `--no-extensions`, with explicit pi-guard, child runtime,
+  permitted tool backings, and (only for an explicitly selected provider) a
+  parent-approved provider adapter. Packages are never inherited automatically.
+  The runtime enforces the parent's tool allowlist even if an adapter registers
+  additional tools.
+- The reviewed provider mapping currently contains only `claude-bridge`, resolved
+  to sibling `pi-claude/extensions/index.ts`. Loading that adapter in the parent
+  calls the shared `./provider-extensions` approval contract. Approval uses a
+  request/reply exchange over Pi's runtime-owned event bus, not environment
+  variables or a module singleton. Removing the adapter and reloading revokes
+  authority; an inherited approval variable grants nothing. Agent frontmatter
+  cannot approve extensions. Other models keep their existing loadout.
+- Provider identity (canonical entry plus a deterministic digest of every
+  recursively sorted `extensions/**/*.ts` production module, `package.json`,
+  and `package-lock.json`) is persisted with the loadout and
+  protected parent/chain authority. The adapter captures this identity at
+  activation; changes before the first child or a later resume fail closed.
+  Launch/resume also requires the live parent adapter. Old loadouts missing the
+  required `providerExtensions` field are rejected, not migrated.
+  Installed transitive dependency contents remain trusted: the digest binds the
+  dependency lock, not every file under `node_modules`. The manifest must expose
+  exactly the reviewed entry. Regular `README.md` documentation is explicitly
+  allowed and excluded from executable identity; symlinked documentation,
+  symlinks, special files, and other non-`.ts` files in the production extension
+  tree are rejected. After an intentional
+  adapter/lock update, launch a newly approved child instead of resuming the old
+  loadout.
 - Project-local agents (`.pi/agents/`) are repo-controlled prompts; they're only
   loaded with `agentScope: "project"`/`"all"` and prompt for confirmation by
   default.
@@ -409,6 +433,11 @@ unless the session was interrupted.
 
 ## Runtime requirements
 
+- **Breaking minimum: Pi 0.99.1 or newer.** Guard and agent-catalog instructions
+  require structured prompt sections so transcript-based providers receive them
+  without duplicates. Missing/invalid structured sections throw an error; there
+  is no legacy text-prompt fallback. Development Pi dependencies are pinned to
+  the minimum supported host.
 - `tmux` is required; there is no headless fallback. Start Pi inside tmux,
   for example `tmux new -A -s pi 'pi'`.
 - Resumes use the original persisted loadout and cannot widen profile, tool,

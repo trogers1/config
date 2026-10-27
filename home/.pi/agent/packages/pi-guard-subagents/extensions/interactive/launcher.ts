@@ -3,6 +3,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { createPane, paneExists, requireTmux } from "./tmux.ts";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { requireActiveProviderExtensions } from "./provider-extensions.ts";
 import { addChild, loadRegistry, registryPath, updateChild } from "./registry.ts";
 import {
 	atomicJsonWrite,
@@ -14,6 +16,7 @@ import {
 } from "./types.ts";
 
 interface LaunchChildOptions {
+	events: ExtensionAPI["events"];
 	parentCwd: string;
 	runId: string;
 	parentSession: string;
@@ -80,7 +83,13 @@ export function buildChildCommand({
 	pi?: string | undefined;
 }): string[] {
 	const args = [pi, "--session-id", sessionId, "--no-extensions", "--tools", loadout.toolAllowlist.join(",")];
-	for (const extension of [loadout.guardExtensionPath, loadout.childRuntimePath, ...loadout.backingExtensionPaths])
+	validateLoadout({ value: loadout });
+	for (const extension of [
+		loadout.guardExtensionPath,
+		loadout.childRuntimePath,
+		...loadout.backingExtensionPaths,
+		...loadout.providerExtensions.map((entry) => entry.path),
+	])
 		args.push("-e", extension);
 	if (loadout.model) args.push("--model", loadout.model);
 	if (loadout.thinking) args.push("--thinking", loadout.thinking);
@@ -143,7 +152,10 @@ export function launchChild(options: LaunchChildOptions): ChildRecord {
 	}
 	const root = path.join(options.parentCwd, ".pi", "orchestration", options.runId);
 	const sessionId = options.sessionId ?? randomUUID();
-	const loadout = options.loadoutPath ? validateResumeLoadout(options.loadoutPath) : validateLoadout(options.loadout);
+	const loadout = options.loadoutPath
+		? validateResumeLoadout({ file: options.loadoutPath })
+		: validateLoadout({ value: options.loadout });
+	requireActiveProviderExtensions({ events: options.events, loadout });
 	const loadoutPath = options.loadoutPath ?? path.join(root, `loadout-${name}-${sessionId}.json`);
 	const trustedAuthority = authorityPath(options.runId, name);
 	atomicJsonWrite(trustedAuthority, immutableLoadout(loadout));
@@ -190,7 +202,8 @@ export function launchChild(options: LaunchChildOptions): ChildRecord {
 
 export function resumeChild(options: LaunchChildOptions & { sessionId: string; loadoutPath: string }): ChildRecord {
 	requireTmux();
-	const loadout = validateResumeLoadout(options.loadoutPath);
+	const loadout = validateResumeLoadout({ file: options.loadoutPath });
+	requireActiveProviderExtensions({ events: options.events, loadout });
 	const canonicalAuthority = authorityPath(options.runId, safeName(options.name));
 	const file = options.registryFile ?? registryPath(options.parentCwd, options.runId);
 	const existingRecord = fs.existsSync(file)
@@ -297,7 +310,7 @@ export function resumeChild(options: LaunchChildOptions & { sessionId: string; l
 	}
 }
 
-export function validateResumeLoadout(file: string): GuardedInteractiveLoadout {
+export function validateResumeLoadout({ file }: { file: string }): GuardedInteractiveLoadout {
 	if (!fs.existsSync(file)) throw new Error(`Refusing resume: loadout is absent: ${file}`);
 	let value: unknown;
 	try {
@@ -305,5 +318,5 @@ export function validateResumeLoadout(file: string): GuardedInteractiveLoadout {
 	} catch {
 		throw new Error(`Refusing resume: malformed loadout: ${file}`);
 	}
-	return validateLoadout(value);
+	return validateLoadout({ value });
 }

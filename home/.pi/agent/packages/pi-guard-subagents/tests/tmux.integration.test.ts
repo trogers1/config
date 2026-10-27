@@ -114,6 +114,7 @@ describe("installed Pi guarded child lifecycle", () => {
 			childRuntimePath: join(process.cwd(), "extensions/interactive/child-runtime.ts"),
 			backingExtensionPaths: [],
 			backingExtensionDigests: [],
+			providerExtensions: [],
 			model: "local/deterministic",
 			thinking: null,
 			systemPromptMode: null,
@@ -217,6 +218,7 @@ describe("installed Pi extension loading smoke", () => {
 				[
 					"--mode",
 					"rpc",
+					"--no-extensions",
 					"--no-session",
 					"-e",
 					join(process.cwd(), "extensions/index.ts"),
@@ -226,8 +228,9 @@ describe("installed Pi extension loading smoke", () => {
 				{
 					input: '{"type":"get_state"}\n',
 					encoding: "utf8",
-					stdio: ["pipe", "ignore", "ignore"],
-					env: { ...process.env, PI_GUARD_TEST_INIT_MARKER: marker },
+					stdio: ["pipe", "pipe", "pipe"],
+					timeout: 15_000,
+					env: { ...process.env, PI_CODING_AGENT_DIR: join(work, "agent-config"), PI_GUARD_TEST_INIT_MARKER: marker },
 				},
 			);
 			expect(readFileSync(marker, "utf8")).toContain("initialized");
