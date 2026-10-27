@@ -14,29 +14,12 @@ I like comprehensive, behavioral testing that is as production-like as possible.
 
 WITH THAT IN MIND, please review the testing and implementation of the current branch to meet the provided AC. Assume you are reviewing it compared to the remote `staging` branch unless otherwise specified.
 
-## Parallel reviewers and agreed changes
+## Shared review policy
 
-By default, delegate each review to **two independent reviewer agents running in
-parallel** over the same change, acceptance criteria, and comparison baseline.
-Give both the same repository instructions and review constraints. Reviewers are
-read-only: neither edits the implementation. The orchestrator owns shared review
-artifacts such as `flow.json` and `flow.html`; reviewers report proposed corrections
-rather than concurrently editing those files. If two reviewers are unavailable,
-report that limitation and ask before substituting a single review.
-
-Collect both independent reports before reconciling findings. Have each reviewer
-assess findings raised only by the other, using concrete code paths and evidence.
-Implement a review-requested change **only when both reviewers explicitly agree
-on the finding and the proposed correction**, and the change is within the user's
-authorized scope. Silence, omission, or matching severity labels are not agreement.
-Keep corrections targeted; agreement on a defect does not authorize unrelated
-refactoring or additional features. Review consensus alone does not authorize
-implementation during a review-only request or bypass human approval gates.
-
-If reviewers disagree or cannot agree on a correction, present the finding,
-evidence, and disagreement to Taylor; do not implement it unilaterally. Report
-agreed findings and unresolved disagreements separately. Verify any authorized
-agreed corrections with the relevant checks before marking them resolved.
+Before delegating review, read and follow `../review-policy/SKILL.md` for reviewer
+independence, parallel dispatch, finding reconciliation, correction authorization,
+and final acceptance. This skill adds the explanatory review and artifact workflow
+below; it does not define a separate reviewer policy.
 
 ## Jira information
 

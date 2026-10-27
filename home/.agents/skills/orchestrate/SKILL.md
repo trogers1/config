@@ -80,13 +80,9 @@ Workers report back in their tool result (summary, files changed, session id, co
 2. **`git diff --stat`** — sane shape and size?
 3. **Run the verification** — the task's test/typecheck command, if the worker couldn't or you distrust the claim.
 4. **Full diff read** — only for risky or core-path changes.
-5. **Parallel reviewer agents** — generally use two independent, read-only
-   `reviewer` agents in parallel over the same change and requirements. Follow
-   `../flow-review/SKILL.md`'s **Parallel reviewers and agreed changes** policy:
-   reconcile both reports, obtain explicit agreement from both reviewers on each
-   finding and proposed correction, and implement only agreed changes within the
-   authorized scope. Bring unresolved disagreements to Taylor instead of applying
-   them unilaterally. Review-only work still requires implementation authorization.
+5. **Reviewer agents** — read and follow `../review-policy/SKILL.md` before
+   delegating review. That skill owns reviewer independence, parallel dispatch,
+   finding reconciliation, correction authorization, and final acceptance.
 
 Do NOT re-read handoff files as a matter of course — the tool result already contains what you need. Handoffs are for Taylor and for crash recovery.
 

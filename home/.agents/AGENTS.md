@@ -2,7 +2,7 @@
 
 Always-on preferences for every repository. Project instructions take
 precedence. Detailed guidance lives in the `code` and `types` snippets and the
-`testing` and `flow-review` skills.
+`testing`, `review-policy`, and `flow-review` skills.
 
 ## Implementation
 
@@ -17,6 +17,14 @@ precedence. Detailed guidance lives in the `code` and `types` snippets and the
 - In TypeScript, JavaScript, and Python, give functions we own a single object
   argument with named properties (keyword-only arguments in Python).
 - Reuse and centralize existing logic rather than writing a parallel version.
+
+## Review delegation
+
+- Before delegating code review, read the `review-policy` skill. Default to two
+  independent, read-only reviewers running in parallel over the same frozen
+  changes. Resolve findings from both before declaring review complete; repeated
+  reviews by one agent do not count as two. If two reviewers are unavailable,
+  disclose the limitation and ask before substituting one.
 
 ## Testing
 
