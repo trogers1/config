@@ -72,6 +72,11 @@ ln -s "$REPO_DIR/home/.pi/agent/skills" "$HOME_DIR/.pi/agent/skills"
 run_shared >/dev/null
 run_shared --verify >/dev/null
 assert_absent "$HOME_DIR/.pi/agent/skills"
+assert_equals "$(readlink "$HOME_DIR/.pi/agent/packages/pi-claude")" "$REPO_DIR/home/.pi/agent/packages/pi-claude"
+assert_absent "$HOME_DIR/.pi/agent/claude-bridge.json"
+# Bootstrap is explicit and never authenticates Claude or installs host peers.
+bootstrap_plan="$(run_shared --dry-run --bootstrap-pi-deps)"
+grep -Fq 'pi-claude && npm ci --ignore-scripts --legacy-peer-deps)' <<<"$bootstrap_plan" || fail 'bridge bootstrap did not suppress scripts/host peers'
 assert_equals "$(readlink "$HOME_DIR/.agents/skills")" "$REPO_DIR/home/.agents/skills"
 assert_equals "$(readlink "$HOME_DIR/.claude/skills")" "$REPO_DIR/home/.claude/skills"
 assert_exists "$HOME_DIR/.claude/skills/flow-review/SKILL.md"
@@ -171,6 +176,7 @@ run_shared >/dev/null
 edit_settings 's["theme"] = "light"; s["hooks"]["Stop"] = [{"hooks": [{"type": "command", "command": "user-stop"}]}]'
 run_shared --uninstall >/dev/null
 assert_absent "$HOME_DIR/.pi/agent/settings.json"
+assert_absent "$HOME_DIR/.pi/agent/packages/pi-claude"
 assert_absent "$HOME_DIR/.claude/skills"
 assert_absent "$HOME_DIR/bin/dev"
 assert_equals "$(python3 -c 'import json, sys; print(json.dumps(json.load(open(sys.argv[1])), sort_keys=True))' "$HOME_DIR/.claude/settings.json")" \

@@ -36,7 +36,7 @@ $Operation = if ($Verify) { 'verify' } elseif ($Status) { 'status' } elseif ($Un
 
 $PiLinks = @('settings.json', 'models.json', 'usage')
 $AgentLinks = @('skills', 'snippets')
-$PackageLinks = @('pi-guard', 'pi-webfetch', 'pi-usage', 'pi-guard-subagents', 'pi-skill-toggle')
+$PackageLinks = @('pi-claude', 'pi-guard', 'pi-webfetch', 'pi-usage', 'pi-guard-subagents', 'pi-skill-toggle')
 $ExtensionLinks = @('ask-user-question.ts', 'prompt-snippets')
 $ApprovedConflicts = @{}
 
@@ -119,7 +119,9 @@ function Test-SymlinkSupport {
 function Test-PackageDependencies([string]$Package) {
   $directory = Join-Path $RepoDir "home\.pi\agent\packages\$Package"
   Invoke-InDirectory $directory {
-    & npm ls --omit=dev --depth=0 *> $null
+    $dependencyFlags = @('--omit=dev', '--depth=0')
+    if ($Package -eq 'pi-claude') { $dependencyFlags += '--omit=peer' }
+    & npm ls @dependencyFlags *> $null
     return $LASTEXITCODE -eq 0
   }
 }
@@ -195,7 +197,10 @@ function Verify-Link([string]$Source, [string]$Target, [string]$Label) {
 function Bootstrap-Dependencies {
   foreach ($package in $PackageLinks) {
     $directory = Join-Path $RepoDir "home\.pi\agent\packages\$package"
-    Invoke-Plan { Invoke-InDirectory $directory { Say "Bootstrapping Pi package dependencies: $package"; & npm ci; if ($LASTEXITCODE -ne 0) { throw "npm ci failed for $package" } } } "(cd $directory && npm ci)"
+    # The owned SDK provider needs no lifecycle scripts; Pi supplies its peers.
+    $installFlags = @()
+    if ($package -eq 'pi-claude') { $installFlags = @('--ignore-scripts', '--legacy-peer-deps') }
+    Invoke-Plan { Invoke-InDirectory $directory { Say "Bootstrapping Pi package dependencies: $package"; & npm ci @installFlags; if ($LASTEXITCODE -ne 0) { throw "npm ci failed for $package" } } } "(cd $directory && npm ci $($installFlags -join ' '))"
   }
   $webfetch = Join-Path $RepoDir 'home\.pi\agent\packages\pi-webfetch'
   $playwright = Join-Path $webfetch 'node_modules\.bin\playwright.cmd'

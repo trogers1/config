@@ -6,3 +6,4 @@ __pycache__/
 **.sqlite
 .pi/orchestration/
 /home/.claude/skills/synced
+/.pi

@@ -9,6 +9,7 @@
   "sessionShareDestination": "gist",
   "packages": [
     "./packages/pi-guard",
+    "./packages/pi-claude",
     "./packages/pi-webfetch",
     "./packages/pi-usage",
     "./packages/pi-guard-subagents",

@@ -134,7 +134,8 @@ packages, bootstrap those dependencies explicitly:
 ./setup.sh --bootstrap-pi-deps
 ----
 
-That command runs `npm ci` in each bundled Pi package and downloads Playwright
+That command runs `npm ci` in each bundled Pi package (with
+`--ignore-scripts --legacy-peer-deps` for the locally owned `pi-claude` SDK provider) and downloads Playwright
 Chromium for `pi-webfetch`; it is never implicit. Use `--dry-run` to print the
 planned changes, `--status` to inspect current managed links/wrappers, and
 `--uninstall` to remove unchanged installer-owned artifacts.
@@ -178,7 +179,7 @@ For native Windows, run the PowerShell shared installer from a PowerShell prompt
 It installs the same explicitly listed shared Pi resources (settings, models,
 skills, usage, packages, and extensions), with the same
 conflict backup, `-DryRun`, `-NonInteractive`, `-Status`, `-Verify`,
-`-Uninstall`, and explicit `-BootstrapPiDeps` behavior. It requires Git, Pi, Node/npm 22.19+,
+`-Uninstall`, and explicit `-BootstrapPiDeps` behavior. It requires Git, Pi 1.3+, Node/npm 22.19+,
 and permission to create symbolic links. Enable Windows Developer Mode or run
 PowerShell elevated if its symbolic-link preflight fails. Both team installers
 leave `~/.pi/agent/pi-guard/profiles.jsonc` user-owned; Pi falls back to its

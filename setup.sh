@@ -23,6 +23,7 @@ PI_LINKS=(
   "usage"
 )
 PI_PACKAGE_LINKS=(
+  "pi-claude"
   "pi-guard"
   "pi-webfetch"
   "pi-usage"
@@ -222,7 +223,9 @@ preflight() {
   if [ "$BOOTSTRAP" -eq 0 ]; then
     local missing=0 package
     for package in "${PI_PACKAGE_LINKS[@]}"; do
-      if ! (cd "$REPO_DIR/home/.pi/agent/packages/$package" && npm ls --omit=dev --depth=0 >/dev/null 2>&1); then
+      local -a dependency_check=(--omit=dev --depth=0)
+      if [ "$package" = "pi-claude" ]; then dependency_check+=(--omit=peer); fi
+      if ! (cd "$REPO_DIR/home/.pi/agent/packages/$package" && npm ls "${dependency_check[@]}" >/dev/null 2>&1); then
         warn "Pi package dependencies are missing or invalid: $package (run ./setup.sh --bootstrap-pi-deps)"
         missing=1
       fi
@@ -621,12 +624,16 @@ uninstall_wrapper() {
 
 bootstrap_dependencies() {
   local package
+  local -a install_flags
   for package in "${PI_PACKAGE_LINKS[@]}"; do
+    install_flags=(ci)
+    # The owned SDK provider needs no lifecycle scripts; Pi supplies its peers.
+    if [ "$package" = "pi-claude" ]; then install_flags+=(--ignore-scripts --legacy-peer-deps); fi
     if [ "$DRY_RUN" -eq 1 ]; then
-      say "PLAN: (cd $REPO_DIR/home/.pi/agent/packages/$package && npm ci)"
+      say "PLAN: (cd $REPO_DIR/home/.pi/agent/packages/$package && npm ${install_flags[*]})"
     else
       say "Bootstrapping Pi package dependencies: $package"
-      (cd "$REPO_DIR/home/.pi/agent/packages/$package" && npm ci)
+      (cd "$REPO_DIR/home/.pi/agent/packages/$package" && npm "${install_flags[@]}")
     fi
   done
   if [ "$DRY_RUN" -eq 1 ]; then

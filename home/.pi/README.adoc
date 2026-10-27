@@ -4,6 +4,7 @@ This repo manages selected global pi agent config:
 
 * `home/.pi/agent/settings.json` → `~/.pi/agent/settings.json`
 * Entries in `home/.pi/agent/extensions` → matching entries in `~/.pi/agent/extensions` (preserving other local extensions)
+* `home/.pi/agent/packages/pi-claude` → `~/.pi/agent/packages/pi-claude`
 * `home/.pi/agent/packages/pi-guard` → `~/.pi/agent/packages/pi-guard`
 * `home/.pi/agent/packages/pi-guard-subagents` → `~/.pi/agent/packages/pi-guard-subagents`
 * `home/.pi/agent/packages/pi-skill-toggle` → `~/.pi/agent/packages/pi-skill-toggle`
@@ -35,3 +36,268 @@ conflict-backup, status, and uninstall behavior.
 For a native Windows Pi-only setup, run `.\setup.ps1` in PowerShell from the
 repository root. It has the same explicit shared Pi resource surface but excludes
 the Bash/tmux workflow and requires permission to create Windows symbolic links.
+
+== Claude Code provider
+
+`pi-claude` owns its provider, MCP rendezvous, stream conversion, and Claude
+session-file reconstruction. Its runtime dependencies are the official
+`@anthropic-ai/claude-agent-sdk` 0.3.293 and MCP SDK 1.31.0, not an upstream
+bridge or session-conversion library. The official SDK controls the user's
+separately installed Claude CLI via `pathToClaudeCodeExecutable`; its packaged
+runtime is never a fallback. There is no token extraction, direct OAuth client, identity spoofing,
+billing-header workaround, alternative API transport, or provider fallback.
+
+Select `claude-bridge/<model>` with `/model`, or use
+`pi --provider claude-bridge --model haiku`. The provider ID remains stable for
+guarded subagents; it does not imply an upstream implementation. The latest Pi-catalog model ID in each supported family
+and the runtime aliases `haiku`, `sonnet`, and `opus` are exposed. Pricing comes
+from Pi's Anthropic catalog, and context metadata is conservatively capped at
+200K tokens. There is no plan setting, automatic one-million-token opt-in, or
+extra-usage opt-in. OpenAI remains the shared default; model tiers are unchanged.
+
+=== Installed Claude executable
+
+Install and authenticate Claude Code separately using its official tooling.
+By default, selection searches `PATH` for `claude` (`claude.exe` on Windows),
+considering only absolute entries and excluding executables in the actual session
+project directory or resolving into it. Empty/relative entries are deliberately
+ignored; a repository-local executable cannot become the runtime through `.`.
+Alternatively, set `CLAUDE_BRIDGE_EXECUTABLE` in Pi's launching user environment
+to an absolute executable path outside that project. Empty/relative or invalid
+explicit overrides fail; no machine-specific path is stored in this repository.
+Project settings and per-request environment cannot select the executable.
+
+Selection resolves symlinks to a canonical regular, readable executable and
+passes that exact path to the SDK on every query. A trusted provider request
+performs a bounded, output-limited `--version` metadata check, not a prompt or
+authentication probe. Version metadata is cached per extension instance and
+refreshed if the selected file identity changes. Discovery alone never launches
+Claude. Missing/unreadable executables and invalid metadata fail without trying
+the SDK's packaged runtime or another API.
+
+The detected CLI version is compared with the installed SDK package's
+`claudeCodeVersion`. A mismatch warns once for the selected executable identity;
+it is not silently labeled compatible or automatically downgraded. Even an exact
+version match does not establish private-session or streaming/MCP compatibility.
+Real installed-runtime acceptance requires separately approved checks; SDK and
+CLI upgrades must be evaluated together. Native Windows runtime support remains
+unverified.
+
+=== Tool and configuration boundary
+
+Delegation requires the actual session's Pi project trust, including when its
+working directory differs from the launch directory. Model-requested tools can
+only rendezvous with Pi's normal tool execution, validation, and guard events.
+Claude native tools are disabled (`tools: []`); only an in-process MCP server is
+configured with `strictMcpConfig: true`. Tool batches are matched by Claude's
+pinned `_meta["claudecode/toolUseId"]` convention, names, and arguments, never
+by dispatch order. Pi executes the complete validated streamed batch through
+its guards without waiting for every MCP handler: a serialized client may await
+A's result before dispatching B. Guarded results queue by ID until their matching
+handlers arrive. Missing/inconsistent late dispatch metadata fails the query;
+it cannot undo already completed guarded work. No mutating tool is falsely
+advertised as read-only. Pi permission-denial results return to Claude as errors.
+
+`settingSources: []` excludes ordinary filesystem settings. Explicit isolation
+settings disable ordinary hooks, bundled skills, auto-memory, remote control,
+and workflows. Shared inline `--settings` also sets `syncClaudeAiSkills: false`
+and `syncClaudeAiPlugins: false`: the SDK documents invocation-only suppression
+of downloads and hiding of already-synced skills/plugins, without moving or
+deleting their files. No user or managed setting is rewritten.
+
+`plugins: []` adds no SDK plugins; it is not a discovery-disable switch.
+Invocation settings explicitly disable `cc-plugin-agents-md@builtin`,
+`cc-plugin-telemetry@builtin`, and `cc-plugin-plugin-authoring@builtin` and set
+`skillOverrides` to `off` for `design`, `doctor`, and `plugin-authoring`.
+Managed policy retains higher precedence. Disabling the telemetry plugin does
+not promise that all native runtime telemetry or network activity ceases.
+
+Initialization requires no advertised skills and either no plugins or exactly
+one native `cc-plugin-sec-default` record, with source exactly
+`cc-plugin-sec-default@builtin` and path exactly the native `builtin` sentinel.
+Raw metadata is schema-validated; missing/foreign provenance, duplicate or extra
+plugins, unexpected record fields, and advertised skills fail closed. There is
+no general `@builtin` allowance. If managed policy requires another component,
+the bridge remains blocked rather than overriding it. `skills: []` alone limits
+main-session prompt loading; the sync and suppression settings do not prove
+that every discovery source or hidden skill has been removed.
+
+Security-default is executable organizational security interposition in the
+trusted Claude runtime, not a Pi-guarded action tool. The bridge never disables
+or seats it, changes managed plugin ordering, or excludes managed instructions.
+The exact exception and optional-component suppression are offline-tested, not
+yet verified by a live acceptance run.
+
+The provider has no AskClaude tool, project-controlled executable override,
+arbitrary SDK arguments, or project config escape hatch. Old bridge
+configuration is not read and should be removed.
+
+This is *not an absolute sandbox*. The installed official runtime, its startup
+and authentication machinery, and administrator-controlled managed policy are
+trusted. Managed hooks may run despite a non-managed `disableAllHooks` setting;
+init validation cannot retroactively prevent startup execution. Enterprise
+approval and account eligibility must be established independently.
+
+=== Authentication, policy, and billing
+
+Authenticate Claude Code separately through its official tooling using the
+intended account/backend. Setup never authenticates, reads the keychain,
+copies tokens, or writes Pi authentication records. The provider lets the
+official runtime perform authentication and surfaces its failures without an
+API fallback. Model availability in Pi does not prove Claude authentication.
+
+Before CLI metadata or query startup, the provider rejects reviewed credential,
+endpoint, cloud-provider and gateway selectors from both the launching and
+request environments. Errors name variables only, never values; configuration
+is not silently stripped. This includes the SDK's Anthropic AWS, Anthropic
+Google Cloud and Mantle routes, not just Bedrock/Vertex/Foundry. Ordinary
+environment is preserved with fixed isolation flags and stable SDK metadata.
+
+For each new SDK query, a bounded metadata-only `claude auth status --json`
+command must report `loggedIn: true` and the documented `authMethod: "claude.ai"`.
+Saved Console/API-key, helper, explicit OAuth-token, third-party, unauthenticated,
+and unknown/malformed status reports fail without dispatching a prompt. Status
+uses the same selected canonical executable, cwd, normalized environment,
+`--setting-sources ''`, and shared inline `--settings` isolation value as the SDK.
+The public command/flag contracts are documented at
+https://code.claude.com/docs/en/cli-reference#cli-commands[CLI commands] and
+https://code.claude.com/docs/en/cli-reference#cli-flags[CLI flags]. No newer
+`configDirectory` output field is required. An unset ambient `CLAUDE_CONFIG_DIR`
+stays unset in both commands: exporting even the default filesystem path can
+change the runtime's auth/keychain context. Explicit user-owned paths are
+normalized; request/project overrides are rejected. The default reconstruction
+storage path is derived separately without exporting it as auth configuration.
+Child-command failures expose only validated exit/errno/signal metadata, not
+raw command errors, output, account details, or credentials.
+
+The SDK then initializes with its asynchronous input held closed. Its public
+`accountInfo()` must corroborate `apiProvider: "firstParty"`; its optional
+`apiKeySource` must be absent or exactly `"none"`. Explicit API/helper sources,
+unknown values, and null fail. The public `AccountInfo` contract marks this
+source optional; a parent-controlled metadata-only observation of CLI 2.1.303 /
+SDK 0.3.293 reported `firstParty` with the source absent after the same-context
+CLI status positively reported `claude.ai`. This is the current supported
+contract, not a legacy compatibility exception.
+
+That CLI status gate must succeed before SDK metadata is considered. Neither
+source absence nor `"none"` independently proves OAuth; `"none"` also includes
+bearer-token/cloud authentication. No user input is yielded until both checks
+succeed, including requests with reconstructed history. Rejected metadata,
+initialization failure, timeout, and abort close the query without releasing
+input. Native parked tool continuations retain their already-validated query.
+No private auth files or token-source strings are interpreted.
+
+This checks a documented authentication route, not Enterprise entitlement or a
+billing guarantee. Status and SDK initialization are separate observations, not
+an atomic credential lock; administrator-managed policy/environment and the
+installed runtime remain trusted. They must honor the supplied settings and
+report provenance honestly. SDK metadata disagreement fails closed, but this is
+not independent enforcement against a hostile runtime or changing managed
+policy. Enterprise approval, account eligibility, subscription billing, and
+quota eligibility require independent confirmation. Avoid runtime
+debug/recording options unless deliberately accepting sensitive logs.
+
+Pi usage and costs are catalog-priced estimates, not subscription-quota data.
+The existing `Claude` usage limit applies to `anthropic`, not `claude-bridge`.
+The official runtime's quota/rate-limit failures remain authoritative.
+
+=== Sessions and private-format risk
+
+Pi's authoritative conversation is reconstructed into fresh provider-owned,
+private, atomically published Claude JSONL files. The official SDK resumes that
+full file path with `forkSession: true`, and its new session ID is kept separate
+from Pi IDs. Text, images, tool IDs/results/error flags, and eligible native
+signed thinking retain their structured roles; history is not flattened into a
+text checkpoint. Incompatible signatures or unsupported history fail loudly.
+Pi system/tool changes are replayed through Pi's normalized current prompt and
+tool state; Claude does not support historical in-place Pi system messages.
+
+A live SDK query stays open across Pi tool batches, so execution and approvals
+remain entirely in Pi. Cancellation and settle/shutdown close the held query
+and resolve pending MCP calls with errors. After a successful turn, one native
+SDK checkpoint is retained in memory. An ordinary unchanged append resumes its
+SDK-generated ID only after matching authoritative Pi history, effective wire
+history, and request configuration. Branch/rewrite divergence, changed context,
+uncertain completion, or a fresh extension runtime requires reconstruction;
+missing native-session errors are surfaced rather than silently retried.
+Reconstruction can lose cache hits and costs startup time/disk space. Restarting
+after completed tool results adds an explicit continuation instruction after
+reconstructed history.
+
+Known failed/aborted attempts use an explicit recovery projection. Empty failed
+transport markers and unresolved calls attributable to an interrupted assistant
+are excluded with content-free diagnostics. Observable interrupted content and
+actual completed tool results remain structured; no successful outcome or fake
+tool result is invented. Ordinary unmatched calls still fail. Summary attribution
+lasts for the whole compaction/tree operation, including split summaries/retries.
+
+Thinking uses the selected catalog's capability and level mappings. Adaptive
+families receive adaptive thinking and validated effort; older families such as
+Haiku use fixed-budget enabled thinking, with an explicit Pi budget when supplied
+or the official runtime's default otherwise. Unsupported combinations fail.
+
+Claude's on-disk format is private and can change. At session startup a bounded,
+read-only checker validates the latest actual main Claude session against
+owned TypeBox schemas and warns on detected drift. Diagnostics contain only
+record type, line number, and redacted path metadata, never conversation
+content. No available session or a matching schema is not proof of runtime
+compatibility. Tests use synthetic temporary sessions, never private transcripts.
+Reconstructed and runtime-forked files contain sensitive conversation data and
+consume disk; retention is not automatically managed by this package.
+
+=== Instrumentation and verification
+
+Payload hooks receive the complete model-directed conversation: validated
+`{systemPrompt, history, content}` requests or
+`{kind: "tool-results", systemPrompt, history, results}` deliveries. Historical
+roles, provenance and identities cannot be forged; structured content can be
+redacted by in-place mutation or replacement. Only validated transformed history
+can enter a reconstruction file. The current extension instance retains its
+effective wire prefix, so a later ordinary turn or forced rebuild cannot restore
+values already redacted from that prefix. The ledger is not a durable privacy
+policy: after reload/reopen, hooks must apply their policy to the complete
+historical envelope as well as new content. Rewriting already-sent history while
+tools are parked closes/reconstructs rather than pretending a new MCP result can
+change old SDK context. Isolation options cannot be replaced through payload
+hooks. Raw SDK event observers are awaited in order. The SDK does not expose HTTP response headers/status, so this provider
+does not synthesize `onResponse` events. Custom fetch, headers, sampling controls,
+and explicit HTTP retry-count controls are rejected. Pi always supplies HTTP
+`timeoutMs` and `maxRetryDelayMs` hints; these are accepted but cannot control
+SDK-internal HTTP timeouts or retry delays. Exact prompt-cache retention,
+cache warming, arbitrary native Claude tools/plugins/skills, and undocumented mid-turn
+steering are not offered.
+
+Explicit dependency bootstrap uses `npm ci --ignore-scripts --legacy-peer-deps`;
+Pi supplies host peers rather than installing a second Pi runtime. Refresh an
+outdated lockfile only with an explicitly authorized
+`npm install --ignore-scripts --legacy-peer-deps` in the package directory.
+Set `PI_TEST_AGENT_PACKAGE` to the absolute installed Pi 0.99.1 package directory
+before running `npm test` from `home/.pi/agent/packages/pi-claude`. Unset
+`PI_CLAUDE_INIT_PROBE`, `PI_CLAUDE_INIT_DIAGNOSTIC`, and `PI_CLAUDE_LIVE_SMOKE`
+for offline verification. For example:
+
+[source,sh]
+----
+PI_TEST_AGENT_PACKAGE="/absolute/path/to/@earendil-works/pi-coding-agent" npm test
+----
+
+`PI_TEST_BIN` selects its CLI when the ambient `pi` is not that installed version. `PI_TEST_TYPESCRIPT` and
+`PI_TEST_TOOLCHAIN` can select existing verification tools without installing
+anything. The standard `pretest` checks types, lint, dependency boundaries,
+unused code, and formatting without vendor-source exemptions.
+
+Behavioral tests load the actual extension through real Pi
+`DefaultResourceLoader`/`createAgentSession` wiring, fake only the external
+official SDK query boundary, connect a real in-memory MCP transport, and use a
+synthetic executable permitting only version and isolated auth-status metadata. They must not
+authenticate, launch a real Claude CLI, read private sessions, or make billable
+requests. Fake-boundary checks do not establish live runtime compatibility,
+Enterprise eligibility, quota behavior, or Windows support. A separately
+approved, opt-in live acceptance probe is not part of ordinary tests.
+
+The no-input initialization probe, one-turn identity diagnostic, and write/read
+acceptance test have separate opt-ins and authorization. The identity diagnostic
+blocks all Pi actions and deliberately stops at approved empty or singleton
+initialization; other component inventories reject. Capturing identities is not
+bridge acceptance or proof that native startup/model work incurred no usage.
+Policy/code approval never implicitly authorizes another live invocation.
