@@ -73,6 +73,27 @@ programming but is unfamiliar with this change. Comprehensive inspection does no
 require a comprehensive walkthrough. Never make the explanation more elaborate
 than the change. Many changed files may implement one simple idea.
 
+### Use conversational, casual language throughout
+
+Write like a helpful teammate talking through the change, not a formal technical
+report. This applies to the whole review: titles, summaries, theme and example
+explanations, findings, diagram labels, and deep dives—not just the opening.
+Prefer everyday words, short sentences, and concrete descriptions of what happens.
+Avoid jargon, dense noun phrases, and abstract architecture language when a plain
+explanation would be just as accurate. Casual does not mean vague: name the actual
+behavior, evidence, and consequences.
+
+Use specialized terminology or more sophisticated language when a highly specific
+technical detail needs it for accuracy. Explain unfamiliar terms in plain language
+when first used, and keep the surrounding explanation conversational. Preserve
+exact code symbols and established domain terms where precision matters; do not
+replace them with misleading simplifications.
+
+For example, prefer “The caller now checks the input before saving it” over
+“Validation responsibility is relocated to the persistence boundary.” Before
+finishing, reread the prose and simplify anything that sounds more complicated
+than the behavior it describes.
+
 ### Start with a conversational narrative
 
 The first screen should explain, without requiring clicks:

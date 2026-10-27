@@ -2,6 +2,29 @@
   "$schema": "../../packages/pi-guard/schemas/profiles.schema.json",
   "defaultProfile": "mcp",
   "rulesets": {
+    "flow-review": {
+      // Shared, preinstalled CLI only: rendering and --validate need no install.
+      "tools": {
+        "bash": [
+          {
+            "pattern": "node ~/.agents/skills/flow-review/dist/scripts/render_flow_html.js *",
+            "decision": "allow",
+          },
+          {
+            "pattern": "node /Users/*/.agents/skills/flow-review/dist/scripts/render_flow_html.js *",
+            "decision": "allow",
+          },
+        ],
+      },
+      // Bash operands use absolute path rules; ~ is not expanded in patterns.
+      "writePaths": [
+        {
+          "pattern": "/Users/*/.agents/skills/flow-review/dist/scripts/render_flow_html.js",
+          "decision": "allow",
+          "contexts": ["bash"],
+        },
+      ],
+    },
     "infra-mutation-deny": {
       "tools": {
         "bash": [
@@ -620,6 +643,7 @@
         "ruleset:vitest",
         "customruleset:infra-mutation-deny",
         "gitlab-skills",
+        "customruleset:flow-review",
       ],
       "sandbox": {
         "network": "allow",
