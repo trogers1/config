@@ -38,6 +38,8 @@ import {
   type SessionStartEvent,
   type ToolCallEvent,
   type ToolCallEventResult,
+  type ToolResultEvent,
+  type ToolResultEventResult,
   type UserBashEvent,
   type UserBashEventResult,
 } from "@earendil-works/pi-coding-agent";
@@ -377,6 +379,10 @@ type GuardExtensionAPI = Omit<
     event: "tool_call",
     handler: ExtensionHandler<ToolCallEvent, ToolCallEventResult>,
   ): void;
+  on(
+    event: "tool_result",
+    handler: ExtensionHandler<ToolResultEvent, ToolResultEventResult>,
+  ): void;
   getAllTools(): Array<{ name: string; description?: string }>;
 };
 
@@ -590,6 +596,15 @@ export default function (pi: GuardExtensionAPI) {
   // override delegates to it whenever sandboxing is disabled or explicitly
   // configured to fall back with a warning.
   const packageBashTool = createBashToolDefinition(startupCwd);
+  const sandboxApprovals = new Map<
+    ToolCallEvent["toolCallId"],
+    {
+      command: string;
+      cwd: string;
+      revision: typeof profileConfigRevision;
+      spec: Extract<SandboxResolution, { kind: "active" }>["spec"];
+    }
+  >();
   // Tool source metadata may change when Pi rebuilds its tool registry. This
   // marker survives those rebuilds and identifies this registered wrapper.
   const packageBashOwnershipMarker = "\n[pi-guard sandbox wrapper]";
@@ -2167,12 +2182,27 @@ The permissions gate remains loaded and will fail closed until the profile is co
     ...packageBashTool,
     description: `${packageBashTool.description}${packageBashOwnershipMarker}`,
     async execute(toolCallId, params, signal, onUpdate, ctx) {
+      const approval = sandboxApprovals.get(toolCallId);
+      sandboxApprovals.delete(toolCallId);
       if (!(await refreshOrPreserveConfiguration({ ctx }))) {
         return sandboxUnavailableResult(
           configurationErrorReason() ?? "Invalid permissions",
         );
       }
       const resolution = await resolveActiveSandbox(ctx.cwd ?? startupCwd);
+
+      if (
+        approval &&
+        (resolution.kind !== "active" ||
+          approval.command !== params.command ||
+          approval.cwd !== (ctx.cwd ?? startupCwd) ||
+          approval.revision !== profileConfigRevision ||
+          JSON.stringify(approval.spec) !== JSON.stringify(resolution.spec))
+      ) {
+        return sandboxUnavailableResult(
+          "Bash sandbox approval changed before execution; local fallback is forbidden. Re-evaluate the request.",
+        );
+      }
 
       if (resolution.kind === "none") {
         return await executeBashWithExitCode({
@@ -2216,6 +2246,9 @@ The permissions gate remains loaded and will fail closed until the profile is co
           sandboxedBash.execute(toolCallId, params, signal, onUpdate, ctx),
       });
     },
+  });
+  pi.on("tool_result", ({ toolCallId }) => {
+    sandboxApprovals.delete(toolCallId);
   });
   pi.registerShortcut("ctrl+shift+b", {
     description: "Show the active sandbox posture",
@@ -2507,6 +2540,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
           policyConfig.profiles[activeProfile].runtime.implicitAskDecision;
 
         if (isToolCallEventType("bash", event)) {
+          sandboxApprovals.delete(event.toolCallId);
           const command = event.input.command ?? "";
           const effectiveCwd = ctx.cwd ?? startupCwd;
           const scopeDecision = decideSubagentBashScope(
@@ -2567,6 +2601,14 @@ The permissions gate remains loaded and will fail closed until the profile is co
           if (isRestartOperation(gateResult)) return gateResult;
           if (gateResult) return gateResult;
 
+          if (sandboxResolution.kind === "active") {
+            sandboxApprovals.set(event.toolCallId, {
+              command: event.input.command,
+              cwd: effectiveCwd,
+              revision: evaluatedRevision,
+              spec: structuredClone(sandboxResolution.spec),
+            });
+          }
           return undefined;
         }
 

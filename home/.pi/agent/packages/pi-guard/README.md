@@ -276,6 +276,13 @@ macOS is the currently verified backend target and uses `sandbox-exec` through
 platform/backend either blocks Bash (the default) or emits a warning and falls
 back to local Bash when it explicitly sets `onUnavailable: "warn"`.
 
+An LLM Bash call approved with an active sandbox is bound to that call's
+command, working directory, policy revision, and sandbox specification. If those
+change before execution, the call fails and must be re-evaluated; it cannot use
+local fallback, including `onUnavailable: "warn"`. This does not remove explicit
+warn fallback for requests evaluated while the backend was already unavailable,
+and it does not relax dynamic-path or command-approval checks.
+
 The sandbox applies only to Bash execution. Pi's in-process `read`, `grep`,
 `find`, `ls`, `write`, and `edit` tools, custom tools, and other extensions
 remain outside this process boundary and continue through the ordinary

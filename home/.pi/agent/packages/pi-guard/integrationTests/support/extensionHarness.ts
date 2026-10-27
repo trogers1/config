@@ -16,6 +16,8 @@ import {
   type SessionStartEvent,
   type ToolCallEvent,
   type ToolCallEventResult,
+  type ToolResultEvent,
+  type ToolResultEventResult,
   type ToolDefinition,
   type UserBashEvent,
   type UserBashEventResult,
@@ -226,8 +228,12 @@ type HandledEvents = {
   session_shutdown: SessionShutdownEvent;
   before_agent_start: BeforeAgentStartEvent;
   tool_call: ToolCallEvent;
+  tool_result: ToolResultEvent;
   user_bash: UserBashEvent;
 };
+
+type HarnessToolCall = Omit<ToolCallEvent, "type" | "toolCallId"> &
+  Partial<Pick<ToolCallEvent, "toolCallId">>;
 
 type HandlerStore = {
   [K in keyof HandledEvents]: Array<
@@ -239,7 +245,9 @@ type HandlerStore = {
           ? ToolCallEventResult
           : K extends "user_bash"
             ? UserBashEventResult
-            : void
+            : K extends "tool_result"
+              ? ToolResultEventResult
+              : void
     >
   >;
 };
@@ -286,6 +294,15 @@ export function createExtensionHarness(
      * must match and every cancellation must be stated explicitly.
      */
     interactionScript?: ScriptedInteraction[];
+    /** Additional extensions, registered after Guard as in the real SDK. */
+    extensions?: Array<
+      (
+        api: Pick<
+          Parameters<typeof permissionsExtension>[0],
+          "on" | "registerTool"
+        >,
+      ) => void
+    >;
   } = {},
 ) {
   if (options.entries !== undefined && options.sessionManager !== undefined)
@@ -316,6 +333,7 @@ export function createExtensionHarness(
     session_shutdown: [],
     before_agent_start: [],
     tool_call: [],
+    tool_result: [],
     user_bash: [],
   };
   const commands = new Map<string, CommandRegistration>();
@@ -326,6 +344,13 @@ export function createExtensionHarness(
   let disposed = false;
   let disposalPromise: Promise<void> | undefined;
   let nextEntryId = entries.length + 1;
+  let nextToolCallId = 1;
+
+  function allocateToolCallId({
+    parentToolCallId,
+  }: Pick<ToolCallEvent, "parentToolCallId">) {
+    return `${parentToolCallId ?? "test-tool-call"}/${nextToolCallId++}`;
+  }
 
   function repeatCount(interaction: ScriptedInteraction): number {
     const repeat = interaction.repeat ?? 1;
@@ -945,6 +970,7 @@ export function createExtensionHarness(
   if (clearSubagentPermissibleGlobs)
     delete process.env.PI_SUBAGENT_PERMISSIBLE_GLOBS;
   permissionsExtension(pi as unknown as ExtensionAPI);
+  for (const extension of options.extensions ?? []) extension(pi);
   if (currentSubagentProfile === undefined) {
     delete process.env.PI_SUBAGENT_PROFILE;
   } else {
@@ -1039,12 +1065,14 @@ export function createExtensionHarness(
     return undefined;
   }
 
-  async function callTool(event: Omit<ToolCallEvent, "type" | "toolCallId">) {
+  async function callTool(event: HarnessToolCall) {
     ensureStarted("callTool");
     return await dispatchToolCall({
       ...event,
       type: "tool_call",
-      toolCallId: "test-tool-call",
+      toolCallId:
+        event.toolCallId ??
+        allocateToolCallId({ parentToolCallId: event.parentToolCallId }),
     });
   }
 
@@ -1052,18 +1080,22 @@ export function createExtensionHarness(
     name,
     params,
     options = {},
+    toolCallId = allocateToolCallId({}),
   }: {
     name: string;
     params: unknown;
     options?: { signal?: AbortSignal };
+    toolCallId?: ToolCallEvent["toolCallId"];
   }): Promise<AgentToolResult<unknown>> {
     ensureStarted("executeRegisteredTool");
     const tool = tools.get(name);
     if (!tool) throw new Error(`Tool not registered: ${name}`);
     if (!Value.Check(tool.parameters, params))
       throw new Error(`Invalid arguments for ${name}`);
-    return await tool.execute(
-      "test-tool-call",
+    if (typeof params !== "object" || params === null || Array.isArray(params))
+      throw new Error(`Tool arguments must be an object: ${name}`);
+    let result = await tool.execute(
+      toolCallId,
       params,
       options.signal,
       undefined,
@@ -1071,8 +1103,9 @@ export function createExtensionHarness(
         ...extensionContext,
         tools: [...tools.values()].map((registered) => ({
           ...registered,
-          execute: async (_id, input, signal) =>
+          execute: async (id, input, signal) =>
             await executeRegisteredTool({
+              toolCallId: id,
               name: registered.name,
               params: input,
               options: { signal },
@@ -1086,15 +1119,19 @@ export function createExtensionHarness(
           )
             throw new Error("Nested tool input must be an object");
           const args = { ...input };
+          const nestedToolCallId = allocateToolCallId({
+            parentToolCallId: toolCallId,
+          });
           const blocked = await dispatchToolCall({
             type: "tool_call",
-            toolCallId: "test-tool-call/1",
-            parentToolCallId: "test-tool-call",
+            toolCallId: nestedToolCallId,
+            parentToolCallId: toolCallId,
             toolName: name,
             input: args,
           });
           if (blocked?.block) throw new Error(blocked.reason);
           const result = await executeRegisteredTool({
+            toolCallId: nestedToolCallId,
             name,
             params: args,
             options: nestedOptions,
@@ -1102,7 +1139,7 @@ export function createExtensionHarness(
           return {
             toolCall: {
               type: "toolCall",
-              id: "test-tool-call/1",
+              id: nestedToolCallId,
               name,
               arguments: args,
             },
@@ -1112,6 +1149,23 @@ export function createExtensionHarness(
         },
       } satisfies ExtensionToolContext,
     );
+    for (const handler of handlers.tool_result) {
+      const update = await handler(
+        {
+          type: "tool_result",
+          toolCallId,
+          toolName: name,
+          input: { ...params },
+          content: result.content,
+          details: result.details,
+          structuredContent: result.structuredContent,
+          isError: result.isError ?? false,
+        } satisfies ToolResultEvent,
+        extensionContext,
+      );
+      if (update) result = { ...result, ...update };
+    }
+    return result;
   }
 
   /** Observe the permission modal created by an in-flight callTool. */
@@ -1452,7 +1506,16 @@ export function createExtensionHarness(
       started = true;
       await dispatchSessionStart({ type: "session_start", reason });
     },
-    async callTool(event: Omit<ToolCallEvent, "type" | "toolCallId">) {
+    /** Allocate a gate→execute identity explicitly, including for interleaved calls. */
+    createToolCall(event: Omit<ToolCallEvent, "type" | "toolCallId">) {
+      return {
+        ...event,
+        toolCallId: allocateToolCallId({
+          parentToolCallId: event.parentToolCallId,
+        }),
+      };
+    },
+    async callTool(event: HarnessToolCall) {
       return await callTool(event);
     },
     async executeTool(
@@ -1461,6 +1524,7 @@ export function createExtensionHarness(
         | {
             name: string;
             params: unknown;
+            toolCallId?: ToolCallEvent["toolCallId"];
             options?: { signal?: AbortSignal };
           },
       params?: unknown,
@@ -1481,9 +1545,7 @@ export function createExtensionHarness(
       ensureStarted("callUserBash");
       return await dispatchUserBash({ ...event, type: "user_bash" });
     },
-    async callToolDecisivelyWithoutPrompt(
-      event: Omit<ToolCallEvent, "type" | "toolCallId">,
-    ) {
+    async callToolDecisivelyWithoutPrompt(event: HarnessToolCall) {
       const confirmCalls = ui.confirm.mock.calls.length;
       const selectCalls = ui.select.mock.calls.length;
       const customCalls = customComponents.length;
@@ -1498,9 +1560,7 @@ export function createExtensionHarness(
         );
       return result;
     },
-    async callToolWithoutPrompt(
-      event: Omit<ToolCallEvent, "type" | "toolCallId">,
-    ) {
+    async callToolWithoutPrompt(event: HarnessToolCall) {
       const confirmCalls = ui.confirm.mock.calls.length;
       const selectCalls = ui.select.mock.calls.length;
       const customCalls = customComponents.length;

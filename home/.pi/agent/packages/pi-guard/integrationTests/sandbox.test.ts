@@ -312,15 +312,17 @@ async function runThroughPi({
   const harness = createExtensionHarness({ contextCwd: root, hasUI: false });
   await harness.start();
   try {
-    const gate = await harness.callTool({
+    const call = harness.createToolCall({
       toolName: "bash",
       input: { command, timeout },
     });
+    const gate = await harness.callTool(call);
     expect(gate?.block, gate?.reason).not.toBe(true);
     return exitCodeFrom({
       result: await harness.executeTool({
         name: "bash",
         params: { command, timeout },
+        toolCallId: call.toolCallId,
         options: { signal },
       }),
     });
@@ -442,14 +444,16 @@ describe("sandbox full-harness OS acceptance", () => {
     }): Promise<void> {
       const command = node({ source });
       // Approve this opaque interpreter request only; never transform path asks.
-      const gate = await harness.callTool({
+      const call = harness.createToolCall({
         toolName: "bash",
         input: { command, timeout: 10 },
       });
+      const gate = await harness.callTool(call);
       expect(gate?.block, gate?.reason).not.toBe(true);
       const result = await harness.executeTool({
         name: "bash",
         params: { command, timeout: 10 },
+        toolCallId: call.toolCallId,
       });
       const code = exitCodeFrom({ result });
       if (success) {
@@ -537,16 +541,18 @@ describe("sandbox full-harness OS acceptance", () => {
       const command = node({
         source: `require('fs').writeFileSync(${JSON.stringify(path.join(trees, "scoped-marker"))}, 'blocked')`,
       });
-      const gate = await scoped.callTool({
+      const call = scoped.createToolCall({
         toolName: "bash",
         input: { command, timeout: 10 },
       });
+      const gate = await scoped.callTool(call);
       expect(gate?.block, gate?.reason).not.toBe(true);
       expect(
         exitCodeFrom({
           result: await scoped.executeTool({
             name: "bash",
             params: { command, timeout: 10 },
+            toolCallId: call.toolCallId,
           }),
         }),
       ).not.toBe(0);
@@ -1301,10 +1307,11 @@ func main() {
         });
         expect(push?.block === true).toBe(profile === "builtin:committer");
         const branchCommand = "git branch shared-metadata-branch";
-        const branchGate = await harness.callTool({
+        const branchCall = harness.createToolCall({
           toolName: "bash",
           input: { command: branchCommand, timeout: 10 },
         });
+        const branchGate = await harness.callTool(branchCall);
         // The committer tier can commit but cannot create branches directly.
         expect(branchGate?.block === true, branchGate?.reason).toBe(
           profile === "builtin:committer",
@@ -1313,6 +1320,7 @@ func main() {
           const branchResult = await harness.executeTool({
             name: "bash",
             params: { command: branchCommand, timeout: 10 },
+            toolCallId: branchCall.toolCallId,
           });
           expect(
             exitCodeFrom({ result: branchResult }),
@@ -1375,14 +1383,16 @@ func main() {
           "git add change.txt",
           "git commit -m 'linked sandbox commit'",
         ]) {
-          const gate = await harness.callTool({
+          const call = harness.createToolCall({
             toolName: "bash",
             input: { command, timeout: 10 },
           });
+          const gate = await harness.callTool(call);
           expect(gate?.block, gate?.reason).not.toBe(true);
           const result = await harness.executeTool({
             name: "bash",
             params: { command, timeout: 10 },
+            toolCallId: call.toolCallId,
           });
           expect(exitCodeFrom({ result }), JSON.stringify(result)).toBe(0);
         }

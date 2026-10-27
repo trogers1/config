@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createBashToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Value } from "typebox/value";
+import { Type } from "typebox";
 import {
   clearSandboxCaches,
   resolveSandbox,
@@ -15,6 +16,7 @@ import {
 } from "../modules/sandbox.lib";
 import { createExtensionHarness } from "./support/extensionHarness";
 import { policyConfig } from "../modules/policy";
+import type { ProfileConfigFile } from "../modules/policyHelpers";
 
 const temporaryDirectories: string[] = [];
 const sandboxedDefaultProfile = {
@@ -78,6 +80,26 @@ function unavailableBackend(): SandboxBackend {
   };
 }
 
+function configureApprovalFixture({ name }: { name: string }) {
+  setSandboxBackendForTesting(availableBackend());
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), `guard-${name}-`));
+  temporaryDirectories.push(directory);
+  const marker = path.join(directory, "must-not-exist");
+  const configPath = writeTempProfileConfig({
+    defaultProfile: "contained",
+    profiles: {
+      contained: {
+        description: "Containment approval survives no local fallback.",
+        extends: ["builtin:default"],
+        writePaths: [{ pattern: `${directory}/**`, decision: "allow" }],
+        sandbox: { network: "deny", onUnavailable: "warn" },
+      },
+    },
+  } satisfies ProfileConfigFile);
+  process.env.PI_GUARD_PROFILE_CONFIG = configPath;
+  return { marker, configPath };
+}
+
 afterEach(async () => {
   delete process.env.PI_GUARD_PROFILE_CONFIG;
   delete process.env.PI_SUBAGENT_PROFILE;
@@ -96,6 +118,137 @@ afterEach(async () => {
  * containment and normal profile behavior belongs in sandbox.test.ts.
  */
 describe("sandbox unavailable-backend lifecycle", () => {
+  it.each(["disabled", "unavailable", "command-changed", "policy-changed"])(
+    "does not execute locally when an approved sandbox becomes %s",
+    async (transition) => {
+      const { marker, configPath } = configureApprovalFixture({
+        name: "approval-transition",
+      });
+      const harness = createExtensionHarness({ hasUI: false });
+      await harness.start();
+      const params = { command: `touch '${marker}'` };
+      const call = harness.createToolCall({ toolName: "bash", input: params });
+      await expect(
+        harness.callToolWithoutPrompt(call),
+      ).resolves.toBeUndefined();
+      if (transition === "disabled") {
+        await harness.runCommand("sandbox-off");
+      } else if (transition === "unavailable") {
+        setSandboxBackendForTesting(unavailableBackend());
+        await clearSandboxCaches();
+      } else if (transition === "policy-changed") {
+        fs.appendFileSync(configPath, "\n// policy revision after approval\n");
+      }
+      const executionParams =
+        transition === "command-changed"
+          ? { command: `${params.command} && ${params.command}` }
+          : params;
+      const result = await harness.executeTool({
+        name: "bash",
+        toolCallId: call.toolCallId,
+        params: executionParams,
+      });
+      expect(result).toMatchObject({ isError: true });
+      expect(fs.existsSync(marker)).toBe(false);
+    },
+  );
+  it.each(["completed", "changed"])(
+    "keeps interleaved approvals independent when another call is %s",
+    async (transition) => {
+      const { marker } = configureApprovalFixture({
+        name: "interleaved-approval",
+      });
+      const harness = createExtensionHarness({ hasUI: false });
+      await harness.start();
+      const firstParams = { command: `touch '${marker}'` };
+      const secondParams = { ...firstParams };
+      const firstCall = harness.createToolCall({
+        toolName: "bash",
+        input: firstParams,
+      });
+      const secondCall = harness.createToolCall({
+        toolName: "bash",
+        input: secondParams,
+      });
+      await harness.callToolWithoutPrompt(firstCall);
+      await harness.callToolWithoutPrompt(secondCall);
+      const first = await harness.executeTool({
+        name: "bash",
+        toolCallId: firstCall.toolCallId,
+        params:
+          transition === "changed"
+            ? { command: `${firstParams.command} && ${firstParams.command}` }
+            : firstParams,
+      });
+      if (transition === "changed") expect(first.isError).toBe(true);
+      else expect(first.isError).not.toBe(true);
+      expect(fs.existsSync(marker)).toBe(false);
+      await harness.runCommand("sandbox-off");
+      const second = await harness.executeTool({
+        name: "bash",
+        toolCallId: secondCall.toolCallId,
+        params: secondParams,
+      });
+      expect(second.isError).toBe(true);
+      expect(fs.existsSync(marker)).toBe(false);
+    },
+  );
+
+  it.each(["nested gate", "nested completion"])(
+    "preserves nested and pending approvals when containment changes after %s",
+    async (transition) => {
+      const { marker } = configureApprovalFixture({ name: "nested-approval" });
+      const harness = createExtensionHarness({
+        hasUI: false,
+        extensions: [
+          (pi) => {
+            pi.registerTool({
+              name: "nested-bash",
+              label: "Nested Bash",
+              description: "Exercise the SDK nested tool boundary.",
+              parameters: Type.Object({}),
+              async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
+                const nested = await ctx.executeTool("bash", {
+                  command: `touch '${marker}'`,
+                });
+                return { ...nested.result, isError: nested.isError };
+              },
+            });
+            pi.on("tool_call", async (event) => {
+              if (
+                transition === "nested gate" &&
+                event.toolName === "bash" &&
+                event.parentToolCallId
+              ) {
+                await harness.runCommand("sandbox-off");
+              }
+            });
+          },
+        ],
+      });
+      await harness.start();
+      const pendingCall = harness.createToolCall({
+        toolName: "bash",
+        input: { command: `touch '${marker}'` },
+      });
+      await harness.callToolWithoutPrompt(pendingCall);
+      const result = await harness.executeTool({
+        name: "nested-bash",
+        params: {},
+      });
+      expect(result.isError).toBe(transition === "nested gate");
+      expect(fs.existsSync(marker)).toBe(false);
+      await harness.runCommand("sandbox-off");
+      const pending = await harness.executeTool({
+        name: "bash",
+        toolCallId: pendingCall.toolCallId,
+        params: pendingCall.input,
+      });
+      expect(pending.isError).toBe(true);
+      expect(fs.existsSync(marker)).toBe(false);
+    },
+  );
+
   it("disposes prepared sandboxes and the backend exactly once per cache clear", async () => {
     const preparedDispose = vi.fn(async () => {});
     const backendDispose = vi.fn(async () => {});

@@ -5,6 +5,9 @@ import type {
   BeforeAgentStartEvent,
   BeforeAgentStartEventResult,
   ExtensionContext,
+  ExtensionHandler,
+  ToolResultEvent,
+  ToolResultEventResult,
   SessionShutdownEvent,
   SessionStartEvent,
   ToolCallEvent,
@@ -898,6 +901,10 @@ function createHarness(options: { hasUI: boolean; cwd?: string }) {
       event: ToolCallEvent,
       ctx: ExtensionContext,
     ) => ToolCallEventResult | Promise<ToolCallEventResult> | void,
+  ): void;
+  function on(
+    event: "tool_result",
+    handler: ExtensionHandler<ToolResultEvent, ToolResultEventResult>,
   ): void;
   function on(event: string, handler: unknown): void {
     handlers.set(event, [...(handlers.get(event) ?? []), handler]);
