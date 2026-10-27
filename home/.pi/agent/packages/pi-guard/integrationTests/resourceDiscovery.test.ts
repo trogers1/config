@@ -7,6 +7,7 @@ import type {
 } from "../modules/policyHelpers";
 
 const profiles = [
+  "builtin:default",
   "builtin:worker",
   "builtin:read-only",
 ] satisfies BuiltinProfileName[];
@@ -33,6 +34,9 @@ beforeEach(() => {
     path.join(fixture, "config-checkout", `resource-${index}`),
   );
   fs.mkdirSync(cwd, { recursive: true });
+  fs.mkdirSync(path.join(home, ".pi/agent"), { recursive: true });
+  fs.writeFileSync(path.join(home, ".pi/agent/AGENTS.md"), "Pi instructions");
+  fs.writeFileSync(path.join(home, ".pi/agent/auth.json"), "credential canary");
   for (const [index, root] of roots.entries()) {
     const target = targets[index];
     if (!target) throw new Error("Missing resource fixture target");
@@ -78,7 +82,145 @@ async function startGuard({ profile }: { profile: (typeof profiles)[number] }) {
   return harness;
 }
 
+it.each(["ordinary", "linked-root", "linked-file", "future-linked-root"])(
+  "protects actual credential locations through the tool gate and kernel: %s",
+  async (layout) => {
+    const piRoot = path.join(home, ".pi");
+    if (layout === "linked-root" || layout === "future-linked-root") {
+      const target = path.join(fixture, "pi-state");
+      fs.renameSync(piRoot, target);
+      fs.symlinkSync(target, piRoot);
+    }
+    const logicalAuth = path.join(piRoot, "agent/auth.json");
+    if (layout === "linked-file") {
+      const target = path.join(fixture, "credentials.json");
+      fs.renameSync(logicalAuth, target);
+      fs.symlinkSync(target, logicalAuth);
+    }
+    const canonicalAuth = fs.realpathSync(logicalAuth);
+    const configuredAuth = path.join(agentDir, "auth.json");
+    const canary = "pi-credential-must-not-be-disclosed";
+    fs.writeFileSync(logicalAuth, canary);
+    fs.writeFileSync(configuredAuth, canary);
+    if (layout === "future-linked-root") fs.unlinkSync(logicalAuth);
+
+    const config = {
+      defaultProfile: "credential-acceptance",
+      profiles: {
+        "credential-acceptance": {
+          description:
+            "Prove inherited credential protection under an approved interpreter",
+          extends: ["builtin:default"],
+          transforms: ["transform:allow-asks"],
+        },
+      },
+    } satisfies ProfileConfigFile;
+    fs.writeFileSync(
+      path.join(fixture, "profiles.jsonc"),
+      JSON.stringify(config),
+    );
+    const { createExtensionHarness } =
+      await import("./support/extensionHarness");
+    const { policyConfig } = await import("../modules/policy");
+    const { translatePolicy } = await import("../modules/sandbox.lib");
+    const translated = translatePolicy(
+      policyConfig.profiles["builtin:default"].policy,
+      "builtin:default",
+      cwd,
+    );
+    if (translated.kind !== "active") throw new Error(translated.reason);
+    const credentialFiles = [
+      ...new Set([
+        logicalAuth,
+        canonicalAuth,
+        configuredAuth,
+        fs.realpathSync(configuredAuth),
+      ]),
+    ];
+    for (const filePath of credentialFiles) {
+      expect(translated.spec.filesystem.readDenyRoots).toContain(filePath);
+      // Outside writable roots, the compiler need not retain a redundant
+      // write deny root, but the protected rule must still prohibit mutation.
+      expect(translated.spec.writeRules).toContainEqual(
+        expect.objectContaining({
+          pattern: filePath,
+          decision: "deny",
+          source: "protected",
+        }),
+      );
+    }
+    const guard = createExtensionHarness({ contextCwd: cwd, hasUI: false });
+    await guard.start();
+    try {
+      // Even a file created after policy initialization must be protected.
+      if (layout === "future-linked-root")
+        fs.writeFileSync(logicalAuth, canary);
+      for (const filePath of credentialFiles) {
+        expect(
+          await guard.callTool({ toolName: "read", input: { path: filePath } }),
+        ).toMatchObject({ block: true });
+      }
+      const source = `const fs = require('node:fs'); for (const file of ${JSON.stringify(credentialFiles)}) { try { console.log(fs.readFileSync(file, 'utf8')); process.exit(1); } catch (error) { if (!['EPERM', 'EACCES'].includes(error.code)) throw error; } } console.log('credential-denials-confirmed');`;
+      const command = `node -e ${JSON.stringify(source)}`;
+      const call = guard.createToolCall({
+        toolName: "bash",
+        input: { command, timeout: 10 },
+      });
+      const gate = await guard.callTool(call);
+      expect(gate?.block, gate?.reason).not.toBe(true);
+      const result = await guard.executeTool({
+        name: "bash",
+        params: { command, timeout: 10 },
+        toolCallId: call.toolCallId,
+      });
+      expect(result).toMatchObject({ details: { exitCode: 0 } });
+      expect(JSON.stringify(result)).toContain("credential-denials-confirmed");
+      expect(JSON.stringify(result)).not.toContain(canary);
+    } finally {
+      await guard.dispose();
+    }
+  },
+);
+
 describe.each(profiles)("%s installed resource discovery", (profile) => {
+  it("reads Pi instructions without approval while keeping credentials and mutations blocked", async () => {
+    const guard = await startGuard({ profile });
+    try {
+      const instruction = path.join(home, ".pi/agent/AGENTS.md");
+      expect(
+        await guard.callTool({
+          toolName: "read",
+          input: { path: instruction },
+        }),
+      ).toBeUndefined();
+      for (const toolName of ["ls", "find"] as const) {
+        expect(
+          await guard.callTool({
+            toolName,
+            input: {
+              path: path.join(home, ".pi"),
+              ...(toolName === "find" ? { pattern: "**/*" } : {}),
+            },
+          }),
+        ).toBeUndefined();
+      }
+      expect(
+        await guard.callTool({
+          toolName: "read",
+          input: { path: path.join(home, ".pi/agent/auth.json") },
+        }),
+      ).toMatchObject({ block: true });
+      expect(
+        await guard.callTool({
+          toolName: "write",
+          input: { path: instruction, content: "changed" },
+        }),
+      ).toMatchObject({ block: true });
+    } finally {
+      await guard.dispose();
+    }
+  });
+
   it("permits dedicated reads and discovery through logical links and exact targets", async () => {
     const guard = await startGuard({ profile });
     try {

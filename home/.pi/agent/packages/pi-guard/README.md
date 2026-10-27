@@ -696,6 +696,7 @@ breaks ties.
 Default-derived and read-only profiles permit dedicated `read`, `ls`, and
 `find` access at these exact user resource roots and their descendants:
 
+- `~/.pi` (including Pi instructions, configuration, packages, and sessions)
 - `~/.agents/skills`
 - `~/.agents/snippets`
 - `<Pi agent directory>/skills`, honoring `PI_CODING_AGENT_DIR`
@@ -714,6 +715,12 @@ allowed to remain absent; dangling installed links and non-directory roots
 fail loudly. Restart after changing the installation to refresh target rules.
 Other configured resource locations need explicit profile rules; lookalike
 `.agents` or `.pi/agent/skills` directories elsewhere are not trusted exceptions.
+
+Protected-path rules still apply. Pi credentials remain denied at both the
+home and configured agent directory, including resolved symlink targets. These
+absolute protected paths also prevent indirect reads by sandboxed commands when
+the sandbox is enabled; the portable `**/.pi/agent/auth.json` rule additionally
+protects conventionally located copies at the tool gate.
 
 These exceptions do not grant content search (`grep`), script execution, Bash
 access, or writes. They do not grant recursive discovery of `~/.agents` itself.

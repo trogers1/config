@@ -56,6 +56,9 @@ function installedResourceRules({ root }: { root: string }): ReadPathRule[] {
 }
 
 const installedResourceReadRules = [
+  // Pi instructions, configuration, packages and sessions are trusted read
+  // resources for main sessions and children. Protected paths still win.
+  path.join(homedir(), ".pi"),
   path.join(homedir(), ".agents", "skills"),
   path.join(homedir(), ".agents", "snippets"),
   path.join(getAgentDir(), "skills"),

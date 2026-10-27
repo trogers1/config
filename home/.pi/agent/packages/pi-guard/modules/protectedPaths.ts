@@ -1,3 +1,7 @@
+import fs from "node:fs";
+import { homedir } from "node:os";
+import path from "node:path";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { dependencyCacheKernelWaiver } from "./dependencyCaches";
 import type { ProtectedPathRule } from "./policyHelpers";
 import { runtimeRequirementDefinition } from "./runtimeRequirements";
@@ -6,8 +10,44 @@ const goRuntimeProtectedPaths = runtimeRequirementDefinition({
   name: "go-toolchain-cache",
 }).protectedPathPatterns;
 
+// Resolve existing ancestors too: auth.json may be created after policy startup.
+function canonicalCredentialPath({ filePath }: { filePath: string }): string {
+  if (fs.lstatSync(filePath, { throwIfNoEntry: false }) !== undefined) {
+    return fs.realpathSync(filePath);
+  }
+  return path.join(
+    canonicalCredentialPath({ filePath: path.dirname(filePath) }),
+    path.basename(filePath),
+  );
+}
+
+const credentialPaths = [
+  path.join(homedir(), ".pi", "agent", "auth.json"),
+  path.resolve(getAgentDir(), "auth.json"),
+];
+const credentialProtectedRules = [
+  ...new Set(
+    credentialPaths.flatMap((filePath) => [
+      filePath,
+      canonicalCredentialPath({ filePath }),
+    ]),
+  ),
+].map((pattern) => ({
+  pattern,
+  decision: "deny" as const,
+  guidance:
+    "Pi credentials are protected even when other Pi configuration is readable.",
+}));
+
 /** Default secret and repository-metadata paths configured by standard profiles. */
 export const defaultProtectedPathRules: ProtectedPathRule[] = [
+  ...credentialProtectedRules,
+  {
+    pattern: "**/.pi/agent/auth.json",
+    decision: "deny",
+    guidance:
+      "Pi credentials are protected even when other Pi configuration is readable.",
+  },
   {
     pattern: "**/.env*",
     decision: "deny",
