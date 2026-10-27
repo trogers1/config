@@ -273,8 +273,8 @@ outdated lockfile only with an explicitly authorized
 `npm install --ignore-scripts --legacy-peer-deps` in the package directory.
 Set `PI_TEST_AGENT_PACKAGE` to the absolute installed Pi 0.99.1 package directory
 before running `npm test` from `home/.pi/agent/packages/pi-claude`. Unset
-`PI_CLAUDE_INIT_PROBE`, `PI_CLAUDE_INIT_DIAGNOSTIC`, and `PI_CLAUDE_LIVE_SMOKE`
-for offline verification. For example:
+all four live opt-ins: `PI_CLAUDE_INIT_PROBE`, `PI_CLAUDE_INIT_DIAGNOSTIC`,
+`PI_CLAUDE_LIVE_SMOKE`, and `PI_CLAUDE_DIRECT_SDK` for offline verification. For example:
 
 [source,sh]
 ----
@@ -295,8 +295,10 @@ requests. Fake-boundary checks do not establish live runtime compatibility,
 Enterprise eligibility, quota behavior, or Windows support. A separately
 approved, opt-in live acceptance probe is not part of ordinary tests.
 
-The no-input initialization probe, one-turn identity diagnostic, and write/read
-acceptance test have separate opt-ins and authorization. The identity diagnostic
+The no-input initialization probe, one-turn identity diagnostic, write/read
+acceptance test, and live direct-SDK diagnostic have four separate opt-ins and
+authorization. `PI_CLAUDE_DIRECT_SDK=1` sends a bounded prompt through the official
+SDK without Pi actions; it is diagnostic isolation, not bridge acceptance. The identity diagnostic
 blocks all Pi actions and deliberately stops at approved empty or singleton
 initialization; other component inventories reject. Capturing identities is not
 bridge acceptance or proof that native startup/model work incurred no usage.

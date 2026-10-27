@@ -268,7 +268,15 @@ function configureProviderPackages({ work, port }: { work: string; port: number 
 			"",
 		].join("\n"),
 	);
-	return { subagents, guard, adapter, reconstructionModule, reconstructionDirectory, reconstructionDocumentation };
+	return {
+		subagents,
+		guard,
+		adapter,
+		reconstructionModule,
+		reconstructionDirectory,
+		reconstructionDocumentation,
+		sharedApprovalModule: join(subagents, "extensions/interactive/provider-extensions.ts"),
+	};
 }
 
 function approvedChildLoadout({
@@ -2010,7 +2018,14 @@ describe("installed Pi public orchestration lifecycle", () => {
 	}, 35_000);
 
 	it("requires a live adapter despite inherited approval names, revokes on reload, and binds activation content", () => {
-		for (const scenario of ["inherited", "remove", "changed-entry", "changed-module", "changed-documentation"]) {
+		for (const scenario of [
+			"inherited",
+			"remove",
+			"changed-entry",
+			"changed-module",
+			"changed-shared-module",
+			"changed-documentation",
+		]) {
 			const work = mkdtempSync(join(tmpdir(), "pi-guard-provider-authority-"));
 			try {
 				const installed = configureProviderPackages({ work, port: 12345 });
@@ -2020,9 +2035,11 @@ describe("installed Pi public orchestration lifecycle", () => {
 						? installed.adapter
 						: scenario === "changed-module"
 							? installed.reconstructionModule
-							: scenario === "changed-documentation"
-								? installed.reconstructionDocumentation
-								: undefined;
+							: scenario === "changed-shared-module"
+								? installed.sharedApprovalModule
+								: scenario === "changed-documentation"
+									? installed.reconstructionDocumentation
+									: undefined;
 				const results = runApprovalProbe({
 					...installed,
 					agentDir,
@@ -2067,7 +2084,11 @@ describe("installed Pi public orchestration lifecycle", () => {
 				"# Documentation changed without changing executable code\n",
 			);
 			expect(launcher.validateResumeLoadout({ file: loadoutPath })).toEqual(value);
-			for (const file of [installed.reconstructionModule, join(installed.reconstructionDirectory, "added-module.ts")]) {
+			for (const file of [
+				installed.reconstructionModule,
+				installed.sharedApprovalModule,
+				join(installed.reconstructionDirectory, "added-module.ts"),
+			]) {
 				const original = existsSync(file) ? readFileSync(file, "utf8") : undefined;
 				writeFileSync(file, `${original ?? "export const addedModule = true;"}\n// changed after approval\n`);
 				expect(() => launcher.validateResumeLoadout({ file: loadoutPath })).toThrow(
@@ -2075,6 +2096,18 @@ describe("installed Pi public orchestration lifecycle", () => {
 				);
 				if (original === undefined) rmSync(file);
 				else writeFileSync(file, original);
+				expect(launcher.validateResumeLoadout({ file: loadoutPath })).toEqual(value);
+			}
+			const sharedSource = readFileSync(installed.sharedApprovalModule, "utf8");
+			const linkedSource = join(work, "shared-source.ts");
+			writeFileSync(linkedSource, sharedSource);
+			for (const kind of ["symlink", "directory"]) {
+				rmSync(installed.sharedApprovalModule);
+				if (kind === "symlink") symlinkSync(linkedSource, installed.sharedApprovalModule);
+				else mkdirSync(installed.sharedApprovalModule);
+				expect(() => launcher.validateResumeLoadout({ file: loadoutPath })).toThrow(/regular non-symlink file/);
+				rmSync(installed.sharedApprovalModule, { recursive: true });
+				writeFileSync(installed.sharedApprovalModule, sharedSource);
 				expect(launcher.validateResumeLoadout({ file: loadoutPath })).toEqual(value);
 			}
 		} finally {

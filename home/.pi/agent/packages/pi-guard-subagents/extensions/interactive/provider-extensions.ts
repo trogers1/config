@@ -8,12 +8,10 @@ import { Value } from "typebox/value";
 
 export const CLAUDE_BRIDGE_PROVIDER = "claude-bridge";
 export const PROVIDER_DOCUMENTATION_BASENAMES = Object.freeze(["README.md"]);
+const approvalSource = fileURLToPath(import.meta.url);
 // Reviewed code only. Neither model inputs nor environment variables supply paths.
 export const APPROVED_PROVIDER_EXTENSIONS = Object.freeze({
-	[CLAUDE_BRIDGE_PROVIDER]: path.resolve(
-		path.dirname(fileURLToPath(import.meta.url)),
-		"../../../pi-claude/extensions/index.ts",
-	),
+	[CLAUDE_BRIDGE_PROVIDER]: path.resolve(path.dirname(approvalSource), "../../../pi-claude/extensions/index.ts"),
 } satisfies Record<typeof CLAUDE_BRIDGE_PROVIDER, string>);
 const ProviderSchema = Type.Literal(CLAUDE_BRIDGE_PROVIDER);
 export const ExtensionIdentitySchema = Type.Object({
@@ -82,17 +80,19 @@ function snapshot({ provider }: { provider: Static<typeof ProviderSchema> }): Pr
 		throw new Error("Provider manifest does not match the reviewed extension entry");
 	const productionRoot = path.dirname(path.resolve(root, manifest.pi.extensions[0]));
 	const files = [
+		approvalSource,
 		manifestFile,
 		path.join(root, "package-lock.json"),
 		...productionFiles({ directory: productionRoot }),
 	].sort();
 	if (!files.includes(extension)) throw new Error("Reviewed provider entry is absent from the production source tree");
 	const digest = crypto.createHash("sha256");
-	// Names and byte lengths frame each file unambiguously. All local production
-	// modules are covered; installed transitive dependency contents remain trusted.
+	// Package-qualified names and byte lengths frame provider code and its shared
+	// approval module unambiguously. Installed dependency contents remain trusted.
 	for (const file of files) {
+		// Reject symlinks/special files before canonicalizing the identity path.
 		const content = readIdentityFile({ file });
-		const relative = path.relative(root, file).split(path.sep).join("/");
+		const relative = path.relative(path.dirname(root), fs.realpathSync(file)).split(path.sep).join("/");
 		digest
 			.update(JSON.stringify([relative, content.length]))
 			.update("\0")

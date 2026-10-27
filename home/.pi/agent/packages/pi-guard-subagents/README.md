@@ -412,7 +412,9 @@ unless the session was interrupted.
   cannot approve extensions. Other models keep their existing loadout.
 - Provider identity (canonical entry plus a deterministic digest of every
   recursively sorted `extensions/**/*.ts` production module, `package.json`,
-  and `package-lock.json`) is persisted with the loadout and
+  `package-lock.json`, and the imported shared
+  `pi-guard-subagents/extensions/interactive/provider-extensions.ts` source)
+  is persisted with the loadout and
   protected parent/chain authority. The adapter captures this identity at
   activation; changes before the first child or a later resume fail closed.
   Launch/resume also requires the live parent adapter. Old loadouts missing the

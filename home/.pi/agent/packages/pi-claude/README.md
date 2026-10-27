@@ -78,7 +78,7 @@ Offline tests use real Pi sessions, real guard wiring and an external fake SDK
 through actual guarded write/read and protected-read denial, plus malformed,
 forged, duplicate and managed-forced additional inventories. Run the configured
 `npm test` script with `PI_TEST_AGENT_PACKAGE` pointing to the installed Pi package,
-and **unset all three flags below** for offline verification. `pretest` runs types,
+and **unset all four flags below** for offline verification. `pretest` runs types,
 lint, dependency boundaries, unused-code and formatting checks.
 
 These live opt-ins are separate, require fresh explicit user authorization and
@@ -92,6 +92,9 @@ are **not** enabled by component-policy approval:
   inventories reject. It is an identity diagnostic, not bridge acceptance.
 - `PI_CLAUDE_LIVE_SMOKE=1`: bounded guarded-write then protected-read acceptance;
   the protected read only runs if the write succeeds.
+- `PI_CLAUDE_DIRECT_SDK=1`: separately authorized live direct-SDK diagnostic;
+  sends a bounded prompt through the official SDK without Pi actions. This is
+  diagnostic isolation, not bridge acceptance.
 
 The exact security-default exception and optional-component suppression are
 **offline-verified only**, not live-compatible/acceptance verified. Previous live

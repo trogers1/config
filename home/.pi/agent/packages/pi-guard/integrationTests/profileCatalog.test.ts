@@ -400,7 +400,7 @@ describe("shipped profile catalog", () => {
     }
   });
 
-  it("builtin:default reads global Pi skills and Pi documentation", async () => {
+  it("builtin:default reads Pi documentation", async () => {
     const root = path.parse(process.cwd()).root;
     const harness = createExtensionHarness({
       contextCwd: path.join(root, "workspace", "project"),
@@ -410,16 +410,6 @@ describe("shipped profile catalog", () => {
     await harness.start();
 
     const readableReferences = [
-      path.join(
-        root,
-        "Users",
-        "example",
-        ".pi",
-        "agent",
-        "skills",
-        "review",
-        "SKILL.md",
-      ),
       path.join(
         root,
         "opt",
