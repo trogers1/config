@@ -204,6 +204,7 @@ const decisionRuleProperties = {
 const ruleSchema = Type.Object(
   {
     pattern: Type.String(),
+    argumentPolicy: Type.Optional(Type.Literal("date-display")),
     ...decisionRuleProperties,
   },
   { additionalProperties: false },

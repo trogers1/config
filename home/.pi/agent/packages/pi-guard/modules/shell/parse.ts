@@ -49,6 +49,25 @@ export function extractCommandSubstitutions(command: string): string[] {
     .map(({ value }) => value);
 }
 
+export function isDateDisplayCommand({
+  command,
+}: {
+  command: string;
+}): boolean {
+  const script = parse(command);
+  const node = script.commands[0]?.command;
+  return (
+    !script.errors?.length &&
+    script.commands.length === 1 &&
+    isCommand(node) &&
+    node.name !== undefined &&
+    staticShellWord({ word: node.name }) === "date" &&
+    isDateDisplayArguments({
+      words: node.suffix,
+    })
+  );
+}
+
 export function shellCommandWords(command: string): string[] {
   const script = parse(command);
   const node = script.commands[0]?.command;
@@ -59,6 +78,42 @@ export function shellCommandWords(command: string): string[] {
 }
 
 export type ShellWords = readonly (string | undefined)[];
+
+// Only current-time display: never positional dates, file operands, unknown
+// options, or dynamic words. The optional format must be the final argument.
+export function isDateDisplayArguments({
+  words,
+}: {
+  words: readonly Word[];
+}): boolean {
+  const arguments_ = words.map((word) =>
+    isDynamicWord(word) ||
+    (word.parts === undefined &&
+      hasActivePathnamePattern({ text: word.text })) ||
+    (word.parts ?? []).some(
+      (part) =>
+        part.type === "Literal" &&
+        hasActivePathnamePattern({ text: part.text }),
+    )
+      ? undefined
+      : word.value,
+  );
+  let index = 0;
+  if (arguments_[index] === "-u") index++;
+  if (index === arguments_.length) return true;
+  return (
+    index === arguments_.length - 1 &&
+    arguments_[index]?.startsWith("+") === true
+  );
+}
+
+function hasActivePathnamePattern({ text }: { text: string }): boolean {
+  for (let index = 0; index < text.length; index++) {
+    if (text[index] === "\\") index++;
+    else if ("*?[".includes(text[index])) return true;
+  }
+  return false;
+}
 
 export type ShellExecutable =
   | { status: "resolved"; executable: string; arguments_: ShellWords }

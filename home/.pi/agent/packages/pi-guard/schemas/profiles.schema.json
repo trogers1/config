@@ -21,6 +21,10 @@
                     "required": ["pattern", "decision"],
                     "properties": {
                       "pattern": { "type": "string" },
+                      "argumentPolicy": {
+                        "type": "string",
+                        "const": "date-display"
+                      },
                       "decision": {
                         "anyOf": [
                           { "type": "string", "const": "allow" },
@@ -217,6 +221,10 @@
                     "required": ["pattern", "decision"],
                     "properties": {
                       "pattern": { "type": "string" },
+                      "argumentPolicy": {
+                        "type": "string",
+                        "const": "date-display"
+                      },
                       "decision": {
                         "anyOf": [
                           { "type": "string", "const": "allow" },

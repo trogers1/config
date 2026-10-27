@@ -2,7 +2,13 @@ import type { Rule } from "../policyHelpers";
 import { defaultGuardRules } from "./guards";
 import { readOnlyGitRules } from "./git";
 
+const dateDisplayRules = [
+  { pattern: "date", decision: "allow", argumentPolicy: "date-display" },
+  { pattern: "date *", decision: "allow", argumentPolicy: "date-display" },
+] satisfies Rule[];
+
 export const defaultShellRules: Rule[] = [
+  ...dateDisplayRules,
   { pattern: "*", decision: "ask" },
   { pattern: "pwd", decision: "allow" },
   { pattern: "cd", decision: "allow" },
@@ -181,6 +187,7 @@ const readOnlyGuardRules: Rule[] = [
 ];
 
 export const readOnlyShellRules: Rule[] = [
+  ...dateDisplayRules,
   {
     pattern: "*",
     decision: "deny",

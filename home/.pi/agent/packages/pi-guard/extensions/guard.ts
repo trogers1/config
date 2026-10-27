@@ -2,6 +2,7 @@ import path from "node:path";
 import { Value } from "typebox/value";
 import {
   extractShellCommands,
+  isDateDisplayCommand,
   matchesCommandPattern,
   normalizeCommandForDecision,
   splitShellCommands,
@@ -3388,12 +3389,11 @@ function evaluateBash(
   command: string,
   activePolicy: ProfilePolicy,
 ): PolicyDecision {
-  return evaluateByPattern(
-    command,
-    activePolicy.tools.bash ?? [],
-    "ask",
-    matchesCommandPattern,
-  );
+  const winner = rankCommandRules(command, activePolicy.tools.bash ?? [])[0];
+  return {
+    decision: winner?.item.decision ?? "ask",
+    rule: winner?.item,
+  };
 }
 
 export function explainPermission({
@@ -3715,7 +3715,9 @@ function rankCommandRules(
 ): RankedItem<Rule>[] {
   return rankMatchingRules(
     rules,
-    (rule) => matchesCommandPattern(rule.pattern, command),
+    (rule) =>
+      matchesCommandPattern(rule.pattern, command) &&
+      (rule.argumentPolicy === undefined || isDateDisplayCommand({ command })),
     (rule) => commandPatternSpecificity(rule.pattern),
   );
 }
@@ -3980,23 +3982,6 @@ function matchableInputValue(value: unknown): string {
   } catch {
     return "";
   }
-}
-
-function evaluateByPattern(
-  value: string,
-  rules: Rule[],
-  defaultDecision: Decision,
-  matches: (pattern: string, value: string) => boolean,
-): PolicyDecision {
-  const winner = chooseMostSpecific(
-    rules,
-    (rule) => matches(rule.pattern, value),
-    (rule) => commandPatternSpecificity(rule.pattern),
-  );
-  return {
-    decision: winner?.item.decision ?? defaultDecision,
-    rule: winner?.item,
-  };
 }
 
 export function stripJsonCommentsAndTrailingCommas(input: string): string {

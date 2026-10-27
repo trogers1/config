@@ -1,4 +1,5 @@
 import path from "node:path";
+import { isDateDisplayArguments } from "./parse";
 import {
   parse,
   type Command,
@@ -123,6 +124,16 @@ export function classifyCommandTokens(
     classifyRipgrepPatterns(command.suffix, tokens);
   }
   if (commandName === "git") classifyGitArguments(command.suffix, tokens);
+  if (
+    commandName === "date" &&
+    isDateDisplayArguments({
+      words: command.suffix,
+    })
+  ) {
+    for (const token of tokens.slice(0, command.suffix.length)) {
+      token.kind = "proven-non-path";
+    }
+  }
   if (commandName === "printf") {
     classifyPrintfArguments({ words: command.suffix, tokens });
   }
