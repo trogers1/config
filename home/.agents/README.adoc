@@ -68,6 +68,12 @@ Skills use the frontmatter both agents understand. Add
 Claude, `/skill:name` in Pi). Reference bundled scripts through
 `~/.agents/skills/<name>/...`, which resolves for every agent.
 
+`review-policy` owns the shared code-review delegation and reconciliation rules,
+including two independent parallel reviewers. Global `AGENTS.md` and the Pi
+subagent tool description surface the default; `orchestrate` and `flow-review`
+refer to the policy rather than maintaining separate copies. The policy applies
+to focused implementation reviews too, without requiring HTML artifacts.
+
 MR review loop: `export-mr-comments` / `address-comments` / `flow-review` →
 `discuss-mr-comments` (interactive, one thread at a time; local approval only) →
 `post-mr-replies` (preview and separately approve publishing).

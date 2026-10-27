@@ -538,7 +538,7 @@ export default function (pi: ExtensionAPI) {
 		name: "subagent",
 		label: "Subagent",
 		description:
-			"Launch a guarded interactive subagent by its catalog name (built-ins: scout, explore, planner, reviewer, worker), or use tasks/chain for parallel/sequential delegation. The current resolved catalog and exact call patterns are included in the system prompt. No headless fallback: launches are asynchronous tmux panes, so end the turn instead of polling; questions and terminal outcomes arrive automatically.",
+			"Launch a guarded interactive subagent by its catalog name (built-ins: scout, explore, planner, reviewer, worker), or use tasks/chain for parallel/sequential delegation. The current resolved catalog and exact call patterns are included in the system prompt. For code-review delegation, read the review-policy skill; default to two independent reviewers running in parallel. No headless fallback: launches are asynchronous tmux panes, so end the turn instead of polling; questions and terminal outcomes arrive automatically.",
 		parameters: Params,
 		async execute(_id, p: ParamsType, _signal, _update, ctx) {
 			const mode = modeOf(p);
