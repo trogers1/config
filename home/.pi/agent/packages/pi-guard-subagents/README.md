@@ -60,7 +60,10 @@ Forked from pi's `examples/extensions/subagent` with additions:
 - **Child-pane shortcut fallback.** The tool-details toggle responds to `Alt+T` and the macOS-safe `Ctrl+Shift+T`.
 - **Interactive tmux lifecycle.** Child processes run in their own tmux pane,
   with a persistent registry/loadout and no headless fallback. Pi must be
-  started inside tmux (`tmux new -A -s pi 'pi'`).
+  started inside tmux (`tmux new -A -s pi 'pi'`). Children require `/bin/zsh`
+  and read `.zshenv` through a non-interactive, non-login shell before Pi starts.
+  Keep `.zshenv` quiet and suitable for unattended execution. The wrapper passes
+  tasks as literal arguments, never interpolated shell code; `.zshrc` is not read.
 - **Persistent worker sessions.** Every worker runs under `--session-id <uuid>
 --name subagent:<agent>:<label>`. The result tells you the id; inspect it live
   afterwards with `pi --session <id>` from the same project directory, or

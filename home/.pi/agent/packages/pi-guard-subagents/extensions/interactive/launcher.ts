@@ -102,7 +102,17 @@ export function buildChildCommand({
 	if (loadout.codingAgentDir !== null) env.PI_CODING_AGENT_DIR = loadout.codingAgentDir;
 	// Omitted scope must not become an empty guard override (deny-all).
 	if (loadout.writes !== null) env.PI_SUBAGENT_PERMISSIBLE_GLOBS = loadout.writes.join(",");
-	return ["/usr/bin/env", ...Object.entries(env).map(([key, value]) => `${key}=${value}`), ...args];
+	// Read ~/.zshenv without interactive/login startup. Keep the task and all
+	// approved arguments literal: only this fixed exec expression is shell code.
+	return [
+		"/usr/bin/env",
+		...Object.entries(env).map(([key, value]) => `${key}=${value}`),
+		"/bin/zsh",
+		"-c",
+		'exec "$@"',
+		"pi-subagent",
+		...args,
+	];
 }
 function persistLaunchFailure(loadoutPath: string, attemptId: string, error: unknown): string {
 	const failure = `Child pane launch failed: ${String(error)}`;

@@ -94,7 +94,12 @@ describe("interactive child loadout boundary", () => {
 		expect(command[command.indexOf("--tools") + 1]).toBe(approved.toolAllowlist.join(","));
 		expect(command).toContain("--session-id");
 		expect(command.at(-1)).toBe(task);
-		expect(command).not.toContain("sh");
+		expect(command.slice(command.indexOf("/bin/zsh"), command.indexOf("/bin/zsh") + 4)).toEqual([
+			"/bin/zsh",
+			"-c",
+			'exec "$@"',
+			"pi-subagent",
+		]);
 		expect(command).not.toContain("-lc");
 	});
 

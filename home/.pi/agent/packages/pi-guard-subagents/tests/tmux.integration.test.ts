@@ -65,7 +65,7 @@ describe("real Pi/tmux availability smoke", () => {
 });
 
 describe("installed Pi guarded child lifecycle", () => {
-	it("runs generated argv directly in a real tmux pane and writes terminal metadata", async () => {
+	it("initializes zshenv, preserves literal argv, and completes a guarded child in real tmux", async () => {
 		const work = mkdtempSync(join(tmpdir(), "pi-guard-subagents-child-"));
 		const socket = `pi-guard-child-${process.pid}`;
 		const session = `pi-guard-child-${process.pid}`;
@@ -129,6 +129,16 @@ describe("installed Pi guarded child lifecycle", () => {
 				stdio: "ignore",
 			});
 			execFileSync("tmux", ["-L", socket, "set-option", "-t", session, "remain-on-exit", "off"], { stdio: "ignore" });
+			const startupMarker = join(work, "zshenv-session.txt");
+			const interactiveMarker = join(work, "must-not-read-zshrc");
+			const zshConfig = join(work, "zsh-config");
+			mkdirSync(zshConfig);
+			writeFileSync(
+				join(zshConfig, ".zshenv"),
+				'print -r -- "$PI_SUBAGENT_SESSION_ID" > "$ZDOTDIR/../zshenv-session.txt"\n',
+			);
+			writeFileSync(join(zshConfig, ".zshrc"), 'touch "$ZDOTDIR/../must-not-read-zshrc"\n');
+			execFileSync("tmux", ["-L", socket, "set-environment", "-t", session, "ZDOTDIR", zshConfig]);
 			const literalMarker = join(work, "must-not-be-created");
 			const task = `respond with the deterministic result; $(touch ${literalMarker}) '$HOME'\nKeep this literal.`;
 			const command = buildChildCommand({ loadout, sessionId, task, loadoutPath });
@@ -163,6 +173,8 @@ describe("installed Pi guarded child lifecycle", () => {
 			expect(providerRequests).toBeGreaterThan(0);
 			expect(terminal.result).toBe("deterministic child complete");
 			expect(fs.existsSync(literalMarker)).toBe(false);
+			expect(readFileSync(startupMarker, "utf8").trim()).toBe(sessionId);
+			expect(fs.existsSync(interactiveMarker)).toBe(false);
 			const panes = execFileSync(
 				"tmux",
 				["-L", socket, "list-panes", "-t", session, "-F", "#{pane_id} #{pane_active} #{pane_dead}"],
