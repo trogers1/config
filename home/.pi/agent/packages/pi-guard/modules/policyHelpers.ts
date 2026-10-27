@@ -276,7 +276,15 @@ const pathRuleSchema = <ContextSchema extends TSchema>(
     { additionalProperties: false },
   );
 
-const readPathRuleSchema = pathRuleSchema(readPathContextSchema);
+const readPathRuleSchema = Type.Object(
+  {
+    ...pathRuleSchema(readPathContextSchema).properties,
+    pathMatch: Type.Optional(
+      Type.Union([Type.Literal("literal"), Type.Literal("subtree")]),
+    ),
+  },
+  { additionalProperties: false },
+);
 const writePathRuleSchema = pathRuleSchema(writePathContextSchema);
 
 const sandboxPathArrayNameSchema = Type.Union([

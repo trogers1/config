@@ -21,6 +21,7 @@ import {
   ruleSectionPresentation,
 } from "../modules/profileAuthoringPresentation";
 import { createExtensionHarness } from "./support/extensionHarness";
+import type { ReadPathRule } from "../modules/policyHelpers";
 
 const submitOverviewSelection = {
   kind: "action",
@@ -74,6 +75,41 @@ const setDirectories = (value: string[]) => ({
 });
 
 describe("/profile-edit public command", () => {
+  it("preserves a literal trailing-space target on unchanged editor save", async () => {
+    const rule = {
+      pattern: "literal-target ",
+      pathMatch: "literal",
+      decision: "allow",
+      contexts: ["read"],
+    } satisfies ReadPathRule;
+    const configPath = writeConfig({
+      defaultProfile: "edited",
+      profiles: {
+        edited: {
+          description: "Whitespace identity.",
+          extends: ["builtin:default"],
+          readPaths: [rule],
+        },
+      },
+    });
+    process.env.PI_GUARD_PROFILE_CONFIG = configPath;
+    const harness = createExtensionHarness({ interactiveUi: true });
+    await harness.start();
+    const pending = harness.runCommand("profile-edit");
+    (await harness.ui.waitForProfileAuthoringOverview()).choose({
+      selection: overviewSectionSelection({ id: "read" }),
+    });
+    const form = await harness.ui.waitForRuleForm();
+    expect(form.render(300).join("\n")).toContain("Path match       literal");
+    form.press("Enter");
+    (await harness.ui.waitForProfileAuthoringOverview()).choose({
+      selection: submitOverviewSelection,
+    });
+    await pending;
+    expect(
+      loadRawProfileConfig({ configPath })?.profiles.edited.readPaths,
+    ).toEqual([rule]);
+  });
   it("offers destructive Force write after a timeout and preserves the lock and draft when declined", async () => {
     const configPath = writeConfig({
       defaultProfile: "edited",

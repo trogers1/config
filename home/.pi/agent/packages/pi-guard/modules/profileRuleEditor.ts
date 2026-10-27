@@ -101,6 +101,7 @@ export type AskRuleCandidate =
     }
   | {
       kind: OrdinaryPathRuleKind;
+      pathMatch?: ReadDeclaration["pathMatch"];
       context: PathContext;
       requestedValue: string;
       initialPattern: string;
@@ -119,6 +120,7 @@ export type EditableRuleRow = {
   decision: "allow" | "ask" | "deny" | "skip";
   guidance?: string;
   contexts?: readonly PathContext[];
+  pathMatch?: ReadDeclaration["pathMatch"];
   request?: AskRuleCandidate;
   origin: "request" | "additional" | "create" | "existing";
 };
@@ -193,7 +195,10 @@ export function ruleEffect(kind: RuleKind, decision: "allow" | "deny"): string {
 
 export function isBroaderPattern(row: EditableRuleRow): boolean {
   return Boolean(
-    row.request && row.pattern.trim() !== row.request.initialPattern.trim(),
+    row.request &&
+    (row.pathMatch === undefined
+      ? row.pattern.trim() !== row.request.initialPattern.trim()
+      : row.pattern !== row.request.initialPattern),
   );
 }
 
@@ -259,6 +264,7 @@ function editableExistingRow(row: AnyProfileRuleEditRow): EditableRuleRow {
     decision: row.raw.decision,
     guidance: row.raw.guidance,
     contexts: row.raw.contexts,
+    pathMatch: row.kind === "read" ? row.raw.pathMatch : undefined,
     origin: "existing",
   };
 }
@@ -341,6 +347,7 @@ function readRows(
     return {
       ...rest,
       pattern: row.pattern,
+      pathMatch: row.pathMatch,
       decision,
       guidance: row.guidance,
       ...(contexts === undefined ? {} : { contexts }),
@@ -640,7 +647,10 @@ export async function editProfileRuleRows({
   const snapshot = (): EditableRuleRow[] =>
     rows.map((row, index) => ({
       ...row,
-      pattern: inputs[index]?.getValue().trim() ?? row.pattern,
+      pattern:
+        row.pathMatch === undefined
+          ? inputs[index].getValue().trim()
+          : inputs[index].getValue(),
       guidance: guidanceInputs[index]?.getValue().trim() || undefined,
     }));
   const result = await showProfileAuthoringCustom<RuleEditorResult | null>({
@@ -800,7 +810,12 @@ export async function editProfileRuleRows({
                   "    Additional profile rule (not required by this ASK)",
                 );
               }
-              if (row.kind === "read" || row.kind === "write")
+              if (row.kind === "read")
+                lines.push(`    Path match       ${row.pathMatch ?? "glob"}`);
+              if (
+                (row.kind === "read" && row.pathMatch === undefined) ||
+                row.kind === "write"
+              )
                 lines.push(
                   "    PATH GLOB/PATTERN — interpreted as a glob, not a literal path (e.g. src/**/*.ts).",
                 );

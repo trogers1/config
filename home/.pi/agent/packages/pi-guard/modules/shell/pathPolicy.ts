@@ -18,10 +18,11 @@ import type {
   PathRule,
   ProfilePolicy,
   ProtectedPathRule,
+  ReadPathRule,
   Rule,
 } from "../policyHelpers";
 import {
-  pathPatternSpecificity,
+  pathRuleSpecificity,
   rankMatchingRules,
   type RankedItem,
 } from "../ruleSpecificity";
@@ -1243,6 +1244,7 @@ export function rankPathRules<
   RuleType extends {
     pattern: string;
     decision: string;
+    pathMatch?: ReadPathRule["pathMatch"];
     contexts?: readonly PathContext[];
   },
 >(
@@ -1258,12 +1260,24 @@ export function rankPathRules<
       if (context && rule.contexts && !rule.contexts.includes(context)) {
         return false;
       }
+      if (rule.pathMatch !== undefined) {
+        const target = path.resolve(startupCwd, rule.pattern);
+        const candidate = path.resolve(absolutePath);
+        const relative = path.relative(target, candidate);
+        return (
+          relative === "" ||
+          (rule.pathMatch === "subtree" &&
+            relative !== ".." &&
+            !relative.startsWith(`..${path.sep}`) &&
+            !path.isAbsolute(relative))
+        );
+      }
       const matchPath = rule.pattern.startsWith("/")
         ? normalizePolicyPath(absolutePath)
         : relativeMatchPath;
       return matchesGlobPattern(rule.pattern, matchPath);
     },
-    (rule) => pathPatternSpecificity(rule.pattern),
+    (rule) => pathRuleSpecificity({ rule }),
   );
 }
 
@@ -1271,6 +1285,7 @@ function resolvePathRules<
   RuleType extends {
     pattern: string;
     decision: string;
+    pathMatch?: ReadPathRule["pathMatch"];
     contexts?: readonly PathContext[];
   },
 >(

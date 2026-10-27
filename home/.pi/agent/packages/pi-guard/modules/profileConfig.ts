@@ -845,10 +845,22 @@ type BaseProfileRuleChange = {
   replacePattern?: string;
 };
 export type ProfileRuleChange =
-  | (BaseProfileRuleChange & { kind: "bash" | "protected"; contexts?: never })
   | (BaseProfileRuleChange & {
-      kind: OrdinaryPathRuleKind;
+      kind: "bash" | "protected";
+      contexts?: never;
+      pathMatch?: never;
+    })
+  | (BaseProfileRuleChange & {
+      kind: "read";
       contexts?: readonly PathContext[];
+      pathMatch?: NonNullable<
+        ProfileConfigProfile["readPaths"]
+      >[number]["pathMatch"];
+    })
+  | (BaseProfileRuleChange & {
+      kind: "write";
+      contexts?: readonly PathContext[];
+      pathMatch?: never;
     });
 export type ProfileMutationTarget = { mode: "update"; profile: string };
 
@@ -856,6 +868,9 @@ type ProfileRuleIdentity = {
   readonly kind: RuleKind;
   readonly pattern: string;
   readonly contexts?: readonly PathContext[];
+  readonly pathMatch?: NonNullable<
+    ProfileConfigProfile["readPaths"]
+  >[number]["pathMatch"];
 };
 
 /** Reject duplicate/overlapping raw rows before any profile mutation writes. */
@@ -877,7 +892,7 @@ function assertUnambiguousProfileRuleIdentities({
       rule.contexts === undefined
         ? undefined
         : new Set(rule.contexts.map(String));
-    const key = `${rule.kind}\0${rule.pattern}`;
+    const key = `${rule.kind}\0${rule.pattern}\0${rule.pathMatch ?? "glob"}`;
     const existing = prior.get(key) ?? [];
     const overlaps = existing.some(
       (contexts) =>
@@ -1841,6 +1856,7 @@ function authoringRuleIdentities({
     ...(definition.readPaths ?? []).map((rule) => ({
       kind: "read" as const,
       pattern: rule.pattern,
+      pathMatch: rule.pathMatch,
       contexts: rule.contexts,
     })),
     ...(definition.writePaths ?? []).map((rule) => ({
@@ -1886,7 +1902,7 @@ function profileRuleIdentityIssues({
       rule.contexts === undefined
         ? undefined
         : new Set(rule.contexts.map(String));
-    const key = `${rule.kind}\0${rule.pattern}`;
+    const key = `${rule.kind}\0${rule.pattern}\0${rule.pathMatch ?? "glob"}`;
     const existing = prior.get(key) ?? [];
     if (
       existing.some(
@@ -2459,20 +2475,30 @@ function applyDirectoryGlobArrayEdit(
   );
 }
 
-function removeRuleIdentity(
-  rules: Array<Record<string, unknown>>,
-  pattern: string,
-  contexts: readonly PathContext[] | undefined,
-  unscopedKind: boolean,
-): Array<Record<string, unknown>> {
+function removeRuleIdentity({
+  rules,
+  pattern,
+  contexts,
+  unscopedKind,
+  pathMatch,
+}: {
+  readonly rules: Array<Record<string, unknown>>;
+  readonly pattern: string;
+  readonly contexts: readonly PathContext[] | undefined;
+  readonly unscopedKind: boolean;
+  readonly pathMatch: ProfileRuleChange["pathMatch"];
+}): Array<Record<string, unknown>> {
   if (unscopedKind || contexts === undefined)
     return rules.filter(
-      (rule) => rule.pattern !== pattern || Array.isArray(rule.contexts),
+      (rule) =>
+        rule.pattern !== pattern ||
+        rule.pathMatch !== pathMatch ||
+        Array.isArray(rule.contexts),
     );
   const removedContexts = new Set(contexts.map(String));
   const retained: Array<Record<string, unknown>> = [];
   for (const existing of rules) {
-    if (existing.pattern !== pattern) {
+    if (existing.pattern !== pattern || existing.pathMatch !== pathMatch) {
       retained.push(existing);
       continue;
     }
@@ -2624,26 +2650,29 @@ function prepareProfileRuleChanges(
     if (!change.replacePattern || change.replacePattern === change.pattern)
       continue;
     const collection = collectionFor(change.kind);
-    collection.after = removeRuleIdentity(
-      collection.after,
-      change.replacePattern,
-      change.contexts,
-      change.kind === "bash" || change.kind === "protected",
-    );
+    collection.after = removeRuleIdentity({
+      rules: collection.after,
+      pattern: change.replacePattern,
+      contexts: change.contexts,
+      unscopedKind: change.kind === "bash" || change.kind === "protected",
+      pathMatch: change.pathMatch,
+    });
   }
   for (const change of options.changes) {
     const collection = collectionFor(change.kind);
     const unscopedKind = change.kind === "bash" || change.kind === "protected";
-    collection.after = removeRuleIdentity(
-      collection.after,
-      change.pattern,
-      change.contexts,
+    collection.after = removeRuleIdentity({
+      rules: collection.after,
+      pattern: change.pattern,
+      contexts: change.contexts,
       unscopedKind,
-    );
+      pathMatch: change.pathMatch,
+    });
     const rule: Record<string, unknown> = {
       pattern: change.pattern,
       decision: change.decision,
     };
+    if (change.pathMatch !== undefined) rule.pathMatch = change.pathMatch;
     if (change.guidance !== undefined) rule.guidance = change.guidance;
     if (!unscopedKind && change.contexts !== undefined)
       rule.contexts = [...new Set(change.contexts)];

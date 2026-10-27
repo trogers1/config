@@ -1,20 +1,65 @@
+import fs from "node:fs";
+import { homedir } from "node:os";
+import path from "node:path";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type {
   ProfilePolicy,
   ReadPathRule,
   WritePathRule,
 } from "../policyHelpers";
 
-const piSkillReadRules: ReadonlyArray<Omit<ReadPathRule, "contexts">> = [
-  {
-    pattern: "/**/.pi/agent/skills/**",
-    decision: "allow",
-  },
-  // Pi also loads global skills from ~/.agents/skills.
-  {
-    pattern: "/**/.agents/skills/**",
-    decision: "allow",
-  },
-];
+function resourcePathRules({
+  resourcePath,
+  directory,
+}: {
+  resourcePath: string;
+  directory: boolean;
+}): ReadPathRule[] {
+  return [
+    {
+      pattern: resourcePath,
+      pathMatch: directory ? "subtree" : "literal",
+      decision: "allow",
+      contexts: directory ? ["read", "ls", "find"] : ["read"],
+    },
+  ];
+}
+
+// Resolve only installed roots and their immediate linked entries. Never grant
+// a target's parent checkout or discover arbitrary lookalike .agents folders.
+function installedResourceRules({ root }: { root: string }): ReadPathRule[] {
+  const rules = resourcePathRules({ resourcePath: root, directory: true });
+  // These resource locations are optional. Existing broken links or invalid
+  // installations must throw rather than silently lose their access policy.
+  if (fs.lstatSync(root, { throwIfNoEntry: false }) === undefined) return rules;
+  if (!fs.statSync(root).isDirectory()) {
+    throw new Error(`Installed resource root is not a directory: ${root}`);
+  }
+  rules.push(
+    ...resourcePathRules({
+      resourcePath: fs.realpathSync(root),
+      directory: true,
+    }),
+  );
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    if (entry.isSymbolicLink()) {
+      const target = fs.realpathSync(path.join(root, entry.name));
+      rules.push(
+        ...resourcePathRules({
+          resourcePath: target,
+          directory: fs.statSync(target).isDirectory(),
+        }),
+      );
+    }
+  }
+  return rules;
+}
+
+const installedResourceReadRules = [
+  path.join(homedir(), ".agents", "skills"),
+  path.join(homedir(), ".agents", "snippets"),
+  path.join(getAgentDir(), "skills"),
+].flatMap((root) => installedResourceRules({ root }));
 
 const piReferencePathRules: ReadonlyArray<Omit<ReadPathRule, "contexts">> = [
   {
@@ -114,10 +159,7 @@ export const readOnlyPathRules: ProfilePolicy["readPaths"] = [
   { pattern: "/tmp/**", decision: "allow" },
   { pattern: "/private/tmp", decision: "allow" },
   { pattern: "/private/tmp/**", decision: "allow" },
-  ...piSkillReadRules.map((rule) => ({
-    ...rule,
-    contexts: ["read" as const],
-  })),
+  ...installedResourceReadRules,
   ...piReferencePathRules.map((rule) => ({
     ...rule,
     contexts: ["read" as const],
@@ -148,13 +190,18 @@ export function defaultReadPaths(
 ): ProfilePolicy["readPaths"] {
   return [
     { pattern: "*", decision: "allow" },
-    { pattern: "..", decision: "ask", contexts: ["read"] },
-    { pattern: "../**", decision: "ask", contexts: ["read", "grep", "ls"] },
+    {
+      pattern: "..",
+      decision: "ask",
+      contexts: ["read", "grep", "ls", "find"],
+    },
+    {
+      pattern: "../**",
+      decision: "ask",
+      contexts: ["read", "grep", "ls", "find"],
+    },
     { pattern: "/tmp/**", decision: "allow" },
-    ...piSkillReadRules.map((rule) => ({
-      ...rule,
-      contexts: ["read" as const],
-    })),
+    ...installedResourceReadRules,
     ...piReferencePathRules.map((rule) => ({
       ...rule,
       contexts: ["read" as const],

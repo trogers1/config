@@ -664,7 +664,8 @@ breaks ties.
   against named input properties. The built-in path tools cannot be configured
   here; they use the path arrays below.
 - `readPaths` applies only to the dedicated `read`, `grep`, `find`, and `ls`
-  tools, which this package activates automatically.
+  tools. Enable optional discovery tools in the agent's tool allowlist; this
+  package does not activate them automatically.
 - `writePaths` applies to `edit`, `write`, and every Bash filesystem operand,
   including Bash readers and both input and output redirections. Bash is
   deliberately treated as write-capable even for apparently read-only commands.
@@ -682,6 +683,40 @@ breaks ties.
 - Deny rules can include `guidance` and `alternatives`; these are returned in the
   blocked tool result, so Pi automatically gives them to the model without
   another prompt.
+
+### Installed instruction resources
+
+Default-derived and read-only profiles permit dedicated `read`, `ls`, and
+`find` access at these exact user resource roots and their descendants:
+
+- `~/.agents/skills`
+- `~/.agents/snippets`
+- `<Pi agent directory>/skills`, honoring `PI_CODING_AGENT_DIR`
+
+Generated resource grants use literal subtree matching, so `*` and `?` in a
+filesystem name cannot authorize matching siblings. Read rules may declare
+`pathMatch: "literal"` for one exact path or `pathMatch: "subtree"` for a path
+and its descendants. Both treat the entire `pattern` value literally and
+resolve relative paths from the startup directory. Omitting `pathMatch`
+preserves the existing glob semantics; no new glob escaping syntax is added.
+
+At process startup, the policy also resolves existing root symlinks and
+immediate installed entry symlinks into precise target rules. A linked skill
+or snippet does not authorize its parent checkout. Missing optional roots are
+allowed to remain absent; dangling installed links and non-directory roots
+fail loudly. Restart after changing the installation to refresh target rules.
+Other configured resource locations need explicit profile rules; lookalike
+`.agents` or `.pi/agent/skills` directories elsewhere are not trusted exceptions.
+
+These exceptions do not grant content search (`grep`), script execution, Bash
+access, or writes. They do not grant recursive discovery of `~/.agents` itself.
+Protected-path denies still apply. Outside-workspace discovery otherwise uses
+the same ask/deny boundary as the other dedicated read tools.
+
+A delegated `writes` scope continues to narrow mutations and Bash filesystem
+operands, not dedicated reads. Use dedicated tools for repository inspection
+and instruction discovery: adding an instruction root to `writes` unnecessarily
+grants mutation authority and is not the remedy for a discovery denial.
 
 ### Authoring matcher syntax
 

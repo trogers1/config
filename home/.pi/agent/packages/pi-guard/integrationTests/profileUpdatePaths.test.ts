@@ -1,6 +1,10 @@
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { readPathContexts, type PathContext } from "../modules/policyHelpers";
+import {
+  readPathContexts,
+  type PathContext,
+  type ReadPathRule,
+} from "../modules/policyHelpers";
 import { loadRawProfileConfig } from "../modules/profileConfig";
 import { ruleSectionPresentation } from "../modules/profileAuthoringPresentation";
 import { createExtensionHarness } from "./support/extensionHarness";
@@ -12,6 +16,121 @@ import {
 installProfileUpdateFixture({});
 
 describe("profile updates through the public extension surface", () => {
+  it.each(["literal", "subtree"] satisfies NonNullable<
+    ReadPathRule["pathMatch"]
+  >[])(
+    "keeps same-text %s rules when remembering an omitted-mode glob",
+    async (pathMatch) => {
+      const profileName = "mode-identity";
+      const pattern = path.join(path.dirname(process.cwd()), "mode-file-?");
+      const retainedRule = {
+        pattern,
+        pathMatch,
+        decision: "deny",
+        contexts: ["read"],
+      } satisfies ReadPathRule;
+      const configPath = writeConfig({
+        config: {
+          defaultProfile: profileName,
+          profiles: {
+            [profileName]: {
+              description: "Independent match identities.",
+              extends: ["builtin:default"],
+              readPaths: [
+                retainedRule,
+                { pattern, decision: "ask", contexts: ["read"] },
+              ],
+            },
+          },
+        },
+      });
+      process.env.PI_GUARD_PROFILE_CONFIG = configPath;
+      const harness = createExtensionHarness({ interactiveUi: true });
+      await harness.start();
+      const pending = harness.callTool({
+        toolName: "read",
+        input: { path: pattern.replace("?", "x") },
+      });
+      (await harness.ui.waitForPermissionChoice()).choose(
+        "Save rule(s) to profile…",
+      );
+      const form = await harness.ui.waitForRuleForm();
+      for (let index = 0; index < pattern.length + 1; index++)
+        form.press("ArrowRight");
+      for (let index = 0; index < pattern.length + 1; index++)
+        form.press("Backspace");
+      form.type(pattern);
+      form.press("Enter");
+      expect(await pending).toBeUndefined();
+      expect(
+        loadRawProfileConfig({ configPath })?.profiles[profileName].readPaths,
+      ).toEqual([
+        retainedRule,
+        { pattern, decision: "allow", contexts: ["read"] },
+      ]);
+    },
+  );
+  it("remembers a literal external read without granting a glob sibling", async () => {
+    const requestedPath = path.join(path.dirname(process.cwd()), "file-?");
+    const profileName = "literal-work";
+    const configPath = writeConfig({
+      config: {
+        defaultProfile: profileName,
+        profiles: {
+          [profileName]: {
+            description: "Literal request identity.",
+            extends: ["builtin:default"],
+            readPaths: [
+              {
+                pattern: requestedPath,
+                pathMatch: "literal",
+                decision: "ask",
+                contexts: ["read"],
+              },
+            ],
+          },
+        },
+      },
+    });
+    process.env.PI_GUARD_PROFILE_CONFIG = configPath;
+    const harness = createExtensionHarness({ interactiveUi: true });
+    await harness.start();
+    const pending = harness.callTool({
+      toolName: "read",
+      input: { path: requestedPath },
+    });
+    (await harness.ui.waitForPermissionChoice()).choose(
+      "Save rule(s) to profile…",
+    );
+    const form = await harness.ui.waitForRuleForm();
+    expect(form.render(300).join("\n")).toContain("Path match       literal");
+    form.press("Enter");
+    expect(await pending).toBeUndefined();
+    expect(
+      loadRawProfileConfig({ configPath })?.profiles[profileName].readPaths,
+    ).toEqual([
+      {
+        pattern: requestedPath,
+        pathMatch: "literal",
+        decision: "allow",
+        contexts: ["read"],
+      },
+    ]);
+    const reloaded = createExtensionHarness({ hasUI: false });
+    await reloaded.start();
+    expect(
+      await reloaded.callToolWithoutPrompt({
+        toolName: "read",
+        input: { path: requestedPath },
+      }),
+    ).toBeUndefined();
+    expect(
+      await reloaded.callTool({
+        toolName: "read",
+        input: { path: requestedPath.replace("?", "x") },
+      }),
+    ).toMatchObject({ block: true });
+  });
   it("persists a direct read ASK to readPaths with immutable request semantics", async () => {
     const configPath = writeConfig({
       config: {

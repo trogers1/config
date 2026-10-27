@@ -13,6 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
 import { loadRegistry } from "../extensions/interactive/registry.ts";
 import {
 	parseOrThrow,
@@ -1585,6 +1586,166 @@ describe("installed Pi public orchestration lifecycle", () => {
 		} finally {
 			await closeProvider(server);
 			rmSync(work, { recursive: true, force: true });
+		}
+	}, 35_000);
+
+	it("discovers installed resources in a real child without widening its write scope", async () => {
+		const fixture = mkdtempSync(join(resolve(process.cwd(), ".."), ".resource-child-"));
+		const work = join(fixture, "project");
+		const home = join(fixture, "home");
+		mkdirSync(join(work, "src"), { recursive: true });
+		mkdirSync(home, { recursive: true });
+		const agentName = "resource-worker";
+		const task = "CHILD_RESOURCE_DISCOVERY";
+		const profile = "builtin:worker";
+		const writes = ["src/**"];
+		const content = "resource reference acceptance evidence";
+		const referenceName = "reference.md";
+		const operations: Array<{ name: Parameters<typeof toolCall>[1]; args: Parameters<typeof toolCall>[2] }> = [];
+		const requests: unknown[] = [];
+		let observedResults: readonly unknown[] = [];
+		const server = createServer(async (request, response) => {
+			try {
+				const body = await readJsonBody(request);
+				requests.push(body);
+				if (toolNames(body).includes("subagent")) {
+					if (toolResultCount(body) === 0)
+						return toolCall(
+							response,
+							"subagent",
+							{
+								agent: agentName,
+								task,
+								cwd: work,
+								writes,
+								agentScope: "project",
+								confirmProjectAgents: false,
+							},
+							"launch-resource-child",
+						);
+					return text(response, "parent waiting");
+				}
+				if (!JSON.stringify(messages(body)).includes(task)) throw new Error("Unexpected resource child request");
+				observedResults = messages(body).filter((message) => isRecord(message) && message.role === "tool");
+				const step = toolResultCount(body);
+				const operation = operations[step];
+				if (operation) return toolCall(response, operation.name, operation.args, `resource-${step}`);
+				return text(response, "resource scenario complete");
+			} catch (error) {
+				response.writeHead(500, { "content-type": "text/plain" });
+				response.end(String(error));
+			}
+		});
+		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+		const address = server.address();
+		if (!address || typeof address === "string") throw new Error("Local resource provider did not bind");
+		const agentDir = configureAgentDir(fixture, address.port);
+		new ProjectTrustStore(agentDir).set(work, true);
+		const sharedSkillsRoot = join(home, ".agents", "skills");
+		const roots = [sharedSkillsRoot, join(home, ".agents", "snippets"), join(agentDir, "skills")];
+		for (const [index, root] of roots.entries()) {
+			const source = join(fixture, "source", `resource-${index}`);
+			mkdirSync(source, { recursive: true });
+			mkdirSync(root, { recursive: true });
+			writeFileSync(join(source, referenceName), content);
+			symlinkSync(source, join(root, "installed"), "dir");
+			operations.push(
+				{ name: "ls", args: { path: root } },
+				{ name: "find", args: { path: join(root, "installed"), pattern: "**/*.md" } },
+				{ name: "read", args: { path: join(root, "installed", referenceName) } },
+				{ name: "read", args: { path: join(source, referenceName) } },
+			);
+		}
+		const containedMarker = join("src", "contained-marker");
+		operations.push({ name: "bash", args: { command: `touch '${containedMarker}'` } });
+		const blockedTarget = join(sharedSkillsRoot, "forbidden.md");
+		operations.push({ name: "write", args: { path: blockedTarget, content: "must not be written" } });
+		const directory = join(work, ".pi", "agents");
+		mkdirSync(directory, { recursive: true });
+		writeFileSync(
+			join(directory, `${agentName}.md`),
+			`---\nname: ${agentName}\ndescription: resource acceptance worker\ntools: read, ls, find, write, bash\nmodel: local/deterministic\nprofile: ${profile}\n---\nRun the requested resource scenario.\n`,
+		);
+		const socket = `pi-resource-child-${process.pid}`;
+		const session = socket;
+		sessions.push({ socket, session });
+		const command = [
+			`cd ${shellQuote(work)} &&`,
+			`HOME=${shellQuote(home)}`,
+			`PI_CODING_AGENT_DIR=${shellQuote(agentDir)}`,
+			`PI_GUARD_ACTIVE_PROFILE=${shellQuote(profile)}`,
+			`PI_GUARD_PROFILE_CONFIG=${shellQuote(join(fixture, "missing-profile.jsonc"))}`,
+			"pi --no-extensions",
+			`-e ${shellQuote(join(process.cwd(), "extensions", "index.ts"))}`,
+			"--model local/deterministic --tools subagent,subagent_message",
+			shellQuote("PUBLIC_RESOURCE_DISCOVERY"),
+		].join(" ");
+		try {
+			// Child panes inherit the tmux server environment, not command-local HOME.
+			execFileSync("tmux", ["-L", socket, "-f", "/dev/null", "new-session", "-d", "-s", session, "sh"], {
+				env: { ...process.env, HOME: home },
+				timeout: 5000,
+			});
+			execFileSync("tmux", ["-L", socket, "send-keys", "-t", session, "-l", command]);
+			execFileSync("tmux", ["-L", socket, "send-keys", "-t", session, "Enter"]);
+			const child = await waitFor(
+				() => {
+					const root = join(work, ".pi", "orchestration");
+					if (!existsSync(root)) return undefined;
+					for (const entry of readdirSync(root, { withFileTypes: true })) {
+						const registry = join(root, entry.name, "registry.json");
+						if (!entry.isDirectory() || !existsSync(registry)) continue;
+						const candidate = loadRegistry(registry).children[0];
+						if (candidate?.delivered) return candidate;
+					}
+					return undefined;
+				},
+				"resource child completion",
+				25_000,
+			);
+			const terminal = parseOrThrow(
+				TerminalSignalSchema,
+				JSON.parse(readFileSync(`${child.loadoutPath}.terminal.json`, "utf8")),
+				"resource terminal",
+			);
+			expect(child.loadoutSnapshot.profile).toBe(profile);
+			expect(child.loadoutSnapshot.writes).toEqual(writes);
+			expect(terminal.permissionBlocks?.map((block) => block.toolName)).toEqual(["write"]);
+			expect(observedResults).toHaveLength(operations.length);
+			for (const [index, operation] of operations.entries()) {
+				const result = JSON.stringify(observedResults[index]);
+				switch (operation.name) {
+					case "read":
+						expect(result).toContain(content);
+						break;
+					case "ls":
+						expect(result).toContain("installed");
+						break;
+					case "find":
+						expect(result).toContain(referenceName);
+						break;
+					case "bash":
+						expect(existsSync(join(work, containedMarker))).toBe(true);
+						break;
+					case "write":
+						expect(result).toContain("PI_SUBAGENT_PERMISSIBLE_GLOBS");
+						break;
+					default:
+						throw new Error(`Unexpected resource operation: ${operation.name}`);
+				}
+			}
+			expect(existsSync(blockedTarget)).toBe(false);
+		} catch (error) {
+			const pane = execFileSync("tmux", ["-L", socket, "capture-pane", "-p", "-t", session], {
+				encoding: "utf8",
+				timeout: 5000,
+			});
+			throw new Error(`Resource lifecycle failed: ${String(error)}\n${pane}\nProvider requests: ${requests.length}`, {
+				cause: error,
+			});
+		} finally {
+			await closeProvider(server);
+			rmSync(fixture, { recursive: true, force: true });
 		}
 	}, 35_000);
 

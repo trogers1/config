@@ -33,6 +33,36 @@ function pathProfile(
 }
 
 describe("permissions explain", () => {
+  it.each([
+    undefined,
+    "literal",
+    "subtree",
+  ] satisfies ReadPathRule["pathMatch"][])(
+    "displays the effective read match mode %s",
+    (pathMatch) => {
+      const rule = {
+        pattern: "external-target",
+        pathMatch,
+        decision: "allow",
+        contexts: ["read"],
+      } satisfies ReadPathRule;
+      const explanation = explainPermission({
+        policy: {
+          tools: {},
+          readPaths: [rule],
+          writePaths: [],
+        } satisfies ProfilePolicy,
+        profileName: "mode-explanation",
+        tool: "read",
+        input: rule.pattern,
+        cwd: startupCwd,
+      });
+      expect(explanation.winner?.pathMatch).toBe(pathMatch ?? "glob");
+      expect(formatExplanation(explanation)).toContain(
+        `pathMatch=${pathMatch ?? "glob"}`,
+      );
+    },
+  );
   it("registers the /permissions command (not a space-containing name)", () => {
     const harness = createExtensionHarness({ hasUI: false });
     expect(harness.commands.has("permissions")).toBe(true);

@@ -1,3 +1,5 @@
+import type { ReadPathRule } from "./policyHelpers";
+
 export type Specificity = {
   literalSegments: number;
   literalCharacters: number;
@@ -87,6 +89,19 @@ export function commandPatternSpecificity(pattern: string): Specificity {
 
 export function pathPatternSpecificity(pattern: string): Specificity {
   return patternSpecificity(pattern, /\//);
+}
+
+export function pathRuleSpecificity({
+  rule,
+}: {
+  rule: Pick<ReadPathRule, "pattern" | "pathMatch">;
+}): Specificity {
+  if (rule.pathMatch === undefined) return pathPatternSpecificity(rule.pattern);
+  const segments = rule.pattern.split(/[\\/]/).filter(Boolean);
+  return {
+    literalSegments: segments.length,
+    literalCharacters: segments.join("").length,
+  };
 }
 
 export function customToolMatchSpecificity(

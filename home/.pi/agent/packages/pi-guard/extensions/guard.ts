@@ -1626,6 +1626,10 @@ The permissions gate remains loaded and will fail closed until the profile is co
       }
     | {
         kind: "read" | "write";
+        pathMatch?: Extract<
+          AskRuleCandidate,
+          { kind: "read" | "write" }
+        >["pathMatch"];
         pattern: string;
         contexts?: readonly PathContext[];
         replacePattern?: string;
@@ -1671,24 +1675,27 @@ The permissions gate remains loaded and will fail closed until the profile is co
         configPath: profileConfigPath,
         expectedRevision: profileConfigRevision,
         target,
-        changes: drafts.map(({ draft, decision, guidance }) =>
-          draft.kind === "bash"
-            ? {
-                kind: draft.kind,
-                pattern: draft.pattern,
-                replacePattern: draft.replacePattern,
-                decision,
-                guidance,
-              }
-            : {
-                kind: draft.kind,
-                pattern: draft.pattern,
-                replacePattern: draft.replacePattern,
-                decision,
-                guidance,
-                contexts: draft.contexts,
-              },
-        ),
+        changes: drafts.map(({ draft, decision, guidance }) => {
+          const common = {
+            pattern: draft.pattern,
+            replacePattern: draft.replacePattern,
+            decision,
+            guidance,
+          };
+          if (draft.kind === "bash") return { ...common, kind: draft.kind };
+          if (draft.kind === "read")
+            return {
+              ...common,
+              kind: draft.kind,
+              contexts: draft.contexts,
+              pathMatch: draft.pathMatch,
+            };
+          if (draft.pathMatch !== undefined)
+            throw new Error(
+              "Write permission changes cannot specify a read-path match mode.",
+            );
+          return { ...common, kind: draft.kind, contexts: draft.contexts };
+        }),
       });
       const effectCounts = new Map<string, number>();
       for (const { draft, decision } of drafts) {
@@ -1766,6 +1773,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
           context: trace.context,
           requestedValue: trace.path,
           initialPattern: displayPath(trace.path, startupCwd),
+          pathMatch: pathRuleMatchMode({ rule: trace.pathMatches[0]?.item }),
           currentDecision: "ask",
           matchedRule: trace.pathMatches[0]
             ? `${trace.pathMatches[0].item.pattern} → ${trace.pathMatches[0].item.decision}`
@@ -1800,6 +1808,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
               }
             : {
                 kind,
+                pathMatch: draft.pathMatch,
                 context:
                   draft.contexts?.[0] ?? (kind === "read" ? "read" : "write"),
                 requestedValue: draft.requestedValue ?? draft.pattern,
@@ -1823,11 +1832,12 @@ The permissions gate remains loaded and will fail closed until the profile is co
         return { approved: false };
       }
       const candidateIdentity = (candidate: AskRuleCandidate): string =>
-        `${candidate.kind}\0${candidate.kind === "bash" ? "" : candidate.context}\0${candidate.requestedValue}`;
+        `${candidate.kind}\0${candidate.kind === "bash" ? "" : candidate.context}\0${candidate.requestedValue}\0${candidate.kind === "bash" ? "" : (candidate.pathMatch ?? "glob")}`;
       const rows: EditableRuleRow[] = candidates.map((candidate, index) => ({
         id: `ask-rule-${index}`,
         kind: candidate.kind,
         pattern: candidate.initialPattern,
+        pathMatch: candidate.kind === "bash" ? undefined : candidate.pathMatch,
         decision: "allow",
         contexts: candidate.kind === "bash" ? undefined : [candidate.context],
         request: candidate,
@@ -1895,7 +1905,8 @@ The permissions gate remains loaded and will fail closed until the profile is co
           (row) =>
             row.kind !== "protected" &&
             row.decision !== "skip" &&
-            row.pattern.trim().length > 0,
+            (row.pathMatch === undefined ? row.pattern.trim() : row.pattern)
+              .length > 0,
         );
         if (selected.length === 0) return { approved: false, back: true };
         const saved = await rememberDecisions({
@@ -1939,6 +1950,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
         kind: row.kind,
         pattern: row.pattern,
         contexts: row.contexts,
+        pathMatch: row.pathMatch,
         replacePattern,
       };
     }
@@ -2648,6 +2660,9 @@ The permissions gate remains loaded and will fail closed until the profile is co
               kind: isReadToolName(event.toolName) ? "read" : "write",
               pattern: displayPath(absolutePath, startupCwd),
               contexts: [event.toolName],
+              pathMatch: pathRuleMatchMode({
+                rule: policyDecision.trace?.pathMatches[0]?.item,
+              }),
               requestedValue: absolutePath,
               source: `${event.toolName} tool`,
               matchedRule: policyDecision.trace?.pathMatches[0]
@@ -3279,7 +3294,17 @@ export function decideBash(
   return evaluateBash(command, activePolicy).decision;
 }
 
+function pathRuleMatchMode({
+  rule,
+}: {
+  readonly rule: PathRule | undefined;
+}): Extract<AskRuleCandidate, { kind: "read" | "write" }>["pathMatch"] {
+  return rule && "pathMatch" in rule ? rule.pathMatch : undefined;
+}
+
 export type RuleExplanation = {
+  pathMatch?:
+    Extract<AskRuleCandidate, { kind: "read" | "write" }>["pathMatch"] | "glob";
   pattern: string;
   decision: Decision;
   score: Specificity;
@@ -3291,6 +3316,10 @@ type DisplayableRule = {
   decision: Decision;
   pattern?: string;
   match?: Record<string, string>;
+  pathMatch?: Extract<
+    AskRuleCandidate,
+    { kind: "read" | "write" }
+  >["pathMatch"];
 };
 
 export type PermissionExplanation = {
@@ -3676,6 +3705,7 @@ function ruleExplanation<T extends DisplayableRule>(
     pattern:
       ranked.item.pattern ??
       (ranked.item.match ? JSON.stringify(ranked.item.match) : "(catch-all)"),
+    pathMatch: ranked.item.pathMatch ?? "glob",
     decision: ranked.item.decision,
     score: ranked.score,
     index: ranked.index,
@@ -3734,14 +3764,14 @@ export function formatExplanation(explanation: PermissionExplanation): string {
     const winner = explanation.winner;
     const tiebreak = winner.tiebreak ? ` (tiebreak: ${winner.tiebreak})` : "";
     lines.push(
-      `Winner: [${winner.decision}] ${winner.pattern} (segments=${winner.score.literalSegments}, chars=${winner.score.literalCharacters}, index=${winner.index})${tiebreak}`,
+      `Winner: [${winner.decision}] ${winner.pattern} (pathMatch=${winner.pathMatch ?? "glob"}, segments=${winner.score.literalSegments}, chars=${winner.score.literalCharacters}, index=${winner.index})${tiebreak}`,
     );
   }
 
   if (explanation.pathWinner) {
     const winner = explanation.pathWinner;
     lines.push(
-      `Path-layer winner: [${winner.decision}] ${winner.pattern} (segments=${winner.score.literalSegments}, chars=${winner.score.literalCharacters}, index=${winner.index})`,
+      `Path-layer winner: [${winner.decision}] ${winner.pattern} (pathMatch=${winner.pathMatch ?? "glob"}, segments=${winner.score.literalSegments}, chars=${winner.score.literalCharacters}, index=${winner.index})`,
     );
   }
 
