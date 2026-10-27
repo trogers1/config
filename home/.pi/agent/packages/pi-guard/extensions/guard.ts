@@ -1,5 +1,6 @@
 import path from "node:path";
 import { Value } from "typebox/value";
+import { setPromptSection } from "../modules/promptSections";
 import {
   extractShellCommands,
   isDateDisplayCommand,
@@ -2446,10 +2447,12 @@ The permissions gate remains loaded and will fail closed until the profile is co
       );
     }
 
-    if (promptSections.length === 1) return undefined;
-    return {
-      systemPrompt: `${event.systemPrompt}\n\n${promptSections.join("\n\n")}`,
-    };
+    setPromptSection({
+      event,
+      name: "pi_guard",
+      content: promptSections.join("\n\n"),
+    });
+    return undefined;
   });
 
   pi.on("user_bash", async (_event, ctx) => {

@@ -1,5 +1,9 @@
 # pi-guard
 
+**Requires Pi 0.99.1 or newer.** This is a breaking minimum: profile instructions
+use structured prompt sections. Older hosts or missing structured prompt state
+fail loudly; no legacy text-prompt fallback is supported.
+
 Policy-driven guardrails, auto-pilot steering, permissions, and optional Bash
 sandboxing for [Pi](https://pi.dev). It provides switchable profiles plus
 customizable, layered composition of shipped profiles, rule sets, transforms,

@@ -6,9 +6,9 @@ import {
   type ExtensionAPI,
   type ExtensionCommandContext,
   type ExtensionContext,
-  type ExtensionToolContext,
   type AgentToolResult,
   type ExtensionHandler,
+  type ExtensionToolContext,
   type RegisteredCommand,
   type SessionEntry as SdkSessionEntry,
   type SessionManager,
@@ -1590,7 +1590,7 @@ export function createExtensionHarness(
       >["message"];
     } = {}) {
       ensureStarted("beforeAgent");
-      return await dispatchBeforeAgentStart({
+      const event: BeforeAgentStartEvent = {
         type: "before_agent_start",
         ...(message
           ? { messageType: "custom" as const, message }
@@ -1608,7 +1608,9 @@ export function createExtensionHarness(
           contextFiles: [],
           skills: [],
         },
-      });
+      };
+      const result = await dispatchBeforeAgentStart(event);
+      return { ...event, ...result };
     },
     shutdown: dispose,
     dispose,

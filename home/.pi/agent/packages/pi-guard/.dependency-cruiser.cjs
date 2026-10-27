@@ -35,7 +35,7 @@ module.exports = {
       name: "not-to-dev-dependency",
       severity: "error",
       comment:
-        "Pi runtime code must not depend on packages declared only for development.",
+        "Pi runtime code must not depend on packages declared only for development; host-provided peer APIs may also be installed as development dependencies for tests.",
       from: { path: "^(extensions|modules)/", pathNot: "\\.test\\.ts$" },
       // Host-provided peers also have exact dev pins for local SDK checks.
       to: { dependencyTypes: ["npm-dev"], dependencyTypesNot: ["npm-peer"] },

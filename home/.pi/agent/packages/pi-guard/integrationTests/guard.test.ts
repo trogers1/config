@@ -2,7 +2,7 @@ import fs from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { stripVTControlCharacters } from "node:util";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import type {
   ExtensionAPI,
   ExtensionContext,
@@ -20,16 +20,16 @@ import permissionsExtension, {
 } from "../extensions/guard";
 import { policyConfig } from "../modules/policy";
 import { askPermissionChoices } from "../modules/profileUpdate";
-import type { CustomToolRule, ProfilePolicy } from "../modules/policyHelpers";
+import {
+  parseOrThrow,
+  profileConfigFileSchema,
+  type CustomToolRule,
+  type ProfilePolicy,
+} from "../modules/policyHelpers";
 import { loadProfileConfig } from "../modules/profileConfig";
-import { defaultProtectedPathRules } from "../modules/protectedPaths";
 import { readCommandDenialReasons } from "../modules/shell/readCommands";
+import { classifyShell } from "../modules/shell/classify";
 import { createExtensionHarness as createInteractiveExtensionHarness } from "./support/extensionHarness";
-
-const defaultProtectedRipgrepArguments = defaultProtectedPathRules
-  .filter((rule) => rule.decision === "deny")
-  .map((rule) => `--glob '!${rule.pattern}'`)
-  .join(" ");
 
 const parserPolicy = {
   tools: {
@@ -1215,24 +1215,84 @@ describe("default profile bash policy", () => {
     ).resolves.toBeUndefined();
   });
 
-  it("keeps common rg glob searches allowed while appending protections last", async () => {
-    const { api, handlers } = createExtensionHarness();
-    permissionsExtension(api);
-    const sessionStart = handlers.get("session_start");
-    const toolCall = handlers.get("tool_call");
-    const ctx = nonInteractiveContext(process.cwd());
-    await sessionStart?.({ type: "session_start" }, ctx);
-
-    const event = {
-      type: "tool_call",
-      toolName: "bash",
-      input: { command: "rg --glob '**/*.ts' PATTERN" },
-    };
-
-    await expect(toolCall?.(event, ctx)).resolves.toBeUndefined();
-    expect(event.input.command).toBe(
-      `rg --glob '**/*.ts' PATTERN ${defaultProtectedRipgrepArguments}`,
+  it.each([
+    {
+      name: "keeps common rg glob searches allowed while appending protections last",
+      repeatedInheritance: false,
+    },
+    {
+      name: "covers repeated inherited protections after caller rg overrides",
+      repeatedInheritance: true,
+    },
+  ])("$name", async ({ repeatedInheritance }) => {
+    const configPath = path.resolve(
+      "integrationTests/fixtures/rg-search-profiles.json",
     );
+    const fixture = parseOrThrow({
+      unverifiedData: JSON.parse(fs.readFileSync(configPath, "utf8")),
+      schema: profileConfigFileSchema,
+      message: "Invalid ripgrep lifecycle fixture",
+    });
+    const profile = repeatedInheritance
+      ? "rg-repeated"
+      : fixture.defaultProfile;
+    if (!profile)
+      throw new Error("Ripgrep fixture omitted its default profile");
+    const resolved = loadProfileConfig({ fallback: policyConfig, configPath });
+    const denyPatterns = resolved.profiles[profile].policy.protectedPathRules
+      ?.filter((rule) => rule.decision === "deny")
+      .map((rule) => rule.pattern);
+    if (!denyPatterns?.length)
+      throw new Error("Ripgrep fixture must declare protected exclusions");
+    if (repeatedInheritance)
+      expect(new Set(denyPatterns).size).toBeLessThan(denyPatterns.length);
+    const expectedExclusions = denyPatterns
+      .map((pattern) => `--glob '!${pattern}'`)
+      .join(" ");
+
+    vi.stubEnv("PI_GUARD_PROFILE_CONFIG", configPath);
+    vi.stubEnv("PI_SUBAGENT_PROFILE", profile);
+    vi.stubEnv("PI_SUBAGENT_PERMISSIBLE_GLOBS", undefined);
+    onTestFinished(() => {
+      vi.unstubAllEnvs();
+    });
+    const harness = createInteractiveExtensionHarness({ hasUI: false });
+    onTestFinished(async () => harness.dispose());
+    await harness.start();
+    expect(harness.errors.map(({ event }) => event)).toEqual([]);
+    const prompt = await harness.beforeAgent();
+    expect(harness.errors.map(({ event }) => event)).toEqual([]);
+    expect(prompt.systemPromptOptions.sections.pi_guard).toContain(
+      `# Active profile: ${profile}`,
+    );
+
+    const input = {
+      command: repeatedInheritance
+        ? "rg --glob '**/*.ts' --glob '**' PATTERN"
+        : "rg --glob '**/*.ts' PATTERN",
+    };
+    await expect(
+      harness.callTool({ toolName: "bash", input }),
+    ).resolves.toBeUndefined();
+    if (!repeatedInheritance) {
+      expect(input.command).toBe(
+        `rg --glob '**/*.ts' PATTERN ${expectedExclusions}`,
+      );
+      return;
+    }
+
+    const parsed = classifyShell(input.command);
+    expect(parsed.errors).toEqual([]);
+    const patterns = parsed.tokens.filter(({ kind }) => kind === "pattern");
+    const callerOverride = patterns.find(({ value }) => value === "**");
+    if (!callerOverride)
+      throw new Error("Ripgrep rewrite removed the caller glob override");
+    expect(patterns.some(({ value }) => value === "**/*.ts")).toBe(true);
+    const exclusions = patterns.filter(({ value }) => value.startsWith("!"));
+    expect(new Set(exclusions.map(({ value }) => value))).toEqual(
+      new Set(denyPatterns.map((pattern) => `!${pattern}`)),
+    );
+    expect(exclusions.every(({ pos }) => pos > callerOverride.pos)).toBe(true);
   });
 
   it.each(['inspect "$TARGET"', 'inspect "${ROOT}/credentials"'])(

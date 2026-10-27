@@ -21,6 +21,7 @@ describe("built-in test profiles", () => {
     vi.stubEnv("PI_SUBAGENT_PROFILE", "builtin:tests-hidden");
     const harness = createExtensionHarness({ hasUI: false });
     await harness.start();
+    expect(harness.errors.map(({ event }) => event)).toEqual([]);
 
     for (const event of [
       { toolName: "read", input: { path: "src/example.test.ts" } },
@@ -47,8 +48,12 @@ describe("built-in test profiles", () => {
     ).resolves.toBeUndefined();
 
     const prompt = await harness.beforeAgent();
-    expect(prompt?.systemPrompt).toContain("You are implementing only");
-    expect(prompt?.systemPrompt).toContain(
+    expect(harness.errors.map(({ event }) => event)).toEqual([]);
+    expect(prompt.systemPrompt).toBe("Base system prompt");
+    expect(prompt.systemPromptOptions.sections.pi_guard).toContain(
+      "You are implementing only",
+    );
+    expect(prompt.systemPromptOptions.sections.pi_guard).toContain(
       "list of every test you believe is bad",
     );
   });
@@ -57,6 +62,7 @@ describe("built-in test profiles", () => {
     vi.stubEnv("PI_SUBAGENT_PROFILE", "builtin:tests-only");
     const harness = createExtensionHarness({ hasUI: false });
     await harness.start();
+    expect(harness.errors.map(({ event }) => event)).toEqual([]);
 
     await expect(
       harness.callToolWithoutPrompt({
@@ -85,10 +91,13 @@ describe("built-in test profiles", () => {
     expect(implementationEdit?.reason).toContain("only edit test files");
 
     const prompt = await harness.beforeAgent();
-    expect(prompt?.systemPrompt).toContain("You are writing tests only");
-    expect(prompt?.systemPrompt).toContain("Only create or modify test files");
-    expect(prompt?.systemPrompt).toContain("Tooling constraints");
-    expect(prompt?.systemPrompt).toContain("read`, `grep`, `find`, and `ls`");
+    expect(harness.errors.map(({ event }) => event)).toEqual([]);
+    expect(prompt.systemPrompt).toBe("Base system prompt");
+    const section = prompt.systemPromptOptions.sections.pi_guard;
+    expect(section).toContain("You are writing tests only");
+    expect(section).toContain("Only create or modify test files");
+    expect(section).toContain("Tooling constraints");
+    expect(section).toContain("read`, `grep`, `find`, and `ls`");
   });
 
   it("steers tests-only bash inspection denials toward the dedicated read tools", async () => {

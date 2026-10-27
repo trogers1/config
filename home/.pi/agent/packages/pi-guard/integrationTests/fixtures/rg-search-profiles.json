@@ -1,0 +1,17 @@
+{
+  "defaultProfile": "rg-search",
+  "profiles": {
+    "rg-search": {
+      "description": "Deterministic ripgrep search lifecycle fixture.",
+      "extends": ["builtin:default"]
+    },
+    "rg-parent": {
+      "description": "A second parent with overlapping protected paths.",
+      "extends": ["builtin:default"]
+    },
+    "rg-repeated": {
+      "description": "Exercises protected coverage with overlapping inheritance.",
+      "extends": ["rg-search", "rg-parent"]
+    }
+  }
+}
