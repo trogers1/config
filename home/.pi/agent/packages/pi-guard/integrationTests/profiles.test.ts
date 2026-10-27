@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -24,6 +25,7 @@ import {
 } from "./support/extensionHarness";
 import { profileDraftDiscardTitle } from "../modules/profileAuthoringPresentation";
 import { defaultProtectedPathRules } from "../modules/protectedPaths";
+import type { ProfileConfigFile } from "../modules/policyHelpers";
 
 const defaultProtectedDenyPatterns = defaultProtectedPathRules
   .filter((rule) => rule.decision === "deny")
@@ -1224,6 +1226,140 @@ describe("permissions extension", () => {
       expect(denied?.reason).toContain("Command denied by explicit rule");
       expect(denied?.reason).not.toContain("PI_SUBAGENT_PERMISSIBLE_GLOBS");
     }
+  });
+
+  describe("shell operand regression under a narrow subagent scope", () => {
+    const profileName = "operand-regression";
+    const scopeRoot = "modules";
+    const outsideFile = "outside.txt";
+    const discoveryRoot = ".pi";
+    const printfFormat = "%s\\n";
+    const printfHomeCommand = `printf '${printfFormat}' "$HOME"`;
+    const revisionRange = "HEAD..FETCH_HEAD";
+    const fixturePolicy = {
+      description: "Allow commands while retaining real path enforcement.",
+      tools: { bash: [{ pattern: "*", decision: "allow" }] },
+      readPaths: [{ pattern: "**", decision: "allow" }],
+      writePaths: [{ pattern: "**", decision: "allow" }],
+    } satisfies ProfileConfigFile["profiles"][string];
+
+    beforeEach(() => {
+      vi.stubEnv("PI_SUBAGENT_PERMISSIBLE_GLOBS", `${scopeRoot}/**`);
+      vi.stubEnv(
+        "PI_GUARD_PROFILE_CONFIG",
+        writeTempConfig(
+          JSON.stringify({
+            defaultProfile: profileName,
+            profiles: { [profileName]: fixturePolicy },
+          } satisfies ProfileConfigFile),
+        ),
+      );
+    });
+
+    it.each([
+      printfHomeCommand,
+      `printf -- '${printfFormat}' '/outside/data'`,
+      "git diff --name-only 7e38612172859e3bebb541f190b4aaf8acd2edf3..HEAD --",
+      "git diff HEAD...FETCH_HEAD --",
+      "git log HEAD.. --",
+      "git diff ..HEAD --",
+    ])("allows non-filesystem operands: %s", async (command) => {
+      const harness = createExtensionHarness({ hasUI: false });
+      await harness.start();
+      await expect(
+        harness.callToolWithoutPrompt({
+          toolName: "bash",
+          input: { command },
+        }),
+      ).resolves.toBeUndefined();
+    });
+
+    it("does not exempt a real tracked range-shaped file when Git falls back to a path", async () => {
+      const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "guard-git-range-"));
+      temporaryDirectories.push(cwd);
+      const git = ({ args }: { args: readonly string[] }) =>
+        execFileSync("git", ["-c", "core.hooksPath=/dev/null", ...args], {
+          cwd,
+          encoding: "utf8",
+          timeout: 5000,
+        });
+      git({ args: ["init", "--initial-branch=main"] });
+      const filename = path.join(cwd, revisionRange);
+      fs.writeFileSync(filename, "before\n");
+      git({ args: ["add", "--", revisionRange] });
+      git({
+        args: [
+          "-c",
+          "user.name=Guard Test",
+          "-c",
+          "user.email=guard@example.test",
+          "-c",
+          "commit.gpgSign=false",
+          "commit",
+          "-m",
+          "fixture",
+        ],
+      });
+      fs.writeFileSync(filename, "after\n");
+      // No FETCH_HEAD exists: Git resolves the bare argument as this filename.
+      expect(git({ args: ["diff", "--name-only", revisionRange] }).trim()).toBe(
+        revisionRange,
+      );
+      const harness = createExtensionHarness({ hasUI: false, contextCwd: cwd });
+      await harness.start();
+      const denied = await harness.callTool({
+        toolName: "bash",
+        input: {
+          command: `git diff ${revisionRange}`,
+        },
+      });
+      expect(denied).toMatchObject({ block: true });
+      expect(denied?.reason).toContain("PI_SUBAGENT_PERMISSIBLE_GLOBS");
+      await expect(
+        harness.callToolWithoutPrompt({
+          toolName: "bash",
+          input: {
+            command: `git diff ${revisionRange} --`,
+          },
+        }),
+      ).resolves.toBeUndefined();
+    });
+
+    it("reports the actual discovery root in the original combined command", async () => {
+      const harness = createExtensionHarness({ hasUI: false });
+      await harness.start();
+      const denied = await harness.callTool({
+        toolName: "bash",
+        input: {
+          command: `${printfHomeCommand}; find ${discoveryRoot} -maxdepth 3 -type f | head -25; find '${path.join(os.homedir(), ".agents")}' -name '*implement*' -o -name '*code*' -o -name '*types*'`,
+        },
+      });
+      expect(denied).toMatchObject({ block: true });
+      expect(denied?.reason).toContain(path.resolve(discoveryRoot));
+      expect(denied?.reason).not.toContain(printfFormat);
+    });
+
+    it.each([
+      `${printfHomeCommand} > ${outsideFile}`,
+      `printf '${printfFormat}' "$(cat ${outsideFile})"`,
+      `printf '${printfFormat}' "\${UNSET_VARIABLE:-$(cat ${outsideFile})}"`,
+      `printf '${printfFormat}' "$(( $(cat ${outsideFile}) + 0 ))"`,
+      `git blame ${revisionRange}`,
+      `printf '${printfFormat}' < ${outsideFile}`,
+      `git diff ${revisionRange} -- ${outsideFile}`,
+      `git diff --no-index ${scopeRoot}/allowed.ts ${revisionRange}`,
+      "git diff ./outside..HEAD",
+      "git diff ../outside..HEAD",
+    ])("still denies filesystem operands: %s", async (command) => {
+      const harness = createExtensionHarness({ hasUI: false });
+      await harness.start();
+      const denied = await harness.callTool({
+        toolName: "bash",
+        input: { command },
+      });
+      expect(denied).toMatchObject({ block: true });
+      expect(denied?.reason).toContain("PI_SUBAGENT_PERMISSIBLE_GLOBS");
+    });
   });
 
   it("enforces subagent permissible scopes for tools and Bash paths", async () => {

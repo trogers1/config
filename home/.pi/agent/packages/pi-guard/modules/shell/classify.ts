@@ -123,6 +123,9 @@ export function classifyCommandTokens(
     classifyRipgrepPatterns(command.suffix, tokens);
   }
   if (commandName === "git") classifyGitArguments(command.suffix, tokens);
+  if (commandName === "printf") {
+    classifyPrintfArguments({ words: command.suffix, tokens });
+  }
   if (commandName === "cd") classifyCdTarget(command.suffix, tokens);
   if (commandName && readerCommands.has(commandName)) {
     classifyReaderArguments(commandName, command.suffix, tokens);
@@ -138,6 +141,43 @@ export function classifyCommandTokens(
   if (commandName === "find") classifyFindArguments(command.suffix, tokens);
 
   return tokens;
+}
+
+// printf consumes format/data, not filenames. Leave variable-assignment and
+// unknown option forms conservative. Only simple variable expansions are
+// exempted: complex expansions may execute nested commands or evaluate code.
+function classifyPrintfArguments({
+  words,
+  tokens,
+}: {
+  words: Word[];
+  tokens: ClassifiedShellToken[];
+}): void {
+  const first = staticWordValue(words[0]);
+  if (first === undefined || (first.startsWith("-") && first !== "--")) return;
+  for (const [index, word] of words.entries()) {
+    // Unproven forms retain their original classification and remain gated.
+    if ((word.parts ?? []).every((part) => isPrintfDataPart({ part }))) {
+      const token = tokens[index];
+      if (token.kind === "dynamic") token.dynamicRole = "argument";
+      else token.kind = "proven-non-path";
+    }
+  }
+}
+
+function isPrintfDataPart({ part }: { part: WordPart }): boolean {
+  switch (part.type) {
+    case "Literal":
+    case "SingleQuoted":
+    case "AnsiCQuoted":
+    case "SimpleExpansion":
+      return true;
+    case "DoubleQuoted":
+    case "LocaleString":
+      return part.parts.every((child) => isPrintfDataPart({ part: child }));
+    default:
+      return false;
+  }
 }
 
 function classifyArgument(
@@ -332,6 +372,9 @@ function classifyGitArguments(
   let subcommand: string | undefined;
   let afterDoubleDash = false;
   let diffNoIndex = false;
+  const revisionSeparatorIndex = words.findIndex(
+    (word) => staticWordValue(word) === "--",
+  );
 
   for (let index = 0; index < words.length; index++) {
     const value = staticWordValue(words[index]);
@@ -445,7 +488,12 @@ function classifyGitArguments(
       subcommand &&
       gitObjectSubcommands.has(subcommand) &&
       tokens[index].kind === "ambiguous" &&
-      (looksLikeGitObjectSpec(value) || looksLikeGitRevision(value))
+      (looksLikeGitObjectSpec(value) ||
+        looksLikeGitRevision(value) ||
+        // Without a separator, an unresolved range can fall back to a filename.
+        (["diff", "log", "rev-list"].includes(subcommand) &&
+          index < revisionSeparatorIndex &&
+          looksLikeGitRevisionRange({ value })))
     ) {
       tokens[index].kind = "repository-object";
       continue;
@@ -898,6 +946,21 @@ function looksLikeGitObjectSpec(value: string): boolean {
   if (separator <= 0 || separator >= value.length - 1) return false;
   const leftSide = value.slice(0, separator);
   return looksLikeGitRevision(leftSide) && !isExplicitPathShapedValue(value);
+}
+
+function looksLikeGitRevisionRange({ value }: { value: string }): boolean {
+  const match = /^(.*?)\.{2,3}(.*?)$/.exec(value);
+  if (!match) return false;
+  const [, left, right] = match;
+  return (
+    Boolean(left || right) &&
+    [left, right].every(
+      (endpoint) =>
+        endpoint === "" ||
+        (!isExplicitPathShapedValue(endpoint) &&
+          looksLikeGitRevision(endpoint)),
+    )
+  );
 }
 
 function looksLikeGitRevision(value: string): boolean {
