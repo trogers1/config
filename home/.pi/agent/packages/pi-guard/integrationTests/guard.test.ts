@@ -980,6 +980,41 @@ describe("custom tool policy", () => {
 });
 
 describe("default profile bash policy", () => {
+  it.each([
+    "shasum",
+    "shasum -a 256",
+    "shasum -a 256 app/routes/clients.tsx tests/routes.test.ts",
+  ])("allows checksum queries without approval: %s", async (command) => {
+    const ctx = context(process.cwd(), false);
+
+    await expect(
+      gateBash({
+        command,
+        startupCwd: process.cwd(),
+        ctx,
+        activePolicy: policyConfig.profiles["builtin:default"].policy,
+      }),
+    ).resolves.toBeUndefined();
+    expect(vi.mocked(ctx.ui.custom)).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "shasum -a 256 .env",
+    "shasum README.md > .env",
+    "shasum /private/guard-outside-workspace/secret.txt",
+  ])("keeps checksum filesystem access gated: %s", async (command) => {
+    const ctx = context(process.cwd(), false);
+
+    await expect(
+      gateBash({
+        command,
+        startupCwd: process.cwd(),
+        ctx,
+        activePolicy: policyConfig.profiles["builtin:default"].policy,
+      }),
+    ).resolves.toMatchObject({ block: true });
+  });
+
   it("does not prompt for a static cd followed by an && command", async () => {
     const repositoryRoot = path.resolve(process.cwd(), "../../../../..");
     const ctx = context(repositoryRoot, false);

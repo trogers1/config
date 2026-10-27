@@ -39,6 +39,8 @@ export const defaultShellRules: Rule[] = [
   { pattern: "wc *", decision: "allow" },
   { pattern: "file", decision: "allow" },
   { pattern: "file *", decision: "allow" },
+  { pattern: "shasum", decision: "allow" },
+  { pattern: "shasum *", decision: "allow" },
   { pattern: "head", decision: "allow" },
   { pattern: "head *", decision: "allow" },
   { pattern: "tail", decision: "allow" },
