@@ -276,6 +276,22 @@ both the ordinary path gate and sandbox writable roots. A scope can only
 reduce profile/configured write access; it cannot add write access, remove a
 protected denial, or affect networking.
 
+On macOS, runtime scratch is separate from task scope: Guard resolves the
+current user's OS temp directory with `getconf DARWIN_USER_TEMP_DIR`, validates
+its canonical location and ownership, and preserves that exact root only when
+the effective parent sandbox already authorizes it. Parent/role restrictions
+and protected-path denies still apply. Other configured extra roots are still
+clipped to task scope; this is not a blanket `/var/folders` grant.
+
+This supports system `/usr/bin/mktemp -d`, which on macOS uses the OS user-temp
+root even when `TMPDIR` points to Guard's private directory. The shared user-temp
+root is **not process-isolated**: authorized children can access other unprotected
+scratch files belonging to the same user, including other processes' temporary
+workspaces. Keep sensitive data protected and real workspaces outside shared
+scratch. A restrictive parent that does not authorize this root retains the
+denial; an explicit `mktemp -d "${TMPDIR%/}/prefix.XXXXXX"` template can instead
+use Guard's private operational directory.
+
 ## Resolution and lifecycle
 
 Sandbox resolution produces one of three states:

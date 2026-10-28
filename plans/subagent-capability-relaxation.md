@@ -50,6 +50,27 @@ subagent delegation separate.
 - Keep extension mappings user-controlled/protected and document their trusted
   host-code boundary. Tool-name approval is not internal-operation sandboxing.
 
+### Approved runtime scratch-space exception
+
+Current-user OS temporary-directory access is approved separately from the
+optional tool capabilities in this plan. Preserve an effective parent's existing
+write authorization for the exact resolved current-user OS temp directory when
+narrowing a child's task write scope. Do not grant all of `/var/folders`, preserve
+all extra write roots, or add authority denied by the parent or a role ceiling.
+Canonicalize the runtime root and keep protected-path denials effective.
+
+This supports standard subprocesses, including macOS `mktemp -d`, which uses the
+OS user-temp directory even when `TMPDIR` points to private agent scratch space.
+Shared user-temp access is not per-agent isolation: it can affect temporary
+artifacts of other processes running as the same user. Read-only role ceilings
+must explicitly distinguish permitted scratch writes from forbidden task-file
+mutation; this exception must not silently override those ceilings.
+
+Verify real system `mktemp` through the scoped sandbox, restrictive-parent
+preservation, and continued denial of unrelated cache, protected, and
+out-of-scope task writes. This approval does not enable codemode, MCP, nested
+delegation, or the other capability changes below.
+
 ### 4. Add optional tools individually, not wholesale inheritance
 
 - Reuse the approved backing-extension mechanism for specific justified tools.
@@ -87,4 +108,5 @@ separately reviewable steps; do not enable broader tools to work around failures
 - Existing detailed model-boundary plan:
   `home/.pi/agent/packages/pi-guard/plans/codemode-guard-boundaries-and-transparency.md`
 
-This is a plan only; no subagent capability changes are authorized by this file.
+Except for the separately approved runtime scratch-space exception above, this
+is a plan only; no other subagent capability changes are authorized by this file.

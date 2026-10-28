@@ -1,7 +1,12 @@
+import path from "node:path";
+import { matchesGlobPattern } from "../shell/pathPolicy";
 import { parseResolvedProfile } from "../policyHelpers";
 import { resolveRuntimeRequirementWritePaths } from "../runtimeRequirements";
 import { getSandboxBackend } from "./backend";
-import { ensureSandboxTemporaryDirectory } from "./temporaryDirectory";
+import {
+  currentUserTemporaryDirectory,
+  ensureSandboxTemporaryDirectory,
+} from "./temporaryDirectory";
 import { translatePolicy } from "./translate";
 import type {
   CoverageReport,
@@ -72,6 +77,39 @@ async function resolveSandboxLocked(
   // SRT overwrites TMPDIR for filesystem-sandboxed children. Its private
   // directory and selected audited requirements are operational roots, not
   // workspace access, so preserve them when a subagent scope narrows writes.
+  const userTemporaryDirectory = state.subagentScopes?.length
+    ? currentUserTemporaryDirectory()
+    : undefined;
+  const parentTranslation = userTemporaryDirectory
+    ? translatePolicy(resolvedPolicy, state.profile, state.startupCwd)
+    : undefined;
+  // This is a task-scope exception, never a new parent/role grant. Preserve
+  // only the exact OS-selected user scratch root that the parent already opens.
+  const coversUserTemp = (root: string): boolean => {
+    if (!userTemporaryDirectory) return false;
+    const normalizedRoot = root
+      .replace(/^\/private\/var\//, "/var/")
+      .replace(/\/\*\*\/\*$/, "");
+    const normalizedTemp = userTemporaryDirectory.replace(
+      /^\/private\/var\//,
+      "/var/",
+    );
+    return (
+      normalizedTemp === normalizedRoot ||
+      normalizedTemp.startsWith(`${normalizedRoot}${path.sep}`) ||
+      matchesGlobPattern(normalizedRoot, normalizedTemp)
+    );
+  };
+  const authorizedUserTemp =
+    userTemporaryDirectory &&
+    parentTranslation?.kind === "active" &&
+    parentTranslation.spec.filesystem.writeAllowRoots.some(coversUserTemp) &&
+    !parentTranslation.spec.filesystem.writeDenyRoots.some(coversUserTemp)
+      ? [
+          userTemporaryDirectory,
+          userTemporaryDirectory.replace(/^\/private\/var\//, "/var/"),
+        ]
+      : [];
   const runtimeWritePaths = [
     ...resolveRuntimeRequirementWritePaths({
       requirements: runtime.requirements,
@@ -102,6 +140,7 @@ async function resolveSandboxLocked(
     policy,
     startupCwd: state.startupCwd,
     subagentScopes,
+    authorizedUserTemp,
   });
   const cached = sandboxCache.get(cacheKey);
   if (cached) return cached;
@@ -139,6 +178,16 @@ async function resolveSandboxLocked(
     };
     sandboxCache.set(cacheKey, resolution);
     return resolution;
+  }
+
+  // Add scratch only after translation: putting it in extraWritePaths would
+  // preauthorize parent ASK rules. Retain every effective parent deny/ask root,
+  // including those otherwise clipped out of the child workspace.
+  if (authorizedUserTemp.length && parentTranslation?.kind === "active") {
+    translated.spec.filesystem.writeAllowRoots.push(...authorizedUserTemp);
+    translated.spec.filesystem.writeDenyRoots.push(
+      ...parentTranslation.spec.filesystem.writeDenyRoots,
+    );
   }
 
   try {

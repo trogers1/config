@@ -101,6 +101,12 @@ function normalizeRoots(roots: string[]): string[] {
 }
 
 function isWithin(candidate: string, root: string): boolean {
+  // Darwin /var and /private/var name the same tree. Compare consistently so
+  // an ASK/deny using one spelling cannot disappear beneath an aliased allow.
+  if (process.platform === "darwin") {
+    candidate = candidate.replace(/^\/var\//, "/private/var/");
+    root = root.replace(/^\/var\//, "/private/var/");
+  }
   const prefix = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
   return candidate === root || candidate.startsWith(prefix);
 }

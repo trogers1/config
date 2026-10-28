@@ -7,6 +7,9 @@ import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { RuleSetName } from "../modules/ruleSets.lib/index";
 import type { ProfileConfigFile } from "../modules/policyHelpers";
 import { createExtensionHarness } from "./support/extensionHarness";
+import { loadProfileConfig } from "../modules/profileConfig";
+import { policyConfig } from "../modules/policy";
+import { resolveSandbox } from "../modules/sandbox.lib";
 
 const tempDirectories: string[] = [];
 
@@ -61,9 +64,11 @@ function createLoopbackServer(): net.Server {
   });
 }
 
-function fixture() {
+function fixture({
+  parentDirectory = os.tmpdir(),
+}: { parentDirectory?: string } = {}) {
   const root = fs.mkdtempSync(
-    path.join(os.tmpdir(), `pi-sandbox-e2e-${crypto.randomUUID()}`),
+    path.join(parentDirectory, `pi-sandbox-e2e-${crypto.randomUUID()}`),
   );
   tempDirectories.push(root);
   fs.mkdirSync(path.join(root, "allowed", "locked"), { recursive: true });
@@ -123,10 +128,12 @@ function writeProfileConfig({
   sandboxOverrides = {},
   sandboxEnabled = true,
   runtimeRuleSets = [],
+  protectedPaths = [],
 }: {
   sandboxOverrides?: Record<string, unknown>;
   sandboxEnabled?: boolean;
   runtimeRuleSets?: readonly RuleSetName[];
+  protectedPaths?: readonly string[];
 }): void {
   const configDirectory = fs.mkdtempSync(
     path.join(os.tmpdir(), `pi-sandbox-profile-${crypto.randomUUID()}`),
@@ -149,6 +156,7 @@ function writeProfileConfig({
           readPaths: [{ pattern: "*", decision: "allow" }],
           writePaths: [{ pattern: "*", decision: "allow" }],
           protectedPathRules: [
+            ...protectedPaths.map((pattern) => ({ pattern, decision: "deny" })),
             { pattern: "**/.env*", decision: "deny" },
             { pattern: "**/.env.template", decision: "allow" },
             { pattern: "protected/**", decision: "deny" },
@@ -1628,7 +1636,9 @@ func main() {
 
   describe("subagent sandbox scopes", () => {
     function scopedFixture() {
-      const root = fixture();
+      // A workspace inside shared OS scratch would intentionally inherit that
+      // entire scratch exception. Keep task-scope assertions outside it.
+      const root = fixture({ parentDirectory: import.meta.dirname });
       fs.mkdirSync(path.join(root, "allowed", "scoped"));
       fs.mkdirSync(path.join(root, "allowed", "sibling"));
       process.env.PI_SUBAGENT_PERMISSIBLE_GLOBS = "allowed/scoped";
@@ -1666,6 +1676,180 @@ func main() {
         }),
       ).toBe(0);
     });
+
+    it("runs Node and system mktemp with scoped private and workspace TMPDIRs", async () => {
+      const root = scopedFixture();
+      process.env.PI_SUBAGENT_PERMISSIBLE_GLOBS = ".";
+      writeProfileConfig({});
+      const harness = createExtensionHarness({
+        contextCwd: root,
+        hasUI: false,
+      });
+      await harness.start();
+      try {
+        for (const workspace of [false, true]) {
+          const source = `
+            const fs = require('fs'); const path = require('path');
+            const { spawnSync } = require('child_process');
+            const env = { ...process.env, ${workspace ? `TMPDIR: ${JSON.stringify(path.join(root, "allowed"))}` : "TMPDIR: process.env.TMPDIR"} };
+            console.log(JSON.stringify({ TMPDIR: env.TMPDIR, TMP: env.TMP, TEMP: env.TEMP }));
+            const directory = fs.mkdtempSync(path.join(env.TMPDIR, 'node-temp-'));
+            fs.rmSync(directory, { recursive: true });
+            const result = spawnSync('/usr/bin/mktemp', ['-d'], { env, encoding: 'utf8' });
+            // macOS default mktemp uses the host user-temp root, not TMPDIR.
+            if (process.platform === 'darwin') {
+              if (result.status === 0 || !/Operation not permitted/.test(result.stderr)) throw new Error('Expected host-temp denial: ' + result.stderr);
+            } else {
+              if (result.status !== 0) throw new Error(result.stderr);
+              fs.rmSync(result.stdout.trim(), { recursive: true });
+            }
+            const explicit = spawnSync('/usr/bin/mktemp', ['-d', path.join(env.TMPDIR, 'explicit.XXXXXX')], { env, encoding: 'utf8' });
+            if (explicit.status !== 0) throw new Error(explicit.stderr);
+            fs.rmSync(explicit.stdout.trim(), { recursive: true });
+          `;
+          const result = await harness.executeTool({
+            name: "bash",
+            params: {
+              command: node({ source: source.replaceAll("\n", " ") }),
+              timeout: 10,
+            },
+          });
+          expect(exitCodeFrom({ result }), JSON.stringify(result)).toBe(0);
+        }
+      } finally {
+        await harness.shutdown();
+      }
+    });
+
+    it("preserves only parent-authorized current-user scratch for scoped system mktemp", async () => {
+      if (process.platform !== "darwin") return;
+      const root = fs.mkdtempSync(
+        path.join(import.meta.dirname, ".temp-scope-"),
+      );
+      tempDirectories.push(root);
+      fs.mkdirSync(path.join(root, "workspace"));
+      const workspace = path.join(root, "workspace");
+      fs.mkdirSync(path.join(workspace, "protected"));
+      fs.writeFileSync(path.join(workspace, "protected", "secret"), "original");
+      const hostTemp = spawnSync("/usr/bin/getconf", ["DARWIN_USER_TEMP_DIR"], {
+        encoding: "utf8",
+      }).stdout.trim();
+      const scratch = fs.mkdtempSync(
+        path.join(hostTemp, "guard-protected-scratch-"),
+      );
+      tempDirectories.push(scratch);
+      const scratchSecret = path.join(scratch, "secret");
+      fs.writeFileSync(scratchSecret, "original");
+      process.env.PI_SUBAGENT_PERMISSIBLE_GLOBS = ".";
+      writeProfileConfig({
+        protectedPaths: [scratchSecret],
+        sandboxOverrides: { extraWritePaths: [hostTemp, root] },
+      });
+      const harness = createExtensionHarness({
+        contextCwd: workspace,
+        hasUI: false,
+      });
+      await harness.start();
+      try {
+        const source = `const fs=require('fs'),cp=require('child_process'); const r=cp.spawnSync('/usr/bin/mktemp',['-d'],{encoding:'utf8'}); if(r.status!==0)throw new Error(r.stderr); try { fs.writeFileSync(${JSON.stringify(scratchSecret)},'bad'); throw new Error('protected escaped'); } catch(e) { if(e.message==='protected escaped')throw e; } fs.rmSync(r.stdout.trim(),{recursive:true}); try { fs.writeFileSync(${JSON.stringify(path.join(root, "sibling"))},'bad'); throw new Error('sibling escaped'); } catch(e) { if(e.message==='sibling escaped')throw e; }`;
+        const result = await harness.executeTool({
+          name: "bash",
+          params: { command: node({ source }), timeout: 10 },
+        });
+        expect(exitCodeFrom({ result }), JSON.stringify(result)).toBe(0);
+        expect(fs.existsSync(path.join(root, "sibling"))).toBe(false);
+      } finally {
+        await harness.shutdown();
+      }
+    });
+
+    it.each(["ask", "deny", "read-only"] as const)(
+      "retains the effective parent's %s scratch ceiling",
+      async (ceiling) => {
+        if (process.platform !== "darwin") return;
+        const root = scopedFixture();
+        const hostTemp = spawnSync(
+          "/usr/bin/getconf",
+          ["DARWIN_USER_TEMP_DIR"],
+          { encoding: "utf8" },
+        )
+          .stdout.trim()
+          .replace(/\/$/, "");
+        const canonicalTemp = fs.realpathSync(hostTemp);
+        const configPath = path.join(root, "ceiling.json");
+        fs.writeFileSync(
+          configPath,
+          JSON.stringify({
+            defaultProfile: "ceiling",
+            profiles: {
+              ceiling: {
+                description: "Effective parent scratch ceiling regression",
+                extends: [
+                  ceiling === "read-only"
+                    ? "builtin:read-only"
+                    : "builtin:default",
+                ],
+                writePaths:
+                  ceiling === "read-only"
+                    ? []
+                    : [
+                        { pattern: "/var/folders/**", decision: "allow" },
+                        {
+                          pattern: `${canonicalTemp}/**`,
+                          decision: ceiling,
+                        },
+                      ],
+                sandbox: { network: "deny" },
+              },
+            },
+          }),
+        );
+        process.env.PI_GUARD_PROFILE_CONFIG = configPath;
+        const resolvedProfile = loadProfileConfig({
+          fallback: policyConfig,
+          configPath,
+        }).profiles.ceiling;
+        for (const scoped of [false, true]) {
+          if (scoped) process.env.PI_SUBAGENT_PERMISSIBLE_GLOBS = ".";
+          else delete process.env.PI_SUBAGENT_PERMISSIBLE_GLOBS;
+          const harness = createExtensionHarness({
+            contextCwd: root,
+            hasUI: false,
+          });
+          await harness.start();
+          try {
+            const resolution = await resolveSandbox({
+              profile: "ceiling",
+              resolvedProfile,
+              startupCwd: root,
+              subagentScopes: scoped
+                ? [{ pattern: ".", decision: "allow" }]
+                : [],
+            });
+            expect(resolution.kind).toBe("active");
+            if (resolution.kind !== "active")
+              throw new Error("Expected active ceiling sandbox");
+            const filesystem = resolution.spec.filesystem;
+            if (!scoped && ceiling !== "read-only") {
+              expect(filesystem.writeDenyRoots).toContain(canonicalTemp);
+            } else {
+              expect(filesystem.writeAllowRoots).not.toContain(canonicalTemp);
+              expect(filesystem.writeAllowRoots).not.toContain(hostTemp);
+            }
+            const result = await harness.executeTool({
+              name: "bash",
+              params: { command: "/usr/bin/mktemp -d", timeout: 10 },
+            });
+            expect(
+              exitCodeFrom({ result }),
+              JSON.stringify({ scoped, result }),
+            ).not.toBe(0);
+          } finally {
+            await harness.shutdown();
+          }
+        }
+      },
+    );
 
     it("permits Go's declared toolchain cache outside a narrow workspace scope", async () => {
       const root = scopedFixture();

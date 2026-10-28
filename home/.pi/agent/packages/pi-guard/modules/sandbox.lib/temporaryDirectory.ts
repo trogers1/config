@@ -1,6 +1,30 @@
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+
+/** Darwin mktemp's default root is confstr-derived, independent of TMPDIR. */
+export function currentUserTemporaryDirectory(): string | undefined {
+  if (process.platform !== "darwin") return undefined;
+  const result = spawnSync("/usr/bin/getconf", ["DARWIN_USER_TEMP_DIR"], {
+    encoding: "utf8",
+    timeout: 5000,
+  });
+  if (result.status !== 0)
+    throw new Error(
+      `Cannot resolve Darwin user temp directory: ${result.stderr}`,
+    );
+  const directory = fs.realpathSync(result.stdout.trim());
+  const metadata = fs.statSync(directory);
+  if (
+    !/^\/private\/var\/folders\/[^/]+\/[^/]+\/T$/.test(directory) ||
+    !metadata.isDirectory() ||
+    metadata.uid !== process.getuid?.()
+  ) {
+    throw new Error(`Invalid Darwin user temp directory: ${directory}`);
+  }
+  return directory;
+}
 
 const directoryPrefix = "pi-guard-";
 const staleDirectoryMaximumAgeMs = 24 * 60 * 60 * 1000;
