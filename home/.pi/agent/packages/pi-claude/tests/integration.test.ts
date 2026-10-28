@@ -8,7 +8,7 @@ import {
   getSystemMessageText,
 } from "@earendil-works/pi-ai";
 import { CLAUDE_BRIDGE_PROVIDER } from "../../pi-guard-subagents/extensions/interactive/provider-extensions.ts";
-import { MCP_NAME } from "../extensions/mcp.ts";
+import { MCP_NAME, sdkToolName } from "../extensions/mcp.ts";
 import { PayloadSchema } from "../extensions/transcript.ts";
 import { parseOrThrow } from "../extensions/validation.ts";
 import {
@@ -110,7 +110,7 @@ test("native base replaces only verified stock Pi preamble/docs and retains othe
   expect(observations[0]?.options.systemPrompt).toEqual({
     type: "preset",
     preset: "claude_code",
-    append: expectedSystem,
+    append: expect.stringContaining(expectedSystem),
   });
   expect(guardSection.length).toBeGreaterThan(0);
   expect(expectedSystem).toContain(guardSection);
@@ -159,11 +159,164 @@ for (const mode of ["customized", "opaque", "payload"]) {
     expect(observations[0]?.options.systemPrompt).toEqual({
       type: "preset",
       preset: "claude_code",
-      append: expected,
+      append: expect.stringContaining(expected),
     });
     expect(JSON.stringify(observations[0]?.inputs).split(literal)).toHaveLength(2);
   });
 }
+
+for (const scenario of [
+  "correction",
+  "mixed-correction",
+  "denied-correction",
+  "all-invalid",
+] satisfies Scenario[]) {
+  test(`${scenario}: CLI rejection stays non-executable and corrected calls retain guarded ownership`, async () => {
+    const run = await setup({ scenario });
+    await run.session.prompt(PROMPT);
+    const message = assistant(run);
+    expect(message.stopReason, message.errorMessage).toBe(
+      scenario === "all-invalid" ? "error" : "stop",
+    );
+    expect(observations).toHaveLength(1);
+    expect(observations[0]?.closed).toBe(true);
+    const calls = run.session.messages.flatMap((entry) =>
+      entry.role === "assistant" ? entry.content.filter((block) => block.type === "toolCall") : [],
+    );
+    expect(calls.every((call) => call.name !== "bash")).toBe(true);
+    const owned = observations[0]?.batches.flat().filter((call) => !call.wireName) ?? [];
+    expect(
+      calls.map((call) => ({ id: call.id, name: call.name, arguments: call.arguments })),
+    ).toEqual(owned);
+    expect(
+      run.session.messages
+        .filter((entry) => entry.role === "toolResult")
+        .map((entry) => entry.toolCallId),
+    ).toEqual(owned.map((call) => call.id));
+    if (scenario === "mixed-correction") {
+      const indexes = run.events.flatMap((event) =>
+        event.type === "message_update" && event.assistantMessageEvent.type === "toolcall_start"
+          ? [event.assistantMessageEvent.contentIndex]
+          : [],
+      );
+      expect(indexes).toEqual([0, 1, 0]);
+      expect(observations[0]?.results.map((reply) => reply.id)).toEqual([
+        owned[1]?.id,
+        owned[0]?.id,
+        owned[2]?.id,
+      ]);
+    }
+    expect(observations[0]?.options.toolAliases).toBeUndefined();
+    const appended = observations[0]?.options.systemPrompt;
+    expect(appended).toMatchObject({
+      append: expect.stringContaining(
+        `${WRITE_DEFINITION.name}: call ${sdkToolName({ name: WRITE_DEFINITION.name })}`,
+      ),
+    });
+    expect(appended).toMatchObject({ append: expect.stringContaining("tools.bash(args)") });
+    const totalInput = run.session.messages.reduce(
+      (total, entry) => total + (entry.role === "assistant" ? entry.usage.input : 0),
+      0,
+    );
+    expect(totalInput).toBe(
+      SDK_USAGE.input_tokens *
+        (scenario === "all-invalid" ? 2 : scenario === "denied-correction" ? 4 : 3),
+    );
+    if (scenario === "all-invalid") {
+      expect(observations[0]?.results).toEqual([]);
+      expect(existsSync(join(run.cwd, WRITE_ARGS.path))).toBe(false);
+    } else {
+      expect(readFileSync(join(run.cwd, WRITE_ARGS.path), "utf8")).toBe(WRITE_ARGS.content);
+      if (scenario === "denied-correction")
+        expect(observations[0]?.results[0]?.result.isError).toBe(true);
+      configureFake({ next: "text", reset: false });
+      await run.session.prompt("Continue from the guarded history.");
+      expect(assistant(run).stopReason).toBe("stop");
+      expect(isAbsolute(observations[1]?.options.resume ?? "")).toBe(true);
+      const reconstructed = JSON.stringify(observations[1]?.resumedRecords);
+      expect(reconstructed).not.toContain("No such tool available");
+      for (const call of owned) expect(reconstructed).toContain(call.id);
+      for (const call of observations[0]?.batches.flat().filter((call) => call.wireName) ?? [])
+        expect(reconstructed).not.toContain(call.id);
+    }
+  });
+}
+
+for (const scenario of ["missing-rejection", "rejection-loop"] satisfies Scenario[]) {
+  test(`${scenario}: correction cannot bypass rejection evidence or retry bounds`, async () => {
+    const run = await setup({ scenario });
+    await run.session.prompt(PROMPT);
+    expect(assistant(run).stopReason).toBe("error");
+    expect(observations[0]?.results).toEqual([]);
+    expect(existsSync(join(run.cwd, WRITE_ARGS.path))).toBe(false);
+    expect(assistant(run).errorMessage).toContain(
+      scenario === "missing-rejection" ? "without rejecting" : "too many unadvertised",
+    );
+  });
+}
+
+for (const scenario of [
+  "start-stall",
+  "text-stall",
+  "thinking-stall",
+  "mixed-stall",
+  "inconsistent-dispatch",
+] satisfies Scenario[]) {
+  test(`${scenario}: unresolved correction/evidence remains bounded through continuations`, async () => {
+    const run = await setup({ scenario });
+    await run.session.prompt(PROMPT);
+    expect(assistant(run).stopReason).toBe("error");
+    expect(assistant(run).errorMessage).toContain(
+      scenario === "inconsistent-dispatch" ? "unresolved MCP dispatch" : "timed out",
+    );
+    expect(observations[0]?.closed).toBe(true);
+    if (scenario === "mixed-stall") expect(observations[0]?.results).toHaveLength(2);
+    else {
+      expect(observations[0]?.results).toEqual([]);
+      expect(existsSync(join(run.cwd, WRITE_ARGS.path))).toBe(false);
+      expect(run.events.filter((event) => event.type === "tool_execution_start")).toEqual([]);
+    }
+    if (scenario === "inconsistent-dispatch")
+      expect(observations[0]?.permissions.at(-1)?.behavior).toBe("allow");
+  });
+}
+
+for (const scenario of [
+  "rejection-false",
+  "rejection-absent",
+  "native-rejection",
+  "foreign-rejection",
+] satisfies Scenario[]) {
+  test(`${scenario}: unadvertised names never execute and only explicit CLI errors qualify`, async () => {
+    const run = await setup({ scenario });
+    await run.session.prompt(PROMPT);
+    expect(assistant(run).stopReason).toBe("error");
+    expect(run.events.filter((event) => event.type === "tool_execution_start")).toEqual([]);
+    expect(existsSync(join(run.cwd, WRITE_ARGS.path))).toBe(false);
+    expect(observations[0]?.closed).toBe(true);
+    if (scenario.startsWith("rejection-"))
+      expect(assistant(run).errorMessage).toContain("not rejected");
+  });
+}
+
+test("delayed CLI evidence after guarded results succeeds, and slow guarded approval has no correction timeout", async () => {
+  configureFake({ next: "mixed-delayed" });
+  active = await createTestSession({
+    extensions: [
+      (pi) => {
+        pi.on("tool_call", async () => {
+          await new Promise<void>((resolve) => setTimeout(resolve, 10_100));
+        });
+      },
+    ],
+  });
+  const run = active;
+  await run.session.prompt(PROMPT);
+  expect(assistant(run).stopReason, assistant(run).errorMessage).toBe("stop");
+  expect(observations[0]?.results).toHaveLength(2);
+  expect(observations[0]?.results.every((reply) => !reply.result.isError)).toBe(true);
+  expect(observations[0]?.closed).toBe(true);
+});
 
 test("Pi-managed skill references load files only through guarded Pi reads", async () => {
   configureFake({ next: "skill-files" });

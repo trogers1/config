@@ -76,6 +76,8 @@ type Generation = {
   rendezvous: ReturnType<typeof createRendezvous>;
   request: SimpleStreamOptions;
   startupTimer: ReturnType<typeof setTimeout> | undefined;
+  correctionTimer: ReturnType<typeof setTimeout> | undefined;
+  dispatchComplete: () => void;
 };
 
 /** All state belongs to this extension instance. Live queries, a current wire
@@ -352,6 +354,7 @@ export function createSessionProvider({
       const rendezvous = createRendezvous({
         tools,
         fail: ({ error }) => failGeneration({ key, generation, error }),
+        onComplete: () => generation.dispatchComplete(),
       });
       const generation: Generation = {
         output,
@@ -368,12 +371,15 @@ export function createSessionProvider({
         detach: () => {},
         request: options,
         startupTimer: undefined,
+        correctionTimer: undefined,
+        dispatchComplete: () => {},
         rendezvous,
         async close({ interrupt = true } = {}) {
           if (generation.closed) return;
           generation.closed = true;
           generation.detach();
           clearTimeout(generation.startupTimer);
+          clearTimeout(generation.correctionTimer);
           releaseInput?.();
           inputReady.resolve(); // unblock the iterable, but closed queries never yield
           controller.abort();
@@ -452,6 +458,7 @@ export function createSessionProvider({
           messages: context.messages,
           sourceSystem,
           systemPrompt,
+          tools,
         }),
         tools,
         rendezvous,
@@ -526,6 +533,32 @@ export function createSessionProvider({
       const sdk = generation.sdk;
       if (!sdk) throw new Error("pi-claude: SDK query was not initialized");
       let initialized = false;
+      const rejected = new Map<string, string>();
+      let rejectionCount = 0;
+      let needsCorrection = false;
+      let guardedWork = false;
+      function correctionDeadline() {
+        if (generation.closed || guardedWork || (!needsCorrection && !rejected.size)) {
+          clearTimeout(generation.correctionTimer);
+          generation.correctionTimer = undefined;
+        } else if (!generation.correctionTimer) {
+          generation.correctionTimer = setTimeout(
+            () =>
+              failGeneration({
+                key,
+                generation,
+                error: new Error(
+                  "pi-claude: timed out waiting for Claude tool-name correction or rejection evidence",
+                ),
+              }),
+            10_000,
+          );
+        }
+      }
+      generation.dispatchComplete = () => {
+        guardedWork = false;
+        correctionDeadline();
+      };
       let sdkId: string | undefined;
       let responseModel: string | undefined;
       for await (const event of sdk) {
@@ -582,6 +615,8 @@ export function createSessionProvider({
           if (!active)
             throw new Error("pi-claude: SDK continued before Pi supplied its guarded tool results");
           if (event.event.type === "message_start") {
+            if (rejected.size)
+              throw new Error("pi-claude: Claude continued without rejecting unadvertised tools");
             if (generation.awaitingDispatch) {
               generation.rendezvous.assertComplete();
               generation.awaitingDispatch = false;
@@ -590,8 +625,23 @@ export function createSessionProvider({
           }
           active.event({ event: event.event });
           if (active.message.responseModel) responseModel = active.message.responseModel;
-          if (active.stopped && active.reason === "toolUse") {
+          if (event.event.type === "message_stop") {
+            for (const [id, name] of active.rejected) {
+              rejected.set(id, name);
+              needsCorrection = true;
+              if (++rejectionCount > 8)
+                throw new Error("pi-claude: too many unadvertised tool attempts");
+            }
+            correctionDeadline();
+            active.rejected.clear();
+          }
+          if (active.stopped && active.reason === "toolUse" && active.batch().length) {
             const batch = active.batch();
+            // A mixed response may await legitimate Pi execution or user approval;
+            // never apply the CLI-correction deadline to guarded tool work.
+            guardedWork = true;
+            needsCorrection = false;
+            correctionDeadline();
             generation.rendezvous.expect({ batch });
             if (generation.closed) return;
             active.message.stopReason = "toolUse";
@@ -602,6 +652,16 @@ export function createSessionProvider({
             generation.parked = true;
             generation.output = undefined;
             active.finish({ reason: "toolUse" });
+          }
+        } else if (event.type === "user") {
+          if (Array.isArray(event.message.content)) {
+            for (const block of event.message.content) {
+              if (block.type !== "tool_result" || !rejected.has(block.tool_use_id)) continue;
+              if (block.is_error !== true)
+                throw new Error("pi-claude: unadvertised tool was not rejected by Claude CLI");
+              rejected.delete(block.tool_use_id);
+              correctionDeadline();
+            }
           }
         } else if (event.type === "assistant") {
           if (event.error) {
@@ -614,6 +674,10 @@ export function createSessionProvider({
           if (event.is_error)
             throw new Error(`pi-claude: Claude returned an error: ${event.result}`);
           generation.rendezvous.assertComplete();
+          if (rejected.size || needsCorrection)
+            throw new Error(
+              "pi-claude: unadvertised tool attempts ended without a corrected Pi call",
+            );
           const active = generation.output;
           if (!active || generation.parked || !sdkId || !responseModel)
             throw new Error(
@@ -625,7 +689,9 @@ export function createSessionProvider({
           generation.wire = [...generation.wire, completed];
           await generation.close({ interrupt: false });
           rememberWire({ key, generation });
-          if (!summary)
+          // Native rejection exchanges are intentionally not executable Pi history.
+          // Rebuild from normalized guarded history instead of resuming a divergent prefix.
+          if (!summary && !rejectionCount)
             checkpoints.set(key, {
               sdkId,
               responseModel,

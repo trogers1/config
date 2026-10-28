@@ -30,6 +30,7 @@ export function createOutput({ model, tools }: { model: Model<string>; tools: To
     },
   };
   const indexes = new Map<number, { index: number; json: string; ended: boolean }>();
+  const rejected = new Map<string, string>();
   let priorUsage = structuredClone(message.usage);
   let started = false;
   let apiStarted = false;
@@ -118,8 +119,12 @@ export function createOutput({ model, tools }: { model: Model<string>; tools: To
             )
               throw new Error("pi-claude: SDK tool block unexpectedly started with arguments");
             const tool = tools.find((entry) => sdkToolName({ name: entry.name }) === block.name);
-            if (!tool)
-              throw new Error(`pi-claude: model requested an unadvertised tool: ${block.name}`);
+            if (!tool) {
+              if (rejected.has(block.id)) throw new Error("pi-claude: duplicate rejected tool ID");
+              rejected.set(block.id, block.name);
+              indexes.set(event.index, { index: -1, json: "", ended: false });
+              break;
+            }
             message.content.push({
               type: "toolCall",
               id: block.id,
@@ -137,8 +142,14 @@ export function createOutput({ model, tools }: { model: Model<string>; tools: To
       case "content_block_delta": {
         const state = indexes.get(event.index);
         if (!state || state.ended) throw new Error("pi-claude: SDK delta without an open block");
-        const block = message.content[state.index];
         const delta = event.delta;
+        if (state.index === -1) {
+          if (delta.type !== "input_json_delta")
+            throw new Error("pi-claude: invalid rejected tool delta");
+          state.json += delta.partial_json;
+          break;
+        }
+        const block = message.content[state.index];
         if (delta.type === "text_delta" && block.type === "text") {
           block.text += delta.text;
           stream.push({
@@ -173,6 +184,10 @@ export function createOutput({ model, tools }: { model: Model<string>; tools: To
         if (!state || state.ended)
           throw new Error("pi-claude: SDK stopped an unknown or completed block");
         state.ended = true;
+        if (state.index === -1) {
+          parseArguments({ text: state.json || "{}" });
+          break;
+        }
         const block = message.content[state.index];
         if (block.type === "text")
           stream.push({
@@ -242,6 +257,7 @@ export function createOutput({ model, tools }: { model: Model<string>; tools: To
   return {
     stream,
     message,
+    rejected,
     event,
     get terminal() {
       return terminal;

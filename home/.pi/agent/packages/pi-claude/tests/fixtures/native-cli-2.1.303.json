@@ -1,0 +1,1472 @@
+[
+  {
+    "type": "queue-operation",
+    "operation": "enqueue",
+    "timestamp": "2026-05-01T12:00:00.000Z",
+    "sessionId": "11111111-1111-4111-8111-111111111111"
+  },
+  {
+    "type": "queue-operation",
+    "operation": "dequeue",
+    "timestamp": "2026-05-01T12:00:00.000Z",
+    "sessionId": "11111111-1111-4111-8111-111111111111"
+  },
+  {
+    "parentUuid": null,
+    "isSidechain": false,
+    "promptId": "11111111-1111-4111-8111-111111111111",
+    "type": "user",
+    "message": {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "sanitized"
+        }
+      ]
+    },
+    "uuid": "11111111-1111-4111-8111-111111111111",
+    "timestamp": "2026-05-01T12:00:00.000Z",
+    "permissionMode": "sanitized",
+    "promptSource": "sanitized",
+    "queueSkipSlashCommands": true,
+    "turnOrigin": "sanitized",
+    "turnPosition": {
+      "promptIndex": 0,
+      "turnIndex": 1
+    },
+    "queueSkipAttachments": true,
+    "userType": "sanitized",
+    "entrypoint": "sanitized",
+    "cwd": "sanitized",
+    "sessionId": "11111111-1111-4111-8111-111111111111",
+    "version": "2.1.303",
+    "gitBranch": "sanitized"
+  },
+  {
+    "parentUuid": "11111111-1111-4111-8111-111111111111",
+    "isSidechain": false,
+    "attachment": {
+      "type": "environment",
+      "snapshot": {
+        "workingDirectory": "sanitized",
+        "isWorktree": false,
+        "isGitRepo": true,
+        "additionalWorkingDirectories": [],
+        "platform": "sanitized",
+        "shell": "sanitized",
+        "osVersion": "sanitized"
+      }
+    },
+    "type": "attachment",
+    "uuid": "11111111-1111-4111-8111-111111111111",
+    "timestamp": "2026-05-01T12:00:00.000Z",
+    "rendered": [
+      {
+        "content": "sanitized"
+      }
+    ],
+    "renderedRole": "sanitized",
+    "userType": "sanitized",
+    "entrypoint": "sanitized",
+    "cwd": "sanitized",
+    "sessionId": "11111111-1111-4111-8111-111111111111",
+    "version": "2.1.303",
+    "gitBranch": "sanitized"
+  },
+  {
+    "parentUuid": "11111111-1111-4111-8111-111111111111",
+    "isSidechain": false,
+    "attachment": {
+      "type": "model",
+      "identity": {
+        "modelId": "sanitized",
+        "marketingName": "sanitized",
+        "knowledgeCutoff": "sanitized"
+      },
+      "text": "sanitized"
+    },
+    "type": "attachment",
+    "uuid": "11111111-1111-4111-8111-111111111111",
+    "timestamp": "2026-05-01T12:00:00.000Z",
+    "rendered": [
+      {
+        "content": "sanitized"
+      }
+    ],
+    "renderedRole": "sanitized",
+    "userType": "sanitized",
+    "entrypoint": "sanitized",
+    "cwd": "sanitized",
+    "sessionId": "11111111-1111-4111-8111-111111111111",
+    "version": "2.1.303",
+    "gitBranch": "sanitized"
+  },
+  {
+    "type": "atis-latch",
+    "atis": "sanitized",
+    "sessionId": "11111111-1111-4111-8111-111111111111"
+  },
+  {
+    "parentUuid": "11111111-1111-4111-8111-111111111111",
+    "isSidechain": false,
+    "attachment": {
+      "type": "session_context",
+      "context": {
+        "userEmail": "sanitized",
+        "gitStatus": "sanitized"
+      }
+    },
+    "type": "attachment",
+    "uuid": "11111111-1111-4111-8111-111111111111",
+    "timestamp": "2026-05-01T12:00:00.000Z",
+    "rendered": [
+      {
+        "content": "sanitized"
+      }
+    ],
+    "renderedRole": "sanitized",
+    "userType": "sanitized",
+    "entrypoint": "sanitized",
+    "cwd": "sanitized",
+    "sessionId": "11111111-1111-4111-8111-111111111111",
+    "version": "2.1.303",
+    "gitBranch": "sanitized"
+  },
+  {
+    "parentUuid": "11111111-1111-4111-8111-111111111111",
+    "isSidechain": false,
+    "attachment": {
+      "type": "date",
+      "date": "sanitized"
+    },
+    "type": "attachment",
+    "uuid": "11111111-1111-4111-8111-111111111111",
+    "timestamp": "2026-05-01T12:00:00.000Z",
+    "rendered": [
+      {
+        "content": "sanitized"
+      }
+    ],
+    "renderedRole": "sanitized",
+    "userType": "sanitized",
+    "entrypoint": "sanitized",
+    "cwd": "sanitized",
+    "sessionId": "11111111-1111-4111-8111-111111111111",
+    "version": "2.1.303",
+    "gitBranch": "sanitized"
+  },
+  {
+    "parentUuid": "11111111-1111-4111-8111-111111111111",
+    "isSidechain": false,
+    "attachment": {
+      "type": "credential_org",
+      "organizationUuid": "11111111-1111-4111-8111-111111111111"
+    },
+    "type": "attachment",
+    "uuid": "11111111-1111-4111-8111-111111111111",
+    "timestamp": "2026-05-01T12:00:00.000Z",
+    "userType": "sanitized",
+    "entrypoint": "sanitized",
+    "cwd": "sanitized",
+    "sessionId": "11111111-1111-4111-8111-111111111111",
+    "version": "2.1.303",
+    "gitBranch": "sanitized"
+  },
+  {
+    "parentUuid": "11111111-1111-4111-8111-111111111111",
+    "isSidechain": false,
+    "attachment": {
+      "type": "prompt_snapshot",
+      "systemPrompt": [
+        "sanitized",
+        "sanitized",
+        "sanitized",
+        "sanitized",
+        "sanitized",
+        "sanitized",
+        "sanitized",
+        "sanitized",
+        "sanitized"
+      ],
+      "reminderFold": false,
+      "echoWireToolInputs": true,
+      "contextRendering": "sanitized"
+    },
+    "type": "attachment",
+    "uuid": "11111111-1111-4111-8111-111111111111",
+    "timestamp": "2026-05-01T12:00:00.000Z",
+    "userType": "sanitized",
+    "entrypoint": "sanitized",
+    "cwd": "sanitized",
+    "sessionId": "11111111-1111-4111-8111-111111111111",
+    "version": "2.1.303",
+    "gitBranch": "sanitized"
+  },
+  {
+    "type": "api-request-shape",
+    "sessionId": "11111111-1111-4111-8111-111111111111",
+    "shapeHash": "sanitized",
+    "timestamp": "2026-05-01T12:00:00.000Z",
+    "version": "2.1.303",
+    "shape": {
+      "system": [
+        {
+          "type": "text",
+          "text": "sanitized"
+        },
+        {
+          "type": "text",
+          "text": "sanitized"
+        },
+        {
+          "type": "text",
+          "text": "sanitized"
+        }
+      ],
+      "tools": [
+        {
+          "name": "sanitized",
+          "description": "sanitized",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "question": {
+                "type": "string",
+                "description": "sanitized"
+              },
+              "details": {
+                "type": "string",
+                "description": "sanitized"
+              },
+              "options": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["sanitized"],
+                  "properties": {
+                    "label": {
+                      "type": "string",
+                      "description": "sanitized"
+                    },
+                    "value": {
+                      "type": "string",
+                      "description": "sanitized"
+                    },
+                    "description": {
+                      "type": "string",
+                      "description": "sanitized"
+                    }
+                  }
+                },
+                "description": "sanitized"
+              },
+              "multiSelect": {
+                "type": "boolean",
+                "description": "sanitized"
+              }
+            },
+            "required": ["sanitized"]
+          },
+          "eager_input_streaming": true
+        },
+        {
+          "name": "sanitized",
+          "description": "sanitized",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "command": {
+                "type": "string",
+                "description": "sanitized"
+              },
+              "timeout": {
+                "type": "number",
+                "description": "sanitized"
+              }
+            },
+            "required": ["sanitized"]
+          },
+          "eager_input_streaming": true
+        },
+        {
+          "name": "sanitized",
+          "description": "sanitized",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "description": "sanitized"
+              }
+            },
+            "required": ["sanitized"]
+          },
+          "eager_input_streaming": true
+        },
+        {
+          "name": "sanitized",
+          "description": "sanitized",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "description": "sanitized"
+              },
+              "edits": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["sanitized", "sanitized"],
+                  "properties": {
+                    "oldText": {
+                      "type": "string",
+                      "description": "sanitized"
+                    },
+                    "newText": {
+                      "type": "string",
+                      "description": "sanitized"
+                    }
+                  }
+                },
+                "description": "sanitized"
+              }
+            },
+            "required": ["sanitized", "sanitized"]
+          },
+          "eager_input_streaming": true
+        },
+        {
+          "name": "sanitized",
+          "description": "sanitized",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "description": "sanitized"
+              },
+              "offset": {
+                "type": "number",
+                "description": "sanitized"
+              },
+              "limit": {
+                "type": "number",
+                "description": "sanitized"
+              }
+            },
+            "required": ["sanitized"]
+          },
+          "eager_input_streaming": true
+        },
+        {
+          "name": "sanitized",
+          "description": "sanitized",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "agent": {
+                "type": "string"
+              },
+              "task": {
+                "type": "string"
+              },
+              "tasks": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["sanitized", "sanitized"],
+                  "properties": {
+                    "agent": {
+                      "type": "string"
+                    },
+                    "task": {
+                      "type": "string"
+                    },
+                    "cwd": {
+                      "type": "string"
+                    },
+                    "writes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "sessionId": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "chain": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["sanitized", "sanitized"],
+                  "properties": {
+                    "agent": {
+                      "type": "string"
+                    },
+                    "task": {
+                      "type": "string"
+                    },
+                    "cwd": {
+                      "type": "string"
+                    },
+                    "writes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "sessionId": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "agentScope": {
+                "type": "string",
+                "enum": ["sanitized", "sanitized", "sanitized", "sanitized"]
+              },
+              "confirmProjectAgents": {
+                "type": "boolean"
+              },
+              "cwd": {
+                "type": "string"
+              },
+              "writes": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "sessionId": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "runDir": {
+                "type": "string"
+              }
+            }
+          },
+          "eager_input_streaming": true
+        },
+        {
+          "name": "sanitized",
+          "description": "sanitized",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "questionId": {
+                "type": "string",
+                "pattern": "sanitized"
+              }
+            },
+            "required": ["sanitized", "sanitized"]
+          },
+          "eager_input_streaming": true
+        },
+        {
+          "name": "sanitized",
+          "description": "sanitized",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "url": {
+                "type": "string",
+                "description": "sanitized"
+              },
+              "waitUntil": {
+                "type": "string",
+                "enum": ["sanitized", "sanitized", "sanitized"],
+                "description": "sanitized"
+              },
+              "timeoutMs": {
+                "type": "number",
+                "description": "sanitized"
+              },
+              "settleMs": {
+                "type": "number",
+                "description": "sanitized"
+              }
+            },
+            "required": ["sanitized"]
+          },
+          "eager_input_streaming": true
+        },
+        {
+          "name": "sanitized",
+          "description": "sanitized",
+          "input_schema": {
+            "type": "object",
+            "properties": {}
+          },
+          "defer_loading": true
+        },
+        {
+          "name": "sanitized",
+          "description": "sanitized",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "description": "sanitized"
+              },
+              "content": {
+                "type": "string",
+                "description": "sanitized"
+              }
+            },
+            "required": ["sanitized", "sanitized"]
+          },
+          "eager_input_streaming": true
+        },
+        {
+          "type": "advisor_20260301",
+          "name": "sanitized",
+          "model": "sanitized",
+          "defer_loading": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "api-request-blob",
+    "sessionId": "11111111-1111-4111-8111-111111111111",
+    "hash": "sanitized",
+    "message": {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "sanitized"
+        },
+        {
+          "type": "text",
+          "text": "sanitized"
+        }
+      ]
+    }
+  },
+  {
+    "type": "api-request-blob",
+    "sessionId": "11111111-1111-4111-8111-111111111111",
+    "hash": "sanitized",
+    "message": {
+      "role": "system",
+      "content": [
+        {
+          "type": "text",
+          "text": "sanitized"
+        }
+      ],
+      "output_config": {
+        "effort": "medium"
+      }
+    }
+  },
+  {
+    "type": "api-request",
+    "sessionId": "11111111-1111-4111-8111-111111111111",
+    "id": "sanitized",
+    "timestamp": "2026-05-01T12:00:00.000Z",
+    "version": "2.1.303",
+    "querySource": "sanitized",
+    "shapeHash": "sanitized",
+    "params": {
+      "model": "sanitized",
+      "betas": [
+        "sanitized",
+        "sanitized",
+        "sanitized",
+        "sanitized",
+        "sanitized",
+        "sanitized",
+        "sanitized",
+        "sanitized",
+        "sanitized",
+        "sanitized",
+        "sanitized",
+        "sanitized",
+        "sanitized",
+        "sanitized",
+        "sanitized",
+        "sanitized",
+        "sanitized"
+      ],
+      "max_tokens": 128000,
+      "thinking": {
+        "type": "adaptive",
+        "display": "updates"
+      },
+      "context_management": {
+        "edits": [
+          {
+            "type": "clear_thinking_20251015",
+            "keep": "all"
+          }
+        ]
+      },
+      "output_config": {
+        "effort": "medium"
+      }
+    },
+    "keep": 0,
+    "tail": ["sanitized", "sanitized"],
+    "cacheControl": [
+      {
+        "path": ["sanitized", 1],
+        "value": {
+          "type": "ephemeral",
+          "ttl": "1h",
+          "scope": "global"
+        }
+      },
+      {
+        "path": ["sanitized", 2],
+        "value": {
+          "type": "ephemeral",
+          "ttl": "1h"
+        }
+      },
+      {
+        "path": ["sanitized", 1, "sanitized", 0],
+        "value": {
+          "type": "ephemeral",
+          "ttl": "1h"
+        }
+      }
+    ],
+    "requestDigest": "sanitized"
+  },
+  {
+    "type": "last-prompt",
+    "lastPrompt": "sanitized",
+    "leafUuid": "11111111-1111-4111-8111-111111111111",
+    "sessionId": "11111111-1111-4111-8111-111111111111"
+  },
+  {
+    "type": "atis-latch",
+    "atis": "sanitized",
+    "sessionId": "11111111-1111-4111-8111-111111111111"
+  },
+  {
+    "type": "ai-title",
+    "aiTitle": "sanitized",
+    "sessionId": "11111111-1111-4111-8111-111111111111"
+  },
+  {
+    "parentUuid": "11111111-1111-4111-8111-111111111111",
+    "isSidechain": false,
+    "message": {
+      "model": "sanitized",
+      "id": "sanitized",
+      "type": "message",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "sanitized",
+          "signature": "sanitized"
+        }
+      ],
+      "container": null,
+      "stop_reason": "tool_use",
+      "stop_sequence": null,
+      "stop_details": null,
+      "usage": {
+        "input_tokens": 2,
+        "cache_creation_input_tokens": 9573,
+        "cache_read_input_tokens": 0,
+        "output_tokens": 200,
+        "output_tokens_details": {
+          "thinking_tokens": 82
+        },
+        "server_tool_use": {
+          "web_search_requests": 0,
+          "web_fetch_requests": 0
+        },
+        "service_tier": "sanitized",
+        "cache_creation": {
+          "ephemeral_1h_input_tokens": 9573,
+          "ephemeral_5m_input_tokens": 0
+        },
+        "inference_geo": "sanitized",
+        "iterations": [
+          {
+            "input_tokens": 2,
+            "output_tokens": 200,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 9573,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 9573
+            },
+            "type": "message"
+          }
+        ],
+        "speed": "sanitized",
+        "fallback_credit": null
+      },
+      "input_transformations": [],
+      "diagnostics": null,
+      "context_management": null
+    },
+    "thinkingDurationMs": 820,
+    "thinkingDisplay": "sanitized",
+    "apiBlockIndex": 0,
+    "requestId": "sanitized",
+    "requestRef": "sanitized",
+    "requestedModel": "sanitized",
+    "type": "assistant",
+    "uuid": "11111111-1111-4111-8111-111111111111",
+    "timestamp": "2026-05-01T12:00:00.000Z",
+    "advisorModel": "sanitized",
+    "effort": "medium",
+    "perTurnEffort": "sanitized",
+    "userType": "sanitized",
+    "entrypoint": "sanitized",
+    "cwd": "sanitized",
+    "sessionId": "11111111-1111-4111-8111-111111111111",
+    "version": "2.1.303",
+    "gitBranch": "sanitized"
+  },
+  {
+    "parentUuid": "11111111-1111-4111-8111-111111111111",
+    "isSidechain": false,
+    "message": {
+      "model": "sanitized",
+      "id": "sanitized",
+      "type": "message",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "sanitized",
+          "name": "sanitized",
+          "input": {
+            "command": "sanitized"
+          },
+          "caller": {
+            "type": "direct"
+          }
+        }
+      ],
+      "container": null,
+      "stop_reason": "tool_use",
+      "stop_sequence": null,
+      "stop_details": null,
+      "usage": {
+        "input_tokens": 2,
+        "cache_creation_input_tokens": 9573,
+        "cache_read_input_tokens": 0,
+        "output_tokens": 200,
+        "output_tokens_details": {
+          "thinking_tokens": 82
+        },
+        "server_tool_use": {
+          "web_search_requests": 0,
+          "web_fetch_requests": 0
+        },
+        "service_tier": "sanitized",
+        "cache_creation": {
+          "ephemeral_1h_input_tokens": 9573,
+          "ephemeral_5m_input_tokens": 0
+        },
+        "inference_geo": "sanitized",
+        "iterations": [
+          {
+            "input_tokens": 2,
+            "output_tokens": 200,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 9573,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 9573
+            },
+            "type": "message"
+          }
+        ],
+        "speed": "sanitized",
+        "fallback_credit": null
+      },
+      "input_transformations": [],
+      "diagnostics": null,
+      "context_management": null
+    },
+    "wireToolInputs": {
+      "sanitized-tool": {
+        "command": "sanitized"
+      }
+    },
+    "apiBlockIndex": 1,
+    "requestId": "sanitized",
+    "requestRef": "sanitized",
+    "requestedModel": "sanitized",
+    "type": "assistant",
+    "uuid": "11111111-1111-4111-8111-111111111111",
+    "timestamp": "2026-05-01T12:00:00.000Z",
+    "advisorModel": "sanitized",
+    "effort": "medium",
+    "perTurnEffort": "sanitized",
+    "userType": "sanitized",
+    "entrypoint": "sanitized",
+    "cwd": "sanitized",
+    "sessionId": "11111111-1111-4111-8111-111111111111",
+    "version": "2.1.303",
+    "gitBranch": "sanitized"
+  },
+  {
+    "parentUuid": "11111111-1111-4111-8111-111111111111",
+    "isSidechain": false,
+    "promptId": "11111111-1111-4111-8111-111111111111",
+    "type": "user",
+    "message": {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "content": "sanitized",
+          "is_error": true,
+          "tool_use_id": "sanitized"
+        }
+      ]
+    },
+    "uuid": "11111111-1111-4111-8111-111111111111",
+    "timestamp": "2026-05-01T12:00:00.000Z",
+    "toolUseResult": "sanitized",
+    "sourceToolAssistantUUID": "11111111-1111-4111-8111-111111111111",
+    "userType": "sanitized",
+    "entrypoint": "sanitized",
+    "cwd": "sanitized",
+    "sessionId": "11111111-1111-4111-8111-111111111111",
+    "version": "2.1.303",
+    "gitBranch": "sanitized"
+  },
+  {
+    "parentUuid": "11111111-1111-4111-8111-111111111111",
+    "isSidechain": false,
+    "attachment": {
+      "type": "prompt_snapshot",
+      "systemPrompt": [
+        "sanitized",
+        "sanitized",
+        "sanitized",
+        "sanitized",
+        "sanitized",
+        "sanitized",
+        "sanitized",
+        "sanitized",
+        "sanitized"
+      ],
+      "tools": [
+        {
+          "name": "sanitized",
+          "description": "sanitized",
+          "schema": {
+            "name": "sanitized",
+            "description": "sanitized",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "question": {
+                  "type": "string",
+                  "description": "sanitized"
+                },
+                "details": {
+                  "type": "string",
+                  "description": "sanitized"
+                },
+                "options": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["sanitized"],
+                    "properties": {
+                      "label": {
+                        "type": "string",
+                        "description": "sanitized"
+                      },
+                      "value": {
+                        "type": "string",
+                        "description": "sanitized"
+                      },
+                      "description": {
+                        "type": "string",
+                        "description": "sanitized"
+                      }
+                    }
+                  },
+                  "description": "sanitized"
+                },
+                "multiSelect": {
+                  "type": "boolean",
+                  "description": "sanitized"
+                }
+              },
+              "required": ["sanitized"]
+            },
+            "eager_input_streaming": true
+          },
+          "server": "sanitized"
+        },
+        {
+          "name": "sanitized",
+          "description": "sanitized",
+          "schema": {
+            "name": "sanitized",
+            "description": "sanitized",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "command": {
+                  "type": "string",
+                  "description": "sanitized"
+                },
+                "timeout": {
+                  "type": "number",
+                  "description": "sanitized"
+                }
+              },
+              "required": ["sanitized"]
+            },
+            "eager_input_streaming": true
+          },
+          "server": "sanitized"
+        },
+        {
+          "name": "sanitized",
+          "description": "sanitized",
+          "schema": {
+            "name": "sanitized",
+            "description": "sanitized",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "string",
+                  "description": "sanitized"
+                }
+              },
+              "required": ["sanitized"]
+            },
+            "eager_input_streaming": true
+          },
+          "server": "sanitized"
+        },
+        {
+          "name": "sanitized",
+          "description": "sanitized",
+          "schema": {
+            "name": "sanitized",
+            "description": "sanitized",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "description": "sanitized"
+                },
+                "edits": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["sanitized", "sanitized"],
+                    "properties": {
+                      "oldText": {
+                        "type": "string",
+                        "description": "sanitized"
+                      },
+                      "newText": {
+                        "type": "string",
+                        "description": "sanitized"
+                      }
+                    }
+                  },
+                  "description": "sanitized"
+                }
+              },
+              "required": ["sanitized", "sanitized"]
+            },
+            "eager_input_streaming": true
+          },
+          "server": "sanitized"
+        },
+        {
+          "name": "sanitized",
+          "description": "sanitized",
+          "schema": {
+            "name": "sanitized",
+            "description": "sanitized",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "description": "sanitized"
+                },
+                "offset": {
+                  "type": "number",
+                  "description": "sanitized"
+                },
+                "limit": {
+                  "type": "number",
+                  "description": "sanitized"
+                }
+              },
+              "required": ["sanitized"]
+            },
+            "eager_input_streaming": true
+          },
+          "server": "sanitized"
+        },
+        {
+          "name": "sanitized",
+          "description": "sanitized",
+          "schema": {
+            "name": "sanitized",
+            "description": "sanitized",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "agent": {
+                  "type": "string"
+                },
+                "task": {
+                  "type": "string"
+                },
+                "tasks": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["sanitized", "sanitized"],
+                    "properties": {
+                      "agent": {
+                        "type": "string"
+                      },
+                      "task": {
+                        "type": "string"
+                      },
+                      "cwd": {
+                        "type": "string"
+                      },
+                      "writes": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "sessionId": {
+                        "type": "string"
+                      },
+                      "label": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                },
+                "chain": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["sanitized", "sanitized"],
+                    "properties": {
+                      "agent": {
+                        "type": "string"
+                      },
+                      "task": {
+                        "type": "string"
+                      },
+                      "cwd": {
+                        "type": "string"
+                      },
+                      "writes": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "sessionId": {
+                        "type": "string"
+                      },
+                      "label": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                },
+                "agentScope": {
+                  "type": "string",
+                  "enum": ["sanitized", "sanitized", "sanitized", "sanitized"]
+                },
+                "confirmProjectAgents": {
+                  "type": "boolean"
+                },
+                "cwd": {
+                  "type": "string"
+                },
+                "writes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "sessionId": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "runDir": {
+                  "type": "string"
+                }
+              }
+            },
+            "eager_input_streaming": true
+          },
+          "server": "sanitized"
+        },
+        {
+          "name": "sanitized",
+          "description": "sanitized",
+          "schema": {
+            "name": "sanitized",
+            "description": "sanitized",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                },
+                "questionId": {
+                  "type": "string",
+                  "pattern": "sanitized"
+                }
+              },
+              "required": ["sanitized", "sanitized"]
+            },
+            "eager_input_streaming": true
+          },
+          "server": "sanitized"
+        },
+        {
+          "name": "sanitized",
+          "description": "sanitized",
+          "schema": {
+            "name": "sanitized",
+            "description": "sanitized",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "url": {
+                  "type": "string",
+                  "description": "sanitized"
+                },
+                "waitUntil": {
+                  "type": "string",
+                  "enum": ["sanitized", "sanitized", "sanitized"],
+                  "description": "sanitized"
+                },
+                "timeoutMs": {
+                  "type": "number",
+                  "description": "sanitized"
+                },
+                "settleMs": {
+                  "type": "number",
+                  "description": "sanitized"
+                }
+              },
+              "required": ["sanitized"]
+            },
+            "eager_input_streaming": true
+          },
+          "server": "sanitized"
+        },
+        {
+          "name": "sanitized",
+          "description": "sanitized",
+          "schema": {
+            "name": "sanitized",
+            "description": "sanitized",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "description": "sanitized"
+                },
+                "content": {
+                  "type": "string",
+                  "description": "sanitized"
+                }
+              },
+              "required": ["sanitized", "sanitized"]
+            },
+            "eager_input_streaming": true
+          },
+          "server": "sanitized"
+        }
+      ],
+      "cliPrefix": "sanitized",
+      "reminderFold": false,
+      "systemTurns": true,
+      "toolChangeHeader": true,
+      "inlineTools": true,
+      "keptReminders": true,
+      "echoWireToolInputs": true,
+      "contextRendering": "sanitized"
+    },
+    "type": "attachment",
+    "uuid": "11111111-1111-4111-8111-111111111111",
+    "timestamp": "2026-05-01T12:00:00.000Z",
+    "userType": "sanitized",
+    "entrypoint": "sanitized",
+    "cwd": "sanitized",
+    "sessionId": "11111111-1111-4111-8111-111111111111",
+    "version": "2.1.303",
+    "gitBranch": "sanitized"
+  },
+  {
+    "type": "api-request-blob",
+    "sessionId": "11111111-1111-4111-8111-111111111111",
+    "hash": "sanitized",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "sanitized",
+          "signature": "sanitized"
+        },
+        {
+          "type": "tool_use",
+          "id": "sanitized",
+          "name": "sanitized",
+          "input": {
+            "command": "sanitized"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "api-request",
+    "sessionId": "11111111-1111-4111-8111-111111111111",
+    "id": "sanitized",
+    "timestamp": "2026-05-01T12:00:00.000Z",
+    "version": "2.1.303",
+    "querySource": "sanitized",
+    "shapeHash": "sanitized",
+    "params": {
+      "model": "sanitized",
+      "betas": [
+        "sanitized",
+        "sanitized",
+        "sanitized",
+        "sanitized",
+        "sanitized",
+        "sanitized",
+        "sanitized",
+        "sanitized",
+        "sanitized",
+        "sanitized",
+        "sanitized",
+        "sanitized",
+        "sanitized",
+        "sanitized",
+        "sanitized",
+        "sanitized",
+        "sanitized"
+      ],
+      "max_tokens": 128000,
+      "thinking": {
+        "type": "adaptive",
+        "display": "updates"
+      },
+      "context_management": {
+        "edits": [
+          {
+            "type": "clear_thinking_20251015",
+            "keep": "all"
+          }
+        ]
+      },
+      "output_config": {
+        "effort": "medium"
+      }
+    },
+    "base": "sanitized",
+    "keep": 2,
+    "tail": ["sanitized", "sanitized"],
+    "cacheControl": [
+      {
+        "path": ["sanitized", 1],
+        "value": {
+          "type": "ephemeral",
+          "ttl": "1h",
+          "scope": "global"
+        }
+      },
+      {
+        "path": ["sanitized", 2],
+        "value": {
+          "type": "ephemeral",
+          "ttl": "1h"
+        }
+      },
+      {
+        "path": ["sanitized", 3, "sanitized", 0],
+        "value": {
+          "type": "ephemeral",
+          "ttl": "1h"
+        }
+      }
+    ],
+    "requestDigest": "sanitized"
+  },
+  {
+    "type": "last-prompt",
+    "lastPrompt": "sanitized",
+    "leafUuid": "11111111-1111-4111-8111-111111111111",
+    "sessionId": "11111111-1111-4111-8111-111111111111"
+  },
+  {
+    "type": "ai-title",
+    "aiTitle": "sanitized",
+    "sessionId": "11111111-1111-4111-8111-111111111111"
+  },
+  {
+    "type": "atis-latch",
+    "atis": "sanitized",
+    "sessionId": "11111111-1111-4111-8111-111111111111"
+  },
+  {
+    "type": "cost-state",
+    "sessionId": "11111111-1111-4111-8111-111111111111",
+    "totalCostUSD": 0.08074049999999999,
+    "totalAPIDuration": 3499,
+    "totalAPIDurationWithoutRetries": 3490,
+    "totalToolDuration": 0,
+    "totalLinesAdded": 0,
+    "totalLinesRemoved": 0,
+    "totalDuration": 4285,
+    "startTime": 1793220090502,
+    "modelUsage": {
+      "sanitized-model": {
+        "inputTokens": 2,
+        "outputTokens": 200,
+        "thinkingTokens": 82,
+        "cacheReadInputTokens": 0,
+        "cacheCreationInputTokens": 9573,
+        "webSearchRequests": 0,
+        "costUSD": 0.080592
+      }
+    },
+    "hasUnknownModelCost": false
+  },
+  {
+    "parentUuid": "11111111-1111-4111-8111-111111111111",
+    "isSidechain": false,
+    "message": {
+      "model": "sanitized",
+      "id": "sanitized",
+      "type": "message",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "sanitized",
+          "name": "sanitized",
+          "input": {
+            "command": "sanitized"
+          },
+          "caller": {
+            "type": "direct"
+          }
+        }
+      ],
+      "container": null,
+      "stop_reason": "tool_use",
+      "stop_sequence": null,
+      "stop_details": null,
+      "usage": {
+        "input_tokens": 2,
+        "cache_creation_input_tokens": 236,
+        "cache_read_input_tokens": 9573,
+        "output_tokens": 124,
+        "output_tokens_details": {
+          "thinking_tokens": 0
+        },
+        "server_tool_use": {
+          "web_search_requests": 0,
+          "web_fetch_requests": 0
+        },
+        "service_tier": "sanitized",
+        "cache_creation": {
+          "ephemeral_1h_input_tokens": 236,
+          "ephemeral_5m_input_tokens": 0
+        },
+        "inference_geo": "sanitized",
+        "iterations": [
+          {
+            "input_tokens": 2,
+            "output_tokens": 124,
+            "cache_read_input_tokens": 9573,
+            "cache_creation_input_tokens": 236,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 236
+            },
+            "type": "message"
+          }
+        ],
+        "speed": "sanitized",
+        "fallback_credit": null
+      },
+      "input_transformations": [],
+      "diagnostics": null,
+      "context_management": null
+    },
+    "wireToolInputs": {
+      "sanitized-tool": {
+        "command": "sanitized"
+      }
+    },
+    "apiBlockIndex": 0,
+    "requestId": "sanitized",
+    "requestRef": "sanitized",
+    "requestedModel": "sanitized",
+    "type": "assistant",
+    "uuid": "11111111-1111-4111-8111-111111111111",
+    "timestamp": "2026-05-01T12:00:00.000Z",
+    "advisorModel": "sanitized",
+    "effort": "medium",
+    "perTurnEffort": "sanitized",
+    "userType": "sanitized",
+    "entrypoint": "sanitized",
+    "cwd": "sanitized",
+    "sessionId": "11111111-1111-4111-8111-111111111111",
+    "version": "2.1.303",
+    "gitBranch": "sanitized"
+  }
+]

@@ -126,12 +126,171 @@ export type WrittenRecord = Static<typeof WrittenRecordSchema>;
 export type AssistantContent = Static<typeof AssistantContentSchema>;
 export type UserContent = Static<typeof UserContentSchema>;
 
+// CLI 2.1.303 adds caller provenance to native tool blocks, not to records we own.
+const nativeToolUseBlock = Type.Object(
+  {
+    ...toolUseBlock.properties,
+    caller: Type.Optional(Type.Object({ type: Type.Literal("direct") }, closed)),
+  },
+  closed,
+);
+const nativeAssistantContent = Type.Array(
+  Type.Union([TextBlockSchema, thinkingBlock, redactedThinkingBlock, nativeToolUseBlock]),
+  { minItems: 1 },
+);
+const effort = Type.Object({ effort: nonempty }, closed);
+const count = Type.Integer({ minimum: 0 });
+const amount = Type.Number({ minimum: 0 });
+// JSON Schema is data here, but its observed keywords are still validated.
+const nativeInputSchema = Type.Cyclic(
+  {
+    Schema: Type.Object(
+      {
+        type: nonempty,
+        description: Type.Optional(Type.String()),
+        properties: Type.Optional(Type.Record(Type.String(), Type.Ref("Schema"))),
+        items: Type.Optional(Type.Ref("Schema")),
+        required: Type.Optional(Type.Array(Type.String())),
+        enum: Type.Optional(Type.Array(Type.String())),
+        pattern: Type.Optional(Type.String()),
+      },
+      closed,
+    ),
+  },
+  "Schema",
+);
+const nativeMetadata = Type.Union([
+  Type.Object({ type: Type.Literal("atis-latch"), sessionId: UuidSchema, atis: Type.String() }),
+  Type.Object({ type: Type.Literal("ai-title"), sessionId: UuidSchema, aiTitle: Type.String() }),
+  Type.Object({
+    type: Type.Literal("api-request-blob"),
+    sessionId: UuidSchema,
+    hash: nonempty,
+    message: Type.Union([
+      Type.Object({ role: Type.Literal("user"), content: UserContentSchema }),
+      Type.Object({
+        role: Type.Literal("system"),
+        content: Type.Array(TextBlockSchema, { minItems: 1 }),
+        output_config: Type.Optional(effort),
+      }),
+      Type.Object({ role: Type.Literal("assistant"), content: nativeAssistantContent }),
+    ]),
+  }),
+  Type.Object({
+    type: Type.Literal("api-request-shape"),
+    sessionId: UuidSchema,
+    shapeHash: nonempty,
+    timestamp,
+    version: nonempty,
+    shape: Type.Object({
+      system: Type.Array(TextBlockSchema),
+      tools: Type.Array(
+        Type.Union([
+          Type.Object({
+            name: identifier,
+            description: Type.String(),
+            input_schema: nativeInputSchema,
+            eager_input_streaming: Type.Optional(Type.Boolean()),
+            defer_loading: Type.Optional(Type.Boolean()),
+          }),
+          Type.Object({
+            type: nonempty,
+            name: identifier,
+            model: nonempty,
+            defer_loading: Type.Boolean(),
+          }),
+        ]),
+      ),
+    }),
+  }),
+  Type.Object({
+    type: Type.Literal("api-request"),
+    sessionId: UuidSchema,
+    id: nonempty,
+    timestamp,
+    version: nonempty,
+    querySource: nonempty,
+    shapeHash: nonempty,
+    params: Type.Object({
+      model: nonempty,
+      betas: Type.Array(nonempty),
+      max_tokens: count,
+      thinking: Type.Object(
+        { type: Type.Literal("adaptive"), display: Type.Literal("updates") },
+        closed,
+      ),
+      context_management: Type.Object(
+        {
+          edits: Type.Array(
+            Type.Object(
+              { type: Type.Literal("clear_thinking_20251015"), keep: Type.Literal("all") },
+              closed,
+            ),
+          ),
+        },
+        closed,
+      ),
+      output_config: effort,
+    }),
+    base: Type.Optional(nonempty),
+    keep: count,
+    tail: Type.Array(nonempty),
+    cacheControl: Type.Array(
+      Type.Object(
+        {
+          path: Type.Array(Type.Union([Type.String(), count]), { minItems: 1 }),
+          value: Type.Object(
+            {
+              type: Type.Literal("ephemeral"),
+              ttl: Type.Literal("1h"),
+              scope: Type.Optional(Type.Literal("global")),
+            },
+            closed,
+          ),
+        },
+        closed,
+      ),
+    ),
+    requestDigest: nonempty,
+  }),
+  Type.Object({
+    type: Type.Literal("cost-state"),
+    sessionId: UuidSchema,
+    totalCostUSD: amount,
+    totalAPIDuration: amount,
+    totalAPIDurationWithoutRetries: amount,
+    totalToolDuration: amount,
+    totalLinesAdded: count,
+    totalLinesRemoved: count,
+    totalDuration: amount,
+    startTime: amount,
+    hasUnknownModelCost: Type.Boolean(),
+    modelUsage: Type.Record(
+      nonempty,
+      Type.Object({
+        inputTokens: count,
+        outputTokens: count,
+        thinkingTokens: count,
+        cacheReadInputTokens: count,
+        cacheCreationInputTokens: count,
+        webSearchRequests: count,
+        costUSD: amount,
+      }),
+    ),
+  }),
+]);
+
 /** Native metadata is extensible; content and known record envelopes are checked.
  * Matching means this modeled contract matched, not that Claude can resume it.
  */
 export const NativeRecordSchema = Type.Union([
+  nativeMetadata,
   Type.Object({ ...base, type: Type.Literal("user"), message: Type.Object(userMessage) }),
-  Type.Object({ ...base, type: Type.Literal("assistant"), message: Type.Object(assistantMessage) }),
+  Type.Object({
+    ...base,
+    type: Type.Literal("assistant"),
+    message: Type.Object({ ...assistantMessage, content: nativeAssistantContent }),
+  }),
   Type.Object({
     ...base,
     type: Type.Literal("attachment"),

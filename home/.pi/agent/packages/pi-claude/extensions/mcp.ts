@@ -34,9 +34,11 @@ type Entry = { block: ToolCall; call?: Pending; result?: CallToolResult; dispatc
 export function createRendezvous({
   tools,
   fail,
+  onComplete,
 }: {
   tools: Tool[];
   fail: ({ error }: { error: Error }) => void;
+  onComplete: () => void;
 }) {
   const server = new McpServer(
     { name: MCP_NAME, version: "1.0.0" },
@@ -90,6 +92,7 @@ export function createRendezvous({
     if ([...batch.values()].every((entry) => entry.dispatched && entry.result && !entry.call)) {
       clearTimeout(timer);
       batch = undefined;
+      onComplete();
     }
   }
   server.server.setRequestHandler(ListToolsRequestSchema, () => ({ tools: definitions }));

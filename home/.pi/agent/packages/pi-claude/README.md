@@ -33,6 +33,43 @@ in checkpoint matching; changed instructions require reconstruction rather than
 reusing stale native context. Native preset/managed-instruction runtime fidelity
 still requires separately authorized live verification.
 
+## Tool names and CLI correction
+
+The owned MCP server already registers short Pi names (for example `bash`).
+Claude CLI qualifies them as `mcp__pi__bash` on its model-facing wire; registering
+prefixed server names would double-prefix them. The installed SDK 0.3.293
+`McpSdkServerConfig` exposes no prefix-removal option. Its `toolAliases` option
+redirects lookup, not advertised names, and is deliberately **not enabled**:
+unadvertised calls must never become executable Pi aliases. Identical short
+names across both interfaces are therefore not supported by this transport.
+
+The provider appends an explicit, declaration-derived short-to-wire name table
+after preserved Pi instructions. Direct model calls use only advertised
+`mcp__pi__*` names. Codemode scripts retain their separate short API, such as
+`tools.bash(args)`. Opaque instructions and tool-description examples are not
+blindly rewritten; the added guidance explains their naming context.
+
+A streamed unadvertised tool attempt is never emitted as an executable Pi call.
+The provider consumes the CLI's error `tool_result` and permits a subsequent
+corrected owned MCP call, including alongside valid siblings and after a real
+Pi guard denial. Missing CLI rejection, more than eight invalid attempts,
+a ten-second correction stall, and completion without any owned correction
+fail explicitly. The dedicated correction deadline survives successor message
+starts and text/thinking continuations. It is suspended during guarded work or
+approval (which has no correction timeout); once guarded results and MCP dispatch
+complete, outstanding rejection evidence is bounded again even if the SDK iterator
+stalls. Once evidence and an owned correction are both satisfied, the correction
+deadline is cleared. Native tools and foreign MCP dispatch remain fail-closed.
+
+Pi history contains only owned tool calls/results, with usage from rejected
+native attempts still charged to the encompassing assistant output. Because the
+native transcript includes rejection exchanges absent from normalized Pi history,
+such generations do not publish reusable native checkpoints: the next request
+reconstructs guarded history rather than resuming a mismatched native prefix.
+The sanitized offline regression sequence mirrors recorded CLI 2.1.303 behavior:
+bare `bash`, CLI `No such tool available: bash`, then `mcp__pi__bash`.
+No live Claude requests were used to validate this change.
+
 ## Trust and component policy
 
 Claude's native external-action tools are disabled. Owned in-process MCP carries

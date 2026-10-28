@@ -36,9 +36,30 @@ import {
   WRITE_DEFINITION,
 } from "../contract.ts";
 
-export type ToolRequest = { name: string; arguments: Record<string, unknown>; id: string };
+export type ToolRequest = {
+  name: string;
+  arguments: Record<string, unknown>;
+  id: string;
+  wireName?: string;
+};
 export type Scenario =
   | "text"
+  | "start-stall"
+  | "text-stall"
+  | "thinking-stall"
+  | "mixed-stall"
+  | "mixed-delayed"
+  | "rejection-false"
+  | "rejection-absent"
+  | "native-rejection"
+  | "foreign-rejection"
+  | "inconsistent-dispatch"
+  | "correction"
+  | "all-invalid"
+  | "missing-rejection"
+  | "rejection-loop"
+  | "mixed-correction"
+  | "denied-correction"
   | "empty"
   | "completed-empty-restart"
   | "completed-thinking-restart"
@@ -82,6 +103,7 @@ export type Observation = {
   wireHistory: string[];
   results: { id: string; result: CallToolResult }[];
   deliveredToolIds: string[];
+  batches: ToolRequest[][];
   permissions: Awaited<ReturnType<NonNullable<Options["canUseTool"]>>>[];
   tools: string[];
   closed: boolean;
@@ -173,6 +195,7 @@ export const fakeQuery: typeof query = ({ prompt, options = {} }) => {
         : resumedRecords.map((record) => JSON.stringify(record.message)),
     results: [],
     deliveredToolIds: [],
+    batches: [],
     permissions: [],
     tools: [],
     closed: false,
@@ -292,46 +315,102 @@ export const fakeQuery: typeof query = ({ prompt, options = {} }) => {
       arguments: PROTECTED_ARGS,
       id: randomUUID(),
     } satisfies ToolRequest;
-    const batches =
-      selected === "skill-files"
-        ? [
-            [{ ...read, arguments: SKILL_READ_ARGS }],
-            [{ ...protectedRead, arguments: PROTECTED_SKILL_ARGS }],
-          ]
-        : selected === "pipeline"
-          ? [[write], [read]]
-          : selected === "secret-tool"
-            ? [[read]]
-            : selected === "serialized"
-              ? [[write, { ...write, id: randomUUID(), arguments: SERIALIZED_WRITE_ARGS }]]
-              : selected === "quota-after-tool" || selected.endsWith("progress")
-                ? [[write]]
-                : selected === "parallel"
-                  ? [
-                      [
-                        write,
-                        {
-                          ...write,
-                          id: randomUUID(),
-                          arguments: { ...WRITE_ARGS, path: "sibling.txt" },
-                        },
-                        protectedRead,
-                      ],
-                    ]
-                  : selected === "denied"
-                    ? [[protectedRead]]
-                    : selected === "parked"
-                      ? [[write]]
-                      : selected === "missing-meta"
-                        ? [[write]]
-                        : [];
+    const batches: ToolRequest[][] =
+      (selected.endsWith("-stall") && !selected.startsWith("mixed")) ||
+      selected === "rejection-false" ||
+      selected === "rejection-absent" ||
+      selected === "inconsistent-dispatch"
+        ? [[{ ...write, wireName: "bash" }]]
+        : selected === "native-rejection" || selected === "foreign-rejection"
+          ? [
+              [
+                {
+                  ...write,
+                  wireName: selected === "native-rejection" ? "Bash" : "mcp__foreign__write",
+                },
+              ],
+            ]
+          : selected === "mixed-stall" || selected === "mixed-delayed"
+            ? [
+                [
+                  write,
+                  { ...write, id: randomUUID(), wireName: "bash" },
+                  { ...write, id: randomUUID(), arguments: SERIALIZED_WRITE_ARGS },
+                ],
+              ]
+            : selected === "rejection-loop"
+              ? Array.from({ length: 9 }, () => [{ ...write, id: randomUUID(), wireName: "bash" }])
+              : selected === "missing-rejection"
+                ? [[{ ...write, id: randomUUID(), wireName: "bash" }], [write]]
+                : selected === "correction"
+                  ? [[{ ...write, id: randomUUID(), wireName: "bash" }], [write]]
+                  : selected === "all-invalid"
+                    ? [[{ ...write, wireName: "bash" }]]
+                    : selected === "mixed-correction"
+                      ? [
+                          [
+                            write,
+                            { ...write, id: randomUUID(), wireName: "bash" },
+                            { ...write, id: randomUUID(), arguments: SERIALIZED_WRITE_ARGS },
+                          ],
+                          [read],
+                        ]
+                      : selected === "denied-correction"
+                        ? [
+                            [protectedRead],
+                            [{ ...write, id: randomUUID(), wireName: "bash" }],
+                            [write],
+                          ]
+                        : selected === "skill-files"
+                          ? [
+                              [{ ...read, arguments: SKILL_READ_ARGS }],
+                              [{ ...protectedRead, arguments: PROTECTED_SKILL_ARGS }],
+                            ]
+                          : selected === "pipeline"
+                            ? [[write], [read]]
+                            : selected === "secret-tool"
+                              ? [[read]]
+                              : selected === "serialized"
+                                ? [
+                                    [
+                                      write,
+                                      {
+                                        ...write,
+                                        id: randomUUID(),
+                                        arguments: SERIALIZED_WRITE_ARGS,
+                                      },
+                                    ],
+                                  ]
+                                : selected === "quota-after-tool" || selected.endsWith("progress")
+                                  ? [[write]]
+                                  : selected === "parallel"
+                                    ? [
+                                        [
+                                          write,
+                                          {
+                                            ...write,
+                                            id: randomUUID(),
+                                            arguments: { ...WRITE_ARGS, path: "sibling.txt" },
+                                          },
+                                          protectedRead,
+                                        ],
+                                      ]
+                                    : selected === "denied"
+                                      ? [[protectedRead]]
+                                      : selected === "parked"
+                                        ? [[write]]
+                                        : selected === "missing-meta"
+                                          ? [[write]]
+                                          : [];
     let latestProgress: Extract<SDKMessage, { type: "tool_progress" }> | undefined;
     for (const batch of batches) {
+      observation.batches.push(structuredClone(batch));
       const currentClient: Client | undefined = client;
       assert(currentClient);
       const replies = new Map<string, Promise<CallToolResult>>();
       // Reverse dispatch order and delay one request until after the final streamed block.
       const dispatch = ({ call }: { call: ToolRequest }) => {
+        if (call.wireName) return; // CLI rejects unknown names without MCP dispatch.
         const reply = currentClient
           .callTool({
             name: call.name,
@@ -360,7 +439,7 @@ export const fakeQuery: typeof query = ({ prompt, options = {} }) => {
         const block = {
           type: "tool_use",
           id: call.id,
-          name: sdkToolName({ name: call.name }),
+          name: call.wireName ?? sdkToolName({ name: call.name }),
           input: call.arguments,
         } satisfies Extract<Parameters<typeof apiMessage>[0]["content"], unknown[]>[number];
         yield frame({
@@ -386,8 +465,46 @@ export const fakeQuery: typeof query = ({ prompt, options = {} }) => {
       }
       assert(delayed);
       // Dispatch asynchronously: real Claude MCP calls and model event delivery are independent.
-      queueMicrotask(() => dispatch({ call: delayed }));
+      if (selected === "inconsistent-dispatch") {
+        const permission: Observation["permissions"][number] = await options.canUseTool(
+          sdkToolName({ name: delayed.name }),
+          delayed.arguments,
+          { ...permissionInfo, mcpServer: { name: MCP_NAME, source: "sdk" } },
+        );
+        observation.permissions.push(permission);
+        assert.equal(permission?.behavior, "allow");
+        dispatch({ call: { ...delayed, wireName: undefined } });
+        // Complete the actual transport request before batch acceptance.
+        await new Promise<void>((resolve) => setTimeout(resolve, 20));
+      } else queueMicrotask(() => dispatch({ call: delayed }));
       yield* finish({ sessionId, tool: true });
+      for (const call of batch.filter(
+        (call) =>
+          call.wireName &&
+          selected !== "missing-rejection" &&
+          selected !== "mixed-stall" &&
+          selected !== "mixed-delayed",
+      )) {
+        yield {
+          type: "user",
+          uuid: randomUUID(),
+          session_id: sessionId,
+          parent_tool_use_id: null,
+          message: {
+            role: "user",
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: call.id,
+                ...(selected === "rejection-absent"
+                  ? {}
+                  : { is_error: selected !== "rejection-false" }),
+                content: `Error: No such tool available: ${call.wireName}`,
+              },
+            ],
+          },
+        } satisfies SDKUserMessage;
+      }
       if (selected.endsWith("progress")) {
         latestProgress = {
           type: "tool_progress",
@@ -404,7 +521,9 @@ export const fakeQuery: typeof query = ({ prompt, options = {} }) => {
         } satisfies SDKMessage;
         yield latestProgress;
       }
-      for (const call of selected === "serialized" ? batch : batch.toReversed()) {
+      for (const call of (selected === "serialized" ? batch : batch.toReversed()).filter(
+        (call) => !call.wireName,
+      )) {
         if (selected === "serialized" && call !== delayed) dispatch({ call });
         const reply = replies.get(call.id);
         assert(reply, "fake failed to dispatch its MCP request");
@@ -413,6 +532,35 @@ export const fakeQuery: typeof query = ({ prompt, options = {} }) => {
         observation.wireHistory.push(JSON.stringify(received));
       }
       if (observation.closed) return;
+      if (selected === "mixed-delayed") {
+        await new Promise<void>((resolve) => setTimeout(resolve, 50));
+        const rejected = batch.find((call) => call.wireName);
+        assert(rejected);
+        yield {
+          type: "user",
+          uuid: randomUUID(),
+          session_id: sessionId,
+          parent_tool_use_id: null,
+          message: {
+            role: "user",
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: rejected.id,
+                is_error: true,
+                content: "No such tool available",
+              },
+            ],
+          },
+        } satisfies SDKUserMessage;
+      }
+      if (selected.endsWith("-stall")) {
+        if (selected === "start-stall") yield start({ id: randomUUID(), sessionId, model });
+        else if (selected !== "mixed-stall")
+          yield* textEvents({ sessionId, model, thinking: selected === "thinking-stall" });
+        await stopped.promise;
+        return;
+      }
     }
     if (selected === "quota" || selected === "quota-after-tool") {
       yield {

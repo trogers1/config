@@ -44,6 +44,7 @@ test.skipIf(process.env.PI_CLAUDE_INIT_PROBE !== "1")(
     const rendezvous = createRendezvous({
       tools,
       fail: () => controller.abort(),
+      onComplete: () => {},
     });
     let sdk: ReturnType<typeof query> | undefined;
     const timer = setTimeout(() => {

@@ -5,14 +5,16 @@ import { pathToFileURL } from "node:url";
 import {
   getCurrentSystemMessage,
   getSystemMessageText,
+  type Tool,
   type TranscriptContext,
 } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
+import { sdkToolName } from "./mcp.ts";
 import { parseOrThrow } from "./validation.ts";
 
 // Version the ownership split as well as its text: checkpoints must never cross
 // a change between a custom base and the native preset.
-export const PROMPT_MODE = "claude-code-preset-pi-context-v1";
+export const PROMPT_MODE = "claude-code-preset-pi-context-v2";
 const SectionsSchema = Type.Record(Type.String(), Type.String());
 let stock: Promise<Record<string, string>> | undefined;
 
@@ -56,10 +58,12 @@ export async function nativeSystemPrompt({
   messages,
   sourceSystem,
   systemPrompt,
+  tools,
 }: {
   messages: TranscriptContext["messages"];
   sourceSystem: string;
   systemPrompt: string;
+  tools: Tool[];
 }): Promise<Options["systemPrompt"]> {
   const defaults = await stockSections();
   const current = getCurrentSystemMessage(messages);
@@ -71,5 +75,17 @@ export async function nativeSystemPrompt({
     }
     append = getSystemMessageText({ ...current, sections });
   }
-  return { type: "preset", preset: "claude_code", append } satisfies Options["systemPrompt"];
+  const names = tools.map((tool) => `- ${tool.name}: call ${sdkToolName({ name: tool.name })}`);
+  const guidance = [
+    "# Pi tool naming (Claude transport)",
+    "Only the advertised mcp__pi__ names are callable as direct model tools. Native Claude tools and bare Pi names are unavailable.",
+    "References to short tool names in the preserved instructions above describe Pi operations; use the matching advertised name for direct calls:",
+    ...names,
+    "Inside codemode JavaScript ONLY, keep the original short API (for example tools.bash(args)); do not prefix script APIs. Tool descriptions' Codemode examples refer to this script API, not direct model tool calls.",
+  ].join("\n");
+  return {
+    type: "preset",
+    preset: "claude_code",
+    append: `${append}\n\n${guidance}`,
+  } satisfies Options["systemPrompt"];
 }
