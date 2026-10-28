@@ -399,6 +399,16 @@ function classifyGitArguments(
       continue;
     }
 
+    // hash-object reads filenames, not revisions or Git option values.
+    // After --, even option-looking filenames must remain path-gated.
+    if (
+      subcommand === "hash-object" &&
+      (afterDoubleDash || !value.startsWith("-"))
+    ) {
+      tokens[index].kind = "filesystem-reference";
+      continue;
+    }
+
     if (value === "--") {
       afterDoubleDash = true;
       continue;

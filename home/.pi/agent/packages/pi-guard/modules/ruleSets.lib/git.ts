@@ -1,6 +1,10 @@
 import type { Rule } from "../policyHelpers";
 
 const sharedGitReadRules: Rule[] = [
+  {
+    pattern: "git hash-object --no-filters -- *",
+    decision: "allow",
+  },
   { pattern: "git config --get *", decision: "allow" },
   { pattern: "git config --get-regexp *", decision: "allow" },
   { pattern: "git config --list", decision: "allow" },
