@@ -28,6 +28,72 @@ pi-guard is mandatory for delegation. Every child is launched with an explicit
 pi-guard extension and a snapshotted profile/loadout; launches fail closed if
 the guard runtime cannot be resolved.
 
+## Messaging integration tests
+
+`npm test` runs the deterministic public Pi/tmux lifecycle tests and skips paid
+messaging cases by default. Keep `PI_LIVE_MESSAGES` unset for offline checks.
+The messaging tests cover execution, an exact-ID reply derived from the received
+question, child completion, and acknowledgment ordered after the matching delivered
+completion/handoff—not just generated tool-call text or registry flags. Actual parent
+and child provider/model identities are checked independently of requested loadouts.
+Offline negatives cover early acknowledgments, missing received question identity,
+wrong observed child identity, truncated output, startup/deadline failures, malformed
+persisted observations and refusal to delete a mismatched authority file.
+
+Live tests require **fresh explicit authorization** and an existing working Pi,
+tmux, zsh, sibling guard/Claude packages, and normal provider authentication.
+Choose an approved cheap OpenAI model and a Claude bridge Haiku model, including
+their provider prefixes, in `PI_LIVE_OPENAI_MODEL` and `PI_LIVE_CLAUDE_MODEL`.
+From this package directory, select exactly one direction:
+
+```bash
+PI_LIVE_MESSAGES=1 \
+PI_LIVE_MESSAGE_DIRECTION=openai-to-claude \
+PI_LIVE_OPENAI_MODEL="${PI_LIVE_OPENAI_MODEL:?Set an approved cheap OpenAI model}" \
+PI_LIVE_CLAUDE_MODEL="${PI_LIVE_CLAUDE_MODEL:?Set an approved Claude bridge Haiku model}" \
+npm test -- tests/public-lifecycle.test.ts -t '^public bidirectional messaging live ' --retry=0
+```
+
+Run `claude-to-openai` separately only if authorized; do not run both directions
+concurrently. The centralized timing configuration reserves 60 seconds for execution
+starting **before** tmux startup, 15 seconds for shutdown, 5 seconds for final validation,
+and 10 seconds of runner headroom (90 seconds total), with no test retries. Each external
+command is asynchronous and capped at two seconds or its remaining phase budget,
+whichever is smaller. A startup timeout does not prove that no server was created. The dedicated tmux server sets
+`CLAUDE_CODE_MAX_OUTPUT_TOKENS=256`; there is no equivalent OpenAI or cross-process
+request budget. A test run is not a count of the SDK's internal HTTP requests or
+retries. The 256-token native cap can truncate a tool call, which is a **failure**,
+not evidence that the child launched. No higher-cap fallback is attempted.
+
+The fixture preserves normal HOME/authentication and guard policy. Parent and
+child Pi sessions stay in its disposable workspace. Observation validates captured
+JSONL bytes before opening only a disposable copy through the host session API.
+While running, only an unfinished final fragment is deferred; final acceptance uses
+strict reads of the original sessions after verified shutdown. Observation does not
+repair producer files or discard malformed complete records.
+
+Failures emit bounded, schema-checked metadata: separate execution, acceptance,
+shutdown, final-validation and deletion outcomes, model-match flags, known stop
+reasons, block counts and known-tool result counts. Reporting failures remain
+visible without replacing the primary failure. Reports never include prompts,
+text/thinking, arguments, result bodies, original errors or arbitrary provider
+metadata strings. Diagnostics do not bypass any acceptance or cleanup gate.
+
+Shutdown binds the exact owned socket and age-gated process identities, verifies
+ancestor-first stopping, recursively discovers descendants until quiescent, and uses
+SIGKILL without resuming termination handlers. Verified nonroot zombie leaves under
+stopped ancestry are already nonexecuting and are never signaled. Their identity and
+terminal state remain checked; disappearance or reparenting is accepted only after
+deliberate parent termination. Authority/workspace deletion requires
+verified exit or nonexecuting zombies for the recorded identities and production
+validation of the exact test-owned authority files. Ambiguous ownership, clock changes,
+shutdown failures and authority mismatches retain artifacts. This closes the observed
+teardown-spawning race; it is **not** atomic PID-safe signaling or containment of a
+process that daemonized before observation. The fixture never enumerates normal HOME
+sessions or unrelated authority records. No configuration edits, credential copies, or native-tool/MCP
+approval environment overrides are needed. Successful offline tests do not establish
+paid-provider acceptance or subscription entitlement.
+
 ## Release (maintainers)
 
 This package is published independently. From a clean checkout, verify the

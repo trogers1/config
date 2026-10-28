@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import {
 	cpSync,
+	lstatSync,
 	existsSync,
 	mkdirSync,
 	mkdtempSync,
@@ -39,6 +40,29 @@ import markerExtension from "./fixtures/marker-extension.ts";
 import reloadMarker from "./fixtures/reload-marker.ts";
 import { runPrintCommand } from "./support/print-command.ts";
 import {
+	observeMessages,
+	messageDiagnostic,
+	type MessageDiagnosticSchema,
+	LaunchControlsSchema,
+	MESSAGE_OBSERVATION_ERRORS,
+	OBSERVATION_SCHEMAS,
+	assertObservedModel,
+	hasAcknowledgedCompletion,
+} from "./support/message-observer.ts";
+import { readSessionSnapshot } from "./support/session-snapshot.ts";
+import { runMessageOutcome } from "./support/message-outcome.ts";
+import {
+	createMessageProcessControl,
+	runOwnedCommand,
+	MESSAGE_PROCESS_COMMANDS,
+	MESSAGE_TIMING,
+	MESSAGE_TEST_TIMEOUT,
+	PROCESS_ERRORS,
+} from "./support/message-process.ts";
+import { SubagentParameters } from "../extensions/index.ts";
+import { incomingNotifications, MESSAGE_NOTIFICATION_TYPES } from "./support/message-notifications.ts";
+import { authorityPath } from "../extensions/interactive/launcher.ts";
+import {
 	CLAUDE_BRIDGE_PROVIDER,
 	PROVIDER_DOCUMENTATION_BASENAMES,
 } from "../extensions/interactive/provider-extensions.ts";
@@ -55,6 +79,7 @@ import {
 	REMOVE_PROVIDER_COMMAND,
 } from "./fixtures/provider-approval-probe.ts";
 
+const LOCAL_PARENT_MODEL = Object.freeze({ provider: "local", id: "deterministic" });
 const ProviderRequestSchema = Type.Object({
 	model: Type.String(),
 	messages: Type.Array(Type.Object({ role: Type.String() })),
@@ -98,7 +123,17 @@ function sse(response: ServerResponse, chunks: readonly Record<string, unknown>[
 	response.end("data: [DONE]\n\n");
 }
 
-function toolCall(response: ServerResponse, name: string, args: Record<string, unknown>, id: string): void {
+function toolCall({
+	response,
+	name,
+	args,
+	id,
+}: {
+	response: ServerResponse;
+	name: string;
+	args: Record<string, unknown> | string;
+	id: string;
+}): void {
 	sse(response, [
 		{
 			id: "local",
@@ -108,7 +143,14 @@ function toolCall(response: ServerResponse, name: string, args: Record<string, u
 					index: 0,
 					delta: {
 						role: "assistant",
-						tool_calls: [{ index: 0, id, type: "function", function: { name, arguments: JSON.stringify(args) } }],
+						tool_calls: [
+							{
+								index: 0,
+								id,
+								type: "function",
+								function: { name, arguments: typeof args === "string" ? args : JSON.stringify(args) },
+							},
+						],
 					},
 					finish_reason: null,
 				},
@@ -117,7 +159,7 @@ function toolCall(response: ServerResponse, name: string, args: Record<string, u
 		{
 			id: "local",
 			object: "chat.completion.chunk",
-			choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
+			choices: [{ index: 0, delta: {}, finish_reason: typeof args === "string" ? "length" : "tool_calls" }],
 			usage: { prompt_tokens: 2, completion_tokens: 1, total_tokens: 3 },
 		},
 	]);
@@ -168,11 +210,11 @@ function configureAgentDir(work: string, port: number): string {
 		join(agentDir, "models.json"),
 		JSON.stringify({
 			providers: {
-				local: {
+				[LOCAL_PARENT_MODEL.provider]: {
 					baseUrl: `http://127.0.0.1:${port}/v1`,
 					api: "openai-completions",
 					apiKey: "local",
-					models: [{ id: "deterministic" }],
+					models: [{ id: LOCAL_PARENT_MODEL.id }],
 				},
 			},
 		}),
@@ -364,6 +406,630 @@ function runApprovalProbe({
 		.map((line) => parseOrThrow(ApprovalProbeResultSchema, JSON.parse(line), "approval probe result"));
 }
 
+const MESSAGE_AGENT = "message-smoke";
+const MESSAGE_REPLY = "ok";
+const MESSAGE_MARKER = "MESSAGE_SMOKE_COMPLETE";
+const MESSAGE_ACK = "MESSAGE_SMOKE_ACKNOWLEDGED";
+
+function messageLaunch({ work }: { work: string }) {
+	return parseOrThrow(
+		SubagentParameters,
+		{
+			agent: MESSAGE_AGENT,
+			task: `Ask the parent to reply only ${MESSAGE_REPLY} via ask_question; after exactly ${MESSAGE_REPLY} finish ${MESSAGE_MARKER}`,
+			cwd: work,
+			agentScope: "project",
+			confirmProjectAgents: false,
+		} satisfies Static<typeof SubagentParameters>,
+		"message launch fixture",
+	);
+}
+
+function assertMalformedObservations({ file, work }: { file: string; work: string }) {
+	const session = readSessionSnapshot({ file });
+	const header = session.header;
+	if (!header) throw new Error("Missing owned session header");
+	const emittedOnly = join(work, "emitted-without-results.jsonl");
+	const withoutResults = session.entries.filter(
+		(entry) => entry.type !== "message" || entry.message.role !== "toolResult",
+	);
+	writeFileSync(emittedOnly, [header, ...withoutResults].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+	expect(observeMessages({ file }).launches).toHaveLength(1);
+	const unexecuted = observeMessages({ file: emittedOnly });
+	expect(unexecuted.launches).toEqual([]);
+	expect(unexecuted.replies).toEqual([]);
+	const launch = messageLaunch({ work });
+	const expectedLaunchControls = parseOrThrow(
+		LaunchControlsSchema,
+		{ agentScope: launch.agentScope, confirmProjectAgents: launch.confirmProjectAgents },
+		"diagnostic fixture controls",
+	);
+	const controlSecret = "PRIVATE_LAUNCH_CONTROL_ARGUMENT_SENTINEL";
+	const controlFile = join(work, "launch-control-variants.jsonl");
+	for (const variant of [
+		"matched",
+		"absent",
+		"missing-scope",
+		"missing-confirmation",
+		"wrong-scope",
+		"wrong-confirmation",
+		"wrong-confirmation-value",
+		"mixed",
+	] as const) {
+		const entries = withoutResults.map((entry) =>
+			entry.type === "message" && entry.message.role === "assistant"
+				? {
+						...entry,
+						message: {
+							...entry.message,
+							content: entry.message.content.flatMap((block) => {
+								if (block.type !== "toolCall" || block.name !== "subagent") return [block];
+								if (variant === "absent") return [];
+								const args: typeof block.arguments = {
+									...block.arguments,
+									...expectedLaunchControls,
+									task: controlSecret,
+									cwd: controlSecret,
+								};
+								if (variant === "missing-scope") delete args.agentScope;
+								if (variant === "missing-confirmation") delete args.confirmProjectAgents;
+								if (variant === "wrong-scope") args.agentScope = controlSecret;
+								if (variant === "wrong-confirmation") args.confirmProjectAgents = controlSecret;
+								if (variant === "wrong-confirmation-value")
+									args.confirmProjectAgents = !expectedLaunchControls.confirmProjectAgents;
+								const call = { ...block, arguments: args };
+								return variant === "mixed"
+									? [
+											call,
+											{
+												...call,
+												id: `${call.id}-mismatch`,
+												arguments: { ...args, confirmProjectAgents: controlSecret },
+											},
+										]
+									: [call];
+							}),
+						},
+					}
+				: entry,
+		);
+		writeFileSync(controlFile, [header, ...entries].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+		const projected = messageDiagnostic({
+			file: controlFile,
+			model: `${LOCAL_PARENT_MODEL.provider}/${LOCAL_PARENT_MODEL.id}`,
+			expectedLaunchControls,
+		});
+		expect(projected.status).toBe("validated");
+		expect(projected.launchControls).toBe(
+			variant === "matched" ? "matched" : variant === "absent" ? "absent" : "mismatched",
+		);
+		expect(JSON.stringify(projected)).not.toContain(controlSecret);
+		let captured: Static<typeof MessageDiagnosticSchema> | undefined;
+		const read = () =>
+			observeMessages({
+				file: controlFile,
+				diagnostic: {
+					model: `${LOCAL_PARENT_MODEL.provider}/${LOCAL_PARENT_MODEL.id}`,
+					expectedLaunchControls,
+					failOnLaunchControlMismatch: true,
+					capture: (value) => {
+						captured = value;
+					},
+				},
+			});
+		if (variant === "matched" || variant === "absent") expect(read().launches).toEqual([]);
+		else expect(read).toThrow(MESSAGE_OBSERVATION_ERRORS.launchControls);
+		expect(captured).toEqual(projected);
+		expect(
+			observeMessages({
+				file: controlFile,
+				diagnostic: {
+					model: `${LOCAL_PARENT_MODEL.provider}/${LOCAL_PARENT_MODEL.id}`,
+					expectedLaunchControls,
+					capture: () => {},
+				},
+			}).launches,
+		).toEqual([]);
+		expect(
+			observeMessages({
+				file: controlFile,
+				diagnostic: {
+					model: `${LOCAL_PARENT_MODEL.provider}/${LOCAL_PARENT_MODEL.id}`,
+					failOnLaunchControlMismatch: true,
+					capture: () => {},
+				},
+			}).launches,
+		).toEqual([]);
+		// No expectation (including child observation) never enables this check.
+		expect(
+			messageDiagnostic({ file: controlFile, model: `${LOCAL_PARENT_MODEL.provider}/${LOCAL_PARENT_MODEL.id}` })
+				.launchControls,
+		).toBe("not-checked");
+	}
+	// The deterministic provider emits no thinking. Add a schema-valid thinking
+	// block to copies of its real assistant entries for boundary-only coverage.
+	const thinking = {
+		type: OBSERVATION_SCHEMAS.thinking.properties.type.const,
+		thinking: MESSAGE_REPLY,
+	} satisfies Static<typeof OBSERVATION_SCHEMAS.thinking>;
+	const fixtures = session.entries.map((entry) =>
+		entry.type === "message" && entry.message.role === "assistant"
+			? { ...entry, message: { ...entry.message, content: [...entry.message.content, thinking] } }
+			: entry,
+	);
+	const validFixture = join(work, "valid-observation-variants.jsonl");
+	writeFileSync(validFixture, [header, ...fixtures].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+	expect(observeMessages({ file: validFixture }).launches).toHaveLength(1);
+	const knownToolDiagnostic = messageDiagnostic({
+		file: validFixture,
+		model: `${LOCAL_PARENT_MODEL.provider}/${LOCAL_PARENT_MODEL.id}`,
+	});
+	expect(knownToolDiagnostic.tools.find((tool) => tool.name === "subagent")).toMatchObject({
+		results: 1,
+		successResults: 1,
+		errorResults: 0,
+		executed: 1,
+	});
+	// Project copies of real public-lifecycle evidence, never a parallel parser.
+	const secret = "PRIVATE_TEXT_THINKING_ARGUMENT_RESULT_ERROR_SENTINEL";
+	const unexpected = "PRIVATE_IDENTITY_TOOL_RAW_STOP_SENTINEL";
+	const diagnosticFile = join(work, "diagnostic-secrets.jsonl");
+	const failedResults = fixtures.map((entry) =>
+		entry.type === "message" && entry.message.role === "toolResult"
+			? { ...entry, message: { ...entry.message, isError: true } }
+			: entry,
+	);
+	writeFileSync(diagnosticFile, [header, ...failedResults].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+	const failedResultDiagnostic = messageDiagnostic({
+		file: diagnosticFile,
+		model: `${LOCAL_PARENT_MODEL.provider}/${LOCAL_PARENT_MODEL.id}`,
+	});
+	expect(failedResultDiagnostic.tools.find((tool) => tool.name === "subagent")).toMatchObject({
+		results: 1,
+		successResults: 0,
+		errorResults: 1,
+		executed: 0,
+	});
+	const diagnosticEntries = fixtures.map((entry) => {
+		if (entry.type !== "message") return entry;
+		if (entry.message.role === "assistant")
+			return {
+				...entry,
+				message: {
+					...entry.message,
+					provider: unexpected,
+					model: unexpected,
+					rawStopReason: unexpected,
+					errorMessage: secret,
+					content: entry.message.content.map((block) =>
+						block.type === "text"
+							? { ...block, text: secret }
+							: block.type === "thinking"
+								? { ...block, thinking: secret }
+								: { ...block, name: unexpected, arguments: { secret }, argumentsError: secret },
+					),
+				},
+			};
+		if (entry.message.role === "toolResult")
+			return {
+				...entry,
+				message: {
+					...entry.message,
+					toolName: unexpected,
+					isError: true,
+					content: [{ type: "text", text: secret }],
+				},
+			};
+		return entry;
+	});
+	writeFileSync(diagnosticFile, [header, ...diagnosticEntries].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+	const diagnostic = messageDiagnostic({
+		file: diagnosticFile,
+		model: `${LOCAL_PARENT_MODEL.provider}/${LOCAL_PARENT_MODEL.id}`,
+	});
+	expect(diagnostic.status).toBe("validated");
+	expect(diagnostic.modelMatches).toBe(false);
+	expect(diagnostic.otherTool).toBe(true);
+	let beforeRejection: Static<typeof MessageDiagnosticSchema> | undefined;
+	expect(() =>
+		observeMessages({
+			file: diagnosticFile,
+			diagnostic: {
+				model: `${LOCAL_PARENT_MODEL.provider}/${LOCAL_PARENT_MODEL.id}`,
+				capture: (value) => {
+					beforeRejection = value;
+				},
+			},
+		}),
+	).toThrow();
+	expect(beforeRejection).toEqual(diagnostic);
+	expect(JSON.stringify(diagnostic)).not.toContain(secret);
+	expect(JSON.stringify(diagnostic)).not.toContain(unexpected);
+	const malformedStop = diagnosticEntries.map((entry) =>
+		entry.type === "message" && entry.message.role === "assistant"
+			? { ...entry, message: { ...entry.message, stopReason: unexpected } }
+			: entry,
+	);
+	writeFileSync(diagnosticFile, [header, ...malformedStop].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+	const unavailable = messageDiagnostic({ file: diagnosticFile, model: unexpected });
+	expect(unavailable.status).toBe("unavailable");
+	expect(JSON.stringify(unavailable)).not.toContain(unexpected);
+	for (const schema of Object.values(OBSERVATION_SCHEMAS)) {
+		const target = "role" in schema.properties ? schema.properties.role.const : schema.properties.type.const;
+		if (!schema.required?.length) throw new Error("Observation schema has no required-field contract");
+		for (const field of schema.required) {
+			let changed = 0;
+			const entries = fixtures.map((entry) => {
+				if (entry.type !== "message") return entry;
+				const message = entry.message;
+				if (message.role === target) {
+					const broken: Record<string, unknown> = { ...message };
+					delete broken[field];
+					changed++;
+					return { ...entry, message: broken };
+				}
+				if (message.role === "assistant")
+					return {
+						...entry,
+						message: {
+							...message,
+							content: message.content.map((block) => {
+								if (block.type !== target) return block;
+								const broken: Record<string, unknown> = { ...block };
+								delete broken[field];
+								changed++;
+								return broken;
+							}),
+						},
+					};
+				return entry;
+			});
+			if (!changed) throw new Error(`Real session lacks observation fixture: ${target}.${field}`);
+			const malformed = join(work, `missing-${target}-${field}.jsonl`);
+			writeFileSync(malformed, [header, ...entries].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+			expect(() => observeMessages({ file: malformed })).toThrow();
+		}
+	}
+}
+const liveDirection = process.env.PI_LIVE_MESSAGE_DIRECTION;
+const liveEnabled = process.env.PI_LIVE_MESSAGES === "1";
+if (liveEnabled && liveDirection !== "openai-to-claude" && liveDirection !== "claude-to-openai")
+	throw new Error("Select exactly one PI_LIVE_MESSAGE_DIRECTION: openai-to-claude or claude-to-openai");
+
+function ownedRegistries({ work }: { work: string }) {
+	const root = join(work, ".pi/orchestration");
+	if (!existsSync(root)) return [];
+	return readdirSync(root, { withFileTypes: true })
+		.filter((entry) => entry.isDirectory())
+		.flatMap((entry) => {
+			const file = join(root, entry.name, "registry.json");
+			return existsSync(file)
+				? [parseOrThrow(RegistrySchema, JSON.parse(readFileSync(file, "utf8")), "owned registry")]
+				: [];
+		});
+}
+
+async function cleanMessageAuthority({
+	work,
+	installed,
+}: {
+	work: string;
+	installed: Pick<ReturnType<typeof configureProviderPackages>, "subagents">;
+}) {
+	// Validate every candidate before deleting any. Never enumerate global authority.
+	const files: string[] = [];
+	for (const registry of ownedRegistries({ work }))
+		for (const child of registry.children) {
+			const launcher: typeof Launcher = await import(
+				pathToFileURL(join(installed.subagents, "extensions/interactive/launcher.ts")).href
+			);
+			const types: typeof LoadoutTypes = await import(
+				pathToFileURL(join(installed.subagents, "extensions/interactive/types.ts")).href
+			);
+			const file = authorityPath(registry.runId, child.name);
+			if (child.authorityPath !== file || !lstatSync(file).isFile() || lstatSync(file).isSymbolicLink())
+				throw new Error("Refusing nonregular or noncanonical test authority");
+			const loadout = launcher.validateResumeLoadout({ file: child.loadoutPath });
+			expect(loadout).toEqual(child.loadoutSnapshot);
+			const authority: unknown = JSON.parse(readFileSync(file, "utf8"));
+			if (!isRecord(authority) || "attemptId" in authority) throw new Error("Invalid immutable authority");
+			const validated = types.validateLoadout({ value: { ...authority, attemptId: child.attemptId } });
+			expect(validated).toEqual(loadout);
+			files.push(file);
+		}
+	for (const file of files) rmSync(file);
+	return files;
+}
+
+function ownedSessionFiles({ sessionDir }: { sessionDir: string }) {
+	// Startup can fail before any child session exists; this is not success evidence.
+	if (!existsSync(sessionDir)) return [];
+	return readdirSync(sessionDir, { recursive: true, encoding: "utf8" })
+		.filter((file) => file.endsWith(".jsonl"))
+		.map((file) => join(sessionDir, file));
+}
+
+function ownedChildSession({ sessionDir, sessionId }: { sessionDir: string; sessionId: ChildRecord["sessionId"] }) {
+	const files = ownedSessionFiles({ sessionDir });
+	const matching = files.filter((file) => readSessionSnapshot({ file }).header?.id === sessionId);
+	if (matching.length !== 1) throw new Error("Expected exactly one child session in disposable storage");
+	const file = matching[0];
+	if (!file) throw new Error("Missing child session path");
+	return file;
+}
+
+function verifyMessageExchange({
+	child,
+	sessionFile,
+	sessionDir,
+	parentModel,
+	childModel,
+}: {
+	child: ChildRecord;
+	sessionFile: string;
+	sessionDir: string;
+} & Pick<Parameters<typeof messageLifecycle>[0], "parentModel" | "childModel">) {
+	const parent = observeMessages({ file: sessionFile });
+	expect(parent.launches).toHaveLength(1);
+	assertObservedModel({ observation: parent, model: parentModel });
+	expect(
+		hasAcknowledgedCompletion({ observation: parent, child, marker: MESSAGE_MARKER, acknowledgment: MESSAGE_ACK }),
+	).toBe(true);
+	expect(child.loadoutSnapshot.model).toBe(childModel);
+	expect(child.state).toBe(CHILD_STATES.completed);
+	const question = parseOrThrow(
+		QuestionSchema,
+		JSON.parse(readFileSync(questionPointerPath({ loadoutPath: child.loadoutPath }), "utf8")),
+		"message question",
+	);
+	expect(question).toMatchObject({ answered: true, childSessionId: child.sessionId, attemptId: child.attemptId });
+	expect(question.question).toContain(MESSAGE_REPLY);
+	const reply = parseOrThrow(
+		ReplySchema,
+		JSON.parse(
+			readFileSync(
+				`${questionRecordPath({ loadoutPath: child.loadoutPath, questionId: question.questionId })}.reply`,
+				"utf8",
+			),
+		),
+		"message reply",
+	);
+	expect(reply).toMatchObject({ answer: MESSAGE_REPLY, questionId: question.questionId, attemptId: child.attemptId });
+	expect(parent.replies).toEqual([{ name: child.name, message: MESSAGE_REPLY, questionId: question.questionId }]);
+	const deliveredQuestion = parent.notifications.find(
+		(notification) =>
+			notification.kind === MESSAGE_NOTIFICATION_TYPES.question &&
+			notification.value.name === child.name &&
+			notification.value.questionId === question.questionId,
+	);
+	const replyEvent = parent.replyEvents[0];
+	if (!deliveredQuestion || !replyEvent || replyEvent.index <= deliveredQuestion.index)
+		throw new Error("Reply did not follow the matching delivered question");
+	const terminal = parseOrThrow(
+		TerminalSignalSchema,
+		JSON.parse(readFileSync(`${child.loadoutPath}.terminal.json`, "utf8")),
+		"message terminal",
+	);
+	expect(terminal).toMatchObject({
+		status: CHILD_STATES.completed,
+		attemptId: child.attemptId,
+		model: childModel.slice(childModel.indexOf("/") + 1),
+	});
+	expect(terminal.result).toContain(MESSAGE_MARKER);
+	expect(terminal.permissionBlocks ?? []).toEqual([]);
+	if (!child.handoffPath) throw new Error("Missing message handoff");
+	expect(readFileSync(child.handoffPath, "utf8")).toContain(MESSAGE_MARKER);
+	const childFile = ownedChildSession({ sessionDir, sessionId: child.sessionId });
+	expect(messageDiagnostic({ file: childFile, model: childModel }).launchControls).toBe("not-checked");
+	const observed = observeMessages({ file: childFile });
+	assertObservedModel({ observation: observed, model: childModel });
+	expect(observed.questions).toHaveLength(1);
+	expect(observed.text).toContain(MESSAGE_MARKER);
+}
+
+async function messageLifecycle({
+	parentModel,
+	childModel,
+	agentDir,
+	installed,
+	work,
+	timeout = MESSAGE_TIMING.executionMs,
+	inspectStopped,
+	parentExecutable = "pi",
+	parentExtension,
+}: {
+	parentModel: string;
+	childModel: string;
+	agentDir?: string;
+	installed: Pick<ReturnType<typeof configureProviderPackages>, "guard" | "subagents" | "adapter">;
+	work: string;
+	timeout?: number;
+	inspectStopped?: (context: { work: string; sessionFile: string }) => void;
+	parentExecutable?: string;
+	parentExtension?: string;
+}) {
+	const deadline = performance.now() + timeout;
+	const socket = join(work, "tmux.socket");
+	const control = createMessageProcessControl({ socket });
+	const sessionFile = join(work, "parent.jsonl");
+	const sessionDir = join(work, "sessions");
+	mkdirSync(join(work, ".pi/agents"), { recursive: true });
+	writeFileSync(
+		join(work, ".pi/agents", `${MESSAGE_AGENT}.md`),
+		`---\nname: ${MESSAGE_AGENT}\ndescription: messaging smoke\nmodel: ${JSON.stringify(childModel)}\nthinking: off\ntools: read\nprofile: builtin:read-only\n---\nAsk the parent using ask_question to reply only ${MESSAGE_REPLY}. After receiving exactly ${MESSAGE_REPLY}, finish with ${MESSAGE_MARKER}.\n`,
+	);
+	const launch = messageLaunch({ work });
+	const expectedLaunchControls = parseOrThrow(
+		LaunchControlsSchema,
+		{ agentScope: launch.agentScope, confirmProjectAgents: launch.confirmProjectAgents },
+		"explicit fixture controls",
+	);
+	const prompt = `Call subagent exactly once with ${JSON.stringify(launch)}. You MUST explicitly include agentScope:${JSON.stringify(launch.agentScope)} and confirmProjectAgents:${JSON.stringify(launch.confirmProjectAgents)} in the call. Omitting these fields can pause for human confirmation; do not approve or bypass any confirmation. WAIT after launch. Do not invent question IDs. Await the actual question notification, then call subagent_message with the real name and exact questionId and message ${MESSAGE_REPLY}. WAIT for actual completion and handoff containing ${MESSAGE_MARKER}, then acknowledge with ${MESSAGE_ACK}. Never retry a failure.`;
+	const args = [
+		parentExecutable,
+		"--no-extensions",
+		"--no-mcp",
+		"--no-skills",
+		"--no-prompt-templates",
+		"--no-context-files",
+		"-e",
+		join(installed.guard, "extensions/guard.ts"),
+		"-e",
+		join(installed.subagents, "extensions/index.ts"),
+		"-e",
+		installed.adapter,
+		...(parentExtension ? ["-e", parentExtension] : []),
+		"--tools",
+		"subagent,subagent_message",
+		"--model",
+		parentModel,
+		"--thinking",
+		"off",
+		"--session",
+		sessionFile,
+		prompt,
+	];
+	let startupAttempted = false;
+	let candidate: ChildRecord | undefined;
+	let parentDiagnostic: Static<typeof MessageDiagnosticSchema> | undefined;
+	let validationDeadline = 0;
+	await runMessageOutcome({
+		execute: async () => {
+			// Keep a dedicated server alive even if Pi fails during startup. All CLI
+			// processes inherit the session-directory/cap environment from this server.
+			if (performance.now() >= deadline) throw new Error(PROCESS_ERRORS.deadline);
+			startupAttempted = true;
+			await runOwnedCommand({
+				command: MESSAGE_PROCESS_COMMANDS.tmux,
+				args: [
+					"-S",
+					socket,
+					"-f",
+					"/dev/null",
+					"new-session",
+					"-d",
+					"-s",
+					"message",
+					"-c",
+					work,
+					"/bin/sleep",
+					String(Math.ceil(MESSAGE_TEST_TIMEOUT / 1000)),
+				],
+				deadline,
+				env: {
+					...process.env,
+					...(agentDir ? { PI_CODING_AGENT_DIR: agentDir } : {}),
+					PI_CODING_AGENT_SESSION_DIR: sessionDir,
+					CLAUDE_CODE_MAX_OUTPUT_TOKENS: "256",
+					PI_OFFLINE: "1",
+				},
+			});
+			await runOwnedCommand({
+				command: MESSAGE_PROCESS_COMMANDS.tmux,
+				args: ["-S", socket, "set-window-option", "-g", "remain-on-exit", "on"],
+				deadline,
+			});
+			const pane = (
+				await runOwnedCommand({
+					command: MESSAGE_PROCESS_COMMANDS.tmux,
+					args: ["-S", socket, "new-window", "-d", "-P", "-F", "#{pane_id}", "-t", "message", "-c", work, ...args],
+					deadline,
+				})
+			).trim();
+			while (performance.now() < deadline) {
+				if (
+					(
+						await runOwnedCommand({
+							command: MESSAGE_PROCESS_COMMANDS.tmux,
+							args: ["-S", socket, "display-message", "-p", "-t", pane, "#{pane_dead}"],
+							deadline,
+						})
+					).trim() === "1"
+				)
+					throw new Error("Messaging parent exited before acknowledgment");
+				const registries = ownedRegistries({ work });
+				const children = registries.flatMap((registry) => registry.children);
+				if (children.length > 1) throw new Error("Unexpected extra launch");
+				const child = children[0];
+				if (
+					child?.failure ||
+					child?.state === CHILD_STATES.failed ||
+					child?.deliveryFailure ||
+					child?.questionDeliveryFailure
+				)
+					throw new Error("Messaging child or delivery failed");
+				const parent = existsSync(sessionFile)
+					? observeMessages({
+							file: sessionFile,
+							running: true,
+							diagnostic: {
+								model: parentModel,
+								expectedLaunchControls,
+								failOnLaunchControlMismatch: true,
+								capture: (value) => {
+									parentDiagnostic = value;
+								},
+							},
+						})
+					: undefined;
+				if (
+					child?.delivered &&
+					parent &&
+					hasAcknowledgedCompletion({ observation: parent, child, marker: MESSAGE_MARKER, acknowledgment: MESSAGE_ACK })
+				) {
+					candidate = child;
+					break;
+				}
+				await new Promise((resolve) => setTimeout(resolve, 100));
+			}
+			if (!candidate) throw new Error(PROCESS_ERRORS.deadline);
+		},
+		shutdown: async () => {
+			if (startupAttempted) {
+				try {
+					await control.shutdown({ deadline: performance.now() + MESSAGE_TIMING.shutdownMs });
+				} catch (error) {
+					try {
+						writeFileSync(join(work, "cleanup-identities.json"), JSON.stringify(control.observedIdentities()));
+					} catch {
+						// The runner still records shutdown as failed; retain its original failure.
+					}
+					throw error;
+				}
+			}
+		},
+		validate: () => {
+			validationDeadline = performance.now() + MESSAGE_TIMING.validationMs;
+			inspectStopped?.({ work, sessionFile });
+			// Final acceptance is based on fresh, strict reads after verified shutdown.
+			if (existsSync(sessionFile)) readSessionSnapshot({ file: sessionFile });
+			for (const file of ownedSessionFiles({ sessionDir })) {
+				if (performance.now() >= validationDeadline) throw new Error(PROCESS_ERRORS.deadline);
+				readSessionSnapshot({ file });
+			}
+			if (performance.now() >= validationDeadline) throw new Error(PROCESS_ERRORS.deadline);
+		},
+		accept: () => {
+			if (!candidate) throw new Error("Missing message acceptance candidate");
+			verifyMessageExchange({ child: candidate, sessionFile, sessionDir, parentModel, childModel });
+			if (performance.now() >= validationDeadline) throw new Error(PROCESS_ERRORS.deadline);
+		},
+		remove: async () => {
+			if (performance.now() >= validationDeadline) throw new Error(PROCESS_ERRORS.deadline);
+			await cleanMessageAuthority({ work, installed });
+			if (performance.now() >= validationDeadline) throw new Error(PROCESS_ERRORS.deadline);
+			rmSync(work, { recursive: true, force: true });
+		},
+		diagnostics: () => [
+			parentDiagnostic ?? messageDiagnostic({ file: sessionFile, model: parentModel, expectedLaunchControls }),
+			...ownedSessionFiles({ sessionDir })
+				.slice(0, 1)
+				.map((file) => messageDiagnostic({ file, model: childModel })),
+		],
+		emit: (report) => console.info(JSON.stringify(report)),
+	});
+}
+
 const sessions: Array<{ socket: string; session: string }> = [];
 afterEach(() => {
 	for (const { socket, session } of sessions.splice(0)) {
@@ -375,6 +1041,238 @@ afterEach(() => {
 	}
 });
 
+describe("public bidirectional messaging", () => {
+	it.each(["openai-to-claude", "claude-to-openai"].filter((direction) => !liveEnabled || direction === liveDirection))(
+		"live %s",
+		{ timeout: MESSAGE_TEST_TIMEOUT, retry: 0, skip: !liveEnabled },
+		async (direction) => {
+			const openai = process.env.PI_LIVE_OPENAI_MODEL;
+			const claude = process.env.PI_LIVE_CLAUDE_MODEL;
+			if (!openai?.startsWith("openai/") || !claude?.startsWith(`${CLAUDE_BRIDGE_PROVIDER}/`) || !/haiku/i.test(claude))
+				throw new Error("Set explicit cheap PI_LIVE_OPENAI_MODEL and PI_LIVE_CLAUDE_MODEL (bridge Haiku)");
+			const work = realpathSync(mkdtempSync(join(tmpdir(), "pi-live-message-")));
+			await messageLifecycle({
+				work,
+				parentModel: direction === "openai-to-claude" ? openai : claude,
+				childModel: direction === "openai-to-claude" ? claude : openai,
+				installed: {
+					subagents: process.cwd(),
+					guard: resolve(process.cwd(), "../pi-guard"),
+					adapter: resolve(process.cwd(), "../pi-claude/extensions/index.ts"),
+				},
+			});
+		},
+	);
+
+	it.each([
+		"complete",
+		"truncated-launch",
+		"omitted-confirmation",
+		"truncated-final-validation",
+		"startup-failure",
+		"deadline",
+		"authority-mismatch",
+		"early-ack",
+		"missing-question-id",
+		"identity-mismatch",
+	])(
+		"observes messaging and cleanup offline: %s",
+		async (scenario) => {
+			const work = realpathSync(mkdtempSync(join(tmpdir(), "pi-offline-message-")));
+			let failure: unknown;
+			const server = createServer(async (request, response) => {
+				try {
+					const body = await readProviderRequest({ request });
+					if (toolNames(body).includes("subagent")) {
+						const received = incomingNotifications({ messages: messages(body) });
+						if (scenario === "truncated-launch" || scenario === "truncated-final-validation")
+							return toolCall({ response, name: "subagent", args: '{"agent":', id: "incomplete-launch" });
+						if (!toolResultCount(body)) {
+							const launch = messageLaunch({ work });
+							if (scenario === "omitted-confirmation") delete launch.confirmProjectAgents;
+							return toolCall({ response, name: "subagent", args: launch, id: "message-launch" });
+						}
+						const question = received.find((notification) => notification.kind === MESSAGE_NOTIFICATION_TYPES.question);
+						if (question && toolResultCount(body) === 1) {
+							return toolCall({
+								response,
+								name: "subagent_message",
+								args: { name: question.value.name, questionId: question.value.questionId, message: MESSAGE_REPLY },
+								id: "message-reply",
+							});
+						}
+						const completion = received.find(
+							(notification) => notification.kind === MESSAGE_NOTIFICATION_TYPES.completion,
+						);
+						return text(
+							response,
+							scenario === "early-ack"
+								? completion
+									? "waiting"
+									: MESSAGE_ACK
+								: completion?.value.result.includes(MESSAGE_MARKER)
+									? MESSAGE_ACK
+									: "waiting",
+						);
+					}
+					if (!toolResultCount(body))
+						return toolCall({
+							response,
+							name: "ask_question",
+							args: { question: `Reply only ${MESSAGE_REPLY}` },
+							id: "message-question",
+						});
+					return text(response, MESSAGE_MARKER);
+				} catch (error) {
+					failure = error;
+					response.destroy();
+				}
+			});
+			await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+			const address = server.address();
+			if (!address || typeof address === "string") throw new Error("Provider did not bind");
+			const installed = configureProviderPackages({ work, port: address.port });
+			let restore: { file: string; content: string } | undefined;
+			try {
+				const executionStarted = performance.now();
+				const lifecycle = messageLifecycle({
+					work,
+					installed,
+					agentDir: configureAgentDir(work, address.port),
+					parentModel: `${LOCAL_PARENT_MODEL.provider}/${LOCAL_PARENT_MODEL.id}`,
+					// Node rejects the Pi-only CLI flags before any provider can run.
+					parentExecutable: scenario === "startup-failure" ? process.execPath : undefined,
+					parentExtension:
+						scenario === "missing-question-id"
+							? join(process.cwd(), "tests/fixtures/missing-question-identity.ts")
+							: undefined,
+					childModel: `${CLAUDE_BRIDGE_PROVIDER}/${LOCAL_PROVIDER_MODEL_ID}`,
+					timeout: scenario === "deadline" ? 100 : scenario === "early-ack" ? 8_000 : 25_000,
+					inspectStopped: ({ sessionFile }) => {
+						const registries = ownedRegistries({ work });
+						if (scenario === "complete") assertMalformedObservations({ file: sessionFile, work });
+						if (scenario === "omitted-confirmation") {
+							expect(performance.now() - executionStarted).toBeLessThan(25_000);
+							expect(registries.flatMap((registry) => registry.children)).toEqual([]);
+							expect(ownedSessionFiles({ sessionDir: join(work, "sessions") })).toEqual([]);
+							const launch = messageLaunch({ work });
+							const diagnostic = messageDiagnostic({
+								file: sessionFile,
+								model: `${LOCAL_PARENT_MODEL.provider}/${LOCAL_PARENT_MODEL.id}`,
+								expectedLaunchControls: parseOrThrow(
+									LaunchControlsSchema,
+									{ agentScope: launch.agentScope, confirmProjectAgents: launch.confirmProjectAgents },
+									"omission fixture controls",
+								),
+							});
+							expect(diagnostic).toMatchObject({ status: "validated", launchControls: "mismatched" });
+							expect(diagnostic.tools.find((tool) => tool.name === "subagent")).toMatchObject({
+								successResults: 0,
+								executed: 0,
+							});
+							const emitted = readSessionSnapshot({ file: sessionFile }).entries.flatMap((entry) =>
+								entry.type === "message" && entry.message.role === "assistant"
+									? entry.message.content.flatMap((block) =>
+											block.type === "toolCall" && block.name === "subagent" ? [block] : [],
+										)
+									: [],
+							);
+							expect(emitted.length).toBeGreaterThan(0);
+							for (const call of emitted) expect(Object.hasOwn(call.arguments, "confirmProjectAgents")).toBe(false);
+						}
+						if (scenario === "truncated-launch") {
+							expect(registries.flatMap((registry) => registry.children)).toEqual([]);
+							expect(() => observeMessages({ file: sessionFile })).toThrow(MESSAGE_OBSERVATION_ERRORS.incomplete);
+						}
+						if (scenario === "truncated-final-validation") {
+							restore = { file: sessionFile, content: readFileSync(sessionFile, "utf8") };
+							writeFileSync(sessionFile, restore.content + "\n{invalid-final-json}\n");
+						}
+						if (scenario === "missing-question-id") {
+							const child = registries[0]?.children[0];
+							if (!child) throw new Error("Missing child for notification fault assertion");
+							const question = parseOrThrow(
+								QuestionSchema,
+								JSON.parse(readFileSync(questionPointerPath({ loadoutPath: child.loadoutPath }), "utf8")),
+								"unanswered question",
+							);
+							expect(question.answered).toBe(false);
+							const snapshot = readSessionSnapshot({ file: sessionFile });
+							expect(
+								snapshot.entries.filter(
+									(entry) =>
+										entry.type === "message" &&
+										entry.message.role === "toolResult" &&
+										entry.message.toolName === "subagent_message" &&
+										!entry.message.isError,
+								),
+							).toEqual([]);
+						}
+						if (scenario === "identity-mismatch") {
+							const child = registries[0]?.children[0];
+							if (!child) throw new Error("Missing child for identity fault");
+							const file = ownedChildSession({ sessionDir: join(work, "sessions"), sessionId: child.sessionId });
+							restore = { file, content: readFileSync(file, "utf8") };
+							const snapshot = readSessionSnapshot({ file });
+							const entries = snapshot.entries.map((entry) =>
+								entry.type === "message" && entry.message.role === "assistant"
+									? { ...entry, message: { ...entry.message, provider: `${entry.message.provider}-unexpected` } }
+									: entry,
+							);
+							writeFileSync(
+								file,
+								[snapshot.header, ...entries].map((entry) => JSON.stringify(entry)).join("\n") + "\n",
+							);
+						}
+						if (scenario === "authority-mismatch") {
+							const registry = registries[0];
+							const child = registry?.children[0];
+							if (!child) throw new Error("Missing test-owned child for cleanup fault");
+							const file = authorityPath(registry.runId, child.name);
+							restore = { file, content: readFileSync(file, "utf8") };
+							const copy = join(work, "authority-copy.json");
+							writeFileSync(copy, restore.content);
+							rmSync(file);
+							symlinkSync(copy, file);
+						}
+					},
+				});
+				if (scenario === "complete") await lifecycle;
+				else
+					await expect(lifecycle).rejects.toThrow(
+						scenario === "authority-mismatch"
+							? "Messaging lifecycle failed: deletion"
+							: scenario === "identity-mismatch"
+								? "Messaging lifecycle failed: acceptance"
+								: "Messaging lifecycle failed: execution",
+					);
+				if (scenario === "omitted-confirmation") {
+					await expect(lifecycle).rejects.toThrow('"launchControls":"mismatched"');
+					for (const phase of ["shutdown", "finalValidation", "deletion"])
+						await expect(lifecycle).rejects.toThrow(`"${phase}":"passed"`);
+				}
+				expect(existsSync(work)).toBe(
+					scenario === "authority-mismatch" ||
+						scenario === "identity-mismatch" ||
+						scenario === "truncated-final-validation",
+				);
+				if (restore) expect(lstatSync(restore.file).isSymbolicLink()).toBe(scenario === "authority-mismatch");
+				if (scenario === "missing-question-id") expect(failure).toBeInstanceOf(Error);
+				else if (failure) throw failure;
+			} finally {
+				await closeProvider(server);
+				if (restore) {
+					rmSync(restore.file);
+					writeFileSync(restore.file, restore.content);
+					await cleanMessageAuthority({ work, installed });
+					rmSync(work, { recursive: true });
+				}
+			}
+		},
+		MESSAGE_TEST_TIMEOUT,
+	);
+});
+
 describe("installed Pi public orchestration lifecycle", () => {
 	it("fails public delegation without a tmux environment and never starts a headless worker", async () => {
 		const work = mkdtempSync(join(tmpdir(), "pi-guard-outside-tmux-"));
@@ -384,18 +1282,18 @@ describe("installed Pi public orchestration lifecycle", () => {
 			const body = await readJsonBody(request);
 			const serialized = JSON.stringify(messages(body));
 			if (toolResultCount(body) === 0)
-				return toolCall(
+				return toolCall({
 					response,
-					"subagent",
-					{
+					name: "subagent",
+					args: {
 						agent: "worker",
 						task: "MUST_NOT_RUN_HEADLESS",
 						cwd: work,
 						agentScope: "project",
 						confirmProjectAgents: false,
 					},
-					"outside-tmux-launch",
-				);
+					id: "outside-tmux-launch",
+				});
 			observedFailure =
 				serialized.includes("Interactive subagents require tmux") && serialized.includes("tmux new -A -s pi");
 			return text(response, observedFailure ? "outside-tmux failure confirmed" : "missing tmux guidance");
@@ -443,12 +1341,12 @@ describe("installed Pi public orchestration lifecycle", () => {
 			const body = await readJsonBody(request);
 			const serialized = JSON.stringify(messages(body));
 			if (toolResultCount(body) === 0)
-				return toolCall(
+				return toolCall({
 					response,
-					"subagent",
-					{ agent: "worker", task: "MUST_REQUIRE_CONFIRMATION", cwd: work, agentScope: "project" },
-					"unconfirmed-project-agent",
-				);
+					name: "subagent",
+					args: { agent: "worker", task: "MUST_REQUIRE_CONFIRMATION", cwd: work, agentScope: "project" },
+					id: "unconfirmed-project-agent",
+				});
 			observedDenial = serialized.includes("non-UI callers must explicitly set confirmProjectAgents: false");
 			return text(response, observedDenial ? "project confirmation denial observed" : "confirmation bypassed");
 		});
@@ -495,23 +1393,28 @@ describe("installed Pi public orchestration lifecycle", () => {
 			const serialized = JSON.stringify(messages(body));
 			if (toolNames(body).includes("subagent")) {
 				if (toolResultCount(body) === 0)
-					return toolCall(
+					return toolCall({
 						response,
-						"subagent",
-						{
+						name: "subagent",
+						args: {
 							agent: "extension-worker",
 							task: "CHILD_EXTENSION_ISOLATION",
 							cwd: work,
 							agentScope: "project",
 							confirmProjectAgents: false,
 						},
-						"launch-extension-child",
-					);
+						id: "launch-extension-child",
+					});
 				return text(response, "parent waiting");
 			}
 			if (!serialized.includes("CHILD_EXTENSION_ISOLATION")) return text(response, "idle");
 			if (toolResultCount(body) === 0)
-				return toolCall(response, "integration_marker", { value: "isolated" }, "permitted-extension-call");
+				return toolCall({
+					response,
+					name: "integration_marker",
+					args: { value: "isolated" },
+					id: "permitted-extension-call",
+				});
 			return text(response, serialized.includes("marker:isolated") ? "extension isolation complete" : "marker failed");
 		});
 		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -579,10 +1482,10 @@ describe("installed Pi public orchestration lifecycle", () => {
 				if (tools.includes("subagent")) {
 					if (!serialized.includes("PUBLIC_SECURITY")) return text(response, "parent idle");
 					if (toolResultCount(body) === 0)
-						return toolCall(
+						return toolCall({
 							response,
-							"subagent",
-							{
+							name: "subagent",
+							args: {
 								agent: "worker",
 								task: "CHILD_SECURITY",
 								cwd: work,
@@ -591,38 +1494,49 @@ describe("installed Pi public orchestration lifecycle", () => {
 								confirmProjectAgents: false,
 								runDir: ".pi/orchestration/public-security",
 							},
-							"parent-subagent",
-						);
+							id: "parent-subagent",
+						});
 					return text(response, "parent waiting for child");
 				}
 				if (!serialized.includes("CHILD_SECURITY")) return text(response, "unexpected child scenario");
 				const step = toolResultCount(body);
 				if (step === 0)
-					return toolCall(response, "write", { path: "src/allowed.txt", content: "allowed\n" }, "allowed-write");
+					return toolCall({
+						response,
+						name: "write",
+						args: { path: "src/allowed.txt", content: "allowed\n" },
+						id: "allowed-write",
+					});
 				if (step === 1)
-					return toolCall(response, "write", { path: "outside-write.txt", content: "blocked\n" }, "blocked-write");
+					return toolCall({
+						response,
+						name: "write",
+						args: { path: "outside-write.txt", content: "blocked\n" },
+						id: "blocked-write",
+					});
 				if (step === 2)
-					return toolCall(
+					return toolCall({
 						response,
-						"edit",
-						{ path: "outside-edit.txt", edits: [{ oldText: "x", newText: "y" }] },
-						"blocked-edit",
-					);
-				if (step === 3) return toolCall(response, "bash", { command: "cat outside-bash.txt" }, "blocked-bash");
+						name: "edit",
+						args: { path: "outside-edit.txt", edits: [{ oldText: "x", newText: "y" }] },
+						id: "blocked-edit",
+					});
+				if (step === 3)
+					return toolCall({ response, name: "bash", args: { command: "cat outside-bash.txt" }, id: "blocked-bash" });
 				if (step === 4)
-					return toolCall(
+					return toolCall({
 						response,
-						"bash",
-						{ command: "printf blocked > outside-redirection.txt" },
-						"blocked-redirection",
-					);
+						name: "bash",
+						args: { command: "printf blocked > outside-redirection.txt" },
+						id: "blocked-redirection",
+					});
 				if (step === 5)
-					return toolCall(
+					return toolCall({
 						response,
-						"subagent",
-						{ agent: "worker", task: "NESTED_CHILD_MUST_NOT_START" },
-						"nested-delegation-attempt",
-					);
+						name: "subagent",
+						args: { agent: "worker", task: "NESTED_CHILD_MUST_NOT_START" },
+						id: "nested-delegation-attempt",
+					});
 				await new Promise((resolve) => setTimeout(resolve, 500));
 				return text(response, "security scenario complete");
 			} catch (error) {
@@ -798,62 +1712,51 @@ describe("installed Pi public orchestration lifecycle", () => {
 						if (!match) throw new Error("question notification omitted persistent child name");
 						if (answeredIds.length === 1 && !staleReplySent) {
 							staleReplySent = true;
-							return toolCall(
+							return toolCall({
 								response,
-								"subagent_message",
-								{
-									name: match[0],
-									message: "STALE_ANSWER_MUST_NOT_REACH_CHILD",
-									questionId: answeredIds[0],
-								},
-								"stale-answer",
-							);
+								name: "subagent_message",
+								args: { name: match[0], message: "STALE_ANSWER_MUST_NOT_REACH_CHILD", questionId: answeredIds[0] },
+								id: "stale-answer",
+							});
 						}
 						if (staleReplySent) staleReplyRejected = serialized.includes(QUESTION_ERRORS.stale);
 						if (answeredIds.length === 2 && !unscopedReplySent) {
 							unscopedReplySent = true;
-							return toolCall(
+							return toolCall({
 								response,
-								"subagent_message",
-								{
-									name: match[0],
-									message: "UNSCOPED_ANSWER_MUST_NOT_REACH_CHILD",
-								},
-								"unscoped-answer",
-							);
+								name: "subagent_message",
+								args: { name: match[0], message: "UNSCOPED_ANSWER_MUST_NOT_REACH_CHILD" },
+								id: "unscoped-answer",
+							});
 						}
 						if (unscopedReplySent) unscopedReplyRejected = serialized.includes(QUESTION_ERRORS.idRequired);
 						await new Promise((resolve) => setTimeout(resolve, 400));
 						answeredIds.push(questionId);
-						return toolCall(
+						return toolCall({
 							response,
-							"subagent_message",
-							{
-								name: match[0],
-								message: `approved answer ${answeredIds.length}`,
-								questionId,
-							},
-							`answer-question-${answeredIds.length}`,
-						);
+							name: "subagent_message",
+							args: { name: match[0], message: `approved answer ${answeredIds.length}`, questionId },
+							id: `answer-question-${answeredIds.length}`,
+						});
 					}
 					if (serialized.includes("RESUME_AFTER_PARENT_RELOAD") && !resumeRequested) {
 						const match = serialized.match(/worker-1-[a-f0-9]+/);
 						if (!match) throw new Error("completion omitted persistent child name");
 						resumeRequested = true;
-						return toolCall(
+						return toolCall({
 							response,
-							"subagent_message",
-							{ name: match[0], message: "CHILD_QUESTION_RESUME" },
-							"resume-question-child",
-						);
+							name: "subagent_message",
+							args: { name: match[0], message: "CHILD_QUESTION_RESUME" },
+							id: "resume-question-child",
+						});
 					}
 					if (serialized.includes("question scenario complete") && !resumeRequested)
 						return text(response, "parent ready for reload");
 					if (toolResultCount(body) === 0)
-						return toolCall(
+						return toolCall({
 							response,
-							"subagent",
-							{
+							name: "subagent",
+							args: {
 								agent: "worker",
 								task: "CHILD_QUESTION",
 								cwd: work,
@@ -862,19 +1765,19 @@ describe("installed Pi public orchestration lifecycle", () => {
 								confirmProjectAgents: false,
 								runDir: ".pi/orchestration/public-question",
 							},
-							"launch-question-child",
-						);
+							id: "launch-question-child",
+						});
 					return text(response, "parent waiting");
 				}
 				if (!serialized.includes("CHILD_QUESTION")) return text(response, "unexpected child scenario");
 				const resumed = serialized.includes("CHILD_QUESTION_RESUME");
 				if (toolResultCount(body) < (resumed ? 3 : 2))
-					return toolCall(
+					return toolCall({
 						response,
-						"ask_question",
-						{ question: "continue integration?" },
-						`child-question-${toolResultCount(body)}`,
-					);
+						name: "ask_question",
+						args: { question: "continue integration?" },
+						id: `child-question-${toolResultCount(body)}`,
+					});
 				if (
 					!serialized.includes("approved answer 1") ||
 					!serialized.includes("approved answer 2") ||
@@ -1060,18 +1963,18 @@ describe("installed Pi public orchestration lifecycle", () => {
 					const serialized = JSON.stringify(messages(body));
 					if (toolNames(body).includes("subagent")) {
 						if (toolResultCount(body) === 0)
-							return toolCall(
+							return toolCall({
 								response,
-								"subagent",
-								{
+								name: "subagent",
+								args: {
 									agent: "worker",
 									task: "CHILD_CLOSED_QUESTION",
 									cwd: work,
 									agentScope: "project",
 									confirmProjectAgents: false,
 								},
-								"launch-parked-child",
-							);
+								id: "launch-parked-child",
+							});
 						const file = await waitFor(() => registryFile, "parked child registry");
 						const child = loadRegistry(file).children[0];
 						if (!child) throw new Error("parked child disappeared");
@@ -1092,28 +1995,28 @@ describe("installed Pi public orchestration lifecycle", () => {
 							if (!parkedQuestion) throw new Error("failed child omitted its parked question");
 							failureSnapshot = captureQuestionAttempt({ child, questionId: parkedQuestion.questionId });
 							oldAnswerSent = true;
-							return toolCall(
+							return toolCall({
 								response,
-								"subagent_message",
-								{
+								name: "subagent_message",
+								args: {
 									name: child.name,
 									message: "must not answer a closed attempt",
 									questionId: parkedQuestion.questionId,
 								},
-								"answer-closed-question",
-							);
+								id: "answer-closed-question",
+							});
 						}
 						if (oldAnswerSent && !resumed) {
 							if (!parkedQuestion || !failureSnapshot) throw new Error("missing closed-attempt snapshot");
 							expect(serialized).toContain(QUESTION_ERRORS.stale);
 							expect(captureQuestionAttempt({ child, questionId: parkedQuestion.questionId })).toEqual(failureSnapshot);
 							resumed = true;
-							return toolCall(
+							return toolCall({
 								response,
-								"subagent_message",
-								{ name: child.name, message: "RESUME_CLOSED_QUESTION" },
-								"resume-closed-child",
-							);
+								name: "subagent_message",
+								args: { name: child.name, message: "RESUME_CLOSED_QUESTION" },
+								id: "resume-closed-child",
+							});
 						}
 						if (resumed && !answered && child.state === CHILD_STATES.waiting) {
 							const question = parseOrThrow(
@@ -1124,23 +2027,23 @@ describe("installed Pi public orchestration lifecycle", () => {
 							if (!parkedQuestion) throw new Error("missing original parked question");
 							expect(question.attemptId).not.toBe(parkedQuestion.attemptId);
 							answered = true;
-							return toolCall(
+							return toolCall({
 								response,
-								"subagent_message",
-								{ name: child.name, message: "resume approved", questionId: question.questionId },
-								"answer-resumed-question",
-							);
+								name: "subagent_message",
+								args: { name: child.name, message: "resume approved", questionId: question.questionId },
+								id: "answer-resumed-question",
+							});
 						}
 						return text(response, "parent waiting");
 					}
 					if (!serialized.includes("CHILD_CLOSED_QUESTION")) throw new Error("unexpected child request");
 					if (serialized.includes("resume approved")) return text(response, "closed question resumed successfully");
-					return toolCall(
+					return toolCall({
 						response,
-						"ask_question",
-						{ question: "May I continue?" },
-						`parked-question-${toolResultCount(body)}`,
-					);
+						name: "ask_question",
+						args: { question: "May I continue?" },
+						id: `parked-question-${toolResultCount(body)}`,
+					});
 				} catch (error) {
 					response.writeHead(500, { "content-type": "text/plain" });
 					response.end(String(error));
@@ -1224,12 +2127,12 @@ describe("installed Pi public orchestration lifecycle", () => {
 						if (launched) {
 							persistentName = launched[0];
 							runningMessageSent = true;
-							return toolCall(
+							return toolCall({
 								response,
-								"subagent_message",
-								{ name: launched[0], message: "RUNNING_GUIDANCE" },
-								"steer-running-child",
-							);
+								name: "subagent_message",
+								args: { name: launched[0], message: "RUNNING_GUIDANCE" },
+								id: "steer-running-child",
+							});
 						}
 					}
 					if (serialized.includes("first completion") && !resumeRequested) {
@@ -1237,18 +2140,18 @@ describe("installed Pi public orchestration lifecycle", () => {
 						if (!match) throw new Error("completion omitted persistent child name");
 						persistentName = match[0];
 						resumeRequested = true;
-						return toolCall(
+						return toolCall({
 							response,
-							"subagent_message",
-							{ name: match[0], message: "CHILD_RESUME_SECOND" },
-							"resume-child",
-						);
+							name: "subagent_message",
+							args: { name: match[0], message: "CHILD_RESUME_SECOND" },
+							id: "resume-child",
+						});
 					}
 					if (toolResultCount(body) === 0)
-						return toolCall(
+						return toolCall({
 							response,
-							"subagent",
-							{
+							name: "subagent",
+							args: {
 								agent: "worker",
 								task: "CHILD_RESUME_FIRST",
 								cwd: work,
@@ -1257,8 +2160,8 @@ describe("installed Pi public orchestration lifecycle", () => {
 								confirmProjectAgents: false,
 								runDir: ".pi/orchestration/public-resume",
 							},
-							"launch-resume-child",
-						);
+							id: "launch-resume-child",
+						});
 					return text(response, "parent waiting");
 				}
 				if (serialized.includes("CHILD_RESUME_SECOND")) return text(response, "second completion");
@@ -1358,10 +2261,10 @@ describe("installed Pi public orchestration lifecycle", () => {
 					if (!serialized.includes("PUBLIC_ORCHESTRATION")) return text(response, "parent idle");
 					if (serialized.includes("parallel-a") && serialized.includes("parallel-b") && !chainRequested) {
 						chainRequested = true;
-						return toolCall(
+						return toolCall({
 							response,
-							"subagent",
-							{
+							name: "subagent",
+							args: {
 								chain: [
 									{ agent: "worker", task: "CHAIN_FIRST", cwd: work, writes: ["src/a/**"] },
 									{ agent: "worker", task: "CHAIN_SECOND {previous}", cwd: work, writes: ["src/b/**"] },
@@ -1369,14 +2272,14 @@ describe("installed Pi public orchestration lifecycle", () => {
 								agentScope: "project",
 								confirmProjectAgents: false,
 							},
-							"launch-chain",
-						);
+							id: "launch-chain",
+						});
 					}
 					if (toolResultCount(body) === 0)
-						return toolCall(
+						return toolCall({
 							response,
-							"subagent",
-							{
+							name: "subagent",
+							args: {
 								tasks: [
 									{ agent: "worker", task: "PARALLEL_A", cwd: work, writes: ["src/a/**"] },
 									{ agent: "worker", task: "PARALLEL_B", cwd: work, writes: ["src/b/**"] },
@@ -1384,8 +2287,8 @@ describe("installed Pi public orchestration lifecycle", () => {
 								agentScope: "project",
 								confirmProjectAgents: false,
 							},
-							"launch-parallel",
-						);
+							id: "launch-parallel",
+						});
 					return text(response, "parent waiting");
 				}
 				if (serialized.includes("PARALLEL_A")) {
@@ -1521,10 +2424,10 @@ describe("installed Pi public orchestration lifecycle", () => {
 			if (toolNames(body).includes("subagent")) {
 				if (toolResultCount(body) === 0) {
 					execFileSync("tmux", ["-L", socket, "resize-window", "-t", session, "-x", "4", "-y", "24"]);
-					return toolCall(
+					return toolCall({
 						response,
-						"subagent",
-						{
+						name: "subagent",
+						args: {
 							tasks: [
 								{ agent: "worker", task: "PARTIAL_FIRST", cwd: work },
 								{ agent: "worker", task: "PARTIAL_MUST_FAIL", cwd: join(work, "missing-cwd") },
@@ -1532,8 +2435,8 @@ describe("installed Pi public orchestration lifecycle", () => {
 							agentScope: "project",
 							confirmProjectAgents: false,
 						},
-						"partial-parallel-launch",
-					);
+						id: "partial-parallel-launch",
+					});
 				}
 				execFileSync("tmux", ["-L", socket, "resize-window", "-t", session, "-x", "80", "-y", "24"]);
 				parentObservedLaunchFailure = /split-window|working directory|No such file/i.test(serialized);
@@ -1614,18 +2517,18 @@ describe("installed Pi public orchestration lifecycle", () => {
 			const serialized = JSON.stringify(messages(body));
 			if (toolNames(body).includes("subagent")) {
 				if (toolResultCount(body) === 0)
-					return toolCall(
+					return toolCall({
 						response,
-						"subagent",
-						{
+						name: "subagent",
+						args: {
 							agent: "worker",
 							task: "CHILD_RUNTIME_FAILURE",
 							cwd: work,
 							agentScope: "project",
 							confirmProjectAgents: false,
 						},
-						"launch-runtime-failure",
-					);
+						id: "launch-runtime-failure",
+					});
 				return text(response, "parent observed runtime failure");
 			}
 			if (serialized.includes("CHILD_RUNTIME_FAILURE")) {
@@ -1693,10 +2596,10 @@ describe("installed Pi public orchestration lifecycle", () => {
 				const serialized = JSON.stringify(messages(body));
 				if (toolNames(body).includes("subagent")) {
 					if (toolResultCount(body) === 0)
-						return toolCall(
+						return toolCall({
 							response,
-							"subagent",
-							{
+							name: "subagent",
+							args: {
 								chain: [
 									{ agent: "worker", task: "CHAIN_PANE_FAILURE", cwd: work },
 									{ agent: "worker", task: "MUST_NOT_LAUNCH", cwd: work },
@@ -1704,12 +2607,12 @@ describe("installed Pi public orchestration lifecycle", () => {
 								agentScope: "project",
 								confirmProjectAgents: false,
 							},
-							"launch-failing-chain",
-						);
+							id: "launch-failing-chain",
+						});
 					return text(response, "parent observed chain failure");
 				}
 				if (serialized.includes("CHAIN_PANE_FAILURE"))
-					return toolCall(response, "bash", { command: "sleep 20" }, "long-running-child");
+					return toolCall({ response, name: "bash", args: { command: "sleep 20" }, id: "long-running-child" });
 				if (serialized.includes("MUST_NOT_LAUNCH")) return text(response, "unexpected second chain step");
 				return text(response, "idle");
 			} catch (error) {
@@ -1783,7 +2686,7 @@ describe("installed Pi public orchestration lifecycle", () => {
 		const writes = ["src/**"];
 		const content = "resource reference acceptance evidence";
 		const referenceName = "reference.md";
-		const operations: Array<{ name: Parameters<typeof toolCall>[1]; args: Parameters<typeof toolCall>[2] }> = [];
+		const operations: Array<Pick<Parameters<typeof toolCall>[0], "name" | "args">> = [];
 		const requests: unknown[] = [];
 		let observedResults: readonly unknown[] = [];
 		const server = createServer(async (request, response) => {
@@ -1792,26 +2695,20 @@ describe("installed Pi public orchestration lifecycle", () => {
 				requests.push(body);
 				if (toolNames(body).includes("subagent")) {
 					if (toolResultCount(body) === 0)
-						return toolCall(
+						return toolCall({
 							response,
-							"subagent",
-							{
-								agent: agentName,
-								task,
-								cwd: work,
-								writes,
-								agentScope: "project",
-								confirmProjectAgents: false,
-							},
-							"launch-resource-child",
-						);
+							name: "subagent",
+							args: { agent: agentName, task, cwd: work, writes, agentScope: "project", confirmProjectAgents: false },
+							id: "launch-resource-child",
+						});
 					return text(response, "parent waiting");
 				}
 				if (!JSON.stringify(messages(body)).includes(task)) throw new Error("Unexpected resource child request");
 				observedResults = messages(body).filter((message) => isRecord(message) && message.role === "tool");
 				const step = toolResultCount(body);
 				const operation = operations[step];
-				if (operation) return toolCall(response, operation.name, operation.args, `resource-${step}`);
+				if (operation)
+					return toolCall({ response, name: operation.name, args: operation.args, id: `resource-${step}` });
 				return text(response, "resource scenario complete");
 			} catch (error) {
 				response.writeHead(500, { "content-type": "text/plain" });
@@ -1941,10 +2838,10 @@ describe("installed Pi public orchestration lifecycle", () => {
 				const serialized = JSON.stringify(messages(body));
 				if (toolNames(body).includes("subagent")) {
 					if (toolResultCount(body) === 0)
-						return toolCall(
+						return toolCall({
 							response,
-							"subagent",
-							{
+							name: "subagent",
+							args: {
 								agent: "worker",
 								task: "CHILD_RESTRICTED",
 								cwd: work,
@@ -1952,13 +2849,18 @@ describe("installed Pi public orchestration lifecycle", () => {
 								agentScope: "project",
 								confirmProjectAgents: false,
 							},
-							"launch-restricted",
-						);
+							id: "launch-restricted",
+						});
 					return text(response, "parent waiting");
 				}
 				if (!serialized.includes("CHILD_RESTRICTED")) return text(response, "unexpected scenario");
 				if (toolResultCount(body) === 0)
-					return toolCall(response, "write", { path: "notes.md", content: "must not exist" }, "profile-write");
+					return toolCall({
+						response,
+						name: "write",
+						args: { path: "notes.md", content: "must not exist" },
+						id: "profile-write",
+					});
 				return text(response, "restricted scenario complete");
 			} catch (error) {
 				response.writeHead(500, { "content-type": "text/plain" });
@@ -2304,7 +3206,8 @@ describe("installed Pi public orchestration lifecycle", () => {
 				const body = await readProviderRequest({ request });
 				if (body.model === LOCAL_PROVIDER_MODEL_ID) {
 					childRequests.push(body);
-					if (toolResultCount(body) === 0) return toolCall(response, "read", { path: agentFile }, "approved-read");
+					if (toolResultCount(body) === 0)
+						return toolCall({ response, name: "read", args: { path: agentFile }, id: "approved-read" });
 					return text(response, "approved provider child complete");
 				}
 				parentPrompts.push(
@@ -2314,18 +3217,18 @@ describe("installed Pi public orchestration lifecycle", () => {
 				parentRequests++;
 				if (!launchRequested) {
 					launchRequested = true;
-					return toolCall(
+					return toolCall({
 						response,
-						"subagent",
-						{
+						name: "subagent",
+						args: {
 							agent: "worker",
 							task: "read the agent file",
 							cwd: work,
 							agentScope: "project",
 							confirmProjectAgents: false,
 						},
-						"launch-approved-provider",
-					);
+						id: "launch-approved-provider",
+					});
 				}
 				if (!resumeRequested) {
 					resumeRequested = true;
@@ -2360,12 +3263,12 @@ describe("installed Pi public orchestration lifecycle", () => {
 					approvedTools = child.loadoutSnapshot.toolAllowlist;
 					approvedProfile = child.loadoutSnapshot.profile;
 					writeFileSync(adapter, `${readFileSync(adapter, "utf8")}\n// changed after parent approval\n`);
-					return toolCall(
+					return toolCall({
 						response,
-						"subagent_message",
-						{ name: child.name, message: "must not resume changed provider" },
-						"rejectchangedprovider",
-					);
+						name: "subagent_message",
+						args: { name: child.name, message: "must not resume changed provider" },
+						id: "rejectchangedprovider",
+					});
 				}
 				// Public resume rejects the registry whose saved provider identity
 				// changed. Lower-level command tests assert the content-change cause.

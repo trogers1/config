@@ -131,6 +131,7 @@ const Params = Type.Object({
 	label: Type.Optional(Type.String()),
 	runDir: Type.Optional(Type.String()),
 });
+export { Params as SubagentParameters };
 type ParamsType = Static<typeof Params>;
 
 type Details = { mode: "single" | "parallel" | "chain"; registry?: string; children: ChildRecord[] };
