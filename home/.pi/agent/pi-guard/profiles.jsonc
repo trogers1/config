@@ -923,88 +923,39 @@
       "color": "cyan",
       "emoji": "🧠",
     },
-    "personal-sidecar-comments": {
+    "sidecar-comments": {
       "description": "Sidecar-specific profile (can see config repo)",
       "emoji": "🛵",
       "extends": ["mcp", "ruleset:go-runtime-commands"],
       "directoryGlobs": ["~/**/sidecar-comments"],
       "color": "yellow",
-      "readPaths": [
-        {
-          "pattern": "~/Code/config",
-          "decision": "allow",
-        },
-        {
-          "pattern": "~/Code/config/**",
-          "decision": "allow",
-        },
-        {
-          "pattern": "~/**/config/xdg/nvim/*",
-          "decision": "allow",
-          "contexts": ["read"],
-        },
-        {
-          "pattern": "~/**/config/xdg/nvim",
-          "decision": "allow",
-          "contexts": ["read"],
-        },
-        {
-          "pattern": "/usr/local/go/src/**",
-          "decision": "allow",
-          "contexts": ["read"],
-        },
-        {
-          "pattern": "/usr/local/go/src",
-          "decision": "allow",
-          "contexts": ["grep"],
-        },
-        {
-          "pattern": ".temp",
-          "decision": "allow",
-        },
-      ],
       "tools": {
         "bash": [
-          {
-            "pattern": "gofmt *",
-            "decision": "allow",
-          },
-          {
-            "pattern": "git reflog *",
-            "decision": "allow",
-          },
+          
+          
           {
             "pattern": "make *",
             "decision": "allow",
           },
-          {
-            "pattern": "mkdir *",
-            "decision": "allow",
-          },
+          
           {
             "pattern": "GOTOOLCHAIN=local go test *",
             "decision": "allow",
           },
         ],
       },
-      "writePaths": [
-        {
-          "pattern": ".temp",
-          "decision": "allow",
-        },
-      ],
     },
-    "personal-sidecar-comments-allow-asks": {
+    "sidecar-comments-allow-asks": {
       "description": "Sidecar-comments Golang profile for auto-pilot that allows asks",
       "emoji": "🤖",
-      "extends": ["personal-sidecar-comments"],
+      "extends": ["sidecar-comments"],
       "color": "orange",
       "transforms": ["transform:allow-asks"],
     },
     "personal-sidecar-comments-deny-asks": {
       "description": "Auto-pilot extension to the golang sidecar profile that denies asks",
       "emoji": "🚅",
-      "extends": ["personal-sidecar-comments-allow-asks"],
+      "extends": ["sidecar-comments-allow-asks"],
       "color": "green",
       "transforms": ["transform:deny-asks"],
     },
@@ -1095,7 +1046,7 @@
     "sidecar-comments-committer-allow-asks": {
       "description": "auto-pilot committer",
       "emoji": "🔥",
-      "extends": ["personal-sidecar-comments", "builtin:committer"],
+      "extends": ["sidecar-comments", "builtin:committer"],
       "color": "red",
       "transforms": ["transform:allow-asks"],
     },
@@ -1116,6 +1067,25 @@
           }
         ]
       },
+    },
+    "sidecar-comments-allow-asks-implement-only": {
+      "description": "No test files, implementation only",
+      "emoji": "✍️",
+      "extends": [
+        "sidecar-comments-allow-asks"
+      ],
+      "readPaths": [
+        {
+          "pattern": "**/tests/**",
+          "decision": "deny"
+        }
+      ],
+      "writePaths": [
+        {
+          "pattern": "**/tests/**",
+          "decision": "deny"
+        }
+      ]
     },
   },
 }
