@@ -101,7 +101,7 @@ describe("shell path policy", () => {
     ).toBe("allow");
     expect(
       decideBashPathReferences(["cat docs/file.md"], root, root, policy),
-    ).toMatchObject({ decision: "deny", path: `${root}/docs/file.md` });
+    ).toBeUndefined();
   });
 
   it("applies path rules only to their selected tool contexts", () => {

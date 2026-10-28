@@ -78,7 +78,7 @@ export const testsOnlyProfile = extendProfile(baseProfile, {
       decision: "deny",
       contexts: ["bash"],
       guidance:
-        "Bash path operands are gated as writes under the tests-only profile. Use the read, grep, find, and ls tools to inspect implementation files; Bash operands and redirections may only target test files and /tmp.",
+        "Proven Bash reader operands use readPaths. Write-capable or unproven operands and redirections are gated as writes and may only target test files and /tmp. Prefer the read, grep, find, and ls tools for implementation inspection.",
       alternatives: [
         "Use the read tool for concrete files",
         "Use the grep tool for content searches",

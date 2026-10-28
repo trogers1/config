@@ -100,7 +100,7 @@ describe("built-in test profiles", () => {
     expect(section).toContain("read`, `grep`, `find`, and `ls`");
   });
 
-  it("steers tests-only bash inspection denials toward the dedicated read tools", async () => {
+  it("allows proven tests-only Bash inspection while retaining edit denials", async () => {
     vi.stubEnv("PI_SUBAGENT_PROFILE", "builtin:tests-only");
     const harness = createExtensionHarness({ hasUI: false });
     await harness.start();
@@ -109,10 +109,7 @@ describe("built-in test profiles", () => {
       toolName: "bash",
       input: { command: "cat src/example.ts" },
     });
-    expect(inspection).toMatchObject({ block: true });
-    expect(inspection?.reason).toContain("gated as writes");
-    expect(inspection?.reason).toContain("read, grep, find, and ls tools");
-    expect(inspection?.reason).toContain("read tool");
+    expect(inspection).toBeUndefined();
 
     // The edit/write denial keeps its own guidance rather than the bash text.
     const implementationEdit = await harness.callTool({

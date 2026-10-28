@@ -128,7 +128,7 @@ export const docsWritePathRules: WritePathRule[] = [
     decision: "deny",
     contexts: ["bash"],
     guidance:
-      "Bash path operands are gated as writes under the scribe-only profile. Only Markdown documentation paths and /tmp may be targeted.",
+      "Proven Bash reader operands use readPaths. Write-capable or unproven operands and redirections are gated as writes; only Markdown documentation paths and /tmp may be written.",
     alternatives: [
       "Use the read tool for concrete files",
       "Use the grep tool for content searches",

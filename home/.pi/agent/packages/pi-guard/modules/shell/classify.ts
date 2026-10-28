@@ -10,7 +10,7 @@ import {
   type WordPart,
 } from "unbash";
 
-export type ShellTokenKind =
+type ShellTokenKind =
   | "ambiguous"
   | "filesystem-reference"
   | "redirection-target"
@@ -21,6 +21,8 @@ export type ShellTokenKind =
 
 type ClassifiedShellToken = {
   kind: ShellTokenKind;
+  /** Absent means conservative write-capable access. */
+  access?: "read" | "write";
   value: string;
   dynamicRole?: "argument" | "filesystem-reference" | "redirection-target";
   pos: number;
@@ -55,6 +57,7 @@ const gitObjectSubcommands = new Set([
   "diff-tree",
 ]);
 const readerCommands = new Set([
+  "ls",
   "cat",
   "head",
   "tail",
@@ -629,11 +632,80 @@ function classifyReadOnlyMergeTreeArguments(
   }
 }
 
+// Each supported option has command-specific semantics. Unsupported forms ask;
+// in particular cat -n numbers lines and never consumes the following filename.
+function classifyProvenReader({
+  command,
+  words,
+  tokens,
+}: {
+  command: string;
+  words: Word[];
+  tokens: ClassifiedShellToken[];
+}): void {
+  const flags =
+    command === "cat"
+      ? /^-[benstuvAET]+$/
+      : command === "ls"
+        ? /^-[aAbBcCdDfFgGhHiklLmnoOpPqQrRsStTuUvVwWxX1]+$/
+        : command === "head"
+          ? /^-[qv]+$/
+          : command === "tail"
+            ? /^-[fqvFr]+$/
+            : command === "wc"
+              ? /^-[clmwL]+$/
+              : command === "file"
+                ? /^-[bhiLNPsvz]+$/
+                : /^-p$/;
+  let options = true;
+  for (let index = 0; index < words.length; index++) {
+    const token = tokens[index];
+    const value = staticWordValue(words[index]);
+    if (options && value === "--") {
+      token.kind = "proven-non-path";
+      options = false;
+      continue;
+    }
+    if (options && value?.startsWith("-") && value !== "-") {
+      if (
+        (command === "head" || command === "tail") &&
+        ["-n", "-c", "--lines", "--bytes"].includes(value)
+      ) {
+        const count = staticWordValue(words[index + 1]);
+        if (count !== undefined && /^[+-]?\d+[bBkKmMgG]?$/.test(count)) {
+          token.kind = "proven-non-path";
+          tokens[++index].kind = "proven-non-path";
+          continue;
+        }
+      } else if (
+        flags.test(value) ||
+        ((command === "head" || command === "tail") &&
+          /^(?:-[nc]|--(?:lines|bytes)=)[+-]?\d+[bBkKmMgG]?$/.test(value))
+      ) {
+        token.kind = "proven-non-path";
+        continue;
+      }
+      token.kind = "ambiguous";
+      continue;
+    }
+    // BSD readers stop option processing at the first operand. Treat all
+    // subsequent words as paths rather than assuming GNU option permutation.
+    options = false;
+    token.access = "read";
+    if (token.kind === "dynamic") token.dynamicRole = "filesystem-reference";
+    else token.kind = "filesystem-reference";
+  }
+}
+
 function classifyReaderArguments(
   command: string,
   words: Word[],
   tokens: ClassifiedShellToken[],
 ): void {
+  if (["ls", "cat", "head", "tail", "nl", "wc", "file"].includes(command)) {
+    classifyProvenReader({ command, words, tokens });
+    return;
+  }
   let sedProgramSeen = command !== "sed";
   for (let index = 0; index < words.length; index++) {
     const value = staticWordValue(words[index]);
@@ -881,15 +953,36 @@ function classifyFindArguments(
     "-perm",
   ]);
   let expressionStarted = false;
+  const readOperands: ClassifiedShellToken[] = [];
+  let proven = true;
 
   for (let index = 0; index < words.length; index++) {
     const value = staticWordValue(words[index]);
     const token = tokens[index];
-    if (!token || value === undefined) continue;
+    if (!token || value === undefined) {
+      proven = false;
+      continue;
+    }
 
     if (value.startsWith("-") || value === "!" || value === "(") {
+      if (
+        !pathValueActions.has(value) &&
+        !provenValuePredicates.has(value) &&
+        ![
+          "-print",
+          "-print0",
+          "-a",
+          "-and",
+          "-o",
+          "-or",
+          "-not",
+          "!",
+          "(",
+        ].includes(value)
+      )
+        proven = false;
       expressionStarted = true;
-      token.kind = "proven-non-path";
+      token.kind = proven ? "proven-non-path" : "ambiguous";
       const operand = tokens[index + 1];
       if (pathValueActions.has(value) && operand) {
         if (operand.kind === "dynamic") {
@@ -897,6 +990,7 @@ function classifyFindArguments(
         } else {
           operand.kind = "filesystem-reference";
         }
+        operand.access = value === "-files0-from" ? "read" : "write";
         index++;
         if (value === "-fprintf") {
           const format = tokens[index + 1];
@@ -915,9 +1009,15 @@ function classifyFindArguments(
     if (!expressionStarted) {
       if (token.kind === "dynamic") token.dynamicRole = "filesystem-reference";
       else token.kind = "filesystem-reference";
+      readOperands.push(token);
+    } else if (value === ")") {
+      token.kind = "proven-non-path";
+    } else {
+      proven = false;
     }
-    // Unknown expression operands remain ambiguous and are path-checked.
+    // Unknown/mutating/executing expressions keep starting roots write-gated.
   }
+  if (proven) for (const token of readOperands) token.access = "read";
 }
 
 function classifyRedirect(

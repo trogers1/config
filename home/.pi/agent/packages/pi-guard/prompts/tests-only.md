@@ -11,7 +11,7 @@ Only create or modify test files. Do not alter production implementation, build 
 
 ## Tooling constraints
 
-- Inspect implementation files only with the dedicated `read`, `grep`, `find`, and `ls` tools. Bash path operands are gated as writes under this profile, so shell readers such as `cat`, `ls`, `find`, and `rg` are denied outside test files even though they only read.
+- Prefer dedicated `read`, `grep`, `find`, and `ls` tools for implementation inspection. Proven Bash reader operands use `readPaths` with the appropriate read context; write-capable or unproven forms and redirections remain write-gated. This does not promote every reader, including `rg`.
 - Write and edit only test files, whether through the dedicated tools or Bash redirections. `/tmp` is available for scratch output.
 - Run tests and checks through the repository's configured scripts (for example `npm test` or `npm run <script>`). Script names are understood by the Bash gate, and changing into a package directory with `cd` is permitted because every later operand is still gated individually.
 

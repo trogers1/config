@@ -26,7 +26,7 @@ import {
   rankMatchingRules,
   type RankedItem,
 } from "../ruleSpecificity";
-import { classifyCommandTokens, type ShellTokenKind } from "./classify";
+import { classifyCommandTokens } from "./classify";
 
 export type PolicyDecision = {
   decision: Decision;
@@ -69,14 +69,7 @@ type CwdState = {
 
 type DecisionWithPath = PolicyDecision & { path: string; matchPath: string };
 
-type PathToken = {
-  kind: ShellTokenKind;
-  value: string;
-  dynamicRole?: "argument" | "filesystem-reference" | "redirection-target";
-  pos: number;
-  end: number;
-  command?: string;
-};
+type PathToken = ReturnType<typeof classifyCommandTokens>[number];
 
 type BashPathTraceSink = {
   first?: BashPathReferenceTrace;
@@ -101,7 +94,11 @@ function pathTraceFromDecision(
   path: string,
   matchPath: string,
   context: PathContext,
-  kind: "read" | "write" = context === "ls" ? "read" : "write",
+  kind: "read" | "write" = context === "bash" ||
+  context === "write" ||
+  context === "edit"
+    ? "write"
+    : "read",
 ): BashPathReferenceTrace {
   return {
     path,
@@ -833,7 +830,13 @@ function analyzeCommand(
       startupCwd,
       activePolicy,
       protectedPathRules,
-      "bash",
+      token.access === "read"
+        ? token.command === "find"
+          ? "find"
+          : token.command === "ls"
+            ? "ls"
+            : "read"
+        : "bash",
       traceSink,
     );
     if (decision && shouldStop(decision, stopOnAsk)) {
@@ -998,7 +1001,7 @@ function evaluateTokenAsPath(
   const decision = evaluatePathByPattern(
     absolutePath,
     startupCwd,
-    activePolicy.writePaths,
+    token.access === "read" ? activePolicy.readPaths : activePolicy.writePaths,
     "allow",
     context,
     protectedPathRules,
@@ -1011,6 +1014,7 @@ function evaluateTokenAsPath(
         absolutePath,
         decision.matchPath,
         context,
+        token.access === "read" ? "read" : "write",
       ),
       decision.decision,
     );

@@ -272,13 +272,17 @@ describe("unbash shell classification", () => {
       expect.arrayContaining([
         expect.objectContaining({ kind: "proven-non-path", value: "-la" }),
         expect.objectContaining({
-          kind: "proven-non-path",
+          kind: "ambiguous",
           value: "--format=%H",
         }),
         expect.objectContaining({ kind: "ambiguous", value: "-I/usr/include" }),
         expect.objectContaining({ kind: "ambiguous", value: "--output=~/x" }),
         expect.objectContaining({ kind: "ambiguous", value: "--output=.env" }),
-        expect.objectContaining({ kind: "ambiguous", value: "./src" }),
+        expect.objectContaining({
+          kind: "filesystem-reference",
+          access: "read",
+          value: "./src",
+        }),
       ]),
     );
   });

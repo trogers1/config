@@ -413,7 +413,7 @@ describe("shell policy parser", () => {
               tools: {
                 bash: [{ pattern: "ls *", decision: commandDecision }],
               },
-              writePaths: [{ pattern: directory, decision: pathDecision }],
+              readPaths: [{ pattern: directory, decision: pathDecision }],
             },
           },
         }),
@@ -1166,7 +1166,7 @@ describe("default profile bash policy", () => {
       "rg --file=../blocked needle modules/allowed.ts",
       "rg -f../blocked needle modules/allowed.ts",
       "find modules -fprint ../blocked",
-      "cat credentials.txt",
+      "unknown-reader credentials.txt",
       "git diff package.json other.json",
       "git blame private.txt",
       "git show path:name",
@@ -1765,8 +1765,9 @@ describe("default profile bash policy", () => {
       const restrictivePolicy = structuredClone(
         policyConfig.profiles["builtin:default"].policy,
       );
-      restrictivePolicy.writePaths = [
+      restrictivePolicy.readPaths = [
         { pattern: "**", decision: "deny" },
+        { pattern: "project", contexts: ["ls"], decision: "allow" },
         { pattern: "project/allowed", decision: "allow" },
       ];
 

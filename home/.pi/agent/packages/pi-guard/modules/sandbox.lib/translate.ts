@@ -215,13 +215,14 @@ export function translatePolicy(
   const writeRules: SandboxPathRule[] = [];
   let missingRestriction = false;
 
-  // readPaths governs dedicated tools, not arbitrary Bash process reads.
+  // readPaths gates dedicated tools and proven Bash operands at the permission
+  // boundary, but does not constrain arbitrary subprocess reads in the kernel.
   if ((policy.readPaths?.length ?? 0) > 0) {
     report.noKernelMeaning.push({
       pattern: "readPaths",
       source: "profile",
       reason:
-        "ordinary readPaths apply to dedicated tools; Bash reads are restricted only by protected paths",
+        "ordinary readPaths gate dedicated tools and proven Bash operands, not arbitrary subprocess reads; kernel read restrictions derive from protected paths",
     });
   }
 

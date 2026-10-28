@@ -674,15 +674,15 @@ breaks ties.
 - Other `tools.<name>` entries configure custom tools by matching glob patterns
   against named input properties. The built-in path tools cannot be configured
   here; they use the path arrays below.
-- `readPaths` applies only to the dedicated `read`, `grep`, `find`, and `ls`
-  tools. Enable optional discovery tools in the agent's tool allowlist; this
-  package does not activate them automatically.
-- `writePaths` applies to `edit`, `write`, and every Bash filesystem operand,
-  including Bash readers and both input and output redirections. Bash is
-  deliberately treated as write-capable even for apparently read-only commands.
-  The one carve-out is `cd`: it mutates nothing and every later operand is gated
-  individually against the tracked directory, so its target is gated against
-  `readPaths` with the `ls` context instead.
+- `readPaths` applies to dedicated inspection tools and proven Bash reader
+  operands: supported `cat`, `head`, `tail`, `nl`, `wc`, and `file` forms use
+  the `read` context; `ls` and proven `find` forms use their named contexts.
+  `cd` targets use `ls`, with later operands resolved against the tracked directory.
+  Enable optional discovery tools in the agent's tool allowlist; this package
+  does not activate them automatically.
+- `writePaths` applies to `edit`, `write`, Bash output operands and redirections,
+  and write-capable or unproven Bash operands. Unknown options and dynamic paths
+  remain conservative; not every shell reader (for example `rg`) is promoted.
 - A path rule can set `contexts` to restrict itself to particular consumers.
   Valid read contexts are `read`, `grep`, `find`, and `ls`; valid write
   contexts are `edit`, `write`, and `bash`. A rule without `contexts` applies to

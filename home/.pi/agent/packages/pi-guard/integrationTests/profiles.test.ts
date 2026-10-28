@@ -644,17 +644,13 @@ describe("permissions extension", () => {
                   { pattern: "cat *", decision: "allow" },
                 ],
               },
-              readPaths: [{ pattern: "**", decision: "allow" }],
-              writePaths: [
-                {
-                  pattern: "**",
-                  decision: "ask",
-                  contexts: ["bash"],
-                },
+              writePaths: [{ pattern: "**", decision: "allow" }],
+              readPaths: [
+                { pattern: "**", decision: "ask", contexts: ["read"] },
                 {
                   pattern: ".env.template",
                   decision: "allow",
-                  contexts: ["bash"],
+                  contexts: ["read"],
                 },
               ],
               protectedPathRules: [
@@ -2478,7 +2474,7 @@ describe("permissions extension", () => {
     ).resolves.toBeUndefined();
   });
 
-  it("gates ambiguous Bash reader operands as writes under read-only while dedicated reads use readPaths", async () => {
+  it("uses readPaths for proven Bash readers and dedicated reads under read-only", async () => {
     const harness = createExtensionHarness({ hasUI: false });
     await harness.start();
     await harness.runCommand({ name: "read-only" });
@@ -2491,14 +2487,12 @@ describe("permissions extension", () => {
       }),
     ).resolves.toBeUndefined();
 
-    // Every Bash filesystem operand is write-gated, so an ambiguous basename
-    // operand is denied even though the same file is readable through `read`.
+    // Proven reader basenames use the same read authority as dedicated reads.
     const operand = await harness.callTool({
       toolName: "bash",
       input: { command: "cat README.md" },
     });
-    expect(operand).toMatchObject({ block: true });
-    expect(operand?.reason).toContain("Bash path reference");
+    expect(operand).toBeUndefined();
 
     // Proven Git revision objects are not filesystem operands and stay usable.
     await expect(

@@ -689,10 +689,11 @@ describe("profile updates through the public extension surface", () => {
               ],
             },
             readPaths: [
-              { pattern: "same.txt", decision: "ask", contexts: ["ls"] },
-            ],
-            writePaths: [
-              { pattern: "same.txt", decision: "ask", contexts: ["bash"] },
+              {
+                pattern: "same.txt",
+                decision: "ask",
+                contexts: ["ls", "read"],
+              },
             ],
           },
         },
@@ -712,7 +713,7 @@ describe("profile updates through the public extension surface", () => {
     const rendered = form.render().join("\n");
     expect(rendered.match(/Requested value/g)?.length, rendered).toBe(2);
     expect(rendered).toContain("Context/source   ls");
-    expect(rendered).toContain("Context/source   bash");
+    expect(rendered).toContain("Context/source   read");
     form.press("Escape");
     (await harness.ui.waitForPermissionChoice()).choose("No (default)");
     expect(await pending).toMatchObject({ block: true });
