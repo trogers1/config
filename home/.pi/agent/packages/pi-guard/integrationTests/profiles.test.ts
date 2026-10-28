@@ -1174,6 +1174,62 @@ describe("permissions extension", () => {
     expect(unspecified?.reason).toContain("non-interactive worker");
   });
 
+  it("allows Go formatting while preserving delegated scope and protected paths", async () => {
+    vi.stubEnv("PI_SUBAGENT_PROFILE", "builtin:worker");
+    vi.stubEnv("PI_SUBAGENT_PERMISSIBLE_GLOBS", "tests/cli/**");
+    const harness = createExtensionHarness({ hasUI: false });
+    await harness.start();
+
+    await expect(
+      harness.callToolWithoutPrompt({
+        toolName: "bash",
+        input: {
+          command:
+            "gofmt -w tests/cli/delivery_failure_test.go tests/cli/retry_test.go",
+        },
+      }),
+    ).resolves.toBeUndefined();
+
+    for (const command of ["gofmt -w outside.go", "gofmt -w tests/cli/.env"]) {
+      await expect(
+        harness.callTool({ toolName: "bash", input: { command } }),
+      ).resolves.toMatchObject({ block: true });
+    }
+  });
+
+  it("allows only the approved sidecar binary prefix for Go tests", async () => {
+    vi.stubEnv(
+      "PI_GUARD_PROFILE_CONFIG",
+      path.resolve("../../pi-guard/profiles.jsonc"),
+    );
+    vi.stubEnv("PI_SUBAGENT_PROFILE", "sidecar-comments");
+    const harness = createExtensionHarness({ hasUI: false });
+    await harness.start();
+
+    await expect(
+      harness.callToolWithoutPrompt({
+        toolName: "bash",
+        input: {
+          command: 'SIDECAR_BIN="$PWD/bin/sidecar" go test ./tests/...',
+        },
+      }),
+    ).resolves.toBeUndefined();
+
+    for (const command of [
+      'SIDECAR_BIN="$PWD/bin/other" go test ./tests/...',
+      'OTHER_BIN="$PWD/bin/sidecar" go test ./tests/...',
+      'PATH="$PWD/bin" go test ./tests/...',
+      'SIDECAR_BIN="$(unknown-command)" go test ./tests/...',
+      'SIDECAR_BIN="$PWD/bin/sidecar" go get example.com/package',
+      'SIDECAR_BIN="$PWD/bin/sidecar" go test ./tests/...; unknown-command',
+    ]) {
+      await expect(
+        harness.callTool({ toolName: "bash", input: { command } }),
+        command,
+      ).resolves.toMatchObject({ block: true });
+    }
+  });
+
   it("does not mistake Go and mise arguments for paths under a narrow subagent scope", async () => {
     vi.stubEnv("PI_SUBAGENT_PROFILE", "builtin:worker");
     vi.stubEnv("PI_SUBAGENT_PERMISSIBLE_GLOBS", "modules/allowed.ts");

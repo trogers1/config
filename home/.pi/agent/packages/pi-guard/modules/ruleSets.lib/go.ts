@@ -1,7 +1,9 @@
 import type { Rule } from "../policyHelpers";
 
-/** Independently composable Go build/test commands and their mise wrappers. */
+/** Independently composable Go formatting/build/test commands and their mise wrappers. */
 export const goTestRules: Rule[] = [
+  { pattern: "gofmt", decision: "allow" },
+  { pattern: "gofmt *", decision: "allow" },
   { pattern: "go build", decision: "allow" },
   { pattern: "go build *", decision: "allow" },
   { pattern: "go test", decision: "allow" },
