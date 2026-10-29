@@ -71,6 +71,27 @@ preservation, and continued denial of unrelated cache, protected, and
 out-of-scope task writes. This approval does not enable codemode, MCP, nested
 delegation, or the other capability changes below.
 
+### Planned exact `/dev/null` redirection exception
+
+The Bash scope gate currently treats `/dev/null` redirections as ordinary
+out-of-scope filesystem writes, so a workspace-scoped child can be blocked from
+running `command >/dev/null 2>&1` even when the parent permits it. This is separate
+from the OS sandbox's runtime scratch-space exception above.
+
+Plan an exact `/dev/null` output-redirection exception to task-scope narrowing.
+Keep parent command/path policy, protected-path denials, and role ceilings in
+force; do not turn a parent deny or approval requirement into an allow. Limit the
+exception to statically proven output redirections, not arbitrary operands,
+write/edit tools, dynamic targets, or general `/dev/**` access. Ordinary writes
+outside the declared task scope must remain blocked.
+
+Use the existing shell classification and shared enforcement/explanation paths
+rather than a parallel command-string check. Verify through the real child gate
+and sandbox where enabled: permitted stdout/stderr redirection to `/dev/null`,
+parent restrictions, continued denial of other device paths and out-of-scope
+files, and mixed commands whose unrelated forbidden action must still block.
+This is planned work only, not authorization to implement a runtime change.
+
 ### 4. Add optional tools individually, not wholesale inheritance
 
 - Reuse the approved backing-extension mechanism for specific justified tools.
