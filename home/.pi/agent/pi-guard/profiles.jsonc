@@ -805,6 +805,18 @@
             "pattern": "psql --version",
             "decision": "allow"
           },
+          {
+            "pattern": "dev *",
+            "decision": "allow"
+          },
+          {
+            "pattern": "git symbolic-ref --quiet --short HEAD",
+            "decision": "allow"
+          },
+          {
+            "pattern": "git check-ref-format --branch *",
+            "decision": "allow"
+          },
         ],
       },
       "readPaths": [
