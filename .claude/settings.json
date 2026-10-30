@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm test *)",
+      "Bash(npm run check:all)",
+      "Bash(npm run fix:prettier)",
+      "Bash(npm --prefix home/.pi/agent/packages/* test *)",
+      "Bash(npm --prefix home/.pi/agent/packages/* run check:all)",
+      "Bash(npm --prefix home/.pi/agent/packages/* run fix:prettier)",
+      "Bash(bash tests/*)",
+      "Bash(python3 tests/*)",
+      "Bash(bash -n *)",
+      "Bash(pi --version)",
+      "Bash(pi --help)",
+      "Bash(claude --help)"
+    ]
+  }
+}

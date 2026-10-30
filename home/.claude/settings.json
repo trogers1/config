@@ -1,5 +1,65 @@
 {
   "theme": "dark",
+  "permissions": {
+    "defaultMode": "acceptEdits",
+    "allow": [
+      "Bash(node --version)",
+      "Bash(npm --version)"
+    ],
+    "ask": [
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Bash(git reset *)",
+      "Bash(git restore *)",
+      "Bash(git clean *)",
+      "Bash(git checkout *)",
+      "Bash(git switch *)",
+      "Bash(git rebase *)",
+      "Bash(git merge *)",
+      "Bash(npm install *)",
+      "Bash(npm ci *)",
+      "Bash(npm update *)",
+      "Bash(npm uninstall *)",
+      "Bash(npx *)",
+      "Bash(docker *)",
+      "Bash(glab *)",
+      "Bash(gh *)",
+      "Bash(jira *)",
+      "Bash(jiratui *)",
+      "Bash(node -e *)",
+      "Bash(rm *)"
+    ],
+    "deny": [
+      "Bash(sudo *)",
+      "Bash(security dump-keychain *)",
+      "Bash(npx prettier *)",
+      "Bash(npx vitest *)",
+      "Bash(terraform apply *)",
+      "Bash(terraform destroy *)",
+      "Bash(terraform import *)",
+      "Bash(terraform refresh *)",
+      "Bash(terraform taint *)",
+      "Bash(terraform untaint *)",
+      "Bash(terraform state *)",
+      "Bash(terraform force-unlock *)",
+      "Bash(terraform test *)",
+      "Bash(terraform * apply *)",
+      "Bash(terraform * destroy *)",
+      "Bash(*aws-tf apply*)",
+      "Bash(*aws-tf destroy*)",
+      "Bash(*auth0-tf apply*)",
+      "Bash(*auth0-tf destroy*)",
+      "Bash(*scripts/infra/activate-env*)",
+      "Bash(*scripts/infra/apply*)",
+      "Bash(*scripts/infra/deploy*)",
+      "Bash(*scripts/infra/destroy-preview*)",
+      "Bash(*scripts/infra/init-env*)",
+      "Bash(*scripts/infra/sync-secrets*)",
+      "Read(~/.ssh/**)",
+      "Read(~/.aws/**)"
+    ]
+  },
   "hooks": {
     "SessionStart": [
       {
@@ -41,5 +101,8 @@
         ]
       }
     ]
+  },
+  "sandbox": {
+    "enabled": true
   }
 }
