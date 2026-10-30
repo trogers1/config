@@ -290,7 +290,7 @@ function parseReader({
       return parseOperands(tokens, new Set(), protectedPathRules);
     case "head":
     case "tail":
-      return parseCountReader(tokens, protectedPathRules);
+      return parseCountReader({ tokens, protectedPathRules });
     case "nl":
       return parseOptions(
         tokens,
@@ -320,14 +320,42 @@ function assertNever({ value }: { value: never }): never {
   throw new Error("Unsupported reader reached exhaustive dispatch");
 }
 
-function parseCountReader(
-  tokens: string[],
-  protectedPathRules: readonly ProtectedPathRule[],
-): ParsedReadCommand {
+function parseCountReader({
+  tokens,
+  protectedPathRules,
+}: {
+  tokens: string[];
+  protectedPathRules: readonly ProtectedPathRule[];
+}): ParsedReadCommand {
+  const shortWithValue = new Set(["n", "c", "q"]);
+  const longWithValue = new Set(["lines", "bytes"]);
+  const normalized: string[] = [];
+  for (let index = 0; index < tokens.length; index++) {
+    const token = tokens[index];
+    if (token === "--") {
+      normalized.push(...tokens.slice(index));
+      break;
+    }
+    // BSD count readers stop options at the first operand. Insert an option
+    // terminator so the generic parser preserves every subsequent filename.
+    if (!token.startsWith("-") || token === "-") {
+      normalized.push("--", ...tokens.slice(index));
+      break;
+    }
+    // Keep legacy decimal counts as one option, never consuming a filename.
+    normalized.push(/^-\d+$/.test(token) ? `-n${token.slice(1)}` : token);
+    // Separate option values are not operands and cannot terminate options.
+    if (
+      (token.length === 2 && shortWithValue.has(token.slice(1))) ||
+      (token.startsWith("--") && longWithValue.has(token.slice(2)))
+    ) {
+      if (index + 1 < tokens.length) normalized.push(tokens[++index]);
+    }
+  }
   return parseOptions(
-    tokens,
-    new Set(["n", "c", "q"]),
-    new Set(["lines", "bytes"]),
+    normalized,
+    shortWithValue,
+    longWithValue,
     protectedPathRules,
   );
 }

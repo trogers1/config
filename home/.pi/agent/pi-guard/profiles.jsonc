@@ -964,6 +964,45 @@
           },
         ],
       },
+      "readPaths": [
+        {
+          "pattern": "~/**/homebrew-tap",
+          "decision": "allow",
+          "contexts": [
+            "ls"
+          ]
+        },
+        {
+          "pattern": "../homebrew-tap",
+          "decision": "allow",
+          "contexts": [
+            "ls"
+          ]
+        },
+        {
+          "pattern": "~/**/homebrew-tap/**",
+          "decision": "allow",
+          "contexts": [
+            "read"
+          ]
+        },
+        {
+          "pattern": "~/*/homebrew-tap/**",
+          "decision": "allow",
+          "contexts": [
+            "read"
+          ]
+        }
+      ],
+      "writePaths": [
+        {
+          "pattern": "../homebrew-tap/**",
+          "decision": "allow",
+          "contexts": [
+            "write"
+          ]
+        }
+      ],
     },
     "sidecar-comments-allow-asks": {
       "description": "Sidecar-comments Golang profile for auto-pilot that allows asks",

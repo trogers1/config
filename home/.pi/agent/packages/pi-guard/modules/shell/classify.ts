@@ -680,7 +680,8 @@ function classifyProvenReader({
       } else if (
         flags.test(value) ||
         ((command === "head" || command === "tail") &&
-          /^(?:-[nc]|--(?:lines|bytes)=)[+-]?\d+[bBkKmMgG]?$/.test(value))
+          (/^-\d+$/.test(value) ||
+            /^(?:-[nc]|--(?:lines|bytes)=)[+-]?\d+[bBkKmMgG]?$/.test(value)))
       ) {
         token.kind = "proven-non-path";
         continue;

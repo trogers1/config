@@ -5,6 +5,10 @@ import { expect, it } from "vitest";
 import { createExtensionHarness } from "./support/extensionHarness";
 
 it.each([
+  { command: "head ordinary -100", deniedName: "-100", protected: false },
+  { command: "head ordinary -100", deniedName: "-100", protected: true },
+  { command: "tail ordinary -100", deniedName: "-100", protected: false },
+  { command: "tail ordinary -100", deniedName: "-100", protected: true },
   { command: "cat ordinary -n", deniedName: "-n", protected: true },
   { command: "cat ordinary -n", deniedName: "-n", protected: false },
   { command: "head ordinary -n 2", deniedName: "-n", protected: true },
@@ -22,7 +26,7 @@ it.each([
     );
     const config = path.join(root, "profiles.jsonc");
     const deniedPath = path.join(root, deniedName);
-    for (const filename of ["ordinary", "-n", "2", "--", "-allowed"]) {
+    for (const filename of ["ordinary", "-n", "-100", "2", "--", "-allowed"]) {
       fs.writeFileSync(path.join(root, filename), "fixture");
     }
     fs.writeFileSync(
@@ -113,6 +117,7 @@ it("gates proven Bash readers by read grants without granting mutation or output
               decision: "deny",
             },
             { pattern: "-secret", decision: "deny" },
+            { pattern: "-100", decision: "deny" },
           ],
           writePaths: [
             { pattern: `${target}/**`, decision: "deny" },
@@ -136,6 +141,14 @@ it("gates proven Bash readers by read grants without granting mutation or output
       `find ${target} -type f -print`,
       `cat -n ${target}/ordinary`,
       `cat -- ${target}/ordinary`,
+      `printf safe | head -100`,
+      `printf safe | tail -100`,
+      `head -100 ${target}/ordinary`,
+      `tail -100 ${target}/ordinary`,
+      `printf safe | head -100 ${target}/ordinary`,
+      `printf safe | tail -100 ${target}/ordinary`,
+      `head -100 -- ${target}/ordinary`,
+      `tail -100 -- ${target}/ordinary`,
       `head -n 2 ${target}/ordinary`,
       `tail -c 4 ${target}/ordinary`,
       `head --lines=2 ${target}/ordinary`,
@@ -162,6 +175,17 @@ it("gates proven Bash readers by read grants without granting mutation or output
       `cat -n ${target}/no-read ${target}/ordinary`,
       `cat -- -secret ${target}/ordinary`,
       `cat -- -n ${target}/secret ${target}/ordinary`,
+      `head -100 ${target}/secret ${target}/ordinary`,
+      `tail -100 ${target}/no-read ${target}/ordinary`,
+      `printf safe | head -100 ${target}/no-read`,
+      `printf safe | tail -100 ${target}/secret`,
+      `head -- -100`,
+      `tail -- -100`,
+      `head -100 -- -100`,
+      `tail -100 -- -100`,
+      `cat -100 ${target}/ordinary`,
+      `head -100x ${target}/ordinary`,
+      `tail -100x ${target}/ordinary`,
       `head -n 2 ${target}/secret ${target}/ordinary`,
       `tail -c 4 ${target}/no-read ${target}/ordinary`,
       `head -- -secret ${target}/ordinary`,

@@ -33,6 +33,80 @@ describe("shell read commands", () => {
     });
   });
 
+  it.each(["head", "tail"])(
+    "parses %s decimal shorthand without losing operands",
+    (reader) => {
+      for (const count of ["-0", "-1", "-100", "-00100"]) {
+        expect(parseReadCommand({ command: `${reader} ${count}` })).toEqual({
+          status: "stdin-only",
+        });
+        expect(
+          parseReadCommand({ command: `${reader} ${count} first second` }),
+        ).toEqual({
+          status: "safe",
+          paths: ["first", "second"],
+        });
+      }
+      expect(parseReadCommand({ command: `${reader} -100 -- -200` })).toEqual({
+        status: "safe",
+        paths: ["-200"],
+      });
+      for (const count of ["-100x", "-1.5", "--100", "-100k"]) {
+        expect(
+          parseReadCommand({ command: `${reader} ${count}` }),
+        ).toMatchObject({
+          status: "unknown",
+        });
+      }
+    },
+  );
+
+  it.each(["head", "tail"])(
+    "preserves every %s filename after the first operand",
+    (reader) => {
+      for (const options of [
+        "",
+        "-100",
+        "-n 2",
+        "-c 2",
+        "--lines 2",
+        "--bytes 2",
+        "-n 2 -100",
+      ]) {
+        for (const filenames of [
+          ["ordinary", "-100"],
+          ["ordinary", "-n", "2", "--", "-100"],
+          ["ordinary", "--unknown", "-100x"],
+          ["-", "-100", "--"],
+        ]) {
+          const command = `${reader} ${options} ${filenames.join(" ")}`;
+          expect(parseReadCommand({ command }), command).toEqual({
+            status: "safe",
+            paths: filenames,
+          });
+        }
+      }
+      expect(
+        parseReadCommand({ command: `${reader} -n 2 -- -100 -- -n` }),
+      ).toEqual({
+        status: "safe",
+        paths: ["-100", "--", "-n"],
+      });
+      expect(parseReadCommand({ command: `${reader} -n 2 -100` })).toEqual({
+        status: "stdin-only",
+      });
+    },
+  );
+
+  it.each(["cat", "nl", "sort", "wc", "file"])(
+    "does not give %s numeric shorthand",
+    (reader) => {
+      expect(parseReadCommand({ command: `${reader} -100` })).toMatchObject({
+        status: "unknown",
+      });
+    },
+  );
+
   it("leaves quoted commit-message prose inert", () => {
     expect(validate({ command: quotedCommitCommand })).toBeUndefined();
   });
