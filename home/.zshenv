@@ -18,26 +18,22 @@ path=("$HOME/.rd/bin" "${path[@]}")
 
 # https://docs.rancherdesktop.io/how-to-guides/using-testcontainers/
 # Reused by the interactive prompt hook when Rancher starts after the shell.
+# Exports all Rancher settings or none, so workloads never see a partial setup.
 configure-rancher-desktop() {
   local rancher_host="unix://$HOME/.rd/docker.sock"
-  if [[ -S "$HOME/.rd/docker.sock" && "${DOCKER_HOST:-$rancher_host}" == "$rancher_host" ]]; then
-    export DOCKER_HOST="$rancher_host"
-    export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE="${TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE:-/var/run/docker.sock}"
-    export TESTCONTAINERS_RYUK_DISABLED="${TESTCONTAINERS_RYUK_DISABLED:-true}"
-    if [[ -z "${TESTCONTAINERS_HOST_OVERRIDE:-}" ]]; then
-      local rancher_ip
-      if ! rancher_ip=$(rdctl info --field ip-address) || [[ -z "$rancher_ip" ]]; then
-        print -u2 -- "Rancher socket exists, but rdctl could not determine its IP address."
-        return 1
-      fi
-      export TESTCONTAINERS_HOST_OVERRIDE="$rancher_ip"
+  [[ -S "$HOME/.rd/docker.sock" && "${DOCKER_HOST:-$rancher_host}" == "$rancher_host" ]] || return 0
+  local rancher_ip="${TESTCONTAINERS_HOST_OVERRIDE:-}"
+  if [[ -z "$rancher_ip" ]]; then
+    if ! rancher_ip=$(rdctl info --field ip-address) || [[ -z "$rancher_ip" ]]; then
+      print -u2 -- "Rancher socket exists, but rdctl could not determine its IP address; Docker settings were not exported."
+      return 1
     fi
   fi
+  export DOCKER_HOST="$rancher_host"
+  export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE="${TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE:-/var/run/docker.sock}"
+  export TESTCONTAINERS_RYUK_DISABLED="${TESTCONTAINERS_RYUK_DISABLED:-true}"
+  export TESTCONTAINERS_HOST_OVERRIDE="$rancher_ip"
 }
-if ! configure-rancher-desktop; then
-  # Never start unattended workloads with partially initialized Rancher settings.
-  # Interactive shells stay usable so the prompt hook can retry after recovery.
-  if [[ ! -o interactive ]]; then
-    exit 1
-  fi
-fi
+# A Rancher failure must not kill every shell (sandboxed agent shells cannot reach
+# rdctl). Docker work fails on its own because nothing above was exported.
+configure-rancher-desktop || true
