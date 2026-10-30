@@ -508,6 +508,10 @@
             "pattern": "-v *",
             "decision": "allow"
           },
+          {
+            "pattern": "jira-ticket *",
+            "decision": "allow"
+          },
         ],
       },
     },

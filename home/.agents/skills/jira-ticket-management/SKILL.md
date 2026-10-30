@@ -58,6 +58,27 @@ Reads, discovery and dry runs do not require mutation approval. Report only the 
 
 **Observed 2026-10-26 on RI Task [RI-512](https://lightcast-io.atlassian.net/browse/RI-512), using the authenticated user's permissions.** This entire section is a disposable operational snapshot, not CLI logic or a universal Jira rule. Remove or replace it when RI's workflow changes. Other issue types, permissions, conditions and automation may differ; live previews always take precedence.
 
+### RI board column names and status aliases
+
+**Rechecked 2026-10-30:** `jira-ticket types --project RI` and `statuses --project RI --type TYPE` for all nine discovered issue types returned the same nine statuses documented below; neither `Done` nor `Reported` is a status name. This catalog check does not revalidate the earlier transition previews.
+
+The user's RI active-sprint board screenshot shows these columns, left to right: **To Do → In Progress → Review → QA / Staging → Done → Reported**. This is column order, not a verified transition route. The screenshot confirms separate Done and Reported columns, but does not establish when either was added.
+
+**The user may refer to a destination by its board column name rather than its Jira status.** Use the following mappings for RI. Example ticket statuses were verified on 2026-10-30 with read-only `jira-ticket get` calls; the user additionally confirmed that To Do contains Backlog, SOLUTIONING and Ready For Dev:
+
+| Board column / user wording | Actual Jira status for CLI drafts | Evidence ticket |
+| --- | --- | --- |
+| To Do / ToDo | Backlog (`10700`), SOLUTIONING (`17315`), Ready For Dev (`17120`) | [RI-332](https://lightcast-io.atlassian.net/browse/RI-332) verifies Backlog; all three column memberships confirmed by the user |
+| In Progress | In Development (`16902`) | [RI-247](https://lightcast-io.atlassian.net/browse/RI-247) |
+| Review | QA (`13010`) | [RI-456](https://lightcast-io.atlassian.net/browse/RI-456) |
+| QA / Staging | Ready For PM Demo (`16903`) | [RI-513](https://lightcast-io.atlassian.net/browse/RI-513) |
+| Done | Ready For Release (`16909`) | [RI-482](https://lightcast-io.atlassian.net/browse/RI-482) |
+| Reported (screenshot label); Released (user wording) | Released (`16911`) | [RI-450](https://lightcast-io.atlassian.net/browse/RI-450) |
+
+Accept case-insensitive column names and ordinary spacing variants such as `todo`, `to do` or `qa/staging`. **To Do is a multi-status column, not an alias for Backlog alone.** If the user requests moving a ticket to To Do without specifying Backlog, SOLUTIONING or Ready For Dev, ask which status is intended; never choose a default. If the ticket already has one of those statuses, explain that it is already in To Do and clarify any intended status change before mutating. Translate other clear column-name requests to the actual status above; do not ask the user to repeat an already unambiguous destination. Show both names in previews/approval plans (for example, **Review column → QA status**), and put only the actual Jira status name or verified ID in the CLI draft. **QA / Staging is not the QA status:** QA status is the Review column. If a bare `QA` request could mean either the status or the column, ask which destination is intended. Likewise, Done means Ready For Release, not Released; Done and Reported are not interchangeable.
+
+These observations verify ticket placements, not each column's complete status mapping. The installed CLI exposes workflow statuses, not board-column configuration. No column mapping was established for Cancel; do not invent one. Do not infer transitions from column order. Continue to read the target, validate the live destination and direct-transition availability, and obtain approval before any Jira mutation. If live evidence conflicts with these aliases, stop and clarify/update the snapshot rather than silently substituting a destination. This alias guidance does not revalidate the earlier transition routes.
+
 ### Main restriction: starting development requires Ready For Dev
 
 **Do not request `SOLUTIONING → In Development` in one update.** Its preview fails with `No unique direct transition to requested status; no intermediate transitions attempted.` The working route, verified by actual updates and readbacks, is:
