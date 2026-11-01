@@ -7,7 +7,10 @@ set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPTS="$REPO_DIR/home/.agents/skills/address-comments/scripts"
-TMP_DIR="$(cd "$(mktemp -d)" && pwd -P)"
+# Checked steps: in `$(cd "$(mktemp -d)" && pwd -P)` a failed mktemp leaves
+# `cd ""`, which stays in the current directory for the trap to delete.
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/post-replies-test.XXXXXX")" || { printf 'FAIL: could not create a scratch directory\n' >&2; exit 1; }
+TMP_DIR="$(cd "$TMP_DIR" && pwd -P)" || { printf 'FAIL: could not resolve the scratch directory\n' >&2; exit 1; }
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }

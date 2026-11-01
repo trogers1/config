@@ -9,7 +9,10 @@ DEV="$REPO_DIR/tmux_and_worktrees/bin/dev"
 CREATE_HOOK="$REPO_DIR/home/.claude/hooks/worktree-create.sh"
 REMOVE_HOOK="$REPO_DIR/home/.claude/hooks/worktree-remove.sh"
 CONFIG_READER="$REPO_DIR/tmux_and_worktrees/bin/lib/read_dev_config_windows.py"
-TMP_DIR="$(cd "$(mktemp -d)" && pwd -P)"
+# Checked steps: in `$(cd "$(mktemp -d)" && pwd -P)` a failed mktemp leaves
+# `cd ""`, which stays in the current directory for the trap to delete.
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dev-test.XXXXXX")" || { printf 'FAIL: could not create a scratch directory\n' >&2; exit 1; }
+TMP_DIR="$(cd "$TMP_DIR" && pwd -P)" || { printf 'FAIL: could not resolve the scratch directory\n' >&2; exit 1; }
 trap 'chmod -R u+w "$TMP_DIR"; rm -rf "$TMP_DIR"' EXIT
 export HOME="$TMP_DIR/home" XDG_STATE_HOME="$TMP_DIR/state"
 mkdir -p "$HOME/bin"

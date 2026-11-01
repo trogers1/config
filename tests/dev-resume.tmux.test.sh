@@ -4,7 +4,10 @@ set -euo pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEV="$REPO_DIR/tmux_and_worktrees/bin/dev"
 REAL_TMUX="$(command -v tmux)"
-TMP_DIR="$(cd "$(mktemp -d)" && pwd -P)"
+# Checked steps: in `$(cd "$(mktemp -d)" && pwd -P)` a failed mktemp leaves
+# `cd ""`, which stays in the current directory for the trap to delete.
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dev-resume-test.XXXXXX")" || { printf 'FAIL: could not create a scratch directory\n' >&2; exit 1; }
+TMP_DIR="$(cd "$TMP_DIR" && pwd -P)" || { printf 'FAIL: could not resolve the scratch directory\n' >&2; exit 1; }
 export HOME="$TMP_DIR/home" XDG_STATE_HOME="$TMP_DIR/state"
 export TEST_REPO_DIR="$REPO_DIR" TEST_DIR="$TMP_DIR"
 SOCKET="dev-resume-test-$$"
