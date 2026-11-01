@@ -2517,10 +2517,12 @@ The permissions gate remains loaded and will fail closed until the profile is co
     let rememberedBashRule: RememberDecision | undefined;
     let rememberedPathRule: RememberDecision | undefined;
     for (let attempt = 0; attempt < maxOperationEvaluationAttempts; attempt++) {
-      // Preserve Pi's original event input identity on the first evaluation;
-      // only restarted attempts replace the rewritten value from our immutable
-      // snapshot.
-      if (attempt > 0) event.input = structuredClone(originalInput);
+      // Pi executes the same args object it passes as event.input, so a
+      // replacement object would leave this attempt's rewrites (for example,
+      // protected search globs) unexecuted. Restarted attempts reset that
+      // object in place from the immutable snapshot instead.
+      if (attempt > 0)
+        restoreToolInput({ target: event.input, snapshot: originalInput });
       const result = await (async () => {
         guardOperationObserver?.onRefreshRequested?.({
           toolName: event.toolName,
@@ -4036,6 +4038,23 @@ export function stripJsonCommentsAndTrailingCommas(input: string): string {
   }
 
   return output.replace(/,\s*([}\]])/g, "$1");
+}
+
+/**
+ * Reset Pi's executed args object to the reviewed snapshot without replacing
+ * its identity, so later in-place rewrites reach the tool that runs.
+ */
+function restoreToolInput({
+  target,
+  snapshot,
+}: {
+  readonly target: ToolCallEvent["input"];
+  readonly snapshot: ToolCallEvent["input"];
+}): void {
+  for (const key of Object.keys(target)) {
+    if (!Object.hasOwn(snapshot, key)) Reflect.deleteProperty(target, key);
+  }
+  Object.assign(target, structuredClone(snapshot));
 }
 
 function isPathToolName(toolName: string): toolName is PathToolName {

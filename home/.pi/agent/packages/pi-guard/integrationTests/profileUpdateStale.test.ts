@@ -128,6 +128,47 @@ describe("profile updates through the public extension surface", () => {
     expect(result?.reason).toContain("protected-path policy");
   });
 
+  it("rewrites the executed ripgrep args with protected paths added during ASK", async () => {
+    // Plain ripgrep is read-only and never asks; piping it does.
+    const command = "rg needle | sh";
+    const protectedPattern = "added-during-ask.secret";
+    const configPath = writeConfig({
+      config: profileWithBashRule({ command, decision: "ask" }),
+    });
+    process.env.PI_GUARD_PROFILE_CONFIG = configPath;
+    const running = createExtensionHarness({ interactiveUi: true });
+    await running.start();
+    // Pi passes this same object to tool_call handlers and to execution, so
+    // it is what the tool actually runs; replacing event.input is not.
+    const executedArgs = { command };
+    const pending = running.callTool({
+      toolName: "bash",
+      input: executedArgs,
+    });
+    const picker = await running.ui.waitForPermissionChoice();
+    const replacement = profileWithBashRule({ command, decision: "ask" });
+    replaceConfig({
+      configPath,
+      config: {
+        ...replacement,
+        profiles: {
+          current: {
+            ...replacement.profiles.current,
+            protectedPathRules: [
+              { pattern: protectedPattern, decision: "deny" },
+            ],
+          },
+        },
+      },
+    });
+    // The external edit makes the first answer stale; the restarted
+    // evaluation asks again under the new protected-path policy.
+    picker.choose(allowOnceChoice);
+    (await running.ui.waitForPermissionChoice()).choose(allowOnceChoice);
+    expect((await pending)?.block).not.toBe(true);
+    expect(executedArgs.command).toContain(`--glob '!${protectedPattern}'`);
+  });
+
   it("keeps PI_SUBAGENT_PROFILE authoritative and fails closed when it is deleted", async () => {
     const command = "echo authoritative-profile";
     const configPath = writeConfig({
