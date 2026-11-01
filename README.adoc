@@ -196,6 +196,15 @@ blocks local scripts, run it explicitly with:
 Application configs that normally live under `~/.config/` live in `./xdg/` in this repo.
 See link:./xdg/README.adoc[`./xdg/README.adoc`] for the rationale and mapping.
 
+Neovim config checks:
+
+* `bash tests/nvim-sidecar-comments.test.sh` runs each `tests/nvim/*.spec.lua`
+  in its own headless Neovim against the real sidecar-comments plugin and the
+  installed `sidecar` CLI (`brew install trogers1/tap/sidecar`).
+* `bash tests/nvim-format.test.sh` checks `xdg/nvim` and `tests/nvim` with
+  stylua and `xdg/nvim/.stylua.toml`; `FIX=1` rewrites the files instead. It
+  uses `stylua` from `PATH` or Mason's copy, or `STYLUA` if set.
+
 == link:./tmux_and_worktrees[Tmux and Worktrees]
 
 This config includes my development tmux+worktree setup for parallel agentic development. Install the shared workflow with link:./setup.sh[`./setup.sh`]. Personal dotfiles are installed separately by `./setup-personal.sh`; see link:./tmux_and_worktrees/README.adoc[the README] for instructions and dependencies.

@@ -146,7 +146,9 @@ return {
     },
     -- Lazy.nvim can't infer the correct Lua module name from the fork repo name,
     -- so configure explicitly.
-    config = function(_, opts) require('avante').setup(opts) end,
+    config = function(_, opts)
+      require('avante').setup(opts)
+    end,
     dependencies = {
       'nvim-lua/plenary.nvim',
       'MunifTanjim/nui.nvim',

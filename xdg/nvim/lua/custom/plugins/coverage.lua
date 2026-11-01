@@ -41,7 +41,9 @@ return {
             if filename ~= '' then
               for directory in vim.fs.parents(vim.fs.dirname(filename)) do
                 local report = directory .. '/coverage/lcov.info'
-                if vim.uv.fs_stat(report) then return report end
+                if vim.uv.fs_stat(report) then
+                  return report
+                end
               end
             end
 
@@ -63,10 +65,14 @@ return {
       }
       local loaded_report
       local function load_nearest_report()
-        if not coverage_filetypes[vim.bo.filetype] then return end
+        if not coverage_filetypes[vim.bo.filetype] then
+          return
+        end
 
         local filename = vim.api.nvim_buf_get_name(0)
-        if filename == '' then return end
+        if filename == '' then
+          return
+        end
         for directory in vim.fs.parents(vim.fs.dirname(filename)) do
           local report = directory .. '/coverage/lcov.info'
           if vim.uv.fs_stat(report) then
