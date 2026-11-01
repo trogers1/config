@@ -32,6 +32,17 @@ CliError.__tostring = function(err)
   return string.format('sidecar %s failed for %s: %s', err.command, err.file, err.message)
 end
 
+-- Deliberate, user-facing refusals ("Save this file before replying").
+local UserError = {}
+UserError.__index = UserError
+UserError.__tostring = function(err)
+  return err.message
+end
+
+local function fail(message)
+  error(setmetatable({ message = message }, UserError))
+end
+
 -- Errors meaning the CLI refused to read the sidecar or source contents.
 local REJECTED_CODES = { validation = true, repair = true }
 
@@ -70,12 +81,14 @@ local function is_rejected(err)
   return getmetatable(err) == CliError and REJECTED_CODES[err.code] == true
 end
 
---- Wrap a keymap callback so a CliError surfaces as readable text: Neovim
---- prints an empty message for table errors raised from keymaps.
+--- Wrap a keymap callback so CliError and UserError surface as readable text
+--- (Neovim prints an empty message for table errors raised from keymaps);
+--- anything else is a bug and keeps its traceback.
 local function loud(fn)
   return function(...)
     local ok, message = xpcall(fn, function(err)
-      if getmetatable(err) == CliError then
+      local kind = getmetatable(err)
+      if kind == CliError or kind == UserError then
         return tostring(err)
       end
       return debug.traceback(err, 2)
@@ -427,7 +440,7 @@ end
 local function require_unmodified_sidecar(sidecar_path)
   local sidecar_buf = find_buffer_by_name(sidecar_path)
   if valid_buf(sidecar_buf) and vim.bo[sidecar_buf].modified then
-    error(string.format('Save %s before changing comments from the source file', sidecar_path))
+    fail(string.format('Save %s before changing comments from the source file', sidecar_path))
   end
 end
 
@@ -467,14 +480,15 @@ local function update_locations(src_buf)
     return
   end
 
+  -- A missing sidecar lists as empty, which clears highlights for threads
+  -- another writer deleted.
   local sidecar_path = M.get_sidecar_path(src_path)
-  if vim.fn.filereadable(sidecar_path) == 0 then
-    return
-  end
-
   local sidecar_buf = find_buffer_by_name(sidecar_path)
   if valid_buf(sidecar_buf) and vim.bo[sidecar_buf].modified then
-    vim.notify(string.format('%s has unsaved edits; comment locations will be updated after you save it and then save the source again', sidecar_path), vim.log.levels.WARN)
+    vim.notify(
+      string.format('%s has unsaved edits; comment locations will be updated after you save it and then save the source again', sidecar_path),
+      vim.log.levels.WARN
+    )
     return
   end
 
@@ -482,7 +496,7 @@ local function update_locations(src_buf)
   local updates = {}
   local needs_sync = false
   for _, thread in ipairs(current.threads) do
-    if is_tracked(thread.location) or thread.location.kind == 'unresolved' then
+    if is_tracked(thread.location) then
       -- Skip threads that another writer moved or detached since we read them.
       if state.extmark_by_thread_id[thread.id] and vim.deep_equal(thread.location, state.loaded_location_by_id[thread.id]) then
         local location = extmark_location(state, thread)
@@ -491,14 +505,14 @@ local function update_locations(src_buf)
         else
           table.insert(updates, { thread_id = thread.id, deleted = true })
         end
-      elseif is_tracked(thread.location) then
+      else
         needs_sync = true
       end
     end
   end
 
   if #updates > M.max_editor_updates then
-    error(string.format('%s has %d tracked comments; the sidecar CLI accepts at most %d editor updates per save', sidecar_path, #updates, M.max_editor_updates))
+    fail(string.format('%s has %d tracked comments; the sidecar CLI accepts at most %d editor updates per save', sidecar_path, #updates, M.max_editor_updates))
   end
 
   local changed = false
@@ -556,7 +570,7 @@ end
 
 function M.open_sidecar(src_filepath)
   if is_sidecar_path(src_filepath) then
-    error(string.format('%s is already a comments file', src_filepath))
+    fail(string.format('%s is already a comments file', src_filepath))
   end
 
   local sidecar_path = M.get_sidecar_path(src_filepath)
@@ -621,8 +635,7 @@ function M.jump_to_comment()
       local mark_row, mark_col, details = mark[2], mark[3], mark[4]
       if not details.invalid then
         -- Line marks are zero-width and cover their whole row.
-        local covers_cursor = details.end_row == nil
-          or ((row > mark_row or col >= mark_col) and (row < details.end_row or col < details.end_col))
+        local covers_cursor = details.end_row == nil or ((row > mark_row or col >= mark_col) and (row < details.end_row or col < details.end_col))
         -- Prefer the comment under the cursor; fall back to any on this line.
         if not thread_id or covers_cursor then
           thread_id = state.thread_id_by_extmark[mark[1]]
@@ -643,7 +656,7 @@ end
 function M.add_comment(location)
   local src_buf = vim.api.nvim_get_current_buf()
   if not is_source_buffer(src_buf) then
-    error 'Comments can only be added to a file buffer'
+    fail 'Comments can only be added to a file buffer'
   end
 
   local src_path = vim.api.nvim_buf_get_name(src_buf)
@@ -676,7 +689,7 @@ function M.add_comment_for_visual_selection()
   vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes('<Esc>', true, false, true), 'nx', false)
 
   if mode == '\22' then
-    error 'Blockwise comment regions are not supported'
+    fail 'Blockwise comment regions are not supported'
   end
 
   local start_line, start_col, end_line, end_col = anchor[2], anchor[3], cursor[2], cursor[3]
@@ -703,7 +716,7 @@ function M.add_comment_for_visual_selection()
   end
 
   if start_line == end_line and start_col >= end_column then
-    error 'Select at least one character to comment on'
+    fail 'Select at least one character to comment on'
   end
 
   return M.add_comment { kind = 'range', start_line = start_line, start_column = start_col, end_line = end_line, end_column = end_column }
@@ -714,10 +727,10 @@ function M.reply()
   local sidecar_path = vim.api.nvim_buf_get_name(sidecar_buf)
   local thread_id = thread_id_at_cursor()
   if not thread_id then
-    error 'Put the cursor inside a comment thread to reply'
+    fail 'Put the cursor inside a comment thread to reply'
   end
   if vim.bo[sidecar_buf].modified then
-    error 'Save this file before replying'
+    fail 'Save this file before replying'
   end
 
   local args = { 'message', 'add', '--thread', thread_id, '--body-file', '-' }
@@ -795,7 +808,11 @@ function M.setup_autocommands()
         if valid_buf(buf) then
           local filepath = vim.api.nvim_buf_get_name(buf)
           if is_sidecar_path(filepath) then
-            if vim.fn.filereadable(filepath) == 1 and not vim.bo[buf].modified and not vim.deep_equal(vim.api.nvim_buf_get_lines(buf, 0, -1, false), vim.fn.readfile(filepath)) then
+            if
+              vim.fn.filereadable(filepath) == 1
+              and not vim.bo[buf].modified
+              and not vim.deep_equal(vim.api.nvim_buf_get_lines(buf, 0, -1, false), vim.fn.readfile(filepath))
+            then
               reload_sidecar_buffer(buf)
             end
           elseif is_source_buffer(buf) and (vim.fn.filereadable(M.get_sidecar_path(filepath)) == 1 or M.state.by_src_path[filepath]) then
@@ -820,6 +837,14 @@ function M.setup(opts)
   })
 
   M.setup_autocommands()
+
+  -- Buffers read before setup never saw BufReadPost; record their file's
+  -- final newline so their source revision can be computed.
+  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+    if valid_buf(buf) and is_source_buffer(buf) and not vim.bo[buf].modified then
+      record_final_newline { bufnr = buf, after_write = false }
+    end
+  end
 
   vim.keymap.set(
     'n',
