@@ -2,138 +2,149 @@
 
 🛵 SidecarComments Plugin                                  *sidecar-comments*
 
-A Neovim plugin for managing comments on any file using a sidecar file
-approach. Perfect for writers, reviewers, and developers who want to add
-editorial comments, notes, and feedback without modifying the source file.
+A Neovim client for the `sidecar` CLI, which keeps review threads for any
+UTF-8 text file in a `.comments` file beside it (`post.md.comments`,
+`main.rs.comments`, ...). The source file is never modified.
 
-FEATURES                                        *sidecar-comments-features*
+The CLI owns the file format, IDs, ordering, source tracking, locking and
+revisions. The plugin never parses or writes `.comments` text itself; it shows
+threads in the source buffer, reports where they moved when you save, and
+calls the CLI from keymaps.
 
-1. Sidecar file format - Comments stored in `.comments` sidecars like
-   `post.md.comments`, `main.rs.comments`, etc.
-2. Works with any filetype - Not limited to markdown
-3. Line and column ranges - Comments can target full lines or exact text spans
-4. Bidirectional navigation - Jump between source text and comments
-5. Visual indicators - Commented lines show red line numbers
-6. Quick split window - Open comments in vertical split
+REQUIREMENTS                                *sidecar-comments-requirements*
+
+The `sidecar` CLI (format and protocol version 2) on `PATH`:
+>
+    brew install trogers1/tap/sidecar
+<
+Sidecars written by the old Lua-only version of this plugin
+(`[@id 12-15 | base64]` headers) are not readable by the CLI and are reported
+as errors.
 
 USAGE                                           *sidecar-comments-usage*
 
-When editing any file (e.g., `post.md`, `main.rs`, `script.lua`):
+In any file buffer:
 
-<leader>so      Open comments sidecar
-<leader>sv      View comment for current line
-<leader>sa      Add new comment for current line
-<leader>sa (visual) Add comment for selected text or lines
+<leader>sa          Add a thread on the current line
+<leader>sa (visual) Add a thread on the selection. Charwise selections
+                    become exact ranges; a linewise selection of one line is
+                    a line thread, of several lines a range.
+<leader>sv          Open the comments file at the thread under the cursor
+<leader>so          Open the comments file
 
-In the comments file:
-<CR>            Jump to the referenced line in the source file
+Adding a thread saves the source buffer first (the CLI records the commented
+text from the saved file), creates the thread with the placeholder body
+`comment`, opens the comments file and puts you in insert mode on that body.
+Type the comment and save.
+
+In a `.comments` file:
+
+<CR>                Jump to the thread's location in the source
+<leader>sr          Reply to the thread under the cursor (same placeholder
+                    flow as adding)
+
+EDITING BY HAND                                 *sidecar-comments-editing*
+
+The comments file is meant to be edited directly. You can:
+
+- change the text of any message (a message body may not be empty),
+- delete a whole thread (this is how a thread is resolved): delete from its
+  `[@th_<id> ...]` line through its `[/@th_<id>]` line, plus one blank line
+  next to it, so exactly one blank line still separates the remaining
+  threads. To delete the last remaining thread, empty the file entirely,
+  including the `<!-- sidecar-format: 2 -->` line,
+- add a reply by hand: a blank line, a `---user` line, then the text,
+  placed before the thread's closing `[/@th_<id>]` line.
+
+On save, the plugin runs `sidecar fix --add-missing-message-ids`, which gives
+hand-written messages their IDs and metadata, and reloads the buffer.
+
+Do not edit the `[@th_...]` header, the `<!-- sidecar-tracking: ... -->` line
+or `<!-- sidecar-meta: ... -->` comments; add new threads with <leader>sa. If
+the CLI rejects the saved file (for example a missing or extra blank line, or
+an empty message), an error diagnostic shows the reason; fix the file and save
+again, or run `:!sidecar validate --file %`.
 
 FILE FORMAT                                     *sidecar-comments-format*
 
-Comments are stored in `.comments` sidecars with this format:
+See `sidecar --help` and the CLI's format reference. A thread looks like:
 >
-    [@c1a2b3c_1 5] Single line comment for line 5
+    <!-- sidecar-format: 2 -->
+    [@th_<thread-uuid> range:20:8-20:19]
+    <!-- sidecar-tracking: {"tracking":{...}} -->
+    ---user <!-- sidecar-meta: {"id":"<message-uuid>"} -->
+    Can this failure be handled?
 
-    [@c1a2b3c_2 10-15] Multi-line comment spanning lines 10-15
-    This comment continues on the next line.
-    And can have multiple paragraphs.
-
-    [@c1a2b3c_3 20:8-20:19 | aGVsbG8=] Comment for a specific text span
+    ---bot <!-- sidecar-meta: {"id":"<message-uuid>"} -->
+    Yes. I updated the error path so that ...
+    [/@th_<thread-uuid>]
 <
+Locations are `file`, `line:N`, `range:L:C-L:C` (1-based UTF-8 byte columns,
+end exclusive), `lost`, or `unresolved`. `---user` messages are from people,
+`---bot` messages from agents.
 
-The header inside `[...]` contains:
-- `@id` - Unique comment identifier (required — do not remove or edit)
-- `reference` - Location in the source file:
-  - `N` - Line N
-  - `N-M` - Lines N through M
-  - `N:C-M:D` - Exact columns from line N, col C to line M, col D
-  - `N:C-D` - Columns C to D on line N
-  - `-1` - Invalid line reference (treated as line 1). A diagnostic error
-    is shown in the sidecar file and the comment is highlighted on the
-    first source line for navigation.
-- `| base64` - Optional base64-encoded anchor text for range comments (used to
-delete-detect when the commented source text changes)
+TRACKING SOURCE EDITS                           *sidecar-comments-tracking*
 
-Text after `]` is the comment content. Everything between the header and the
-next header (or EOF) belongs to that comment.
+Line and range threads follow your edits through extmarks. When you save the
+source, the plugin sends their new positions to `sidecar editor-update`. A
+thread whose text you deleted becomes `unresolved`: it keeps its
+conversation, loses its highlight, and gets a warning diagnostic in the
+comments file. Move it back with `sidecar thread move`, or let
+`sidecar sync` find its text again. A line thread follows its line: rewriting
+the line's text (`cc`, `S`) keeps it; deleting the line makes it
+`unresolved`.
 
-EXTERNAL RESPONSES/EDITS                                  *sidecar-comments-edits*
+Positions are only sent when the buffer is written to its own file, and the
+CLI rejects them if the saved file differs from the buffer (for example when a
+formatter rewrote it after the write).
 
-An external process (like an agent or another user) may reply in the body of an existing comment. 
-Locate the stable `@id` in its header, never edit that header or its location, and use a recognizable
-agent reply block (the convention the `local-sidecar-comment-discussion` skill
-uses; a thread whose last entry is a 🤖 block is awaiting the user):
->
-    [@c1a2b3c_2 10-15] Can this failure be handled?
-    ---
+A thread is only highlighted when its stored coordinates were captured from
+exactly the text in the buffer. Threads stored against other text (the file
+changed outside Neovim, or another writer added or moved a thread while the
+buffer has unsaved edits) are left unhighlighted with a warning. On the next
+save the plugin runs `sidecar sync`, which re-matches them by their text, or
+marks them unresolved if they cannot be found.
 
-    🤖 Yes. I updated the error path so that ...
+If the comments buffer has unsaved edits when you save the source, positions
+are not sent until you save the comments file and then save the source again,
+and you are warned.
 
-    ---
+OTHER WRITERS                                   *sidecar-comments-writers*
 
-    Actually, a better option would be...
-
-<
-
-The plugin imports an externally changed sidecar before it rewrites one during
-a source save. If both the sidecar buffer has unsaved Neovim edits and another
-process changed the file, it warns and refuses to overwrite either version.
-
-Use normal mode for whole-line comments, visual mode for exact spans.
-
-EXAMPLE WORKFLOW                                *sidecar-comments-example*
-
-1. Open your source file
-2. Place cursor on a line you want to comment
-3. Press <leader>sa to add a comment, or visually select text first for a
-   column-aware comment
-4. Type your comment in the sidecar window
-5. Press <CR> on any comment line to jump back to the source
-6. Commented lines show red line numbers
+Agents and other tools should change threads through the CLI
+(`sidecar message add --author-kind agent ...`), which locks the file. When
+Neovim regains focus the plugin rereads every sidecar and reloads unmodified
+comments buffers that changed on disk; comments buffers with unsaved edits are
+left alone. Threads another writer moved are re-placed from the file when the
+source buffer matches the saved file (otherwise see
+|sidecar-comments-tracking|), and your unsaved moves of the other threads are
+kept.
 
 CONFIGURATION                                   *sidecar-comments-config*
 
 Default configuration:
 >
     require('custom.sidecar_comments').setup({
+      cmd = 'sidecar',                 -- CLI executable
       sidecar_ext = '.comments',       -- Suffix added to source files
-      highlight_group = 'CommentLineNr', -- Highlight group for line numbers
-      range_highlight_group = 'SidecarCommentRange', -- Highlight for commented text
-      sign_priority = 10,              -- Priority of line number highlights
-      sort_comments = false,           -- Auto-sort comments by document order on save
-    })
-<
-
-When `sort_comments = true`, comments are automatically reordered by their
-position in the source file (by start line, then start column, then end line)
-every time the source buffer or sidecar is saved.
-
-You can also sort manually with:
->
-    require('custom.sidecar_comments').sort_comments()
-<
-Or pass a specific file path:
->
-    require('custom.sidecar_comments').sort_comments('/path/to/file.rs')
-<
-
-You can customize the highlight color:
->
-    vim.api.nvim_set_hl(0, 'CommentLineNr', {
-      fg = '#ff6b6b',  -- Red color
-      bold = true,
+      placeholder = 'comment',         -- Body of new threads and replies
+      author_name = nil,               -- Optional --author-name for your messages
+      highlight_group = 'CommentLineNr', -- Line number of commented lines
+      range_highlight_group = 'SidecarCommentRange', -- Commented text
+      priority = 10,                   -- Extmark priority
     })
 <
 
 KEYMAPS                                         *sidecar-comments-keymaps*
 
-Default keymaps (in source files):
+In source files:
 <leader>so      🛵 [S]idecarComments [O]pen
 <leader>sv      🛵 [S]idecarComments [V]iew
 <leader>sa      🛵 [S]idecarComments [A]dd (normal/visual mode)
 
 In sidecar files:
-<CR>            🛵 Jump to source line
+<CR>            🛵 Jump to source
+<leader>sr      🛵 [S]idecarComments [R]eply
 
 CREDITS                                         *sidecar-comments-credits*
 

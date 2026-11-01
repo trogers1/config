@@ -1,90 +1,93 @@
+-- Neovim client for the `sidecar` CLI (https://github.com/trogers1/sidecar-comments).
+--
+-- The CLI owns the `.comments` format, IDs, ordering, source tracking, locking
+-- and revisions.  This module only maps CLI locations to extmarks, reports
+-- editor positions back on save, and drives the CLI from keymaps.  It never
+-- parses or serializes `.comments` text itself.
 local M = {}
 
 M.config = {
+  cmd = 'sidecar',
   sidecar_ext = '.comments',
-  comment_pattern = '^%[(.-)%]%s*(.*)$',
+  -- Body of a newly created thread or reply; the cursor lands on it to type over.
+  placeholder = 'comment',
+  author_name = nil,
   highlight_group = 'CommentLineNr',
   range_highlight_group = 'SidecarCommentRange',
-  sign_priority = 10,
-  sort_comments = true,
+  priority = 10,
 }
 
-M.highlight_ns_id = vim.api.nvim_create_namespace 'sidecar_comments_highlight'
+M.protocol = 2
+-- EditorUpdateRequest.updates maxItems in the CLI's v2 schema.
+M.max_editor_updates = 256
 M.comment_ns_id = vim.api.nvim_create_namespace 'sidecar_comments_tracking'
 M.diagnostic_ns_id = vim.api.nvim_create_namespace 'sidecar_comments_diagnostics'
 M.state = {
   by_src_path = {},
-  next_id = 0,
 }
 
-local normalize_comment_for_buffer
-local comment_is_deleted
-
-local function valid_buf(bufnr)
-  return bufnr and vim.api.nvim_buf_is_valid(bufnr) and vim.api.nvim_buf_is_loaded(bufnr)
+local CliError = {}
+CliError.__index = CliError
+CliError.__tostring = function(err)
+  return string.format('sidecar %s failed for %s: %s', err.command, err.file, err.message)
 end
 
-local function get_buf_lines(bufnr)
-  if not valid_buf(bufnr) then
-    return {}
+-- Errors meaning the CLI refused to read the sidecar or source contents.
+local REJECTED_CODES = { validation = true, repair = true }
+
+--- Run one CLI command against a sidecar and return its JSON `result` and `changed`.
+--- Throws a CliError carrying the CLI's error code on failure.
+local function run_cli(opts)
+  local cmd = { M.config.cmd, '--output', 'json' }
+  vim.list_extend(cmd, opts.args)
+  vim.list_extend(cmd, { '--file', opts.file })
+
+  local completed = vim.system(cmd, { stdin = opts.stdin, text = true }):wait()
+  local command = table.concat(opts.args, ' ')
+
+  if completed.code ~= 0 then
+    local ok, envelope = pcall(vim.json.decode, completed.stderr)
+    if not ok or type(envelope) ~= 'table' or type(envelope.error) ~= 'table' then
+      error(string.format('sidecar %s exited %d without a JSON error: %s', command, completed.code, completed.stderr))
+    end
+    error(setmetatable({
+      command = command,
+      file = opts.file,
+      code = envelope.error.code,
+      message = envelope.error.message,
+      details = envelope.error.details,
+    }, CliError))
   end
 
-  return vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  local envelope = vim.json.decode(completed.stdout)
+  if envelope.protocol ~= M.protocol then
+    error(string.format('sidecar %s answered with protocol %s; this plugin speaks protocol %d', command, tostring(envelope.protocol), M.protocol))
+  end
+  return envelope.result, envelope.changed
 end
 
-local function read_file_lines(filepath)
-  local file = io.open(filepath, 'r')
-  if not file then
-    return {}
-  end
-
-  local lines = {}
-  for line in file:lines() do
-    table.insert(lines, line)
-  end
-
-  file:close()
-  return lines
+local function is_rejected(err)
+  return getmetatable(err) == CliError and REJECTED_CODES[err.code] == true
 end
 
-local function write_file_lines(filepath, lines)
-  local file = assert(io.open(filepath, 'w'))
-
-  for i, line in ipairs(lines) do
-    file:write(line)
-    if i < #lines then
-      file:write '\n'
+--- Wrap a keymap callback so a CliError surfaces as readable text: Neovim
+--- prints an empty message for table errors raised from keymaps.
+local function loud(fn)
+  return function(...)
+    local ok, message = xpcall(fn, function(err)
+      if getmetatable(err) == CliError then
+        return tostring(err)
+      end
+      return debug.traceback(err, 2)
+    end, ...)
+    if not ok then
+      error(message, 0)
     end
   end
-
-  file:close()
 end
 
--- Deliberately use the file contents rather than mtime: an external process can write
--- more than once within a filesystem timestamp's resolution.
-local function sidecar_disk_snapshot(filepath)
-  local exists = vim.fn.filereadable(filepath) == 1
-  local lines = exists and read_file_lines(filepath) or {}
-  return lines, string.format('%d\0%s', exists and 1 or 0, table.concat(lines, '\n'))
-end
-
-local function delete_file_if_exists(filepath)
-  if vim.fn.filereadable(filepath) == 1 then
-    vim.fn.delete(filepath)
-  end
-end
-
-local function split_text_lines(text)
-  if text == nil or text == '' then
-    return { '' }
-  end
-
-  return vim.split(text, '\n', { plain = true, trimempty = false })
-end
-
-local function get_line_length(bufnr, line_num)
-  local line = vim.api.nvim_buf_get_lines(bufnr, line_num - 1, line_num, false)[1] or ''
-  return #line
+local function valid_buf(bufnr)
+  return bufnr ~= nil and vim.api.nvim_buf_is_valid(bufnr) and vim.api.nvim_buf_is_loaded(bufnr)
 end
 
 local function find_buffer_by_name(filepath)
@@ -95,626 +98,13 @@ local function find_buffer_by_name(filepath)
   end
 end
 
-local function get_or_create_state(src_path)
-  local state = M.state.by_src_path[src_path]
-  if not state then
-    state = {
-      comments = {},
-      initialized = false,
-      src_buf = nil,
-      -- Snapshot of the sidecar last incorporated by this plugin.  It lets us
-      -- distinguish an external edit from our own serialization.
-      sidecar_fingerprint = nil,
-      external_conflict_fingerprint = nil,
-    }
-    M.state.by_src_path[src_path] = state
-  end
-
-  return state
+local function is_sidecar_path(filepath)
+  return vim.endswith(filepath, M.config.sidecar_ext)
 end
 
-local function new_comment_id()
-  M.state.next_id = M.state.next_id + 1
-  return string.format('c%x_%d', vim.uv.hrtime(), M.state.next_id)
-end
-
-local function parse_comment_header(header)
-  local anchor_encoded
-  local base_header, maybe_anchor = header:match '^(.-)%s+|%s+(.+)$'
-  if base_header then
-    header = base_header
-    anchor_encoded = maybe_anchor
-  end
-
-  local anchor_text = nil
-  if anchor_encoded then
-    local ok, decoded = pcall(vim.base64.decode, anchor_encoded)
-    if ok then
-      anchor_text = decoded
-    end
-  end
-
-  local id, reference = header:match '^@([^%s]+)%s+(.+)$'
-
-  if not reference then
-    reference = header
-  end
-
-  local location = M.parse_reference(reference)
-  if not location then
-    return nil
-  end
-
-  return {
-    id = id,
-    anchor_text = anchor_text,
-    kind = (location.start_col and location.end_col) and 'range' or 'line',
-    start_line = location.start_line,
-    start_col = location.start_col,
-    end_line = location.end_line,
-    end_col = location.end_col,
-  }
-end
-
-local function parse_sidecar_lines(lines)
-  local comments = {}
-  local current_comment = nil
-  local seen_ids = {}
-
-  for line_num, line in ipairs(lines) do
-    local header, text = line:match(M.config.comment_pattern)
-    local parsed = header and parse_comment_header(header) or nil
-
-    if parsed then
-      if current_comment then
-        table.insert(comments, current_comment)
-      end
-
-      local comment_id = parsed.id
-      if not comment_id or seen_ids[comment_id] then
-        comment_id = new_comment_id()
-      end
-      seen_ids[comment_id] = true
-
-      local invalid_line_ref = parsed.start_line == -1 or parsed.end_line == -1
-
-      current_comment = {
-        id = comment_id,
-        anchor_text = parsed.anchor_text,
-        kind = parsed.kind,
-        start_line = parsed.start_line,
-        start_col = parsed.start_col,
-        end_line = parsed.end_line,
-        end_col = parsed.end_col,
-        text = text,
-        sidecar_line = line_num,
-        invalid_line_ref = invalid_line_ref,
-        orig_start_line = parsed.start_line,
-        orig_end_line = parsed.end_line,
-      }
-    elseif current_comment then
-      current_comment.text = current_comment.text .. '\n' .. line
-    end
-  end
-
-  if current_comment then
-    table.insert(comments, current_comment)
-  end
-
-  return comments
-end
-
-local function get_current_location(state, comment)
-  if not valid_buf(state.src_buf) or not comment.extmark_id then
-    return {
-      start_line = comment.start_line,
-      start_col = comment.start_col,
-      end_line = comment.end_line,
-      end_col = comment.end_col,
-    }
-  end
-
-  local extmark = vim.api.nvim_buf_get_extmark_by_id(state.src_buf, M.comment_ns_id, comment.extmark_id, { details = true })
-  if #extmark == 0 then
-    return {
-      start_line = comment.start_line,
-      start_col = comment.start_col,
-      end_line = comment.end_line,
-      end_col = comment.end_col,
-    }
-  end
-
-  local details = extmark[3] or {}
-  return {
-    start_line = extmark[1] + 1,
-    start_col = comment.kind == 'range' and (extmark[2] + 1) or nil,
-    end_line = (details.end_row or extmark[1]) + 1,
-    end_col = comment.kind == 'range' and (details.end_col or extmark[2]) or nil,
-  }
-end
-
-local function get_text_for_location(bufnr, location)
-  if not valid_buf(bufnr) then
-    return ''
-  end
-
-  local normalized = normalize_comment_for_buffer(bufnr, {
-    kind = 'range',
-    start_line = location.start_line,
-    start_col = location.start_col,
-    end_line = location.end_line,
-    end_col = location.end_col,
-  })
-
-  if normalized.start_line == normalized.end_line and normalized.start_col >= normalized.end_col then
-    return ''
-  end
-
-  local lines = vim.api.nvim_buf_get_text(bufnr, normalized.start_line - 1, normalized.start_col, normalized.end_line - 1, normalized.end_col, {})
-
-  return table.concat(lines, '\n')
-end
-
-local function get_current_comment_text(state, comment)
-  if comment.kind ~= 'range' or not valid_buf(state.src_buf) then
-    return nil
-  end
-
-  return get_text_for_location(state.src_buf, get_current_location(state, comment))
-end
-
-local function ensure_anchor_text(state, comment)
-  if comment.kind ~= 'range' or comment.anchor_text ~= nil then
-    return
-  end
-
-  comment.anchor_text = get_current_comment_text(state, comment)
-end
-
-local function refresh_comment_locations(state)
-  if not valid_buf(state.src_buf) then
-    return
-  end
-
-  for _, comment in ipairs(state.comments) do
-    ensure_anchor_text(state, comment)
-    local location = get_current_location(state, comment)
-    comment.start_line = location.start_line
-    comment.end_line = location.end_line
-
-    if comment.kind == 'range' then
-      comment.start_col = location.start_col
-      comment.end_col = location.end_col
-    else
-      comment.start_col = nil
-      comment.end_col = nil
-    end
-  end
-end
-
-normalize_comment_for_buffer = function(bufnr, comment)
-  local line_count = math.max(vim.api.nvim_buf_line_count(bufnr), 1)
-  local start_line = math.min(math.max(comment.start_line or 1, 1), line_count)
-  local end_line = math.min(math.max(comment.end_line or start_line, start_line), line_count)
-
-  if comment.kind == 'range' then
-    local start_col = math.min(math.max((comment.start_col or 1) - 1, 0), get_line_length(bufnr, start_line))
-    local end_col = math.min(math.max(comment.end_col or start_col, 0), get_line_length(bufnr, end_line))
-
-    if start_line == end_line and end_col < start_col then
-      end_col = start_col
-    end
-
-    return {
-      start_line = start_line,
-      start_col = start_col,
-      end_line = end_line,
-      end_col = end_col,
-    }
-  end
-
-  return {
-    start_line = start_line,
-    start_col = 0,
-    end_line = end_line,
-    end_col = get_line_length(bufnr, end_line),
-  }
-end
-
-local function apply_comments_to_buffer(state, src_buf)
-  state.src_buf = src_buf
-  vim.api.nvim_buf_clear_namespace(src_buf, M.comment_ns_id, 0, -1)
-
-  for _, comment in ipairs(state.comments) do
-    local location = normalize_comment_for_buffer(src_buf, comment)
-    comment.start_line = location.start_line
-    comment.end_line = location.end_line
-
-    if comment.kind == 'range' then
-      comment.start_col = location.start_col + 1
-      comment.end_col = location.end_col
-    else
-      comment.start_col = nil
-      comment.end_col = nil
-    end
-
-    comment.extmark_id = vim.api.nvim_buf_set_extmark(src_buf, M.comment_ns_id, location.start_line - 1, location.start_col, {
-      end_row = location.end_line - 1,
-      end_col = location.end_col,
-      right_gravity = true,
-      end_right_gravity = false,
-      strict = false,
-    })
-  end
-end
-
-local function find_comment(state, comment_id)
-  for _, comment in ipairs(state.comments) do
-    if comment.id == comment_id then
-      return comment
-    end
-  end
-end
-
-local function serialize_comment(comment)
-  local start_line = comment.invalid_line_ref and comment.orig_start_line or comment.start_line
-  local end_line = comment.invalid_line_ref and comment.orig_end_line or comment.end_line
-  local reference = M.format_reference(start_line, end_line, comment.start_col, comment.end_col, comment.kind)
-  local text_lines = split_text_lines(comment.text)
-  local header = string.format('@%s %s', comment.id, reference)
-
-  if comment.kind == 'range' and comment.anchor_text and comment.anchor_text ~= '' then
-    header = string.format('%s | %s', header, vim.base64.encode(comment.anchor_text))
-  end
-
-  local serialized = { string.format('[%s] %s', header, text_lines[1] or '') }
-
-  for i = 2, #text_lines do
-    table.insert(serialized, text_lines[i])
-  end
-
-  return serialized
-end
-
-local function sort_comments_by_location(state)
-  table.sort(state.comments, function(a, b)
-    if a.start_line ~= b.start_line then
-      return a.start_line < b.start_line
-    end
-    if (a.start_col or 1) ~= (b.start_col or 1) then
-      return (a.start_col or 1) < (b.start_col or 1)
-    end
-    if (a.end_line or a.start_line) ~= (b.end_line or b.start_line) then
-      return (a.end_line or a.start_line) < (b.end_line or b.start_line)
-    end
-    return a.id < b.id
-  end)
-end
-
-local function serialize_state(src_path)
-  local state = get_or_create_state(src_path)
-  refresh_comment_locations(state)
-
-  if M.config.sort_comments then
-    sort_comments_by_location(state)
-  end
-
-  local lines = {}
-  local line_by_id = {}
-  local line_range_by_id = {}
-
-  for _, comment in ipairs(state.comments) do
-    local start_line = #lines + 1
-    local serialized = serialize_comment(comment)
-
-    line_by_id[comment.id] = start_line
-    line_range_by_id[comment.id] = {
-      start_line = start_line,
-      end_line = start_line + #serialized - 1,
-    }
-
-    vim.list_extend(lines, serialized)
-  end
-
-  return lines, line_by_id, line_range_by_id
-end
-
-local function set_sidecar_buffer_lines(sidecar_buf, lines, preserve_view)
-  if not valid_buf(sidecar_buf) then
-    return
-  end
-
-  local win = nil
-  local cursor = nil
-
-  if preserve_view then
-    for _, candidate in ipairs(vim.api.nvim_list_wins()) do
-      if vim.api.nvim_win_get_buf(candidate) == sidecar_buf then
-        win = candidate
-        cursor = vim.api.nvim_win_get_cursor(candidate)
-        break
-      end
-    end
-  end
-
-  vim.api.nvim_buf_set_lines(sidecar_buf, 0, -1, false, lines)
-
-  if win and cursor then
-    local max_line = math.max(vim.api.nvim_buf_line_count(sidecar_buf), 1)
-    vim.api.nvim_win_set_cursor(win, { math.min(cursor[1], max_line), cursor[2] })
-  end
-end
-
-local function update_sidecar_diagnostics(sidecar_buf, src_path, line_range_by_id)
-  if not valid_buf(sidecar_buf) then
-    return
-  end
-
-  local state = get_or_create_state(src_path)
-  local diagnostics = {}
-  local sidecar_lines = get_buf_lines(sidecar_buf)
-
-  for _, comment in ipairs(state.comments) do
-    local line_range = line_range_by_id[comment.id]
-    if line_range then
-      local end_line_text = sidecar_lines[line_range.end_line] or ''
-
-      if comment.invalid_line_ref then
-        table.insert(diagnostics, {
-          lnum = line_range.start_line - 1,
-          end_lnum = line_range.end_line - 1,
-          col = 0,
-          end_col = math.max(#end_line_text, 1),
-          severity = vim.diagnostic.severity.ERROR,
-          source = 'sidecar-comments',
-          message = 'Comment has an invalid line reference (-1)',
-        })
-      elseif comment_is_deleted(state, comment) then
-        table.insert(diagnostics, {
-          lnum = line_range.start_line - 1,
-          end_lnum = line_range.end_line - 1,
-          col = 0,
-          end_col = math.max(#end_line_text, 1),
-          severity = vim.diagnostic.severity.ERROR,
-          source = 'sidecar-comments',
-          message = 'The text for this comment appears to have been deleted',
-        })
-      end
-    end
-  end
-
-  vim.diagnostic.set(M.diagnostic_ns_id, sidecar_buf, diagnostics)
-end
-
-local function render_sidecar(src_path, opts)
-  opts = opts or {}
-  local sidecar_path = M.get_sidecar_path(src_path)
-  local lines, line_by_id, line_range_by_id = serialize_state(src_path)
-  local sidecar_buf = opts.sidecar_buf or find_buffer_by_name(sidecar_path)
-  local sidecar_exists = vim.fn.filereadable(sidecar_path) == 1
-
-  if opts.update_buffer and valid_buf(sidecar_buf) then
-    set_sidecar_buffer_lines(sidecar_buf, lines, opts.preserve_view)
-    update_sidecar_diagnostics(sidecar_buf, src_path, line_range_by_id)
-    if opts.mark_unmodified then
-      vim.bo[sidecar_buf].modified = false
-    end
-  end
-
-  if #lines == 0 then
-    if sidecar_exists then
-      delete_file_if_exists(sidecar_path)
-    end
-    if opts.write_file then
-      local state = get_or_create_state(src_path)
-      local _, fingerprint = sidecar_disk_snapshot(sidecar_path)
-      state.sidecar_fingerprint = fingerprint
-      state.external_conflict_fingerprint = nil
-    end
-
-    if valid_buf(sidecar_buf) then
-      vim.bo[sidecar_buf].modified = false
-    end
-  elseif opts.write_file then
-    write_file_lines(sidecar_path, lines)
-    local state = get_or_create_state(src_path)
-    local _, fingerprint = sidecar_disk_snapshot(sidecar_path)
-    state.sidecar_fingerprint = fingerprint
-    state.external_conflict_fingerprint = nil
-    if valid_buf(sidecar_buf) then
-      vim.bo[sidecar_buf].modified = false
-    end
-  end
-
-  return line_by_id
-end
-
-local function load_comments_for_buffer(src_buf)
-  local src_path = vim.api.nvim_buf_get_name(src_buf)
-  local sidecar_path = M.get_sidecar_path(src_path)
-  local sidecar_buf = find_buffer_by_name(sidecar_path)
-  local source_lines = valid_buf(sidecar_buf) and get_buf_lines(sidecar_buf) or read_file_lines(sidecar_path)
-  local state = get_or_create_state(src_path)
-
-  state.comments = parse_sidecar_lines(source_lines)
-  state.initialized = true
-  local _, fingerprint = sidecar_disk_snapshot(sidecar_path)
-  state.sidecar_fingerprint = fingerprint
-  state.external_conflict_fingerprint = nil
-  apply_comments_to_buffer(state, src_buf)
-
-  return state
-end
-
-local function ensure_comments_for_buffer(src_buf)
-  local src_path = vim.api.nvim_buf_get_name(src_buf)
-  local state = get_or_create_state(src_path)
-
-  if not state.initialized or state.src_buf ~= src_buf or not valid_buf(state.src_buf) then
-    return load_comments_for_buffer(src_buf)
-  end
-
-  return state
-end
-
-local function merge_sidecar_into_state(src_path, comments, preserve_positions)
-  local state = get_or_create_state(src_path)
-
-  if preserve_positions then
-    refresh_comment_locations(state)
-  end
-
-  local existing_by_id = {}
-  for _, comment in ipairs(state.comments) do
-    existing_by_id[comment.id] = comment
-  end
-
-  local merged = {}
-  for _, parsed in ipairs(comments) do
-    local comment = parsed.id and existing_by_id[parsed.id] or nil
-
-    if comment then
-      comment.text = parsed.text
-      comment.kind = parsed.kind or comment.kind
-      if parsed.anchor_text ~= nil then
-        comment.anchor_text = parsed.anchor_text
-      end
-      if not preserve_positions then
-        comment.start_line = parsed.start_line
-        comment.start_col = parsed.start_col
-        comment.end_line = parsed.end_line
-        comment.end_col = parsed.end_col
-      end
-      comment.invalid_line_ref = parsed.invalid_line_ref
-      comment.orig_start_line = parsed.orig_start_line
-      comment.orig_end_line = parsed.orig_end_line
-    else
-      comment = {
-        id = parsed.id or new_comment_id(),
-        kind = parsed.kind,
-        start_line = parsed.start_line,
-        start_col = parsed.start_col,
-        end_line = parsed.end_line,
-        end_col = parsed.end_col,
-        text = parsed.text,
-        anchor_text = parsed.anchor_text,
-        invalid_line_ref = parsed.invalid_line_ref,
-        orig_start_line = parsed.orig_start_line,
-        orig_end_line = parsed.orig_end_line,
-      }
-    end
-
-    table.insert(merged, comment)
-  end
-
-  state.comments = merged
-  state.initialized = true
-
-  if valid_buf(state.src_buf) then
-    apply_comments_to_buffer(state, state.src_buf)
-  end
-
-  return state
-end
-
-local function sync_state_from_sidecar_buffer(sidecar_buf, preserve_positions)
-  local sidecar_path = vim.api.nvim_buf_get_name(sidecar_buf)
-  local src_path = M.get_source_path(sidecar_path)
-  local comments = parse_sidecar_lines(get_buf_lines(sidecar_buf))
-  local state = get_or_create_state(src_path)
-
-  if not valid_buf(state.src_buf) then
-    state.src_buf = find_buffer_by_name(src_path)
-  end
-
-  return merge_sidecar_into_state(src_path, comments, preserve_positions)
-end
-
--- Import edits made by another process (for example, an agent) before this
--- plugin serializes a sidecar.  A modified Neovim buffer and a changed file
--- are a real conflict; do not pick a winner and silently discard a reply.
-local function import_external_sidecar_changes(src_path, opts)
-  -- `string.gsub` returns a second, numeric result. Be defensive in case a
-  -- caller forwards it accidentally as the optional argument.
-  opts = type(opts) == 'table' and opts or {}
-  local state = get_or_create_state(src_path)
-  local sidecar_path = M.get_sidecar_path(src_path)
-  local disk_lines, disk_fingerprint = sidecar_disk_snapshot(sidecar_path)
-
-  if state.sidecar_fingerprint == nil then
-    state.sidecar_fingerprint = disk_fingerprint
-    return true
-  end
-
-  if state.sidecar_fingerprint == disk_fingerprint then
-    return true
-  end
-
-  local sidecar_buf = find_buffer_by_name(sidecar_path)
-  if valid_buf(sidecar_buf) and vim.bo[sidecar_buf].modified then
-    if state.external_conflict_fingerprint ~= disk_fingerprint then
-      vim.notify('Sidecar changed on disk while it has unsaved Neovim edits; refusing to overwrite either version', vim.log.levels.WARN)
-      state.external_conflict_fingerprint = disk_fingerprint
-    end
-    return false
-  end
-
-  merge_sidecar_into_state(src_path, parse_sidecar_lines(disk_lines), state.initialized)
-  state.sidecar_fingerprint = disk_fingerprint
-  state.external_conflict_fingerprint = nil
-
-  if valid_buf(sidecar_buf) and opts.update_buffer ~= false then
-    render_sidecar(src_path, {
-      sidecar_buf = sidecar_buf,
-      update_buffer = true,
-      preserve_view = true,
-      mark_unmodified = true,
-    })
-  end
-
-  return true
-end
-
-function M.parse_reference(reference)
-  local start_line, start_col, end_line, end_col = reference:match '^(-?%d+):(%d+)%-(-?%d+):(%d+)$'
-  if start_line then
-    return {
-      start_line = tonumber(start_line),
-      start_col = tonumber(start_col),
-      end_line = tonumber(end_line),
-      end_col = tonumber(end_col),
-    }
-  end
-
-  start_line, start_col, end_col = reference:match '^(-?%d+):(%d+)%-(%d+)$'
-  if start_line then
-    return {
-      start_line = tonumber(start_line),
-      start_col = tonumber(start_col),
-      end_line = tonumber(start_line),
-      end_col = tonumber(end_col),
-    }
-  end
-
-  start_line, end_line = reference:match '^(-?%d+)%-(-?%d+)$'
-  if start_line then
-    return {
-      start_line = tonumber(start_line),
-      end_line = tonumber(end_line),
-    }
-  end
-
-  start_line = reference:match '^(-?%d+)$'
-  if start_line then
-    return {
-      start_line = tonumber(start_line),
-      end_line = tonumber(start_line),
-    }
-  end
-end
-
-function M.parse_sidecar(filepath)
-  return parse_sidecar_lines(read_file_lines(filepath))
+local function is_source_buffer(bufnr)
+  local filepath = vim.api.nvim_buf_get_name(bufnr)
+  return filepath ~= '' and vim.bo[bufnr].buftype == '' and not is_sidecar_path(filepath)
 end
 
 function M.get_sidecar_path(src_filepath)
@@ -722,321 +112,626 @@ function M.get_sidecar_path(src_filepath)
 end
 
 function M.get_source_path(sidecar_filepath)
-  -- Do not leak gsub's second return value (the substitution count) to a
-  -- caller that forwards this function call as an argument.
-  local source_path = sidecar_filepath:gsub(vim.pesc(M.config.sidecar_ext) .. '$', '')
-  return source_path
+  return sidecar_filepath:sub(1, #sidecar_filepath - #M.config.sidecar_ext)
 end
 
-function M.format_reference(start_line, end_line, start_col, end_col, kind)
-  if kind == 'range' and start_col and end_col then
-    return string.format('%d:%d-%d:%d', start_line, start_col, end_line, end_col)
-  end
-
-  if start_line == end_line then
-    return tostring(start_line)
-  end
-
-  return string.format('%d-%d', start_line, end_line)
+--- Whether the file on disk ends in a newline, as of the last read or write.
+local function record_final_newline(opts)
+  local bo = vim.bo[opts.bufnr]
+  vim.b[opts.bufnr].sidecar_final_newline = bo.eol or (opts.after_write and bo.fixeol and not bo.binary)
 end
 
-function M.format_comment(start_line, end_line, text, start_col, end_col, comment_id, kind)
-  local range = M.format_reference(start_line, end_line, start_col, end_col, kind or ((start_col and end_col) and 'range' or 'line'))
-  if comment_id then
-    return string.format('[@%s %s] %s', comment_id, range, text)
+--- The CLI's normalized source revision for the buffer's text, assuming the
+--- file's final newline as last read or written.
+local function buffer_revision(bufnr)
+  local final_newline = vim.b[bufnr].sidecar_final_newline
+  if final_newline == nil then
+    error(string.format('No recorded read or write for %s', vim.api.nvim_buf_get_name(bufnr)))
   end
-  return string.format('[%s] %s', range, text)
+
+  local is_empty = vim.api.nvim_buf_call(bufnr, function()
+    return vim.fn.line2byte(vim.fn.line '$' + 1) == -1
+  end)
+  if is_empty then
+    return 'sha256:' .. vim.fn.sha256 ''
+  end
+
+  local text = table.concat(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), '\n')
+  return 'sha256:' .. vim.fn.sha256(text .. (final_newline and '\n' or ''))
 end
 
-function M.comment_contains_position(comment, line_num, col_num)
-  if line_num < comment.start_line or line_num > comment.end_line then
+local function author_args()
+  local args = { '--author-kind', 'human' }
+  if M.config.author_name then
+    vim.list_extend(args, { '--author-name', M.config.author_name })
+  end
+  return args
+end
+
+--- Format a CLI location as a `--location` flag value.
+local function location_arg(location)
+  if location.kind == 'line' then
+    return string.format('line:%d', location.line)
+  end
+  return string.format('range:%d:%d-%d:%d', location.start_line, location.start_column, location.end_line, location.end_column)
+end
+
+local function is_tracked(location)
+  return location.kind == 'line' or location.kind == 'range'
+end
+
+local function reset_state(state)
+  if valid_buf(state.src_buf) then
+    vim.api.nvim_buf_clear_namespace(state.src_buf, M.comment_ns_id, 0, -1)
+  end
+  state.threads_by_id = {}
+  state.loaded_location_by_id = {}
+  state.extmark_by_thread_id = {}
+  state.thread_id_by_extmark = {}
+end
+
+local function get_or_create_state(src_path)
+  local state = M.state.by_src_path[src_path]
+  if not state then
+    state = {
+      src_buf = nil,
+      -- Locations as last read from the sidecar, to tell our extmark movement
+      -- apart from moves made by another writer (for example, an agent).
+      loaded_location_by_id = {},
+      threads_by_id = {},
+      extmark_by_thread_id = {},
+      thread_id_by_extmark = {},
+      unplaced_count = 0,
+    }
+    M.state.by_src_path[src_path] = state
+  end
+  return state
+end
+
+local function remove_extmark(state, thread_id)
+  local extmark_id = state.extmark_by_thread_id[thread_id]
+  if not extmark_id then
+    return
+  end
+  vim.api.nvim_buf_del_extmark(state.src_buf, M.comment_ns_id, extmark_id)
+  state.extmark_by_thread_id[thread_id] = nil
+  state.thread_id_by_extmark[extmark_id] = nil
+end
+
+-- CLI coordinates are 1-based UTF-8 byte columns with exclusive range ends;
+-- extmarks are 0-based byte columns with exclusive ends.  Range gravities keep
+-- insertions at either boundary outside the selection, as the CLI requires.
+-- Line threads are a zero-width mark at the line start, so rewriting the
+-- line's text (`cc`, `S`) keeps it while deleting the line invalidates it.
+local function place_extmark(state, thread)
+  local location = thread.location
+  local opts = {
+    id = state.extmark_by_thread_id[thread.id],
+    right_gravity = true,
+    invalidate = true,
+    number_hl_group = M.config.highlight_group,
+    priority = M.config.priority,
+  }
+  local row, col
+
+  if location.kind == 'line' then
+    row, col = location.line - 1, 0
+    opts.line_hl_group = M.config.range_highlight_group
+  else
+    row, col = location.start_line - 1, location.start_column - 1
+    opts.end_row, opts.end_col = location.end_line - 1, location.end_column - 1
+    opts.end_right_gravity = false
+    opts.hl_group = M.config.range_highlight_group
+  end
+
+  local extmark_id = vim.api.nvim_buf_set_extmark(state.src_buf, M.comment_ns_id, row, col, opts)
+  state.extmark_by_thread_id[thread.id] = extmark_id
+  state.thread_id_by_extmark[extmark_id] = thread.id
+end
+
+--- The thread's current location in the buffer, or nil when its text was deleted.
+local function extmark_location(state, thread)
+  local extmark = vim.api.nvim_buf_get_extmark_by_id(state.src_buf, M.comment_ns_id, state.extmark_by_thread_id[thread.id], { details = true })
+  local row, col, details = extmark[1], extmark[2], extmark[3]
+
+  if details.invalid then
+    return nil
+  end
+
+  if thread.location.kind == 'line' then
+    return { kind = 'line', line = row + 1 }
+  end
+
+  if row == details.end_row and col == details.end_col then
+    return nil
+  end
+
+  return {
+    kind = 'range',
+    start_line = row + 1,
+    start_column = col + 1,
+    end_line = details.end_row + 1,
+    end_column = details.end_col + 1,
+  }
+end
+
+--- Adopt a `thread list` result.  Threads whose stored location is unchanged
+--- since we last read it keep their extmark, which may have moved with unsaved
+--- edits.  Others are (re)placed only when their coordinates were captured
+--- from exactly the buffer's current text; the rest stay unplaced until a save
+--- lets `sidecar sync` re-match them.
+local function apply_threads(state, result)
+  local revision = buffer_revision(state.src_buf)
+  local threads_by_id = {}
+  local unplaced = 0
+
+  for _, thread in ipairs(result.threads) do
+    threads_by_id[thread.id] = thread
+    local has_mark = state.extmark_by_thread_id[thread.id] ~= nil
+    local unchanged = vim.deep_equal(thread.location, state.loaded_location_by_id[thread.id])
+
+    if not is_tracked(thread.location) then
+      remove_extmark(state, thread.id)
+    elseif not (unchanged and has_mark) then
+      if thread.tracking.source_revision == revision then
+        place_extmark(state, thread)
+      else
+        remove_extmark(state, thread.id)
+        unplaced = unplaced + 1
+      end
+    end
+  end
+
+  for thread_id in pairs(state.extmark_by_thread_id) do
+    if not threads_by_id[thread_id] then
+      remove_extmark(state, thread_id)
+    end
+  end
+
+  state.threads_by_id = threads_by_id
+  state.loaded_location_by_id = vim.iter(result.threads):fold({}, function(acc, thread)
+    acc[thread.id] = thread.location
+    return acc
+  end)
+
+  if unplaced > 0 and unplaced ~= state.unplaced_count then
+    vim.notify(
+      string.format(
+        '%d comment(s) on %s do not match the current text; `sidecar sync` will try to re-match them when you save, and any it cannot find become unresolved',
+        unplaced,
+        vim.api.nvim_buf_get_name(state.src_buf)
+      ),
+      vim.log.levels.WARN
+    )
+  end
+  state.unplaced_count = unplaced
+end
+
+local function list_threads(src_path)
+  return run_cli { args = { 'thread', 'list' }, file = M.get_sidecar_path(src_path) }
+end
+
+--- Read the sidecar for a source buffer and show its threads.  `reset`
+--- discards existing extmarks, which a reload leaves at stale rows.
+local function load_source_buffer(opts)
+  local src_buf = opts.bufnr
+  local src_path = vim.api.nvim_buf_get_name(src_buf)
+  local state = get_or_create_state(src_path)
+
+  if opts.reset or state.src_buf ~= src_buf then
+    reset_state(state)
+    state.src_buf = src_buf
+  end
+
+  local ok, result = pcall(list_threads, src_path)
+  if not ok then
+    if not is_rejected(result) then
+      error(result, 0)
+    end
+    reset_state(state)
+    vim.notify(tostring(result), vim.log.levels.ERROR)
+    return state
+  end
+
+  apply_threads(state, result)
+  return state
+end
+
+local function find_line(bufnr, text)
+  for line_num, line in ipairs(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)) do
+    if line:find(text, 1, true) then
+      return line_num
+    end
+  end
+end
+
+--- Header line of a thread in a sidecar buffer.
+local function find_thread_header(sidecar_buf, thread_id)
+  local line_num = find_line(sidecar_buf, '[@th_' .. thread_id .. ' ')
+  if not line_num then
+    error(string.format('Thread %s is not in %s', thread_id, vim.api.nvim_buf_get_name(sidecar_buf)))
+  end
+  return line_num
+end
+
+--- Show unresolved threads, or the CLI's reason for rejecting the file.  Only
+--- valid for a buffer whose text matches the file on disk.
+local function update_sidecar_diagnostics(sidecar_buf)
+  local sidecar_path = vim.api.nvim_buf_get_name(sidecar_buf)
+  local ok, result = pcall(list_threads, M.get_source_path(sidecar_path))
+
+  if not ok then
+    if not is_rejected(result) then
+      error(result, 0)
+    end
+    local repair = result.details and result.details.diagnostics and result.details.diagnostics[1]
+    vim.diagnostic.set(M.diagnostic_ns_id, sidecar_buf, {
+      {
+        lnum = repair and repair.line and (repair.line - 1) or 0,
+        col = 0,
+        severity = vim.diagnostic.severity.ERROR,
+        source = 'sidecar',
+        message = string.format('Sidecar rejected this file (%s). Fix it and save again, or run :!sidecar validate --file %s', result.message, sidecar_path),
+      },
+    })
     return false
   end
 
-  if comment.kind ~= 'range' or not comment.start_col or not comment.end_col then
-    return true
+  local diagnostics = {}
+  for _, thread in ipairs(result.threads) do
+    if thread.location.kind == 'unresolved' then
+      table.insert(diagnostics, {
+        lnum = find_thread_header(sidecar_buf, thread.id) - 1,
+        col = 0,
+        severity = vim.diagnostic.severity.WARN,
+        source = 'sidecar',
+        message = 'The text for this comment was deleted or could not be found in the source',
+      })
+    end
   end
-
-  if comment.start_line == comment.end_line then
-    return col_num >= comment.start_col and col_num <= comment.end_col
-  end
-
-  if line_num == comment.start_line then
-    return col_num >= comment.start_col
-  end
-
-  if line_num == comment.end_line then
-    return col_num <= comment.end_col
-  end
-
+  vim.diagnostic.set(M.diagnostic_ns_id, sidecar_buf, diagnostics)
   return true
 end
 
-comment_is_deleted = function(state, comment)
-  if comment.kind ~= 'range' or not comment.anchor_text or comment.anchor_text == '' then
-    return false
-  end
-
-  return get_current_comment_text(state, comment) == ''
+local function windows_showing(bufnr)
+  return vim.tbl_filter(function(win)
+    return vim.api.nvim_win_get_buf(win) == bufnr
+  end, vim.api.nvim_list_wins())
 end
 
-function M.open_sidecar(src_filepath, opts)
-  opts = opts or {}
+--- Reread a sidecar buffer after the CLI rewrote the file, keeping each window's view.
+local function reload_sidecar_buffer(sidecar_buf)
+  if vim.bo[sidecar_buf].modified then
+    error(string.format('Refusing to reload %s over unsaved edits', vim.api.nvim_buf_get_name(sidecar_buf)))
+  end
+
+  local views = {}
+  for _, win in ipairs(windows_showing(sidecar_buf)) do
+    views[win] = vim.api.nvim_win_call(win, vim.fn.winsaveview)
+  end
+
+  vim.api.nvim_buf_call(sidecar_buf, function()
+    vim.cmd 'silent edit!'
+  end)
+
+  for win, view in pairs(views) do
+    vim.api.nvim_win_call(win, function()
+      vim.fn.winrestview(view)
+    end)
+  end
+
+  -- Reloading clears diagnostics set during the reload's own BufReadPost.
+  update_sidecar_diagnostics(sidecar_buf)
+end
+
+local function require_unmodified_sidecar(sidecar_path)
+  local sidecar_buf = find_buffer_by_name(sidecar_path)
+  if valid_buf(sidecar_buf) and vim.bo[sidecar_buf].modified then
+    error(string.format('Save %s before changing comments from the source file', sidecar_path))
+  end
+end
+
+--- ID of the thread enclosing the cursor in a sidecar buffer, or nil between threads.
+local function thread_id_at_cursor()
+  local cursor_line = vim.api.nvim_win_get_cursor(0)[1]
+  local lines = vim.api.nvim_buf_get_lines(0, 0, cursor_line, false)
+  for line_num = #lines, 1, -1 do
+    local thread_id = lines[line_num]:match '^%[@th_([%x%-]+) '
+    if thread_id then
+      return thread_id
+    end
+    if line_num ~= cursor_line and lines[line_num]:match '^%[/@th_' then
+      return nil
+    end
+  end
+end
+
+--- Put the cursor on a new message's placeholder body and start typing over it.
+local function edit_placeholder(sidecar_buf, message_id)
+  local meta_line = find_line(sidecar_buf, '"id":"' .. message_id .. '"')
+  if not meta_line then
+    error(string.format('Message %s is not in %s', message_id, vim.api.nvim_buf_get_name(sidecar_buf)))
+  end
+
+  vim.api.nvim_buf_set_lines(sidecar_buf, meta_line, meta_line + 1, false, { '' })
+  vim.api.nvim_win_set_cursor(0, { meta_line + 1, 0 })
+  vim.cmd 'startinsert'
+end
+
+--- Report the extmark positions of a just-saved source buffer to the CLI, and
+--- let `sidecar sync` re-match threads that could not be placed.
+local function update_locations(src_buf)
+  local src_path = vim.api.nvim_buf_get_name(src_buf)
+  local state = M.state.by_src_path[src_path]
+  if not state or state.src_buf ~= src_buf then
+    return
+  end
+
+  local sidecar_path = M.get_sidecar_path(src_path)
+  if vim.fn.filereadable(sidecar_path) == 0 then
+    return
+  end
+
+  local sidecar_buf = find_buffer_by_name(sidecar_path)
+  if valid_buf(sidecar_buf) and vim.bo[sidecar_buf].modified then
+    vim.notify(string.format('%s has unsaved edits; comment locations will be updated after you save it and then save the source again', sidecar_path), vim.log.levels.WARN)
+    return
+  end
+
+  local current = list_threads(src_path)
+  local updates = {}
+  local needs_sync = false
+  for _, thread in ipairs(current.threads) do
+    if is_tracked(thread.location) or thread.location.kind == 'unresolved' then
+      -- Skip threads that another writer moved or detached since we read them.
+      if state.extmark_by_thread_id[thread.id] and vim.deep_equal(thread.location, state.loaded_location_by_id[thread.id]) then
+        local location = extmark_location(state, thread)
+        if location then
+          table.insert(updates, { thread_id = thread.id, location = location })
+        else
+          table.insert(updates, { thread_id = thread.id, deleted = true })
+        end
+      elseif is_tracked(thread.location) then
+        needs_sync = true
+      end
+    end
+  end
+
+  if #updates > M.max_editor_updates then
+    error(string.format('%s has %d tracked comments; the sidecar CLI accepts at most %d editor updates per save', sidecar_path, #updates, M.max_editor_updates))
+  end
+
+  local changed = false
+  if #updates > 0 then
+    -- The CLI checks this revision against the saved file under its lock, so
+    -- a file that differs from the buffer fails with conflict:source_revision.
+    local _, update_changed = run_cli {
+      args = { 'editor-update', '--operations-file', '-' },
+      file = sidecar_path,
+      stdin = vim.json.encode {
+        protocol = M.protocol,
+        if_revision = current.storage_revision,
+        source_revision = buffer_revision(src_buf),
+        updates = updates,
+      },
+    }
+    changed = update_changed
+  end
+
+  if needs_sync then
+    local _, sync_changed = run_cli { args = { 'sync' }, file = sidecar_path }
+    changed = changed or sync_changed
+  end
+
+  if changed then
+    load_source_buffer { bufnr = src_buf }
+    if valid_buf(sidecar_buf) then
+      reload_sidecar_buffer(sidecar_buf)
+    end
+  else
+    apply_threads(state, current)
+  end
+end
+
+--- Assign IDs to hand-written messages after the sidecar buffer is saved.
+local function fix_sidecar_buffer(sidecar_buf)
+  local sidecar_path = vim.api.nvim_buf_get_name(sidecar_buf)
+  local ok, result_or_err, changed = pcall(run_cli, { args = { 'fix', '--add-missing-message-ids' }, file = sidecar_path })
+
+  if not ok and not is_rejected(result_or_err) then
+    error(result_or_err, 0)
+  end
+
+  if ok and changed then
+    reload_sidecar_buffer(sidecar_buf)
+  elseif not update_sidecar_diagnostics(sidecar_buf) then
+    return
+  end
+
+  local src_buf = find_buffer_by_name(M.get_source_path(sidecar_path))
+  if valid_buf(src_buf) then
+    load_source_buffer { bufnr = src_buf }
+  end
+end
+
+function M.open_sidecar(src_filepath)
+  if is_sidecar_path(src_filepath) then
+    error(string.format('%s is already a comments file', src_filepath))
+  end
+
   local sidecar_path = M.get_sidecar_path(src_filepath)
   local sidecar_buf = find_buffer_by_name(sidecar_path)
 
   if sidecar_buf then
-    for _, win in ipairs(vim.api.nvim_list_wins()) do
-      if vim.api.nvim_win_get_buf(win) == sidecar_buf then
-        vim.api.nvim_set_current_win(win)
-        return sidecar_path
-      end
+    local win = windows_showing(sidecar_buf)[1]
+    if win then
+      vim.api.nvim_set_current_win(win)
+      return vim.api.nvim_get_current_buf()
     end
-  end
-
-  if opts.ensure_file and vim.fn.filereadable(sidecar_path) == 0 then
-    local file = io.open(sidecar_path, 'w')
-    if file then
-      file:close()
-    end
-  end
-
-  if sidecar_buf then
-    vim.cmd(opts.vsplit and 'vsplit' or 'split')
+    vim.cmd 'vsplit'
     vim.api.nvim_win_set_buf(0, sidecar_buf)
   else
-    vim.cmd(string.format('%s %s', opts.vsplit and 'vsplit' or 'split', vim.fn.fnameescape(sidecar_path)))
+    vim.cmd('vsplit ' .. vim.fn.fnameescape(sidecar_path))
   end
 
-  vim.bo.filetype = 'markdown'
-
-  return sidecar_path
+  return vim.api.nvim_get_current_buf()
 end
 
-function M.jump_to_source_line()
-  local line = vim.api.nvim_get_current_line()
-  local header = line:match(M.config.comment_pattern)
-  local parsed = header and parse_comment_header(header) or nil
-
-  if not parsed then
+function M.jump_to_source()
+  local thread_id = thread_id_at_cursor()
+  if not thread_id then
+    vim.notify('No comment thread at the cursor', vim.log.levels.INFO)
     return
   end
 
-  local current_file = vim.api.nvim_buf_get_name(0)
-  local src_path = M.get_source_path(current_file)
+  local src_path = M.get_source_path(vim.api.nvim_buf_get_name(0))
   local src_buf = find_buffer_by_name(src_path)
-  local location = {
-    start_line = math.max(parsed.start_line, 1),
-    start_col = parsed.start_col,
-    end_line = math.max(parsed.end_line, 1),
-    end_col = parsed.end_col,
-  }
+  local win = src_buf and windows_showing(src_buf)[1]
 
-  if src_buf then
-    local state = get_or_create_state(src_path)
-    if not valid_buf(state.src_buf) or state.src_buf ~= src_buf then
-      ensure_comments_for_buffer(src_buf)
-      state = get_or_create_state(src_path)
-    end
-
-    if parsed.id then
-      local comment = find_comment(state, parsed.id)
-      if comment then
-        location = get_current_location(state, comment)
-      end
-    end
+  if win then
+    vim.api.nvim_set_current_win(win)
+  else
+    vim.cmd('edit ' .. vim.fn.fnameescape(src_path))
   end
 
-  if src_buf then
-    for _, win in ipairs(vim.api.nvim_list_wins()) do
-      if vim.api.nvim_win_get_buf(win) == src_buf then
-        vim.api.nvim_set_current_win(win)
-        vim.api.nvim_win_set_cursor(0, { location.start_line, math.max((location.start_col or 1) - 1, 0) })
-        return
-      end
-    end
+  local state = M.state.by_src_path[src_path]
+  local extmark_id = state and state.src_buf == vim.api.nvim_get_current_buf() and state.extmark_by_thread_id[thread_id]
+  if not extmark_id then
+    local thread = state and state.threads_by_id[thread_id]
+    local kind = thread and thread.location.kind or 'not placed'
+    vim.notify(string.format('This comment is not attached to a location in the source (%s)', kind), vim.log.levels.INFO)
+    return
   end
 
-  vim.cmd('edit ' .. vim.fn.fnameescape(src_path))
-  vim.api.nvim_win_set_cursor(0, { location.start_line, math.max((location.start_col or 1) - 1, 0) })
+  local extmark = vim.api.nvim_buf_get_extmark_by_id(state.src_buf, M.comment_ns_id, extmark_id, {})
+  vim.api.nvim_win_set_cursor(0, { extmark[1] + 1, extmark[2] })
 end
 
 function M.jump_to_comment()
   local src_buf = vim.api.nvim_get_current_buf()
   local src_path = vim.api.nvim_buf_get_name(src_buf)
-  local sidecar_path = M.get_sidecar_path(src_path)
-  local state = ensure_comments_for_buffer(src_buf)
+  local state = M.state.by_src_path[src_path]
+  local row, col = unpack(vim.api.nvim_win_get_cursor(0))
+  row = row - 1
 
-  if #state.comments == 0 and vim.fn.filereadable(sidecar_path) == 0 then
-    vim.notify('No comments file found', vim.log.levels.INFO)
-    return
-  end
-
-  refresh_comment_locations(state)
-
-  local cursor = vim.api.nvim_win_get_cursor(0)
-  local current_line = cursor[1]
-  local current_col = cursor[2] + 1
-
-  for _, comment in ipairs(state.comments) do
-    if M.comment_contains_position(comment, current_line, current_col) then
-      M.open_sidecar(src_path, { vsplit = true })
-      local sidecar_buf = vim.api.nvim_get_current_buf()
-      local line_by_id = render_sidecar(src_path, {
-        sidecar_buf = sidecar_buf,
-        update_buffer = true,
-        preserve_view = true,
-      })
-      local target_line = line_by_id[comment.id]
-
-      if target_line then
-        vim.api.nvim_win_set_cursor(0, { target_line, 0 })
+  local thread_id = nil
+  if state and state.src_buf == src_buf then
+    local marks = vim.api.nvim_buf_get_extmarks(src_buf, M.comment_ns_id, { row, 0 }, { row, -1 }, { details = true, overlap = true })
+    for _, mark in ipairs(marks) do
+      local mark_row, mark_col, details = mark[2], mark[3], mark[4]
+      if not details.invalid then
+        -- Line marks are zero-width and cover their whole row.
+        local covers_cursor = details.end_row == nil
+          or ((row > mark_row or col >= mark_col) and (row < details.end_row or col < details.end_col))
+        -- Prefer the comment under the cursor; fall back to any on this line.
+        if not thread_id or covers_cursor then
+          thread_id = state.thread_id_by_extmark[mark[1]]
+        end
       end
-      return
     end
   end
 
-  vim.notify('No comment found for current line', vim.log.levels.INFO)
+  if not thread_id then
+    vim.notify('No comment found for the current line', vim.log.levels.INFO)
+    return
+  end
+
+  local sidecar_buf = M.open_sidecar(src_path)
+  vim.api.nvim_win_set_cursor(0, { find_thread_header(sidecar_buf, thread_id), 0 })
 end
 
-function M.add_comment()
-  return M.add_comment_for_range(vim.api.nvim_win_get_cursor(0)[1], vim.api.nvim_win_get_cursor(0)[1])
+function M.add_comment(location)
+  local src_buf = vim.api.nvim_get_current_buf()
+  if not is_source_buffer(src_buf) then
+    error 'Comments can only be added to a file buffer'
+  end
+
+  local src_path = vim.api.nvim_buf_get_name(src_buf)
+  local sidecar_path = M.get_sidecar_path(src_path)
+  require_unmodified_sidecar(sidecar_path)
+
+  -- The CLI captures the commented text from the saved file.
+  if vim.bo[src_buf].modified then
+    vim.cmd 'write'
+  end
+
+  local args = { 'thread', 'create', '--location', location_arg(location), '--body-file', '-' }
+  vim.list_extend(args, author_args())
+  local created = run_cli { args = args, file = sidecar_path, stdin = M.config.placeholder .. '\n' }
+
+  load_source_buffer { bufnr = src_buf }
+  local sidecar_buf = M.open_sidecar(src_path)
+  reload_sidecar_buffer(sidecar_buf)
+  edit_placeholder(sidecar_buf, created.generated_ids.message_id)
+end
+
+function M.add_line_comment()
+  M.add_comment { kind = 'line', line = vim.api.nvim_win_get_cursor(0)[1] }
 end
 
 function M.add_comment_for_visual_selection()
-  local selection_type = vim.fn.visualmode()
+  local mode = vim.fn.mode()
   local anchor = vim.fn.getpos 'v'
   local cursor = vim.fn.getpos '.'
-  local start_line = anchor[2]
-  local start_col = anchor[3]
-  local end_line = cursor[2]
-  local end_col = cursor[3]
+  vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes('<Esc>', true, false, true), 'nx', false)
 
-  if start_line == 0 or end_line == 0 then
-    vim.notify('No visual selection found', vim.log.levels.WARN)
-    return
+  if mode == '\22' then
+    error 'Blockwise comment regions are not supported'
   end
 
-  if selection_type == string.char(22) then
-    vim.notify('Blockwise comment regions are not supported yet', vim.log.levels.WARN)
-    return
-  end
-
+  local start_line, start_col, end_line, end_col = anchor[2], anchor[3], cursor[2], cursor[3]
   if start_line > end_line or (start_line == end_line and start_col > end_col) then
     start_line, end_line = end_line, start_line
     start_col, end_col = end_col, start_col
   end
 
-  vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes('<Esc>', true, false, true), 'n', false)
+  local end_text = vim.fn.getline(end_line)
 
-  if selection_type == 'V' then
-    return M.add_comment_for_range(start_line, end_line)
+  if mode == 'V' then
+    if start_line == end_line then
+      return M.add_comment { kind = 'line', line = start_line }
+    end
+    return M.add_comment { kind = 'range', start_line = start_line, start_column = 1, end_line = end_line, end_column = #end_text + 1 }
   end
 
-  return M.add_comment_for_range(start_line, end_line, start_col, end_col)
+  -- Visual ends are inclusive and point at the first byte of the last
+  -- character (or past the line end after `$`); the CLI wants the byte after it.
+  local end_column = 1
+  if #end_text > 0 then
+    local last_byte = math.min(end_col, #end_text)
+    end_column = last_byte + vim.str_utf_end(end_text, last_byte) + 1
+  end
+
+  if start_line == end_line and start_col >= end_column then
+    error 'Select at least one character to comment on'
+  end
+
+  return M.add_comment { kind = 'range', start_line = start_line, start_column = start_col, end_line = end_line, end_column = end_column }
 end
 
-function M.add_comment_for_range(start_line, end_line, start_col, end_col)
-  local src_buf = vim.api.nvim_get_current_buf()
-  local src_path = vim.api.nvim_buf_get_name(src_buf)
-  local state = ensure_comments_for_buffer(src_buf)
-
-  refresh_comment_locations(state)
-
-  local comment = {
-    id = new_comment_id(),
-    kind = (start_col and end_col) and 'range' or 'line',
-    start_line = start_line,
-    start_col = start_col,
-    end_line = end_line,
-    end_col = end_col,
-    text = '',
-  }
-
-  table.insert(state.comments, comment)
-  apply_comments_to_buffer(state, src_buf)
-
-  M.open_sidecar(src_path, { vsplit = true, ensure_file = true })
+function M.reply()
   local sidecar_buf = vim.api.nvim_get_current_buf()
-  local line_by_id = render_sidecar(src_path, {
-    sidecar_buf = sidecar_buf,
-    update_buffer = true,
-    write_file = true,
-    preserve_view = false,
-    mark_unmodified = true,
-  })
-  local target_line = line_by_id[comment.id] or vim.api.nvim_buf_line_count(sidecar_buf)
+  local sidecar_path = vim.api.nvim_buf_get_name(sidecar_buf)
+  local thread_id = thread_id_at_cursor()
+  if not thread_id then
+    error 'Put the cursor inside a comment thread to reply'
+  end
+  if vim.bo[sidecar_buf].modified then
+    error 'Save this file before replying'
+  end
 
-  vim.api.nvim_win_set_cursor(0, { target_line, vim.fn.col '$' - 1 })
-  vim.cmd 'startinsert!'
+  local args = { 'message', 'add', '--thread', thread_id, '--body-file', '-' }
+  vim.list_extend(args, author_args())
+  local added = run_cli { args = args, file = sidecar_path, stdin = M.config.placeholder .. '\n' }
+
+  reload_sidecar_buffer(sidecar_buf)
+  edit_placeholder(sidecar_buf, added.generated_id)
 end
 
-function M.sort_comments(src_path)
-  src_path = src_path or vim.api.nvim_buf_get_name(vim.api.nvim_get_current_buf())
-  local state = get_or_create_state(src_path)
-  refresh_comment_locations(state)
-  sort_comments_by_location(state)
-  return render_sidecar(src_path, {
-    write_file = true,
-    update_buffer = true,
-    preserve_view = false,
-    mark_unmodified = true,
-  })
-end
-
-function M.setup_highlighting(bufnr)
-  bufnr = bufnr or vim.api.nvim_get_current_buf()
-  local filepath = vim.api.nvim_buf_get_name(bufnr)
-
-  if filepath:match(vim.pesc(M.config.sidecar_ext) .. '$') then
-    return
-  end
-
-  local state = get_or_create_state(filepath)
-  if state.src_buf ~= bufnr or not valid_buf(state.src_buf) then
-    state = ensure_comments_for_buffer(bufnr)
-  end
-
-  refresh_comment_locations(state)
-  vim.api.nvim_buf_clear_namespace(bufnr, M.highlight_ns_id, 0, -1)
-  vim.diagnostic.set(M.diagnostic_ns_id, bufnr, {})
-
-  for _, comment in ipairs(state.comments) do
-    local location = normalize_comment_for_buffer(bufnr, comment)
-    local is_deleted = comment_is_deleted(state, comment)
-
-    if is_deleted then
-      goto continue
-    end
-
-    for line_num = location.start_line, location.end_line do
-      vim.api.nvim_buf_set_extmark(bufnr, M.highlight_ns_id, line_num - 1, 0, {
-        number_hl_group = M.config.highlight_group,
-        priority = M.config.sign_priority,
-      })
-    end
-
-    if comment.kind == 'range' then
-      if location.start_line < location.end_line or location.start_col < location.end_col then
-        vim.api.nvim_buf_set_extmark(bufnr, M.highlight_ns_id, location.start_line - 1, location.start_col, {
-          end_row = location.end_line - 1,
-          end_col = location.end_col,
-          hl_group = M.config.range_highlight_group,
-          priority = M.config.sign_priority,
-          strict = false,
-        })
-      end
-    else
-      for line_num = location.start_line, location.end_line do
-        vim.api.nvim_buf_set_extmark(bufnr, M.highlight_ns_id, line_num - 1, 0, {
-          line_hl_group = M.config.range_highlight_group,
-          priority = M.config.sign_priority,
-        })
-      end
-    end
-
-    ::continue::
-  end
+--- Whether a write event saved the buffer to its own file (not `:w other`).
+--- `args.file` is the path as typed; the buffer name may be symlink-resolved.
+local function wrote_own_file(args)
+  return vim.fn.resolve(vim.fn.fnamemodify(args.file, ':p')) == vim.fn.resolve(vim.api.nvim_buf_get_name(args.buf)) and not vim.bo[args.buf].modified
 end
 
 function M.setup_autocommands()
@@ -1044,55 +739,25 @@ function M.setup_autocommands()
 
   vim.api.nvim_create_autocmd({ 'BufReadPost', 'BufNewFile' }, {
     group = augroup,
-    pattern = '*',
     callback = function(args)
-      local filepath = vim.api.nvim_buf_get_name(args.buf)
-      if filepath == '' or vim.bo[args.buf].buftype ~= '' then
+      if not is_source_buffer(args.buf) then
         return
       end
-      if filepath:match(vim.pesc(M.config.sidecar_ext) .. '$') then
-        return
+      record_final_newline { bufnr = args.buf, after_write = false }
+      local state = M.state.by_src_path[vim.api.nvim_buf_get_name(args.buf)]
+      if vim.fn.filereadable(M.get_sidecar_path(vim.api.nvim_buf_get_name(args.buf))) == 1 or state then
+        load_source_buffer { bufnr = args.buf, reset = true }
       end
-      ensure_comments_for_buffer(args.buf)
-      M.setup_highlighting(args.buf)
     end,
   })
 
   vim.api.nvim_create_autocmd('BufWritePost', {
     group = augroup,
-    pattern = '*',
     callback = function(args)
-      local src_path = vim.api.nvim_buf_get_name(args.buf)
-      if src_path == '' or vim.bo[args.buf].buftype ~= '' then
-        return
+      if is_source_buffer(args.buf) and wrote_own_file(args) then
+        record_final_newline { bufnr = args.buf, after_write = true }
+        update_locations(args.buf)
       end
-      if src_path:match(vim.pesc(M.config.sidecar_ext) .. '$') then
-        return
-      end
-      local sidecar_buf = find_buffer_by_name(M.get_sidecar_path(src_path))
-
-      -- A response may have been written directly to the sidecar by an
-      -- external process.  Import it before serializing locations from the source save.
-      -- If the user also has unsaved sidecar edits, leave both versions alone.
-      if not import_external_sidecar_changes(src_path) then
-        M.setup_highlighting(args.buf)
-        return
-      end
-
-      if valid_buf(sidecar_buf) then
-        sync_state_from_sidecar_buffer(sidecar_buf, true)
-      else
-        ensure_comments_for_buffer(args.buf)
-      end
-
-      render_sidecar(src_path, {
-        sidecar_buf = sidecar_buf,
-        update_buffer = valid_buf(sidecar_buf),
-        write_file = true,
-        preserve_view = true,
-        mark_unmodified = true,
-      })
-      M.setup_highlighting(args.buf)
     end,
   })
 
@@ -1101,72 +766,10 @@ function M.setup_autocommands()
     pattern = '*' .. M.config.sidecar_ext,
     callback = function(args)
       vim.bo[args.buf].filetype = 'markdown'
-      vim.keymap.set('n', '<CR>', M.jump_to_source_line, { buffer = args.buf, desc = '🛵 Jump to source line' })
-
-      local src_path = M.get_source_path(vim.api.nvim_buf_get_name(args.buf))
-      local src_buf = find_buffer_by_name(src_path)
-      if src_buf then
-        local state = get_or_create_state(src_path)
-        state.src_buf = src_buf
-        if #state.comments == 0 then
-          ensure_comments_for_buffer(src_buf)
-        else
-          refresh_comment_locations(state)
-        end
-
-        render_sidecar(src_path, {
-          sidecar_buf = args.buf,
-          update_buffer = true,
-          preserve_view = true,
-          mark_unmodified = true,
-        })
-      else
-        sync_state_from_sidecar_buffer(args.buf, false)
-        render_sidecar(src_path, {
-          sidecar_buf = args.buf,
-          update_buffer = true,
-          preserve_view = true,
-          mark_unmodified = true,
-        })
-      end
-
-      local state = get_or_create_state(src_path)
-      local _, fingerprint = sidecar_disk_snapshot(M.get_sidecar_path(src_path))
-      state.sidecar_fingerprint = fingerprint
-      state.external_conflict_fingerprint = nil
-    end,
-  })
-
-  vim.api.nvim_create_autocmd('BufWritePre', {
-    group = augroup,
-    pattern = '*' .. M.config.sidecar_ext,
-    callback = function(args)
-      local src_path = M.get_source_path(vim.api.nvim_buf_get_name(args.buf))
-      if not import_external_sidecar_changes(src_path, { update_buffer = false }) then
-        error 'Sidecar changed on disk while this buffer has unsaved edits; reload or merge before writing'
-      end
-      sync_state_from_sidecar_buffer(args.buf, false)
-      render_sidecar(src_path, {
-        sidecar_buf = args.buf,
-        update_buffer = true,
-        preserve_view = true,
-      })
-    end,
-  })
-
-  -- `FocusGained` catches edits made while Neovim was in the background.
-  -- The source-save path above repeats this check, so a response is still safe
-  -- when focus never changes.
-  vim.api.nvim_create_autocmd('FocusGained', {
-    group = augroup,
-    callback = function()
-      for _, buf in ipairs(vim.api.nvim_list_bufs()) do
-        if valid_buf(buf) then
-          local sidecar_path = vim.api.nvim_buf_get_name(buf)
-          if sidecar_path:match(vim.pesc(M.config.sidecar_ext) .. '$') then
-            import_external_sidecar_changes(M.get_source_path(sidecar_path))
-          end
-        end
+      vim.keymap.set('n', '<CR>', loud(M.jump_to_source), { buffer = args.buf, desc = '🛵 Jump to source' })
+      vim.keymap.set('n', '<leader>sr', loud(M.reply), { buffer = args.buf, desc = '🛵 [S]idecarComments [R]eply' })
+      if vim.fn.filereadable(vim.api.nvim_buf_get_name(args.buf)) == 1 then
+        update_sidecar_diagnostics(args.buf)
       end
     end,
   })
@@ -1175,17 +778,30 @@ function M.setup_autocommands()
     group = augroup,
     pattern = '*' .. M.config.sidecar_ext,
     callback = function(args)
-      local src_path = M.get_source_path(vim.api.nvim_buf_get_name(args.buf))
-      local state = get_or_create_state(src_path)
-      local src_buf = state.src_buf or find_buffer_by_name(src_path)
+      if wrote_own_file(args) then
+        fix_sidecar_buffer(args.buf)
+      end
+    end,
+  })
 
-      local _, fingerprint = sidecar_disk_snapshot(M.get_sidecar_path(src_path))
-      state.sidecar_fingerprint = fingerprint
-      state.external_conflict_fingerprint = nil
-
-      if valid_buf(src_buf) then
-        state.src_buf = src_buf
-        M.setup_highlighting(src_buf)
+  -- Pick up replies, moves and new threads written by other processes while
+  -- Neovim was in the background.  `:checktime` is postponed inside
+  -- autocommands, so reload unmodified sidecar buffers directly; modified
+  -- ones are left alone because their text no longer matches the file.
+  vim.api.nvim_create_autocmd('FocusGained', {
+    group = augroup,
+    callback = function()
+      for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+        if valid_buf(buf) then
+          local filepath = vim.api.nvim_buf_get_name(buf)
+          if is_sidecar_path(filepath) then
+            if vim.fn.filereadable(filepath) == 1 and not vim.bo[buf].modified and not vim.deep_equal(vim.api.nvim_buf_get_lines(buf, 0, -1, false), vim.fn.readfile(filepath)) then
+              reload_sidecar_buffer(buf)
+            end
+          elseif is_source_buffer(buf) and (vim.fn.filereadable(M.get_sidecar_path(filepath)) == 1 or M.state.by_src_path[filepath]) then
+            load_source_buffer { bufnr = buf }
+          end
+        end
       end
     end,
   })
@@ -1199,31 +815,23 @@ function M.setup(opts)
     fg = '#ffd7d7',
     bold = true,
   })
-  local range_bg = vim.o.background == 'dark' and '#3f1d1d' or '#fcefef'
-
   vim.api.nvim_set_hl(0, M.config.range_highlight_group, {
-    bg = range_bg,
+    bg = vim.o.background == 'dark' and '#3f1d1d' or '#fcefef',
   })
 
   M.setup_autocommands()
 
-  vim.keymap.set('n', '<leader>so', function()
-    local src_buf = vim.api.nvim_get_current_buf()
-    local src_path = vim.api.nvim_buf_get_name(src_buf)
-
-    ensure_comments_for_buffer(src_buf)
-    M.open_sidecar(src_path, { vsplit = true })
-    render_sidecar(src_path, {
-      sidecar_buf = vim.api.nvim_get_current_buf(),
-      update_buffer = true,
-      preserve_view = true,
-      mark_unmodified = true,
-    })
-  end, { desc = '🛵 [S]idecarComments [O]pen' })
-
-  vim.keymap.set('n', '<leader>sv', M.jump_to_comment, { desc = '🛵 [S]idecarComments [V]iew' })
-  vim.keymap.set('n', '<leader>sa', M.add_comment, { desc = '🛵 [S]idecarComments [A]dd' })
-  vim.keymap.set('x', '<leader>sa', M.add_comment_for_visual_selection, { desc = '🛵 [S]idecarComments [A]dd for selection' })
+  vim.keymap.set(
+    'n',
+    '<leader>so',
+    loud(function()
+      M.open_sidecar(vim.api.nvim_buf_get_name(0))
+    end),
+    { desc = '🛵 [S]idecarComments [O]pen' }
+  )
+  vim.keymap.set('n', '<leader>sv', loud(M.jump_to_comment), { desc = '🛵 [S]idecarComments [V]iew' })
+  vim.keymap.set('n', '<leader>sa', loud(M.add_line_comment), { desc = '🛵 [S]idecarComments [A]dd' })
+  vim.keymap.set('x', '<leader>sa', loud(M.add_comment_for_visual_selection), { desc = '🛵 [S]idecarComments [A]dd for selection' })
 end
 
 return M

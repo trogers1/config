@@ -200,6 +200,8 @@ Tip: for moving files or directories, `x` then navigate then `p` is usually bett
 | `<Leader>sa` | 🛵 Add a sidecar comment (use Visual mode to comment on selection) |
 | `<Leader>so` | 🛵 Open sidecar comments file |
 | `<Leader>sv` | 🛵 View comment in sidecar comments file |
+| `<Leader>sr` | 🛵 Reply to the thread under the cursor (in a `.comments` file) |
+| `<CR>` | 🛵 Jump to the thread's source location (in a `.comments` file) |
 
 ---
 
