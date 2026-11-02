@@ -57,7 +57,8 @@ sc.reply()
 type_body 'A reply'
 t.check('reply added', #threads()[1].messages == 2 and threads()[1].messages[2].body == 'A reply', threads()[1].messages)
 
--- Hand-written reply without metadata gets an ID on save
+-- Hand-written reply without metadata gets an ID on save, including a
+-- bare role header with trailing ASCII spaces and tabs.
 local lines = vim.api.nvim_buf_get_lines(side_buf, 0, -1, false)
 local close = nil
 for i, line in ipairs(lines) do
@@ -65,10 +66,10 @@ for i, line in ipairs(lines) do
     close = i
   end
 end
-vim.api.nvim_buf_set_lines(side_buf, close - 1, close - 1, false, { '', '---user', 'Hand reply' })
+vim.api.nvim_buf_set_lines(side_buf, close - 1, close - 1, false, { '', '---user \t ', 'Hand reply' })
 vim.cmd 'write'
 local messages = threads()[1].messages
-t.check('hand reply accepted with ID', #messages == 3 and messages[3].body == 'Hand reply' and messages[3].id ~= nil, messages)
+t.check('hand reply with trailing header whitespace accepted with ID', #messages == 3 and messages[3].body == 'Hand reply' and messages[3].id ~= nil, messages)
 t.check(
   'buffer reloaded with meta',
   not vim.bo[side_buf].modified and table.concat(vim.api.nvim_buf_get_lines(side_buf, 0, -1, false), '\n'):find '---user <!%-%- sidecar%-meta' ~= nil
@@ -174,7 +175,27 @@ t.check('diagnostics survive focus reload', #vim.diagnostic.get(side_buf, { name
 vim.api.nvim_buf_set_lines(side_buf, 1, 2, false, { 'garbage' })
 local ok = pcall(vim.cmd, 'write')
 diagnostics = vim.diagnostic.get(side_buf, { namespace = sc.diagnostic_ns_id })
-t.check('rejected file shows diagnostic', ok and #diagnostics == 1 and diagnostics[1].message:find 'rejected' ~= nil, diagnostics)
+t.check(
+  'rejected file shows diagnostic',
+  ok and #diagnostics > 0 and diagnostics[1].severity == vim.diagnostic.severity.ERROR and #diagnostics[1].message > 0,
+  diagnostics
+)
+local rejected = vim.system({ 'sidecar', '--output', 'json', 'fix', '--add-missing-message-ids', '--file', sidecar }, { text = true }):wait()
+local cli_error = vim.json.decode(rejected.stderr).error
+local reported = cli_error.details and cli_error.details.diagnostics
+if reported and #reported > 0 then
+  t.check('real CLI diagnostics all rendered', #diagnostics == #reported, diagnostics)
+  for i, diagnostic in ipairs(reported) do
+    t.check(
+      'real CLI diagnostic position and content ' .. i,
+      diagnostics[i].lnum == (diagnostic.line or 1) - 1
+        and diagnostics[i].col == (diagnostic.column or 1) - 1
+        and diagnostics[i].code == diagnostic.code
+        and diagnostics[i].message == diagnostic.message .. (diagnostic.hint and ('\n' .. diagnostic.hint) or ''),
+      diagnostics[i]
+    )
+  end
+end
 
 -- Adding a comment while the sidecar buffer is dirty fails loudly
 vim.api.nvim_buf_set_lines(side_buf, 1, 2, false, { 'still dirty' })

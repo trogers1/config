@@ -45,6 +45,9 @@ end
 
 -- Errors meaning the CLI refused to read the sidecar or source contents.
 local REJECTED_CODES = { validation = true, repair = true }
+local SIDECAR_CONTENT_PATHS = { target_content = true, target_encoding = true, target_endings = true, tracking = true }
+
+local publish_cli_diagnostics
 
 --- Run one CLI command against a sidecar and return its JSON `result` and `changed`.
 --- Throws a CliError carrying the CLI's error code on failure.
@@ -61,13 +64,15 @@ local function run_cli(opts)
     if not ok or type(envelope) ~= 'table' or type(envelope.error) ~= 'table' then
       error(string.format('sidecar %s exited %d without a JSON error: %s', command, completed.code, completed.stderr))
     end
-    error(setmetatable({
+    local err = setmetatable({
       command = command,
       file = opts.file,
       code = envelope.error.code,
       message = envelope.error.message,
       details = envelope.error.details,
-    }, CliError))
+    }, CliError)
+    publish_cli_diagnostics { err = err }
+    error(err)
   end
 
   local envelope = vim.json.decode(completed.stdout)
@@ -321,7 +326,16 @@ local function apply_threads(state, result)
 end
 
 local function list_threads(src_path)
-  return run_cli { args = { 'thread', 'list' }, file = M.get_sidecar_path(src_path) }
+  local sidecar_path = M.get_sidecar_path(src_path)
+  local result, changed = run_cli { args = { 'thread', 'list' }, file = sidecar_path }
+  local buf = find_buffer_by_name(sidecar_path)
+  if valid_buf(buf) and not vim.bo[buf].modified then
+    local retained = vim.tbl_filter(function(diagnostic)
+      return diagnostic.severity ~= vim.diagnostic.severity.ERROR
+    end, vim.diagnostic.get(buf, { namespace = M.diagnostic_ns_id }))
+    vim.diagnostic.set(M.diagnostic_ns_id, buf, retained)
+  end
+  return result, changed
 end
 
 --- Read the sidecar for a source buffer and show its threads.  `reset`
@@ -367,6 +381,41 @@ local function find_thread_header(sidecar_buf, thread_id)
   return line_num
 end
 
+--- CLI positions refer to the on-disk sidecar, never the source buffer.
+--- Do not attach them to unsaved text whose byte positions may have moved.
+publish_cli_diagnostics = function(opts)
+  local err = opts.err
+  local buf = find_buffer_by_name(err.file)
+  if not valid_buf(buf) or vim.bo[buf].modified then
+    return
+  end
+  local reported = err.details and err.details.diagnostics or {}
+  if #reported == 0 and not (err.code == 'repair' or (err.code == 'validation' and err.details and SIDECAR_CONTENT_PATHS[err.details.path])) then
+    return
+  end
+  local fallback = string.format(
+    'Sidecar rejected this file (%s). Fix it and save again, or run :!sidecar validate --file %s',
+    err.message,
+    err.file
+  )
+  local diagnostics = {}
+  for _, diagnostic in ipairs(reported) do
+    table.insert(diagnostics, {
+      lnum = (diagnostic.line or 1) - 1,
+      col = (diagnostic.column or 1) - 1,
+      severity = vim.diagnostic.severity.ERROR,
+      source = 'sidecar',
+      code = diagnostic.code,
+      message = (diagnostic.message or fallback) .. (diagnostic.hint and ('\n' .. diagnostic.hint) or ''),
+      user_data = { byte_offset = diagnostic.byte_offset },
+    })
+  end
+  if #diagnostics == 0 then
+    diagnostics = { { lnum = 0, col = 0, severity = vim.diagnostic.severity.ERROR, source = 'sidecar', message = fallback } }
+  end
+  vim.diagnostic.set(M.diagnostic_ns_id, buf, diagnostics)
+end
+
 --- Show unresolved threads, or the CLI's reason for rejecting the file.  Only
 --- valid for a buffer whose text matches the file on disk.
 local function update_sidecar_diagnostics(sidecar_buf)
@@ -377,16 +426,6 @@ local function update_sidecar_diagnostics(sidecar_buf)
     if not is_rejected(result) then
       error(result, 0)
     end
-    local repair = result.details and result.details.diagnostics and result.details.diagnostics[1]
-    vim.diagnostic.set(M.diagnostic_ns_id, sidecar_buf, {
-      {
-        lnum = repair and repair.line and (repair.line - 1) or 0,
-        col = 0,
-        severity = vim.diagnostic.severity.ERROR,
-        source = 'sidecar',
-        message = string.format('Sidecar rejected this file (%s). Fix it and save again, or run :!sidecar validate --file %s', result.message, sidecar_path),
-      },
-    })
     return false
   end
 
@@ -552,11 +591,14 @@ local function fix_sidecar_buffer(sidecar_buf)
   local sidecar_path = vim.api.nvim_buf_get_name(sidecar_buf)
   local ok, result_or_err, changed = pcall(run_cli, { args = { 'fix', '--add-missing-message-ids' }, file = sidecar_path })
 
-  if not ok and not is_rejected(result_or_err) then
-    error(result_or_err, 0)
+  if not ok then
+    if not is_rejected(result_or_err) then
+      error(result_or_err, 0)
+    end
+    return
   end
 
-  if ok and changed then
+  if changed then
     reload_sidecar_buffer(sidecar_buf)
   elseif not update_sidecar_diagnostics(sidecar_buf) then
     return
