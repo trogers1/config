@@ -35,6 +35,13 @@ function overviewSectionSelection({
   return { kind: "section", id };
 }
 
+/** Inputs render the focused cursor amid their value; assert its visible text. */
+function renderedText(lines: readonly string[]): string {
+  return lines
+    .join("\n")
+    .replace(/\x1b(?:_pi:[^\x07]*\x07|\[[0-?]*[ -/]*[@-~])/gu, "");
+}
+
 const originalConfigPath = process.env.PI_GUARD_PROFILE_CONFIG;
 const originalSubagentProfile = process.env.PI_SUBAGENT_PROFILE;
 const temporaryDirectories: string[] = [];
@@ -947,7 +954,7 @@ describe("/profile-edit public command", () => {
     overview.choose({ selection: overviewSectionSelection({ id: "bash" }) });
     form = await harness.ui.waitForRuleForm();
     expect(form.render().join("\n")).toContain("Local decision  ❓ ASK");
-    form.press("CtrlShiftR"); // Explicitly retain an empty local section.
+    form.press("CtrlShiftX"); // Explicitly retain an empty local section.
 
     overview = await harness.ui.waitForProfileAuthoringOverview();
     overview.choose({ selection: overviewSectionSelection({ id: "read" }) });
@@ -996,6 +1003,114 @@ describe("/profile-edit public command", () => {
     ]);
   });
 
+  it("keeps the surviving custom cwd clause when removing an original and replacement clause", async () => {
+    const configPath = writeConfig({
+      defaultProfile: "edited",
+      profiles: {
+        edited: {
+          description: "Custom clause identity fixture.",
+          extends: ["builtin:default"],
+          tools: {
+            subagent: [
+              // Shipped profiles allow subagents; this makes others ASK.
+              { decision: "ask" },
+              {
+                decision: "allow",
+                match: { agent: "*", cwd: "/workspace/allowed/**" },
+              },
+            ],
+          },
+        },
+      },
+    });
+    process.env.PI_GUARD_PROFILE_CONFIG = configPath;
+    const harness = createExtensionHarness({ interactiveUi: true });
+    await harness.start();
+
+    const pending = harness.runCommand("profile-edit");
+    (await harness.ui.waitForProfileAuthoringOverview()).choose({
+      selection: { kind: "section", id: "customTools" },
+    });
+    const editor = await harness.ui.waitForRuleForm();
+    editor.press("CtrlArrowDown"); // select the allow rule
+    editor.press("CtrlShiftD"); // remove original agent clause
+    editor.press("CtrlA");
+    editor.type("agent");
+    editor.press("CtrlK");
+    editor.type("replacement");
+    editor.press("CtrlShiftD"); // remove only the replacement
+    editor.press("Enter");
+    (await harness.ui.waitForProfileAuthoringOverview()).choose({
+      selection: submitOverviewSelection,
+    });
+    await pending;
+
+    const rule = loadRawProfileConfig({ configPath })?.profiles.edited.tools
+      ?.subagent?.[1];
+    expect(rule).toEqual({
+      decision: "allow",
+      match: { cwd: "/workspace/allowed/**" },
+    });
+    const enforcement = createExtensionHarness({ hasUI: false });
+    await enforcement.start();
+    await enforcement.callToolWithoutPrompt({
+      toolName: "subagent",
+      input: { agent: "any", cwd: "/workspace/allowed/project" },
+    });
+    expect(
+      await enforcement.callToolDecisivelyWithoutPrompt({
+        toolName: "subagent",
+        input: { agent: "any", cwd: "/workspace/unrelated" },
+      }),
+    ).toMatchObject({ block: true });
+  });
+
+  it("clears custom tools into own special-name declarations without rewriting Bash comments", async () => {
+    const configPath = writeConfig({ profiles: {} });
+    fs.writeFileSync(
+      configPath,
+      `// Preserve this user-owned comment
+{
+  "defaultProfile": "edited",
+  "profiles": {
+    "edited": {
+      "description": "Editable custom tools.",
+      "extends": ["builtin:default"],
+      "tools": {
+        // Keep this Bash declaration and its comment.
+        "bash": [{ "pattern": "echo retained", "decision": "allow" }],
+        "constructor": [{ "decision": "ask" }]
+      }
+    }
+  }
+}
+`,
+    );
+    process.env.PI_GUARD_PROFILE_CONFIG = configPath;
+    const harness = createExtensionHarness({
+      customResults: [
+        overviewSectionSelection({ id: "customTools" }),
+        { action: "clear", rows: [] },
+        submitOverviewSelection,
+      ],
+    });
+    await harness.start();
+    await harness.runCommand("profile-edit");
+
+    const source = fs.readFileSync(configPath, "utf8");
+    expect(source).toContain("// Keep this Bash declaration and its comment.");
+    const profile = loadRawProfileConfig({ configPath })?.profiles.edited;
+    const tools = profile?.tools;
+    if (tools === undefined) throw new Error("missing tools declaration");
+    expect(Object.hasOwn(tools, "constructor")).toBe(true);
+    expect(
+      Object.getOwnPropertyDescriptor(tools, "constructor")?.value,
+    ).toEqual([]);
+    expect(tools.bash).toEqual([
+      { pattern: "echo retained", decision: "allow" },
+    ]);
+  });
+
   it("discards overview drafts and recovers an invalid overlap without writing it", async () => {
     const configPath = writeConfig({
       defaultProfile: "edited",
@@ -1020,43 +1135,70 @@ describe("/profile-edit public command", () => {
     await cancelled.runCommand("profile-edit");
     expect(fs.readFileSync(configPath, "utf8")).toBe(before);
 
-    const invalidRows = [
-      {
-        id: "read-0",
-        kind: "read",
-        pattern: "same.txt",
-        decision: "ask",
-        contexts: ["read"],
-        origin: "existing",
-      },
-      {
-        id: "new",
-        kind: "read",
-        pattern: "same.txt",
-        decision: "deny",
-        contexts: ["read"],
-        origin: "create",
-      },
-    ];
-    const repairedRows = [invalidRows[0]];
-    const harness = createExtensionHarness({
-      customResults: [
-        overviewSectionSelection({ id: "read" }),
-        { action: "save", rows: invalidRows },
-        submitOverviewSelection,
-        { action: "save", rows: repairedRows },
-        submitOverviewSelection,
-      ],
-    });
+    const harness = createExtensionHarness({ interactiveUi: true });
     await harness.start();
-    await harness.runCommand("profile-edit");
-    expect(
-      loadRawProfileConfig({ configPath: configPath })?.profiles.edited
-        .readPaths,
-    ).toEqual([{ pattern: "same.txt", decision: "ask", contexts: ["read"] }]);
-    expect(fs.readFileSync(configPath, "utf8")).toContain(
-      "// Preserve this user-owned comment",
-    );
+
+    const pending = harness.runCommand("profile-edit");
+    let settled = false;
+    try {
+      (await harness.ui.waitForProfileAuthoringOverview()).choose({
+        selection: overviewSectionSelection({ id: "read" }),
+      });
+      const emptyEditor = await harness.ui.waitForRuleForm();
+      expect(emptyEditor.render().join("\n")).toContain(
+        "No rules in this section",
+      );
+
+      // Create the first local declaration through the production editor.
+      // Ctrl+N focuses its pattern; Tab changes its default DENY to ASK.
+      emptyEditor.press("CtrlN");
+      emptyEditor.type("same.txt");
+      emptyEditor.press("Tab");
+      expect(emptyEditor.render().join("\n")).toContain("same.txt");
+      emptyEditor.press("Enter");
+
+      (await harness.ui.waitForProfileAuthoringOverview()).choose({
+        selection: overviewSectionSelection({ id: "read" }),
+      });
+      const editor = await harness.ui.waitForRuleForm();
+      // The overview draft, unlike the cancelled sandbox draft above, remains
+      // available to a new editor invocation before any more keys are sent.
+      expect(renderedText(editor.render())).toContain("same.txt");
+      editor.press("CtrlN"); // Create a second production-issued row and clause ID.
+      editor.type("same.txt");
+      editor.press("Tab");
+      editor.press("Enter");
+
+      (await harness.ui.waitForProfileAuthoringOverview()).choose({
+        selection: submitOverviewSelection,
+      });
+      // Commit validation returns the overlapping production draft to the
+      // affected visible editor rather than writing it.
+      const invalidEditor = await harness.ui.waitForRuleForm();
+      expect(invalidEditor.render().join("\n")).toContain(
+        profileAuthoringInvalidMarker,
+      );
+      expect(fs.readFileSync(configPath, "utf8")).toBe(before);
+      invalidEditor.press("CtrlD"); // Remove the production-created rule.
+      invalidEditor.press("Enter");
+      (await harness.ui.waitForProfileAuthoringOverview()).choose({
+        selection: submitOverviewSelection,
+      });
+      await pending;
+      settled = true;
+      expect(
+        loadRawProfileConfig({ configPath: configPath })?.profiles.edited
+          .readPaths,
+      ).toEqual([{ pattern: "same.txt", decision: "ask" }]);
+      expect(fs.readFileSync(configPath, "utf8")).toContain(
+        "// Preserve this user-owned comment",
+      );
+    } finally {
+      if (!settled) {
+        harness.ui.sendTerminalInput({ data: "\x03" });
+        await pending;
+      }
+    }
   });
 
   it("lets an inherited restrictive sandbox enter Customize and override its network behavior", async () => {
@@ -1411,16 +1553,36 @@ describe("/profile-edit public command", () => {
     const configPath = writeConfig(config);
     process.env.PI_GUARD_PROFILE_CONFIG = configPath;
     const ranked = createExtensionHarness({
+      interactiveUi: true,
       confirm: true,
-      customResults: [
-        overviewSectionSelection({ id: "directoryGlobs" }),
-        setDirectories([`${cwd}/edited`]),
-        submitOverviewSelection,
-      ],
     });
     await ranked.start();
     const priorEntries = ranked.entries.length;
-    await ranked.runCommand("profile-edit");
+    const rankedPending = ranked.runCommand("profile-edit");
+    let rankedSettled = false;
+    try {
+      (await ranked.ui.waitForProfileAuthoringOverview()).choose({
+        selection: overviewSectionSelection({ id: "directoryGlobs" }),
+      });
+      const directoryEditor = await ranked.ui.waitForRuleForm();
+      // Verify this is the directory editor before driving its focused input.
+      expect(renderedText(directoryEditor.render())).toContain(
+        "Startup Directory globs",
+      );
+      directoryEditor.press("CtrlU");
+      directoryEditor.type(`${cwd}/edited`);
+      directoryEditor.press("Enter");
+      (await ranked.ui.waitForProfileAuthoringOverview()).choose({
+        selection: submitOverviewSelection,
+      });
+      await rankedPending;
+      rankedSettled = true;
+    } finally {
+      if (!rankedSettled) {
+        ranked.ui.sendTerminalInput({ data: "\x03" });
+        await rankedPending;
+      }
+    }
     expect(ranked.entries.slice(priorEntries)).toHaveLength(1);
     expect(ranked.entries.at(-1)).toMatchObject({
       data: { profile: "edited" },
@@ -1434,16 +1596,36 @@ describe("/profile-edit public command", () => {
       await import("./support/extensionHarness");
     process.env.PI_SUBAGENT_PROFILE = "authority";
     const authoritative = createSubagentHarness({
+      interactiveUi: true,
       confirm: true,
-      customResults: [
-        overviewSectionSelection({ id: "directoryGlobs" }),
-        setDirectories([`${cwd}/authority`]),
-        submitOverviewSelection,
-      ],
     });
     await authoritative.start();
     const authorityEntries = authoritative.entries.length;
-    await authoritative.runCommand("profile-edit");
+    const authorityPending = authoritative.runCommand("profile-edit");
+    let authoritySettled = false;
+    try {
+      (await authoritative.ui.waitForProfileAuthoringOverview()).choose({
+        selection: overviewSectionSelection({ id: "directoryGlobs" }),
+      });
+      const directoryEditor = await authoritative.ui.waitForRuleForm();
+      // The authority edit must still use the directory editor, not an ASK picker.
+      expect(renderedText(directoryEditor.render())).toContain(
+        "Startup Directory globs",
+      );
+      directoryEditor.press("CtrlU");
+      directoryEditor.type(`${cwd}/authority`);
+      directoryEditor.press("Enter");
+      (await authoritative.ui.waitForProfileAuthoringOverview()).choose({
+        selection: submitOverviewSelection,
+      });
+      await authorityPending;
+      authoritySettled = true;
+    } finally {
+      if (!authoritySettled) {
+        authoritative.ui.sendTerminalInput({ data: "\x03" });
+        await authorityPending;
+      }
+    }
     // The immutable authority wins instead of any directory match.
     expect(authoritative.entries.slice(authorityEntries)).toHaveLength(1);
     expect(authoritative.entries.at(-1)).toMatchObject({

@@ -535,11 +535,11 @@ describe("profile configuration", () => {
       });
       throw new Error("expected loadProfileConfig to throw");
     } catch (error) {
-      expect(error).toBeInstanceOf(ProfileConfigLoadError);
-      if (!(error instanceof ProfileConfigLoadError)) throw error;
+      expect(error).toBeInstanceOf(ProfileConfigMalformedError);
+      if (!(error instanceof ProfileConfigMalformedError)) throw error;
       expect(error.configPath).toBe(configPath);
       expect(error.message).toContain(configPath);
-      expect(error.message).toContain("JSONC parse error");
+      expect(error.details).toContain("JSONC parse error: ValueExpected");
     }
   });
 
@@ -784,7 +784,20 @@ describe("profile configuration", () => {
           ["__proto__", genericPolicyConfig.profiles["builtin:default"]],
         ]),
       }),
-      messageFragment: "profile '__proto__' is not configured",
+      messageFragment: "profile name '__proto__' is reserved",
+    },
+    {
+      label: "__proto__ custom tool",
+      contents: JSON.stringify({
+        profiles: {
+          tools: {
+            description: "Prototype-named custom tool.",
+            extends: ["builtin:default"],
+            tools: Object.fromEntries([["__proto__", [{ decision: "deny" }]]]),
+          },
+        },
+      }),
+      messageFragment: "/profiles/tools/tools/__proto__",
     },
   ])("throws a typed error for $label", ({ contents, messageFragment }) => {
     const configPath = writeConfig(contents);

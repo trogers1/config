@@ -374,7 +374,7 @@ describe("/profile-add", () => {
     ).toMatchObject({ block: true });
   });
 
-  it("retains a populated CREATE section on Back until creation", async () => {
+  it("keeps an accepted CREATE section when Back discards a later invocation", async () => {
     const configPath = temporaryConfig();
     process.env.PI_GUARD_PROFILE_CONFIG = configPath;
     const harness = createExtensionHarness({
@@ -396,7 +396,7 @@ describe("/profile-add", () => {
     const editor = await harness.ui.waitForRuleForm();
     editor.press("CtrlN");
     editor.type("echo retained");
-    editor.press("Escape");
+    editor.press("Enter"); // accept this section into the wizard draft
 
     const overview = await harness.ui.waitForProfileAuthoringOverview();
     expect(overview.render().join("\n")).toContain(
@@ -404,8 +404,19 @@ describe("/profile-add", () => {
     );
     overview.choose({ selection: overviewSectionSelection({ id: "bash" }) });
     const reopened = await harness.ui.waitForRuleForm();
-    expect(reopened.render().join("\n")).toContain("cho retained");
-    reopened.press("Escape");
+    reopened.type(" discarded");
+    reopened.press("Escape"); // discard only this re-opened invocation
+    const retainedOverview = await harness.ui.waitForProfileAuthoringOverview();
+    expect(retainedOverview.render().join("\n")).toContain(
+      ruleSectionOption({ kind: "bash", count: 1 }),
+    );
+    retainedOverview.choose({
+      selection: overviewSectionSelection({ id: "bash" }),
+    });
+    const restored = await harness.ui.waitForRuleForm();
+    expect(restored.render().join("\n")).toContain("cho retained");
+    expect(restored.render().join("\n")).not.toContain("discarded");
+    restored.press("Escape");
     await chooseOverview({ harness, selection: submitOverviewSelection });
     await run;
     expect(
@@ -483,7 +494,7 @@ describe("/profile-add", () => {
       selection: overviewSectionSelection({ id: "bash" }),
     });
     const retainedEditor = await harness.ui.waitForRuleForm();
-    retainedEditor.press("CtrlShiftR"); // explicit clear
+    retainedEditor.press("CtrlShiftX"); // explicit clear
     const overviewWithReadIssue =
       await harness.ui.waitForProfileAuthoringOverview();
     expect(overviewWithReadIssue.render().join("\n")).toContain(
@@ -494,16 +505,19 @@ describe("/profile-add", () => {
     expect(invalidReadEditor.render().join("\n")).toContain(
       profileAuthoringInvalidMarker,
     );
-    invalidReadEditor.press("CtrlShiftR");
+    invalidReadEditor.press("CtrlShiftX");
     (await harness.ui.waitForProfileAuthoringOverview()).choose({
       selection: submitOverviewSelection,
     });
     await run;
-    expect(
-      loadRawProfileConfig({ configPath: configPath })?.profiles[
-        "duplicate-work"
-      ],
-    ).toBeDefined();
+    const created = loadRawProfileConfig({ configPath: configPath })?.profiles[
+      "duplicate-work"
+    ];
+    expect(created).toBeDefined();
+    // Clear persists intentionally empty local groups rather than reverting
+    // them to the inherited/omitted state.
+    expect(created?.tools?.bash).toEqual([]);
+    expect(created?.readPaths).toEqual([]);
   });
 
   it("rejects persistent ASK saves to an authoritative built-in profile without creating a child", async () => {
@@ -527,7 +541,7 @@ describe("/profile-add", () => {
     expect(loadRawProfileConfig({ configPath })?.profiles).toEqual({});
   });
 
-  it("remembers a denied ASK command and optional steering in the active custom profile", async () => {
+  it("remembers a denied ASK command and its persisted denial guidance in the active custom profile", async () => {
     const configPath = temporaryConfig();
     fs.writeFileSync(
       configPath,
@@ -555,7 +569,7 @@ describe("/profile-add", () => {
     );
     const editor = await harness.ui.waitForRuleForm();
     editor.press("Tab"); // allow → deny
-    editor.press("ArrowDown");
+    editor.press("CtrlK");
     editor.type("Use the documented workflow instead.");
     editor.press("Enter");
     const result = await pending;
@@ -569,14 +583,17 @@ describe("/profile-add", () => {
           {
             pattern: "echo never-again",
             decision: "deny",
+            guidance: "Use the documented workflow instead.",
           },
         ],
       },
     });
-    await harness.callToolDecisivelyWithoutPrompt({
+    const repeated = await harness.callToolDecisivelyWithoutPrompt({
       toolName: "bash",
       input: { command: "echo never-again" },
     });
+    expect(repeated).toMatchObject({ block: true });
+    expect(repeated?.reason).toContain("Use the documented workflow instead.");
   });
 
   it("completes a current local allow save after top-level re-evaluation", async () => {

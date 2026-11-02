@@ -200,7 +200,7 @@ const decisionRuleProperties = {
   guidance: Type.Optional(Type.String()),
 };
 
-const ruleSchema = Type.Object(
+export const ruleSchema = Type.Object(
   {
     pattern: Type.String(),
     argumentPolicy: Type.Optional(Type.Literal("date-display")),
@@ -232,7 +232,7 @@ const customToolMatchSchema = Type.Unsafe<Record<string, string>>({
   minProperties: 1,
 });
 
-const customToolRuleSchema = Type.Object(
+export const customToolRuleSchema = Type.Object(
   {
     ...decisionRuleProperties,
     match: Type.Optional(customToolMatchSchema),
@@ -248,13 +248,56 @@ type ToolPolicies = {
     | undefined;
 };
 
-const toolsSchema = Type.Unsafe<ToolPolicies>({
+/** Tool names with their own policy shape; every other name is a custom tool. */
+export const builtInToolNames = [
+  "bash",
+  "read",
+  "grep",
+  "find",
+  "ls",
+  "edit",
+  "write",
+] as const;
+
+/**
+ * A declaration name that object assignment treats as a prototype rather than
+ * an own key. It is reserved for profiles and custom tools alike.
+ */
+export const prototypeDeclarationName = "__proto__";
+
+export const customToolNamePattern = `^(?!(?:${[...builtInToolNames, prototypeDeclarationName].join("|")})$).+$`;
+export const customToolNameSchema = Type.String({
+  minLength: 1,
+  pattern: customToolNamePattern,
+});
+
+/** Why a name cannot hold custom-tool rules, or undefined when it can. */
+export function customToolNameError({
+  name,
+}: {
+  readonly name: string;
+}): string | undefined {
+  if (name.trim().length === 0) return "custom tool name is required";
+  if (
+    builtInToolNames.some((builtIn) => builtIn === name) ||
+    name === prototypeDeclarationName
+  )
+    return `'${name}' is a reserved tool name`;
+  // Build the message first: a failed schema check narrows `name` to never.
+  const invalid = `invalid custom tool name '${name}'`;
+  return Value.Check(customToolNameSchema, name) ? undefined : invalid;
+}
+
+export const customToolRuleArraySchema = Type.Array(customToolRuleSchema);
+export const bashRuleArraySchema = Type.Array(ruleSchema);
+
+export const toolsSchema = Type.Unsafe<ToolPolicies>({
   type: "object",
   properties: {
     bash: { type: "array", items: ruleSchema },
   },
   patternProperties: {
-    "^(?!(?:bash|read|grep|find|ls|edit|write)$).+$": {
+    [customToolNamePattern]: {
       type: "array",
       items: customToolRuleSchema,
     },
@@ -612,10 +655,14 @@ export function parsePolicyConfig({
     schema: policyConfigSchema,
     message: "Invalid pi-guard policy",
   });
-  const profiles: Record<string, ResolvedProfile> = {};
-  for (const [name, profile] of Object.entries(parsed.profiles)) {
-    profiles[name] = parseResolvedProfile({ unverifiedProfile: profile });
-  }
+  // fromEntries defines own properties, so a profile named `__proto__` is
+  // data rather than a prototype assignment.
+  const profiles = Object.fromEntries(
+    Object.entries(parsed.profiles).map(([name, profile]) => [
+      name,
+      parseResolvedProfile({ unverifiedProfile: profile }),
+    ]),
+  );
   if (!Object.hasOwn(profiles, parsed.defaultProfile)) {
     throw new Error(
       `Invalid pi-guard policy at /defaultProfile: profile '${parsed.defaultProfile}' is not configured`,
@@ -944,7 +991,13 @@ export function extendProfile(
       ? (mergedTools[toolName] ?? [])
       : [];
     assertCustomToolRuleArray(toolName, inheritedRules);
-    mergedTools[toolName] = [...inheritedRules, ...overrideRules];
+    // Define rather than assign: assigning `__proto__` would set the prototype.
+    Object.defineProperty(mergedTools, toolName, {
+      configurable: true,
+      enumerable: true,
+      value: [...inheritedRules, ...overrideRules],
+      writable: true,
+    });
   }
 
   const mergedProtectedPathRules = [

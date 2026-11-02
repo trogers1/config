@@ -1,8 +1,9 @@
 import {
+  Editor,
+  type EditorTheme,
   Input,
   Key,
   matchesKey,
-  truncateToWidth,
   wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 import {
@@ -14,11 +15,34 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
   readPathContexts,
   writePathContexts,
+  type Decision,
   type PathContext,
   type ReadPathContext,
   type WritePathContext,
 } from "./policyHelpers";
 import type { OrdinaryPathRuleKind, RuleKind } from "./profileConfig";
+import {
+  builtInRuleKinds,
+  inlineAskBuiltInRuleKinds,
+  canSaveRuleEditor,
+  initializeRuleEditorRows,
+  initializeRuleEditorState,
+  isBuiltInRuleKind,
+  nextRuleEditorDecision,
+  nextRuleEditorFocus,
+  ruleEditorIdentityHistory,
+  transitionRuleEditor,
+  validateRuleEditor,
+  type EditableRule,
+  type EditableRuleCreation,
+  type GlobMatcher,
+  type ReadPathMatch,
+  type RuleDecision,
+  type RuleOrigin,
+  type RuleEditorOptions,
+  type RuleEditorState,
+} from "./ruleEditorDomain";
+import { terminalSafeText } from "./terminalText";
 import type { ProfileConfigProfile } from "./policyHelpers";
 
 export type RuleSectionEdit<T> =
@@ -38,55 +62,780 @@ type ProfileRuleSectionEdits = {
   >;
 };
 import {
-  renderPurposePresentation,
   profileAuthoringSelectedRowMarker,
   profileAuthoringUnselectedRowMarker,
   ruleSectionPresentation,
-  type RuleSectionPresentation,
 } from "./profileAuthoringPresentation";
-
-type TextStyle = (text: string) => string;
-
-function sectionDescriptionLines({
-  width,
-  presentation,
-  purposeStyles,
-  mutedStyle,
-}: {
-  readonly width: number;
-  readonly presentation: RuleSectionPresentation;
-  readonly purposeStyles: {
-    readonly normal: TextStyle;
-    readonly deny: TextStyle;
-    readonly allow: TextStyle;
-  };
-  readonly mutedStyle: TextStyle;
-}): {
-  readonly purpose: string[];
-  readonly examples: string[];
-  readonly syntax: string[];
-} {
-  return {
-    purpose: wrapTextWithAnsi(
-      renderPurposePresentation({
-        purpose: presentation.purposePresentation,
-        styles: purposeStyles,
-      }),
-      width,
-    ),
-    examples: wrapTextWithAnsi(mutedStyle(presentation.examples), width),
-    syntax: wrapTextWithAnsi(mutedStyle(presentation.syntax), width),
-  };
-}
-
-const emptyRuleSectionMessage = "No rules in this section. Ctrl+N adds one.";
 /** Row labels own the selection indicator, so embedded Inputs need no prompt. */
 const embeddedInputOptions = { prompt: "" } as const;
+const emptyGlobMatcher = (): GlobMatcher => ({ kind: "glob", pattern: "" });
 
 function newEmbeddedInput({ value }: { readonly value: string }): Input {
   const input = new Input(embeddedInputOptions);
   input.setValue(value);
   return input;
+}
+
+/** pi-tui keeps Input's cursor private; read it, or fail rather than guess. */
+function inputCursor({ input }: { readonly input: Input }): number {
+  const cursor: unknown = Reflect.get(input, "cursor");
+  if (
+    typeof cursor !== "number" ||
+    !Number.isInteger(cursor) ||
+    cursor < 0 ||
+    cursor > input.getValue().length
+  )
+    throw new Error("pi-tui Input no longer exposes a usable cursor");
+  return cursor;
+}
+
+/**
+ * Draw an embedded Input with its value escaped for the terminal, since
+ * values can come from model-controlled tool input. The raw cursor maps onto
+ * the escaped prefix; a bracketed paste places the display Input's cursor
+ * there before it draws the window.
+ */
+function renderTerminalSafeInput({
+  input,
+  width,
+}: {
+  readonly input: Input;
+  readonly width: number;
+}): string {
+  const value = input.getValue();
+  const display = new Input(embeddedInputOptions);
+  display.handleInput(
+    `\x1b[200~${terminalSafeText({ text: value.slice(0, inputCursor({ input })) })}\x1b[201~`,
+  );
+  display.setValue(terminalSafeText({ text: value }));
+  display.focused = input.focused;
+  return display.render(width)[0] ?? "";
+}
+
+/** Render only sanitized data through the SDK; never sanitize its styling. */
+function renderTerminalSafeGuidance({
+  editor,
+  display,
+  width,
+}: {
+  readonly editor: Editor;
+  readonly display: Editor;
+  readonly width: number;
+}): string[] {
+  const lines = editor.getText().split("\n");
+  const cursor = editor.getCursor();
+  const line = lines[cursor.line];
+  if (line === undefined || cursor.col < 0 || cursor.col > line.length)
+    throw new Error("pi-tui Editor exposed an invalid guidance cursor");
+  const text = lines.map((text) => terminalSafeText({ text })).join("\n");
+  // Preserve the SDK's preferred visual column across consecutive navigation.
+  if (display.getText() !== text) display.setText(text);
+  placeGuidanceCursor({
+    editor: display,
+    line: cursor.line,
+    col: terminalSafeText({ text: line.slice(0, cursor.col) }).length,
+  });
+  display.focused = editor.focused;
+  return display.render(width);
+}
+
+/** The SDK exposes a cursor reader but no setter; validate its state boundary. */
+function placeGuidanceCursor({
+  editor,
+  line,
+  col,
+}: {
+  readonly editor: Editor;
+  readonly line: number;
+  readonly col: number;
+}): void {
+  const text = editor.getLines()[line];
+  if (
+    text === undefined ||
+    !Number.isInteger(col) ||
+    col < 0 ||
+    col > text.length
+  )
+    throw new Error("Invalid mapped guidance cursor");
+  const state: unknown = Reflect.get(editor, "state");
+  if (
+    typeof state !== "object" ||
+    state === null ||
+    typeof Reflect.get(state, "cursorLine") !== "number" ||
+    typeof Reflect.get(state, "cursorCol") !== "number"
+  )
+    throw new Error("pi-tui Editor no longer exposes a usable cursor state");
+  Reflect.set(state, "cursorLine", line);
+  Reflect.set(state, "cursorCol", col);
+}
+
+/** Snap a display cursor inside an escape to the nearest raw grapheme edge. */
+function mapGuidanceCursorToRaw({
+  editor,
+  display,
+}: {
+  readonly editor: Editor;
+  readonly display: Editor;
+}): void {
+  const cursor = display.getCursor();
+  const line = editor.getLines()[cursor.line];
+  if (line === undefined) throw new Error("Invalid display guidance line");
+  let rawCol = 0;
+  let displayCol = 0;
+  let distance = Math.abs(cursor.col);
+  for (const { segment, index } of new Intl.Segmenter(undefined, {
+    granularity: "grapheme",
+  }).segment(line)) {
+    displayCol += terminalSafeText({ text: segment }).length;
+    const nextDistance = Math.abs(cursor.col - displayCol);
+    if (nextDistance < distance) {
+      distance = nextDistance;
+      rawCol = index + segment.length;
+    }
+  }
+  placeGuidanceCursor({ editor, line: cursor.line, col: rawCol });
+}
+
+export type { EditableRule, EditableRuleCreation } from "./ruleEditorDomain";
+
+export type EditRulesOptions = {
+  readonly mode: RuleEditorOptions["mode"];
+  readonly title: string;
+  /** Unidentified clauses are accepted only while opening this invocation. */
+  readonly rows: readonly EditableRuleCreation[];
+  /** ASK locks the invoked tool; profile authoring intentionally does not. */
+  readonly lockedToolName?: string;
+  /** Raw request-glob warnings, kept separate from durable policy guidance. */
+  readonly requestWarnings?: readonly string[];
+  readonly clearAvailable?: boolean;
+  /** Adapter options for built-in implicit command/path clauses. */
+  readonly builtin?: {
+    readonly allowedTools: readonly RuleKind[];
+    readonly defaultTool: RuleKind;
+    readonly defaultDecision?: "allow" | "deny";
+    readonly requestDetails?: Readonly<Record<string, AskRuleCandidate>>;
+  };
+};
+export type EditRulesResult = {
+  readonly action: "back" | "save" | "clear";
+  readonly rows: readonly EditableRule[];
+};
+
+/**
+ * The one rule editor. Inline ASK, `/profile-add`, and `/profile-edit` use
+ * this state machine, renderer, and input loop for built-in sections and
+ * custom tools alike, rather than adapters inventing a second workflow.
+ */
+export async function editRules({
+  ctx,
+  options,
+  custom,
+}: {
+  readonly ctx: { readonly ui: Pick<ExtensionContext["ui"], "custom"> };
+  readonly options: EditRulesOptions;
+  readonly custom?: ProfileAuthoringCustom;
+}): Promise<EditRulesResult> {
+  const domainOptions: RuleEditorOptions = {
+    mode: options.mode,
+    lockedToolName: options.lockedToolName,
+    allowAddRemove: true,
+    clearAvailable: options.clearAvailable,
+    builtin: options.builtin,
+  };
+  const invocationRows = initializeRuleEditorRows({ rows: options.rows });
+  let state: RuleEditorState = initializeRuleEditorState({
+    state: {
+      baseline: structuredClone(invocationRows),
+      rows: structuredClone(invocationRows),
+      ...ruleEditorIdentityHistory({ rows: invocationRows }),
+      selected: 0,
+      clause: 0,
+      field: "pattern",
+    },
+  });
+  const toolInputs: Input[] = [];
+  const pathInputs: Input[][] = [];
+  const patternInputs: Input[][] = [];
+  const guidanceEditors: Editor[] = [];
+  const guidanceDisplays: Editor[] = [];
+  let focused = false;
+  let rebuildInputAdapters: () => void = () => undefined;
+  // Pi Inputs are cursor adapters only. Domain state is the sole draft state;
+  // adapters are rebuilt for structural changes, never after each keystroke.
+  const snapshot = (): readonly EditableRule[] => structuredClone(state.rows);
+  const syncActiveFocus = (): void => {
+    toolInputs.flat().forEach((input) => (input.focused = false));
+    pathInputs.flat().forEach((input) => (input.focused = false));
+    patternInputs.flat().forEach((input) => (input.focused = false));
+    guidanceEditors.forEach((editor) => (editor.focused = false));
+    if (!focused) return;
+    const input = activeInput();
+    const guidance = activeGuidanceEditor();
+    if (input) input.focused = true;
+    if (guidance) guidance.focused = true;
+  };
+  const dispatch = ({
+    action,
+    rebuild = false,
+  }: {
+    readonly action: Parameters<typeof transitionRuleEditor>[0]["action"];
+    readonly rebuild?: boolean;
+  }): void => {
+    state = transitionRuleEditor({ state, action, options: domainOptions });
+    if (rebuild) rebuildInputAdapters();
+    syncActiveFocus();
+  };
+  const commitActiveInput = (): void => {
+    const input = activeInput();
+    if (input === undefined) return;
+    dispatch({ action: { type: "set-field-value", value: input.getValue() } });
+  };
+  const activeInput = (): Input | undefined =>
+    state.field === "tool"
+      ? toolInputs[state.selected]
+      : state.field === "path"
+        ? pathInputs[state.selected]?.[state.clause]
+        : state.field === "pattern"
+          ? patternInputs[state.selected]?.[state.clause]
+          : undefined;
+  const activeGuidanceEditor = (): Editor | undefined =>
+    state.field === "guidance" ? guidanceEditors[state.selected] : undefined;
+  const result = await showProfileAuthoringCustom<EditRulesResult | null>({
+    ctx,
+    custom,
+    factory: (tui, theme, keys, done) => {
+      const editorTheme: EditorTheme = {
+        borderColor: (text) => theme.fg("accent", text),
+        selectList: {
+          selectedPrefix: (text) => theme.fg("accent", text),
+          selectedText: (text) => theme.fg("accent", text),
+          description: (text) => theme.fg("muted", text),
+          scrollInfo: (text) => theme.fg("dim", text),
+          noMatch: (text) => theme.fg("warning", text),
+        },
+      };
+      let guidanceWidth = Math.max(1, tui.terminal.columns - 4);
+      rebuildInputAdapters = (): void => {
+        toolInputs.splice(0);
+        pathInputs.splice(0);
+        patternInputs.splice(0);
+        guidanceEditors.splice(0);
+        guidanceDisplays.splice(0);
+        state.rows.forEach((editable) => {
+          toolInputs.push(newEmbeddedInput({ value: editable.rule.toolName }));
+          pathInputs.push(
+            editable.rule.inputs.map((input) =>
+              newEmbeddedInput({ value: input.inputPath }),
+            ),
+          );
+          patternInputs.push(
+            editable.rule.inputs.map((input) =>
+              newEmbeddedInput({ value: input.matcher.pattern }),
+            ),
+          );
+          const guidance = new Editor(tui, editorTheme);
+          guidance.setText(editable.rule.guidance ?? "");
+          guidance.onChange = () =>
+            dispatch({
+              action: {
+                type: "set-field-value",
+                value: guidance.getExpandedText(),
+              },
+            });
+          guidanceEditors.push(guidance);
+          guidanceDisplays.push(new Editor(tui, editorTheme));
+        });
+        syncActiveFocus();
+      };
+      rebuildInputAdapters();
+      const finish = ({
+        action,
+      }: {
+        readonly action: EditRulesResult["action"];
+      }): void => done({ action, rows: snapshot() });
+      const addRule = (): void => {
+        const toolName =
+          options.lockedToolName ?? options.builtin?.defaultTool ?? "";
+        dispatch({
+          action: {
+            type: "add-rule",
+            rule: {
+              origin: (options.mode === "ask"
+                ? "additional"
+                : "create") satisfies RuleOrigin,
+              rule: {
+                toolName,
+                inputs: options.builtin
+                  ? [
+                      {
+                        inputPath: toolName === "bash" ? "command" : "path",
+                        matcher: emptyGlobMatcher(),
+                      },
+                    ]
+                  : [],
+                decision:
+                  options.builtin?.defaultDecision ??
+                  (options.mode === "ask" ? "allow" : "deny"),
+                ...(options.builtin &&
+                (toolName === "read" || toolName === "write")
+                  ? {
+                      contexts: state.rows.find(
+                        (row) => row.rule.toolName === toolName,
+                      )?.rule.contexts,
+                    }
+                  : {}),
+              },
+            },
+          },
+          rebuild: true,
+        });
+        dispatch({
+          action: {
+            type: "focus",
+            // A locked custom target is displayed, not editable. Its first
+            // valid visible field is guidance until the author adds a
+            // named clause. Built-ins always have an implicit clause.
+            field: options.builtin
+              ? "pattern"
+              : options.lockedToolName === undefined
+                ? "tool"
+                : "guidance",
+          },
+        });
+      };
+      const addClause = (): void => {
+        const row = state.rows[state.selected];
+        if (row === undefined) return;
+        dispatch({
+          action: {
+            type: "add-clause",
+            ruleId: row.id,
+            input: {
+              inputPath: options.builtin
+                ? row.rule.toolName === "bash"
+                  ? "command"
+                  : "path"
+                : "",
+              matcher: emptyGlobMatcher(),
+            },
+          },
+          rebuild: true,
+        });
+      };
+      const validation = () =>
+        validateRuleEditor({ state, options: domainOptions });
+      const decisionLabel = ({
+        decision,
+      }: {
+        readonly decision: RuleDecision;
+      }): string =>
+        decision === "allow"
+          ? "✅ ALLOW"
+          : decision === "deny"
+            ? "⛔️ DENY"
+            : decision === "ask"
+              ? "❓ ASK"
+              : "SKIP";
+      const presentation =
+        options.builtin?.allowedTools.length === 1
+          ? ruleSectionPresentation[options.builtin.allowedTools[0]]
+          : undefined;
+      return {
+        get focused() {
+          return focused;
+        },
+        set focused(value: boolean) {
+          focused = value;
+          syncActiveFocus();
+        },
+        render: (width) => {
+          guidanceWidth = Math.max(1, width - 4);
+          const invalid = validation();
+          return [
+            theme.fg(
+              "accent",
+              theme.bold(terminalSafeText({ text: options.title })),
+            ),
+            "",
+            ...(presentation === undefined
+              ? []
+              : [
+                  ...wrapTextWithAnsi(presentation.purpose, width),
+                  "",
+                  ...wrapTextWithAnsi(presentation.examples, width),
+                  ...wrapTextWithAnsi(presentation.syntax, width),
+                  "",
+                ]),
+            ...(options.builtin
+              ? presentation === undefined
+                ? [
+                    "Built-in rules use command/path raw-glob clauses. Multiple clauses expand to ordinary declarations.",
+                  ]
+                : []
+              : [
+                  "Custom-tool rules use AND across named raw-glob clauses. A rule with no clauses is a catch-all.",
+                ]),
+            ...(options.requestWarnings ?? []).flatMap((warning) =>
+              wrapTextWithAnsi(
+                theme.fg("warning", `⚠ ${terminalSafeText({ text: warning })}`),
+                width,
+              ),
+            ),
+            ...(state.rows.length === 0
+              ? [
+                  theme.fg(
+                    "warning",
+                    options.builtin
+                      ? "No rules in this section. Ctrl+N adds one."
+                      : "No custom-tool rules. Ctrl+N adds one.",
+                  ),
+                ]
+              : state.rows.flatMap((_, index) => {
+                  const editable = state.rows[index];
+                  const rule = editable.rule;
+                  const mark =
+                    index === state.selected
+                      ? profileAuthoringSelectedRowMarker
+                      : profileAuthoringUnselectedRowMarker;
+                  const tool = toolInputs[index];
+                  const details =
+                    options.builtin?.requestDetails?.[editable.id];
+                  const builtInTarget = { value: rule.toolName };
+                  const target =
+                    options.builtin && isBuiltInRuleKind(builtInTarget)
+                      ? ruleSectionPresentation[builtInTarget.value].label
+                      : options.builtin || options.lockedToolName
+                        ? terminalSafeText({ text: rule.toolName })
+                        : `Tool ${tool ? renderTerminalSafeInput({ input: tool, width: Math.max(1, width - 24) }) : ""}`;
+                  const lines = [
+                    `${mark}${target} · ${rule.decision.toUpperCase()}`,
+                    ...(options.builtin
+                      ? [
+                          `    Local decision  ${decisionLabel({ decision: rule.decision })}`,
+                          ...(options.mode === "ask" && rule.decision !== "skip"
+                            ? [
+                                `    ASK → ${decisionLabel({ decision: rule.decision })}`,
+                              ]
+                            : []),
+                        ]
+                      : []),
+                    ...(options.mode === "ask" &&
+                    editable.origin === "additional"
+                      ? [
+                          "    Additional profile rule (not required by this ASK)",
+                        ]
+                      : []),
+                  ];
+                  if (details) {
+                    lines.push(
+                      `    Requested value  ${terminalSafeText({ text: details.requestedValue })}`,
+                    );
+                    if (details.kind !== "bash")
+                      lines.push(
+                        `    Context/source   ${details.context} · ${terminalSafeText({ text: details.source.tool })}${details.source.role ? ` (${terminalSafeText({ text: details.source.role })})` : ""}`,
+                      );
+                    lines.push(
+                      `    Matched rule     ${details.matchedRule === undefined ? "none (fallback ASK)" : terminalSafeText({ text: details.matchedRule })}`,
+                    );
+                    if (details.kind !== "bash") {
+                      lines.push(
+                        `    Writes to        profile ${ruleDestination({ kind: details.kind })}`,
+                        `    ${ruleEffect({ kind: details.kind, decision: rule.decision === "deny" ? "deny" : "allow" })}`,
+                      );
+                    }
+                    if (rule.decision === "skip")
+                      lines.push(
+                        "    Request draft retained; unchanged; remains ASK",
+                      );
+                    if (
+                      rule.inputs.some((input) =>
+                        isBroaderPattern({
+                          pattern: input.matcher.pattern,
+                          pathMatch: rule.pathMatch,
+                          request: details,
+                        }),
+                      )
+                    )
+                      lines.push(
+                        theme.fg(
+                          "warning",
+                          "    ⚠ Broader/custom pattern: this rule may affect paths beyond this request.",
+                        ),
+                      );
+                  }
+                  for (const [inputIndex, input] of rule.inputs.entries()) {
+                    const active =
+                      inputIndex === state.clause && index === state.selected;
+                    const path = pathInputs[index]?.[inputIndex];
+                    const pattern = patternInputs[index]?.[inputIndex];
+                    const fieldWidth = Math.max(1, width - 14);
+                    if (!options.builtin)
+                      lines.push(
+                        `    ${active ? "→" : " "} Path    ${path ? renderTerminalSafeInput({ input: path, width: fieldWidth }) : terminalSafeText({ text: input.inputPath })}`,
+                      );
+                    // Keep the active matcher in its own budgeted line, so
+                    // narrow viewports retain both its cursor and meaning.
+                    lines.push(
+                      `    ${active ? "→" : " "} Pattern ${pattern ? renderTerminalSafeInput({ input: pattern, width: fieldWidth }) : terminalSafeText({ text: input.matcher.pattern })}`,
+                    );
+                  }
+                  if (rule.inputs.length === 0)
+                    lines.push(
+                      options.builtin
+                        ? "    No command/path clauses"
+                        : "    Catch-all (no match clauses)",
+                    );
+                  if (rule.toolName === "read")
+                    lines.push(
+                      `    Path match       ${rule.pathMatch ?? "glob"}`,
+                    );
+                  if (
+                    (rule.toolName === "read" &&
+                      rule.pathMatch === undefined) ||
+                    rule.toolName === "write"
+                  )
+                    lines.push(
+                      "    PATH GLOB/PATTERN — interpreted as a glob, not a literal path (e.g. src/**/*.ts).",
+                    );
+                  if (rule.toolName === "read" || rule.toolName === "write")
+                    lines.push(
+                      `    Context          ${rule.contexts?.join(", ") ?? "all contexts"}`,
+                    );
+                  if (options.mode === "ask" && rule.inputs.length === 1)
+                    lines.push(
+                      `    Draft pattern    ${terminalSafeText({ text: rule.inputs[0]?.matcher.pattern ?? "" })}`,
+                    );
+                  const guidance = guidanceEditors[index];
+                  lines.push("    Guidance:");
+                  lines.push(
+                    ...(guidance && guidanceDisplays[index]
+                      ? renderTerminalSafeGuidance({
+                          editor: guidance,
+                          display: guidanceDisplays[index],
+                          width: Math.max(1, width - 4),
+                        })
+                      : [theme.fg("dim", "none")]
+                    ).map((line) => `    ${line}`),
+                  );
+                  return lines;
+                })),
+            "",
+            ...(validation() === undefined &&
+            options.mode === "ask" &&
+            state.rows.length > 0 &&
+            state.rows.every((row) => row.rule.decision === "skip")
+              ? [theme.fg("warning", "Save disabled: every row is skipped"), ""]
+              : []),
+            ...(options.mode === "ask" &&
+            state.rows.some(
+              (row) =>
+                row.rule.decision !== "skip" && row.rule.inputs.length === 0,
+            )
+              ? [
+                  theme.fg(
+                    "warning",
+                    "⚠ Tool-wide catch-all: Save opens a separate confirmation before this rule is persisted.",
+                  ),
+                  "",
+                ]
+              : []),
+            theme.fg(
+              "dim",
+              invalid
+                ? `Save disabled: ${terminalSafeText({ text: invalid.message })}`
+                : `Enter save · Ctrl+K field${options.builtin ? " · Ctrl+Shift+K target" : ""} · Tab decision · Ctrl+↑/↓ rule · Ctrl+←/→ clause · Ctrl+N add rule · Ctrl+A add clause · Ctrl+D remove rule · Ctrl+Shift+D remove clause · Ctrl+X context · Ctrl+Shift+R reset${options.clearAvailable ? " · Ctrl+Shift+X clear" : ""} · Ctrl+J newline in guidance (Shift/Ctrl+Enter need extended keys) · Esc back`,
+            ),
+          ].flatMap((line) => wrapTextWithAnsi(line, width));
+        },
+        invalidate: () => undefined,
+        handleInput: (data) => {
+          if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c")))
+            finish({ action: "back" });
+          else if (matchesKey(data, Key.ctrlShift("r")))
+            dispatch({ action: { type: "reset" }, rebuild: true });
+          else if (
+            matchesKey(data, Key.ctrlShift("x")) &&
+            options.clearAvailable
+          ) {
+            dispatch({ action: { type: "clear" }, rebuild: true });
+            finish({ action: "clear" });
+          } else if (matchesKey(data, Key.ctrl("n"))) addRule();
+          else if (matchesKey(data, Key.ctrl("a"))) addClause();
+          else if (matchesKey(data, Key.ctrlShift("d"))) {
+            const row = state.rows[state.selected];
+            const input = row?.rule.inputs[state.clause];
+            if (row !== undefined && input !== undefined) {
+              dispatch({
+                action: {
+                  type: "remove-clause",
+                  ruleId: row.id,
+                  clauseId: input.id,
+                },
+                rebuild: true,
+              });
+              dispatch({
+                action: {
+                  type: "focus",
+                  field: row.rule.inputs.length === 1 ? "guidance" : "pattern",
+                },
+              });
+            }
+          } else if (matchesKey(data, Key.ctrl("d"))) {
+            const row = state.rows[state.selected];
+            if (row !== undefined)
+              dispatch({
+                action: { type: "remove-rule", ruleId: row.id },
+                rebuild: true,
+              });
+          } else if (matchesKey(data, Key.tab)) {
+            const row = state.rows[state.selected];
+            if (row !== undefined)
+              dispatch({
+                action: {
+                  type: "set-decision",
+                  ruleId: row.id,
+                  decision: nextRuleEditorDecision({
+                    state,
+                    ruleId: row.id,
+                    options: domainOptions,
+                  }),
+                },
+              });
+          } else if (matchesKey(data, Key.ctrl("x"))) {
+            const row = state.rows[state.selected];
+            if (
+              row &&
+              row.origin !== "request" &&
+              (row.rule.toolName === "read" || row.rule.toolName === "write")
+            ) {
+              const contexts = contextsByKind[row.rule.toolName];
+              const current =
+                row.rule.contexts?.length === 1
+                  ? contexts.indexOf(row.rule.contexts[0])
+                  : -1;
+              const next = contexts[current + 1];
+              for (const context of row.rule.contexts ?? [])
+                dispatch({
+                  action: { type: "toggle-context", ruleId: row.id, context },
+                });
+              if (next !== undefined)
+                dispatch({
+                  action: {
+                    type: "toggle-context",
+                    ruleId: row.id,
+                    context: next,
+                  },
+                });
+            }
+          } else if (
+            matchesKey(data, Key.ctrl("left")) ||
+            matchesKey(data, Key.ctrl("right"))
+          ) {
+            const row = state.rows[state.selected];
+            if (row !== undefined && row.rule.inputs.length > 0) {
+              const index = matchesKey(data, Key.ctrl("left"))
+                ? Math.max(0, state.clause - 1)
+                : Math.min(row.rule.inputs.length - 1, state.clause + 1);
+              const input = row.rule.inputs[index];
+              if (input !== undefined)
+                dispatch({
+                  action: {
+                    type: "select-clause",
+                    ruleId: row.id,
+                    clauseId: input.id,
+                  },
+                });
+            }
+          } else if (
+            matchesKey(data, Key.ctrl("up")) ||
+            matchesKey(data, Key.ctrl("down"))
+          ) {
+            const index = matchesKey(data, Key.ctrl("up"))
+              ? Math.max(0, state.selected - 1)
+              : Math.min(state.rows.length - 1, state.selected + 1);
+            const row = state.rows[index];
+            if (row !== undefined)
+              dispatch({ action: { type: "select-rule", ruleId: row.id } });
+          } else if (
+            state.field === "guidance" &&
+            // Legacy terminals send Ctrl+J, and unextended Shift/Ctrl+Enter,
+            // as a raw line feed that also matches Enter. Guidance takes it
+            // as a newline before Enter can save.
+            (data === "\n" ||
+              keys.matches(data, "tui.input.newLine") ||
+              matchesKey(data, Key.ctrl("enter")))
+          ) {
+            activeGuidanceEditor()?.insertTextAtCursor("\n");
+          } else if (matchesKey(data, Key.enter)) {
+            if (canSaveRuleEditor({ state, options: domainOptions }))
+              finish({ action: "save" });
+          } else if (matchesKey(data, Key.ctrlShift("k"))) {
+            const row = state.rows[state.selected];
+            // Destination-fixed profile sections expose one allowed target;
+            // this remains a domain no-op and preserves path contexts.
+            if (options.builtin && row && row.origin !== "request") {
+              // Rebuild adapter state after the structural target change;
+              // the domain returns focus to the visible pattern field.
+              dispatch({
+                action: { type: "cycle-built-in-target", ruleId: row.id },
+                rebuild: true,
+              });
+            }
+          } else if (matchesKey(data, Key.ctrl("k"))) {
+            dispatch({
+              action: {
+                type: "focus",
+                field: nextRuleEditorFocus({ state, options: domainOptions }),
+              },
+            });
+          } else {
+            const guidance = activeGuidanceEditor();
+            if (guidance) {
+              const display = guidanceDisplays[state.selected];
+              const visualNavigation = [
+                "tui.editor.cursorUp",
+                "tui.editor.cursorDown",
+                "tui.editor.pageUp",
+                "tui.editor.pageDown",
+              ] as const;
+              if (
+                visualNavigation.some((action) => keys.matches(data, action))
+              ) {
+                if (!display)
+                  throw new Error("Missing guidance display editor");
+                // Synchronize before navigation even if edits arrived before
+                // the next scheduled render. Layout includes escape expansion.
+                renderTerminalSafeGuidance({
+                  editor: guidance,
+                  display,
+                  width: guidanceWidth,
+                });
+                display.handleInput(data);
+                mapGuidanceCursorToRaw({ editor: guidance, display });
+              } else {
+                guidance.handleInput(data);
+                // Horizontal motion or editing starts a new preferred-column
+                // sequence; the next render rebuilds only this display copy.
+                display?.setText("");
+              }
+            } else {
+              activeInput()?.handleInput(data);
+              commitActiveInput();
+            }
+          }
+          tui.requestRender();
+        },
+      };
+    },
+  });
+  // Back abandons this modal invocation and restores its opening draft. The
+  // permission guard, rather than an unsubmitted ASK editor, retains skipped
+  // request drafts after a successful partial save.
+  if (isProfileAuthoringAbort(result) || result?.action === "back")
+    return { action: "back", rows: structuredClone(state.baseline) };
+  if (result === null || result === undefined)
+    return { action: "back", rows: structuredClone(state.baseline) };
+  return result;
 }
 
 export type AskRuleCandidate =
@@ -101,7 +850,7 @@ export type AskRuleCandidate =
     }
   | {
       kind: OrdinaryPathRuleKind;
-      pathMatch?: ReadDeclaration["pathMatch"];
+      pathMatch?: ReadPathMatch;
       context: PathContext;
       requestedValue: string;
       initialPattern: string;
@@ -116,11 +865,13 @@ export type EditableRuleRow = {
   id: string;
   kind: RuleKind;
   pattern: string;
-  /** `ask` is a durable decision only when the row belongs to edit mode. */
-  decision: "allow" | "ask" | "deny" | "skip";
+  /** `skip` is transient; all durable decisions are schema-derived. */
+  decision: RuleDecision;
   guidance?: string;
+  /** True only when the editor intentionally changed or cleared guidance. */
+  guidanceTouched?: boolean;
   contexts?: readonly PathContext[];
-  pathMatch?: ReadDeclaration["pathMatch"];
+  pathMatch?: ReadPathMatch;
   request?: AskRuleCandidate;
   origin: "request" | "additional" | "create" | "existing";
 };
@@ -149,8 +900,8 @@ type ProfileRuleEditRow<K extends SectionKind> = {
   readonly raw: DeclarationFor<K>;
 };
 
-export type RuleEditorOptions = {
-  mode: "ask" | "create" | "edit";
+export type EditRuleRowsOptions = {
+  mode: RuleEditorOptions["mode"];
   rows: readonly EditableRuleRow[];
   /** CREATE sections use a fixed kind. ASK editors may contain mixed kinds. */
   kind?: RuleKind;
@@ -160,12 +911,12 @@ export type RuleEditorOptions = {
   defaultDecision?: "allow" | "deny";
 };
 
-export type RuleEditorResult = {
-  action: "back" | "save" | "clear";
+export type EditRuleRowsResult = {
+  action: EditRulesResult["action"];
   rows: EditableRuleRow[];
 };
 
-export function ruleDestination(kind: RuleKind): string {
+export function ruleDestination({ kind }: { readonly kind: RuleKind }): string {
   return kind === "bash"
     ? "tools.bash"
     : kind === "read"
@@ -175,7 +926,13 @@ export function ruleDestination(kind: RuleKind): string {
         : "protectedPathRules";
 }
 
-export function ruleEffect(kind: RuleKind, decision: "allow" | "deny"): string {
+export function ruleEffect({
+  kind,
+  decision,
+}: {
+  readonly kind: RuleKind;
+  readonly decision: Exclude<Decision, "ask">;
+}): string {
   if (kind === "protected")
     return decision === "deny"
       ? "Blocks both reads and writes."
@@ -193,17 +950,21 @@ export function ruleEffect(kind: RuleKind, decision: "allow" | "deny"): string {
     : "Denies this Bash command.";
 }
 
-export function isBroaderPattern(row: EditableRuleRow): boolean {
+export function isBroaderPattern({
+  pattern,
+  pathMatch,
+  request,
+}: {
+  readonly pattern: string;
+  readonly pathMatch: ReadPathMatch | undefined;
+  readonly request: AskRuleCandidate | undefined;
+}): boolean {
   return Boolean(
-    row.request &&
-    (row.pathMatch === undefined
-      ? row.pattern.trim() !== row.request.initialPattern.trim()
-      : row.pattern !== row.request.initialPattern),
+    request &&
+    (pathMatch === undefined
+      ? pattern.trim() !== request.initialPattern.trim()
+      : pattern !== request.initialPattern),
   );
-}
-
-function copyRow(row: EditableRuleRow): EditableRuleRow {
-  return { ...row, contexts: row.contexts ? [...row.contexts] : undefined };
 }
 
 const contextsByKind: Record<OrdinaryPathRuleKind, readonly PathContext[]> = {
@@ -211,10 +972,13 @@ const contextsByKind: Record<OrdinaryPathRuleKind, readonly PathContext[]> = {
   write: writePathContexts,
 };
 
-function sameContexts(
-  first: readonly PathContext[] | undefined,
-  second: readonly PathContext[] | undefined,
-): boolean {
+function sameContexts({
+  first,
+  second,
+}: {
+  readonly first: readonly PathContext[] | undefined;
+  readonly second: readonly PathContext[] | undefined;
+}): boolean {
   return (
     first === second ||
     (first !== undefined &&
@@ -225,10 +989,13 @@ function sameContexts(
 }
 
 /** Convert exact local declarations into rows without resolving inheritance. */
-export function profileRuleEditRows<K extends SectionKind>(
-  kind: K,
-  rules: readonly DeclarationFor<K>[],
-): readonly ProfileRuleEditRow<K>[] {
+export function profileRuleEditRows<K extends SectionKind>({
+  kind,
+  rules,
+}: {
+  readonly kind: K;
+  readonly rules: readonly DeclarationFor<K>[];
+}): readonly ProfileRuleEditRow<K>[] {
   return rules.map((raw, index) => ({ id: `${kind}-${index}`, kind, raw }));
 }
 
@@ -238,7 +1005,11 @@ type AnyProfileRuleEditRow =
   | ProfileRuleEditRow<"write">
   | ProfileRuleEditRow<"protected">;
 
-function editableExistingRow(row: AnyProfileRuleEditRow): EditableRuleRow {
+function editableExistingRow({
+  row,
+}: {
+  readonly row: AnyProfileRuleEditRow;
+}): EditableRuleRow {
   if (row.kind === "bash")
     return {
       id: row.id,
@@ -269,135 +1040,192 @@ function editableExistingRow(row: AnyProfileRuleEditRow): EditableRuleRow {
   };
 }
 
-function durableDecision(row: EditableRuleRow): "allow" | "ask" | "deny" {
+function durableDecision({ row }: { readonly row: EditableRuleRow }): Decision {
   if (row.decision === "skip")
     throw new Error("skip is not valid in an edit section");
   return row.decision;
 }
-function protectedDecision(row: EditableRuleRow): "allow" | "deny" {
-  const decision = durableDecision(row);
+function protectedDecision({
+  row,
+}: {
+  readonly row: EditableRuleRow;
+}): Exclude<Decision, "ask"> {
+  const decision = durableDecision({ row });
   if (decision === "ask")
     throw new Error("ask is not valid for protected rules");
   return decision;
 }
-function bashRows(
-  initial: readonly ProfileRuleEditRow<"bash">[],
-  rows: readonly EditableRuleRow[],
-): BashDeclaration[] {
+function bashRows({
+  initial,
+  rows,
+}: {
+  readonly initial: readonly ProfileRuleEditRow<"bash">[];
+  readonly rows: readonly EditableRuleRow[];
+}): BashDeclaration[] {
   const original = new Map(initial.map((row) => [row.id, row.raw]));
   return rows.map((row) => {
     const raw = original.get(row.id);
-    const decision = durableDecision(row);
+    const decision = durableDecision({ row });
+    // The form supplies semantic fields, but only a touched optional field is
+    // authority to replace its raw declaration. This preserves both omitted
+    // and deliberately empty guidance when another row/section is edited.
+    const guidance =
+      row.guidanceTouched || raw === undefined ? row.guidance : raw.guidance;
     if (
       raw &&
       raw.pattern === row.pattern &&
       raw.decision === decision &&
-      raw.guidance === row.guidance
+      raw.guidance === guidance
     )
       return raw;
-    return { ...raw, pattern: row.pattern, decision, guidance: row.guidance };
+    const declaration = { ...raw, pattern: row.pattern, decision };
+    if (row.guidanceTouched || raw === undefined) {
+      if (row.guidance === undefined) delete declaration.guidance;
+      else declaration.guidance = row.guidance;
+    }
+    return declaration;
   });
 }
-function isReadContext(context: PathContext): context is ReadPathContext {
+type PathContextArgument = { readonly context: PathContext };
+type ReadPathContextArgument = { readonly context: ReadPathContext };
+type WritePathContextArgument = { readonly context: WritePathContext };
+
+function isReadContext(
+  argument: PathContextArgument,
+): argument is ReadPathContextArgument {
   return (
-    context === "read" ||
-    context === "grep" ||
-    context === "find" ||
-    context === "ls"
+    argument.context === "read" ||
+    argument.context === "grep" ||
+    argument.context === "find" ||
+    argument.context === "ls"
   );
 }
-function isWriteContext(context: PathContext): context is WritePathContext {
-  return context === "edit" || context === "write" || context === "bash";
+function isWriteContext(
+  argument: PathContextArgument,
+): argument is WritePathContextArgument {
+  return (
+    argument.context === "edit" ||
+    argument.context === "write" ||
+    argument.context === "bash"
+  );
 }
-function readContexts(
-  contexts: readonly PathContext[] | undefined,
-): ReadPathContext[] | undefined {
+function readContexts({
+  contexts,
+}: {
+  readonly contexts: readonly PathContext[] | undefined;
+}): ReadPathContext[] | undefined {
   if (contexts === undefined) return undefined;
-  if (!contexts.every(isReadContext))
+  const argumentsForContexts = contexts.map((context) => ({ context }));
+  if (!argumentsForContexts.every(isReadContext))
     throw new Error("read rule contexts must be read contexts");
-  return [...contexts];
+  return argumentsForContexts.map((argument) => argument.context);
 }
-function writeContexts(
-  contexts: readonly PathContext[] | undefined,
-): WritePathContext[] | undefined {
+function writeContexts({
+  contexts,
+}: {
+  readonly contexts: readonly PathContext[] | undefined;
+}): WritePathContext[] | undefined {
   if (contexts === undefined) return undefined;
-  if (!contexts.every(isWriteContext))
+  const argumentsForContexts = contexts.map((context) => ({ context }));
+  if (!argumentsForContexts.every(isWriteContext))
     throw new Error("write rule contexts must be write contexts");
-  return [...contexts];
+  return argumentsForContexts.map((argument) => argument.context);
 }
-function readRows(
-  initial: readonly ProfileRuleEditRow<"read">[],
-  rows: readonly EditableRuleRow[],
-): ReadDeclaration[] {
+function readRows({
+  initial,
+  rows,
+}: {
+  readonly initial: readonly ProfileRuleEditRow<"read">[];
+  readonly rows: readonly EditableRuleRow[];
+}): ReadDeclaration[] {
   const original = new Map(initial.map((row) => [row.id, row.raw]));
   return rows.map((row) => {
     const raw = original.get(row.id);
-    const decision = durableDecision(row);
+    const decision = durableDecision({ row });
     if (
       raw &&
       raw.pattern === row.pattern &&
       raw.decision === decision &&
-      raw.guidance === row.guidance &&
-      sameContexts(raw.contexts, row.contexts)
+      raw.pathMatch === row.pathMatch &&
+      raw.guidance === (row.guidanceTouched ? row.guidance : raw.guidance) &&
+      sameContexts({ first: raw.contexts, second: row.contexts })
     )
       return raw;
     const rest = { ...raw };
     delete rest.contexts;
-    const contexts = readContexts(row.contexts);
+    delete rest.pathMatch;
+    if (row.guidanceTouched || raw === undefined) {
+      if (row.guidance === undefined) delete rest.guidance;
+      else rest.guidance = row.guidance;
+    }
+    const contexts = readContexts({ contexts: row.contexts });
     return {
       ...rest,
       pattern: row.pattern,
-      pathMatch: row.pathMatch,
+      ...(row.pathMatch === undefined ? {} : { pathMatch: row.pathMatch }),
       decision,
-      guidance: row.guidance,
       ...(contexts === undefined ? {} : { contexts }),
     };
   });
 }
-function writeRows(
-  initial: readonly ProfileRuleEditRow<"write">[],
-  rows: readonly EditableRuleRow[],
-): WriteDeclaration[] {
+function writeRows({
+  initial,
+  rows,
+}: {
+  readonly initial: readonly ProfileRuleEditRow<"write">[];
+  readonly rows: readonly EditableRuleRow[];
+}): WriteDeclaration[] {
   const original = new Map(initial.map((row) => [row.id, row.raw]));
   return rows.map((row) => {
     const raw = original.get(row.id);
-    const decision = durableDecision(row);
+    const decision = durableDecision({ row });
     if (
       raw &&
       raw.pattern === row.pattern &&
       raw.decision === decision &&
-      raw.guidance === row.guidance &&
-      sameContexts(raw.contexts, row.contexts)
+      raw.guidance === (row.guidanceTouched ? row.guidance : raw.guidance) &&
+      sameContexts({ first: raw.contexts, second: row.contexts })
     )
       return raw;
     const rest = { ...raw };
     delete rest.contexts;
-    const contexts = writeContexts(row.contexts);
+    if (row.guidanceTouched || raw === undefined) {
+      if (row.guidance === undefined) delete rest.guidance;
+      else rest.guidance = row.guidance;
+    }
+    const contexts = writeContexts({ contexts: row.contexts });
     return {
       ...rest,
       pattern: row.pattern,
       decision,
-      guidance: row.guidance,
       ...(contexts === undefined ? {} : { contexts }),
     };
   });
 }
-function protectedRows(
-  initial: readonly ProfileRuleEditRow<"protected">[],
-  rows: readonly EditableRuleRow[],
-): ProtectedDeclaration[] {
+function protectedRows({
+  initial,
+  rows,
+}: {
+  readonly initial: readonly ProfileRuleEditRow<"protected">[];
+  readonly rows: readonly EditableRuleRow[];
+}): ProtectedDeclaration[] {
   const original = new Map(initial.map((row) => [row.id, row.raw]));
   return rows.map((row) => {
     const raw = original.get(row.id);
-    const decision = protectedDecision(row);
+    const decision = protectedDecision({ row });
     if (
       raw &&
       raw.pattern === row.pattern &&
       raw.decision === decision &&
-      raw.guidance === row.guidance
+      raw.guidance === (row.guidanceTouched ? row.guidance : raw.guidance)
     )
       return raw;
-    return { ...raw, pattern: row.pattern, decision, guidance: row.guidance };
+    const declaration = { ...raw, pattern: row.pattern, decision };
+    if (row.guidanceTouched || raw === undefined) {
+      if (row.guidance === undefined) delete declaration.guidance;
+      else declaration.guidance = row.guidance;
+    }
+    return declaration;
   });
 }
 
@@ -473,41 +1301,47 @@ export function serializeProfileRuleSectionEdit({
   rows,
   preserveExplicitEmpty = false,
 }: RuleSectionSerializationOptions): RuleSectionEdit<readonly unknown[]> {
+  // SKIP is a transient ASK-editor choice. Exclude it before every durable
+  // validation so incomplete skipped drafts cannot block serialization.
+  const durableRows = rows.filter((row) => row.decision !== "skip");
   if (initial.some((row) => row.kind !== kind))
     throw new Error(`initial row kind does not match ${kind} section`);
-  if (rows.some((row) => row.kind !== kind))
+  if (durableRows.some((row) => row.kind !== kind))
     throw new Error(`row kind does not match ${kind} section`);
   if (
     (kind === "bash" || kind === "protected") &&
-    rows.some((row) => row.contexts !== undefined)
+    durableRows.some((row) => row.contexts !== undefined)
   )
     throw new Error(`contexts are not valid for ${kind} rules`);
   if (
     kind === "read" &&
-    rows.some(
+    durableRows.some(
       (row) =>
         row.contexts !== undefined &&
-        row.contexts.some((context) => !isReadContext(context)),
+        row.contexts.some((context) => !isReadContext({ context })),
     )
   )
     throw new Error("read rule contexts must be read contexts");
   if (
     kind === "write" &&
-    rows.some(
+    durableRows.some(
       (row) =>
         row.contexts !== undefined &&
-        row.contexts.some((context) => !isWriteContext(context)),
+        row.contexts.some((context) => !isWriteContext({ context })),
     )
   )
     throw new Error("write rule contexts must be write contexts");
-  if (rows.length === 0)
+  if (durableRows.length === 0)
     return initial.length === 0 && preserveExplicitEmpty
       ? { mode: "set", value: [] }
       : { mode: "omit" };
-  if (kind === "bash") return { mode: "set", value: bashRows(initial, rows) };
-  if (kind === "read") return { mode: "set", value: readRows(initial, rows) };
-  if (kind === "write") return { mode: "set", value: writeRows(initial, rows) };
-  return { mode: "set", value: protectedRows(initial, rows) };
+  if (kind === "bash")
+    return { mode: "set", value: bashRows({ initial, rows: durableRows }) };
+  if (kind === "read")
+    return { mode: "set", value: readRows({ initial, rows: durableRows }) };
+  if (kind === "write")
+    return { mode: "set", value: writeRows({ initial, rows: durableRows }) };
+  return { mode: "set", value: protectedRows({ initial, rows: durableRows }) };
 }
 
 type RuleSectionEditorContext = {
@@ -544,7 +1378,7 @@ export function editProfileRuleSection({
   title,
   preserveExplicitEmpty,
 }: Extract<RuleSectionEditorOptions, { readonly kind: "bash" }>): Promise<{
-  action: RuleEditorResult["action"];
+  action: EditRuleRowsResult["action"];
   edit: ProfileRuleSectionEdits["bash"];
 }>;
 export function editProfileRuleSection({
@@ -554,7 +1388,7 @@ export function editProfileRuleSection({
   title,
   preserveExplicitEmpty,
 }: Extract<RuleSectionEditorOptions, { readonly kind: "read" }>): Promise<{
-  action: RuleEditorResult["action"];
+  action: EditRuleRowsResult["action"];
   edit: ProfileRuleSectionEdits["readPaths"];
 }>;
 export function editProfileRuleSection({
@@ -564,7 +1398,7 @@ export function editProfileRuleSection({
   title,
   preserveExplicitEmpty,
 }: Extract<RuleSectionEditorOptions, { readonly kind: "write" }>): Promise<{
-  action: RuleEditorResult["action"];
+  action: EditRuleRowsResult["action"];
   edit: ProfileRuleSectionEdits["writePaths"];
 }>;
 export function editProfileRuleSection({
@@ -574,19 +1408,19 @@ export function editProfileRuleSection({
   title,
   preserveExplicitEmpty,
 }: Extract<RuleSectionEditorOptions, { readonly kind: "protected" }>): Promise<{
-  action: RuleEditorResult["action"];
+  action: EditRuleRowsResult["action"];
   edit: ProfileRuleSectionEdits["protectedPathRules"];
 }>;
 export function editProfileRuleSection(
   options: RuleSectionEditorOptions,
 ): Promise<{
-  action: RuleEditorResult["action"];
+  action: EditRuleRowsResult["action"];
   edit: RuleSectionEdit<readonly unknown[]>;
 }>;
 export async function editProfileRuleSection(
   options: RuleSectionEditorOptions,
 ): Promise<{
-  action: RuleEditorResult["action"];
+  action: EditRuleRowsResult["action"];
   edit: RuleSectionEdit<readonly unknown[]>;
 }> {
   const { ctx, kind, initial, title } = options;
@@ -597,7 +1431,7 @@ export async function editProfileRuleSection(
       mode: options.mode,
       kind,
       title,
-      rows: initial.map(editableExistingRow),
+      rows: initial.map((row) => editableExistingRow({ row })),
       allowAddRemove: true,
     },
   });
@@ -624,338 +1458,119 @@ export async function editProfileRuleSection(
   };
 }
 
-/** Production-owned multi-row editor shared by ASK, CREATE, and local edits. */
+/**
+ * Built-in policy adapter for the canonical editor. Bash and path declarations
+ * are represented as their implicit logical input (command or path); the
+ * editor can therefore use the same rule, clause, focus, render, and input
+ * state machine as custom tools. A multi-clause built-in rule expands back to
+ * ordinary declarations at this boundary.
+ */
 export async function editProfileRuleRows({
   ctx,
   options,
   custom,
 }: {
   readonly ctx: { readonly ui: Pick<ExtensionContext["ui"], "custom"> };
-  readonly options: RuleEditorOptions;
+  readonly options: EditRuleRowsOptions;
   readonly custom?: ProfileAuthoringCustom;
-}): Promise<RuleEditorResult> {
-  const initialRows = options.rows.map(copyRow);
-  const rows: EditableRuleRow[] = options.rows.map(copyRow);
-  const inputs: Input[] = [];
-  const guidanceInputs: Input[] = [];
-  const attachInputs = (row: EditableRuleRow) => {
-    inputs.push(newEmbeddedInput({ value: row.pattern }));
-    guidanceInputs.push(newEmbeddedInput({ value: row.guidance ?? "" }));
-  };
-  rows.forEach(attachInputs);
-
-  const snapshot = (): EditableRuleRow[] =>
-    rows.map((row, index) => ({
-      ...row,
-      pattern:
-        row.pathMatch === undefined
-          ? inputs[index].getValue().trim()
-          : inputs[index].getValue(),
-      guidance: guidanceInputs[index]?.getValue().trim() || undefined,
-    }));
-  const result = await showProfileAuthoringCustom<RuleEditorResult | null>({
+}): Promise<EditRuleRowsResult> {
+  if (
+    options.mode === "ask" &&
+    (options.defaultKind === "protected" ||
+      options.rows.some((row) => row.kind === "protected"))
+  )
+    throw new Error(
+      "inline ASK only supports non-empty bash, read, and write rules",
+    );
+  const inputPath = ({
+    kind,
+  }: {
+    readonly kind: RuleKind;
+  }): "command" | "path" => (kind === "bash" ? "command" : "path");
+  const editableRows: EditableRule[] = options.rows.map((row) => ({
+    id: row.id,
+    origin: row.origin,
+    rule: {
+      toolName: row.kind,
+      inputs: [
+        {
+          id: `${row.id}:clause`,
+          inputPath: inputPath({ kind: row.kind }),
+          matcher: { kind: "glob", pattern: row.pattern },
+        },
+      ],
+      contexts: row.contexts,
+      pathMatch: row.pathMatch,
+      decision: row.decision,
+      guidance: row.guidance,
+    },
+  }));
+  const clauseProvenance = new Map(
+    options.rows.map((row) => [
+      `${row.id}:clause`,
+      { id: row.id, request: row.request },
+    ]),
+  );
+  const requestDetails: Record<string, AskRuleCandidate> = Object.fromEntries(
+    options.rows.flatMap((row) =>
+      row.request === undefined ? [] : [[row.id, row.request]],
+    ),
+  );
+  const result = await editRules({
     ctx,
     custom,
-    factory: (tui, theme, _keys, done) => {
-      let selected = 0;
-      let guidanceFocused = false;
-      const finish = (action: RuleEditorResult["action"]) =>
-        done({
-          action,
-          rows: snapshot(),
-        });
-      const submit = () => {
-        const current = snapshot();
-        if (
-          options.mode === "ask" &&
-          current.every((row) => row.decision === "skip")
-        )
-          return;
-        if (
-          current.some(
-            (row) => row.decision !== "skip" && row.pattern.length === 0,
-          )
-        )
-          return;
-        finish("save");
-      };
-      const wire = (input: Input) => {
-        input.onSubmit = submit;
-        input.onEscape = () => finish("back");
-      };
-      [...inputs, ...guidanceInputs].forEach(wire);
-      const addRow = () => {
-        const selectedRow = rows[selected];
-        const row: EditableRuleRow = {
-          id: `additional-${crypto.randomUUID()}`,
-          kind:
-            options.kind ?? selectedRow?.kind ?? options.defaultKind ?? "bash",
-          pattern: "",
-          decision: options.defaultDecision ?? "deny",
-          contexts: selectedRow?.contexts,
-          origin: options.mode === "ask" ? "additional" : "create",
-        };
-        rows.push(row);
-        attachInputs(row);
-        wire(inputs.at(-1)!);
-        wire(guidanceInputs.at(-1)!);
-        selected = rows.length - 1;
-        guidanceFocused = false;
-      };
-      const removeRow = () => {
-        if (rows[selected]?.origin === "request") return;
-        rows.splice(selected, 1);
-        inputs.splice(selected, 1);
-        guidanceInputs.splice(selected, 1);
-        selected = Math.max(0, Math.min(selected, rows.length - 1));
-        guidanceFocused = false;
-      };
-      const reset = () => {
-        rows.splice(0, rows.length, ...initialRows.map(copyRow));
-        inputs.splice(0);
-        guidanceInputs.splice(0);
-        rows.forEach(attachInputs);
-        [...inputs, ...guidanceInputs].forEach(wire);
-        selected = 0;
-        guidanceFocused = false;
-      };
-
-      return {
-        get focused() {
-          return (
-            (guidanceFocused ? guidanceInputs[selected] : inputs[selected])
-              ?.focused ?? false
-          );
-        },
-        set focused(value: boolean) {
-          inputs.forEach(
-            (input, index) =>
-              (input.focused = value && index === selected && !guidanceFocused),
-          );
-          guidanceInputs.forEach(
-            (input, index) =>
-              (input.focused = value && index === selected && guidanceFocused),
-          );
-        },
-        render: (width) => {
-          const current = snapshot();
-          const changed = current.filter((row) => row.decision !== "skip");
-          const invalid = changed.some((row) => !row.pattern);
-          const description = options.kind
-            ? sectionDescriptionLines({
-                width,
-                presentation: ruleSectionPresentation[options.kind],
-                purposeStyles: {
-                  normal: (text) => theme.fg("text", text),
-                  deny: (text) => theme.fg("error", text),
-                  allow: (text) => theme.fg("success", text),
-                },
-                mutedStyle: (text) => theme.fg("dim", text),
-              })
-            : undefined;
-          return [
-            theme.fg(
-              "accent",
-              theme.bold(
-                options.mode === "ask"
-                  ? options.title.replace(
-                      /\b\d+ profile changes?\b/,
-                      `${changed.length} profile change${changed.length === 1 ? "" : "s"}`,
-                    )
-                  : options.title,
-              ),
-            ),
-            "",
-            ...(description ? description.purpose : []),
-            ...(description ? [""] : []),
-            ...(description
-              ? [...description.examples, ...description.syntax]
-              : []),
-            ...(description ? [""] : []),
-            ...(current.length === 0
-              ? [theme.fg("warning", emptyRuleSectionMessage)]
-              : []),
-            ...current.flatMap((row, index) => {
-              const decision = row.decision;
-              const mark =
-                decision === "allow"
-                  ? "✅"
-                  : decision === "deny"
-                    ? "⛔️"
-                    : decision === "ask"
-                      ? "❓"
-                      : "⏭️";
-              const request = row.request;
-              const destination = `profile ${ruleDestination(row.kind)}`;
-              const lines = [
-                `${
-                  index === selected
-                    ? profileAuthoringSelectedRowMarker
-                    : profileAuthoringUnselectedRowMarker
-                }${ruleSectionPresentation[row.kind].label} ${mark} ${
-                  inputs[index]?.render(Math.max(1, width - 26))[0] ?? ""
-                }`,
-              ];
-              if (request) {
-                lines.push(`    Requested value  ${request.requestedValue}`);
-                if (request.kind !== "bash")
-                  lines.push(
-                    `    Context/source   ${request.context} · ${request.source.tool}${request.source.role ? ` (${request.source.role})` : ""}`,
-                  );
-                lines.push(
-                  `    Matched rule     ${request.matchedRule ?? "none (fallback ASK)"}`,
-                );
-              } else if (row.origin === "additional") {
-                lines.push(
-                  "    Additional profile rule (not required by this ASK)",
-                );
-              }
-              if (row.kind === "read")
-                lines.push(`    Path match       ${row.pathMatch ?? "glob"}`);
-              if (
-                (row.kind === "read" && row.pathMatch === undefined) ||
-                row.kind === "write"
-              )
-                lines.push(
-                  "    PATH GLOB/PATTERN — interpreted as a glob, not a literal path (e.g. src/**/*.ts).",
-                );
-              if (!request && (row.kind === "read" || row.kind === "write"))
-                lines.push(
-                  `    Context          ${row.contexts?.join(", ") ?? "all contexts"}`,
-                );
-              lines.push(
-                `    Writes to        ${destination}`,
-                options.mode === "edit"
-                  ? `    Local decision  ${decision === "ask" ? "❓ ASK" : decision === "allow" ? "✅ ALLOW" : "⛔️ DENY"}`
-                  : `    Effective change ${decision === "skip" ? "unchanged; remains ASK" : `ASK → ${decision === "allow" ? "✅ ALLOW" : "⛔️ DENY"}`}`,
-              );
-              if (decision === "allow" || decision === "deny")
-                lines.push(
-                  `    Effect           ${ruleEffect(row.kind, decision)}`,
-                );
-              if (request && isBroaderPattern(row))
-                lines.push(
-                  "    ⚠ Broader/custom pattern: this rule may affect paths beyond this request.",
-                );
-              if (decision === "deny" && row.kind !== "protected")
-                lines.push(
-                  `${
-                    index === selected && guidanceFocused
-                      ? profileAuthoringSelectedRowMarker
-                      : profileAuthoringUnselectedRowMarker
-                  }  Guidance         ${
-                    guidanceInputs[index]?.getValue()
-                      ? guidanceInputs[index]?.render(
-                          Math.max(1, width - 24),
-                        )[0]
-                      : theme.fg("dim", "Add persistent steering…")
-                  }`,
-                );
-              return lines;
-            }),
-            "",
-            theme.fg(
-              "dim",
-              options.mode === "ask" && changed.length === 0
-                ? "Save disabled: every row is skipped. Tab a row to allow or deny."
-                : invalid
-                  ? "Save disabled: changed rules need a pattern."
-                  : options.mode === "ask"
-                    ? `Enter save ${changed.length} rule${changed.length === 1 ? "" : "s"} and re-check request · Tab allow/deny/skip · Ctrl+N add · Ctrl+K kind · Ctrl+X context · Esc Back`
-                    : options.mode === "edit"
-                      ? "Enter save local rules · Tab allow/deny/ask · Ctrl+N add · Ctrl+D remove · Ctrl+X context · Ctrl+Shift+R clear · Esc Back"
-                      : "Enter save section · Tab allow/deny · Ctrl+N add · Ctrl+D remove · Ctrl+X context · Ctrl+Shift+R clear · Esc Back",
-            ),
-          ].map((line) => truncateToWidth(line, width));
-        },
-        invalidate: () => {
-          inputs.forEach((input) => input.invalidate());
-          guidanceInputs.forEach((input) => input.invalidate());
-        },
-        handleInput: (data) => {
-          // Empty forms have no Input to receive Escape, so handle it before
-          // forwarding input. Populated forms retain their existing onEscape.
-          if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c"))) {
-            finish("back");
-          } else if (matchesKey(data, Key.ctrlShift("r"))) {
-            if (options.mode === "ask") reset();
-            else finish("clear");
-          } else if (matchesKey(data, Key.ctrl("n"))) {
-            if (options.allowAddRemove !== false) addRow();
-          } else if (matchesKey(data, Key.ctrl("d"))) {
-            if (options.allowAddRemove !== false) removeRow();
-          } else if (matchesKey(data, Key.ctrl("k"))) {
-            const row = rows[selected];
-            if (row?.origin === "additional" && options.kind === undefined) {
-              const kinds: RuleKind[] = ["bash", "read", "write"];
-              row.kind =
-                kinds[(kinds.indexOf(row.kind) + 1) % kinds.length] ?? "bash";
-              row.contexts = undefined;
-            }
-          } else if (matchesKey(data, Key.ctrl("x"))) {
-            const row = rows[selected];
-            if (
-              row &&
-              row.origin !== "request" &&
-              (row.kind === "read" || row.kind === "write")
-            ) {
-              const contexts = contextsByKind[row.kind];
-              const current =
-                row.contexts?.length === 1
-                  ? contexts.indexOf(row.contexts[0])
-                  : -1;
-              const next = current + 1;
-              row.contexts =
-                next >= contexts.length ? undefined : [contexts[next]];
-            }
-          } else if (matchesKey(data, Key.up)) {
-            if (guidanceFocused) guidanceFocused = false;
-            else selected = Math.max(0, selected - 1);
-          } else if (matchesKey(data, Key.down)) {
-            if (
-              !guidanceFocused &&
-              rows[selected]?.decision === "deny" &&
-              rows[selected]?.kind !== "protected"
-            )
-              guidanceFocused = true;
-            else {
-              guidanceFocused = false;
-              selected = Math.min(rows.length - 1, selected + 1);
-            }
-          } else if (matchesKey(data, Key.tab)) {
-            const row = rows[selected];
-            if (row) {
-              row.decision =
-                options.mode === "ask"
-                  ? row.decision === "allow"
-                    ? "deny"
-                    : row.decision === "deny"
-                      ? "skip"
-                      : "allow"
-                  : options.mode === "edit" && row.kind !== "protected"
-                    ? row.decision === "allow"
-                      ? "deny"
-                      : row.decision === "deny"
-                        ? "ask"
-                        : "allow"
-                    : row.decision === "allow"
-                      ? "deny"
-                      : "allow";
-              if (row.decision !== "deny") guidanceFocused = false;
-            }
-          } else {
-            (guidanceFocused
-              ? guidanceInputs[selected]
-              : inputs[selected]
-            )?.handleInput(data);
-          }
-          tui.requestRender();
-        },
-      };
+    options: {
+      mode: options.mode,
+      title: options.title,
+      rows: editableRows,
+      clearAvailable: options.mode !== "ask",
+      builtin: {
+        allowedTools: options.kind
+          ? [options.kind]
+          : options.mode === "ask"
+            ? inlineAskBuiltInRuleKinds
+            : builtInRuleKinds,
+        defaultTool: options.kind ?? options.defaultKind ?? "bash",
+        defaultDecision: options.defaultDecision,
+        requestDetails,
+      },
     },
   });
-
-  if (isProfileAuthoringAbort(result))
-    return { action: "back", rows: snapshot() };
-  return result ?? { action: "back", rows: snapshot() };
+  const rows = result.rows.flatMap((editable) => {
+    // Preserve transient SKIP rows for the permission guard. Durable section
+    // serializers filter them before validation and persistence.
+    const target = { value: editable.rule.toolName };
+    if (!isBuiltInRuleKind(target))
+      throw new Error(
+        `editor returned non-built-in target '${editable.rule.toolName}'`,
+      );
+    return editable.rule.inputs.map((input) => {
+      const provenance = clauseProvenance.get(input.id);
+      return {
+        id: provenance?.id ?? `${editable.id}-clause-${input.id}`,
+        kind: target.value,
+        // Literal path matches use the exact text; globs ignore edge spaces.
+        pattern:
+          editable.rule.pathMatch === undefined
+            ? input.matcher.pattern.trim()
+            : input.matcher.pattern,
+        decision: editable.rule.decision,
+        // Optional raw fields belong to their original declaration, not the
+        // first clause currently displayed. New clauses receive guidance only
+        // after an intentional edit in this invocation.
+        ...(editable.rule.guidance === undefined ||
+        (!editable.rule.guidanceTouched && provenance === undefined)
+          ? {}
+          : { guidance: editable.rule.guidance }),
+        ...(editable.rule.guidanceTouched === undefined
+          ? {}
+          : { guidanceTouched: editable.rule.guidanceTouched }),
+        contexts: editable.rule.contexts,
+        pathMatch: editable.rule.pathMatch,
+        request: provenance?.request ?? requestDetails[provenance?.id ?? ""],
+        origin: editable.origin,
+      } satisfies EditableRuleRow;
+    });
+  });
+  return { action: result.action, rows };
 }

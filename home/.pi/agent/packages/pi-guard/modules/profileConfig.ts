@@ -5,7 +5,6 @@ import path from "node:path";
 import {
   applyEdits,
   modify,
-  parse,
   parseTree,
   printParseErrorCode,
   type ParseError,
@@ -20,13 +19,17 @@ import {
   finalizeResolvedProfile,
   runtimeRequirementProvenanceFor,
   hasPolicyReferencePrefix,
+  customToolNameError,
+  customToolRuleArraySchema,
   isBuiltinProfileName,
   parseOrThrow,
   policyReferencePrefix,
   profileConfigFileSchema,
+  prototypeDeclarationName,
   reservedProfilePrefix,
   warnOnPolicyRuleConflicts,
   type CustomRuleSetPolicy,
+  type CustomToolRule,
   type PathContext,
   type PolicyConfig,
   type ProfileConfigFile,
@@ -172,6 +175,63 @@ function isProfileConfigFile(value: unknown): value is ProfileConfigFile {
   return Value.Check(profileConfigFileSchema, value);
 }
 
+/**
+ * Materialize JSONC objects with data properties, rather than assigning their
+ * keys into ordinary objects. jsonc-parser's `parse` uses assignment, so a
+ * JSON key named `__proto__` changes the parsed object's prototype instead of
+ * becoming an own declaration. The syntax tree retains that key faithfully.
+ */
+function materializeJsoncNode({
+  node,
+}: {
+  readonly node: NonNullable<ReturnType<typeof parseTree>>;
+}): unknown {
+  if (node.type === "array")
+    return (node.children ?? []).map((child) =>
+      materializeJsoncNode({ node: child }),
+    );
+  if (node.type === "object") {
+    const value: Record<string, unknown> = {};
+    for (const property of node.children ?? []) {
+      const key = property.children?.[0];
+      const declaration = property.children?.[1];
+      if (
+        key?.type !== "string" ||
+        typeof key.value !== "string" ||
+        declaration === undefined
+      )
+        throw new Error("JSONC object contains an unmaterializable property");
+      Object.defineProperty(value, key.value, {
+        configurable: true,
+        enumerable: true,
+        value: materializeJsoncNode({ node: declaration }),
+        writable: true,
+      });
+    }
+    return value;
+  }
+  return node.value;
+}
+
+/** Parse JSONC without allowing declaration names to mutate object prototypes. */
+function parse({
+  source,
+  errors,
+  options,
+}: {
+  readonly source: string;
+  readonly errors?: ParseError[];
+  readonly options?: Parameters<typeof parseTree>[2];
+}): unknown {
+  const parseErrors = errors ?? [];
+  const root = parseTree(source, parseErrors, options);
+  // jsonc-parser retains a partial syntax tree on failure. Its incomplete
+  // properties are not valid materializer input, so classify syntax errors
+  // before traversing that partial tree and let callers report parser detail.
+  if (parseErrors.length > 0) return undefined;
+  return root === undefined ? undefined : materializeJsoncNode({ node: root });
+}
+
 function isShippedRuleSetName({
   value,
 }: {
@@ -197,8 +257,10 @@ export function loadRawProfileConfig({
 
   try {
     const errors: ParseError[] = [];
-    const parsed: unknown = parse(fs.readFileSync(configPath, "utf8"), errors, {
-      allowTrailingComma: true,
+    const parsed: unknown = parse({
+      source: fs.readFileSync(configPath, "utf8"),
+      errors,
+      options: { allowTrailingComma: true },
     });
     if (errors.length > 0) return undefined;
 
@@ -257,8 +319,10 @@ export function loadRawProfileDeclarations({
   }
   try {
     const errors: ParseError[] = [];
-    const parsed: unknown = parse(source, errors, {
-      allowTrailingComma: true,
+    const parsed: unknown = parse({
+      source,
+      errors,
+      options: { allowTrailingComma: true },
     });
     const validationError =
       errors.length > 0
@@ -402,7 +466,11 @@ export function loadProfileConfigSnapshot({
       directoryGlobDeclarations: [],
     };
   const errors: ParseError[] = [];
-  const parsed: unknown = parse(source, errors, { allowTrailingComma: true });
+  const parsed: unknown = parse({
+    source,
+    errors,
+    options: { allowTrailingComma: true },
+  });
   if (errors.length > 0)
     throw new ProfileConfigMalformedError(
       configPath,
@@ -445,9 +513,12 @@ export function warnOnProfileConfigSnapshotRuleConflicts({
   readonly snapshot: ProfileConfigSnapshot;
 }): void {
   if (snapshot.raw === undefined) return;
-  const profiles: Record<string, ResolvedProfile> = {};
-  for (const profileName of Object.keys(snapshot.raw.profiles))
-    profiles[profileName] = snapshot.config.profiles[profileName];
+  const profiles = Object.fromEntries(
+    Object.keys(snapshot.raw.profiles).map((profileName) => [
+      profileName,
+      snapshot.config.profiles[profileName],
+    ]),
+  );
   warnOnPolicyRuleConflicts({ profiles });
 }
 
@@ -499,9 +570,10 @@ function loadProfileConfigSource({
   try {
     const errors: ParseError[] = [];
     const parsed: unknown =
-      parsedSource ?? parse(source, errors, { allowTrailingComma: true });
+      parsedSource ??
+      parse({ source, errors, options: { allowTrailingComma: true } });
     if (errors.length > 0) {
-      throwProfileConfigError(
+      throw new ProfileConfigMalformedError(
         configPath,
         `JSONC parse error: ${errors
           .map((error) => printParseErrorCode(error.error))
@@ -521,6 +593,11 @@ function loadProfileConfigSource({
           parsed.profiles,
           name,
         )?.value;
+        if (name === prototypeDeclarationName)
+          throwProfileConfigError(
+            configPath,
+            `/profiles/${name}: profile name '${name}' is reserved`,
+          );
         const prefix = reservedProfilePrefix({ name });
         if (prefix) {
           throwProfileConfigError(
@@ -801,9 +878,7 @@ function loadProfileConfigSource({
       resolveProfile({ target: name });
     }
 
-    const resolvedUserProfiles: Record<string, ResolvedProfile> = {};
-    for (const [name, profile] of resolvedUsers)
-      resolvedUserProfiles[name] = profile;
+    const resolvedUserProfiles = Object.fromEntries(resolvedUsers);
     const profiles: Record<string, ResolvedProfile> = {
       ...builtins,
       ...resolvedUserProfiles,
@@ -936,6 +1011,17 @@ function isMutationDocument(value: unknown): value is MutationDocument {
   return isRecord(value) && isRecord(value.profiles);
 }
 
+/** Read only authored data keys; never traverse Object.prototype dictionaries. */
+function ownRecordValue({
+  record,
+  key,
+}: {
+  readonly record: Record<string, unknown>;
+  readonly key: string;
+}): unknown {
+  return Object.getOwnPropertyDescriptor(record, key)?.value;
+}
+
 function sourceRevision(source: string | undefined): string {
   return createHash("sha256")
     .update(source ?? "")
@@ -947,29 +1033,51 @@ function readMutationSource({
 }: {
   readonly configPath: string;
 }): string {
-  if (!fs.existsSync(configPath)) return '{\n  "profiles": {}\n}\n';
-  const source = fs.readFileSync(configPath, "utf8");
-  const errors: ParseError[] = [];
-  const parsed: unknown = parse(source, errors, { allowTrailingComma: true });
-  if (errors.length > 0 || typeof parsed !== "object" || parsed === null) {
-    const detail =
-      errors.length > 0
-        ? `JSONC parse error: ${errors.map((error) => printParseErrorCode(error.error)).join(", ")}`
-        : "configuration root must be an object";
-    throw new ProfileConfigLoadError(configPath, detail);
-  }
-  const profiles: unknown = Reflect.get(parsed, "profiles");
-  if (
-    !Object.hasOwn(parsed, "profiles") ||
-    typeof profiles !== "object" ||
-    profiles === null
-  ) {
-    throw new ProfileConfigLoadError(
+  let source: string;
+  try {
+    if (!fs.existsSync(configPath)) return '{\n  "profiles": {}\n}\n';
+    source = fs.readFileSync(configPath, "utf8");
+  } catch (error) {
+    throw new ProfileConfigUnreadableError(
       configPath,
-      "configuration must contain a profiles object",
+      error instanceof Error ? error.message : String(error),
     );
   }
-  return source;
+  try {
+    const errors: ParseError[] = [];
+    const parsed: unknown = parse({
+      source,
+      errors,
+      options: { allowTrailingComma: true },
+    });
+    if (errors.length > 0)
+      throw new ProfileConfigMalformedError(
+        configPath,
+        `JSONC parse error: ${errors.map((error) => printParseErrorCode(error.error)).join(", ")}`,
+      );
+    if (typeof parsed !== "object" || parsed === null)
+      throw new ProfileConfigMalformedError(
+        configPath,
+        "configuration root must be an object",
+      );
+    const profiles: unknown = Reflect.get(parsed, "profiles");
+    if (
+      !Object.hasOwn(parsed, "profiles") ||
+      typeof profiles !== "object" ||
+      profiles === null
+    )
+      throw new ProfileConfigMalformedError(
+        configPath,
+        "configuration must contain a profiles object",
+      );
+    return source;
+  } catch (error) {
+    if (error instanceof ProfileConfigLoadError) throw error;
+    throw new ProfileConfigMalformedError(
+      configPath,
+      `failed to materialize JSONC source: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }
 
 export const profileConfigLockSettings = {
@@ -1340,6 +1448,11 @@ type ProtectedPathDeclarations = NonNullable<
 
 /** A narrow raw-declaration edit. Omitted properties are never rewritten. */
 type AuthoringDeclarationEdit = {
+  /**
+   * Complete local tools snapshot; Bash is edited separately to retain
+   * siblings. It must name every custom-tool group in the file.
+   */
+  readonly customTools?: NonNullable<ProfileConfigProfile["tools"]>;
   readonly sandbox?: RawSandboxAuthoring;
   readonly directoryGlobs?: DirectoryGlobsAuthoring;
   readonly bash?: RuleSectionEdit<BashDeclaration>;
@@ -1361,10 +1474,6 @@ type PreparedAuthoringDeclarationCandidate = {
   readonly source: string;
   readonly updated: string;
 };
-
-function declarationEditIsEmpty(edit: AuthoringDeclarationEdit): boolean {
-  return Object.keys(edit).length === 0;
-}
 
 /** Reject ambiguous rows submitted by a declaration editor before writing. */
 function assertUnambiguousDeclarationRules(
@@ -1404,11 +1513,6 @@ function prepareAuthoringDeclarationCandidate({
   const configPath = resolveProfileConfigPath({
     configPath: options.configPath,
   });
-  if (declarationEditIsEmpty(options.edit))
-    throw new ProfileConfigLoadError(
-      configPath,
-      "at least one declaration edit is required",
-    );
   if (options.edit.bash?.mode === "set")
     assertUnambiguousDeclarationRules(
       options.edit.bash.value,
@@ -1434,7 +1538,11 @@ function prepareAuthoringDeclarationCandidate({
       configPath,
     );
   const source = sourceOverride ?? readMutationSource({ configPath });
-  const parsed: unknown = parse(source, [], { allowTrailingComma: true });
+  const parsed: unknown = parse({
+    source,
+    errors: [],
+    options: { allowTrailingComma: true },
+  });
   if (
     !isMutationDocument(parsed) ||
     !Object.hasOwn(parsed.profiles, options.profile)
@@ -1462,14 +1570,16 @@ function prepareAuthoringDeclarationCandidate({
       apply("sandbox", serialized);
       return;
     }
-    const currentDocument: unknown = parse(updated, [], {
-      allowTrailingComma: true,
+    const currentDocument: unknown = parse({
+      source: updated,
+      errors: [],
+      options: { allowTrailingComma: true },
     });
     const currentProfile = isRecord(currentDocument)
       ? currentDocument.profiles
       : undefined;
     const currentProfileDefinition = isRecord(currentProfile)
-      ? currentProfile[options.profile]
+      ? ownRecordValue({ record: currentProfile, key: options.profile })
       : undefined;
     const currentSandbox = isRecord(currentProfileDefinition)
       ? currentProfileDefinition.sandbox
@@ -1506,7 +1616,11 @@ function prepareAuthoringDeclarationCandidate({
     });
     if (serialized === undefined) apply("directoryGlobs", undefined);
     else {
-      const current: unknown = parse(updated, [], { allowTrailingComma: true });
+      const current: unknown = parse({
+        source: updated,
+        errors: [],
+        options: { allowTrailingComma: true },
+      });
       const profile = isRecord(current) ? current.profiles : undefined;
       const definition = isRecord(profile)
         ? profile[options.profile]
@@ -1534,9 +1648,14 @@ function prepareAuthoringDeclarationCandidate({
   const existingRuleArray = (
     location: readonly string[],
   ): readonly Record<string, unknown>[] => {
-    const current: unknown = parse(updated, [], { allowTrailingComma: true });
+    const current: unknown = parse({
+      source: updated,
+      errors: [],
+      options: { allowTrailingComma: true },
+    });
     const value = location.reduce<unknown>(
-      (parent, key) => (isRecord(parent) ? parent[key] : undefined),
+      (parent, key) =>
+        isRecord(parent) ? ownRecordValue({ record: parent, key }) : undefined,
       current,
     );
     if (value === undefined) return [];
@@ -1556,12 +1675,34 @@ function prepareAuthoringDeclarationCandidate({
         configPath,
         `${location.join(".")} must be an array of rule objects`,
       );
-    updated = applyRuleArrayEdit(
-      updated,
-      [...profilePath, ...location],
-      existingRuleArray([...profilePath, ...location]),
-      value,
-    );
+    const destination = [...profilePath, ...location];
+    const existing = existingRuleArray(destination);
+    // An LCS edit has no insertion to make when both arrays are empty. Create
+    // an absent explicit-empty declaration directly, rather than silently
+    // treating it as equivalent to omission. Walk only own data properties so
+    // names such as "__proto__" cannot resolve through Object.prototype.
+    let current: unknown = parse({
+      source: updated,
+      errors: [],
+      options: { allowTrailingComma: true },
+    });
+    let declared = true;
+    for (const key of destination) {
+      if (!isRecord(current) || !Object.hasOwn(current, key)) {
+        declared = false;
+        break;
+      }
+      current = ownRecordValue({ record: current, key });
+    }
+    updated =
+      value.length === 0 && !declared
+        ? applyEdits(
+            updated,
+            modify(updated, destination, value, {
+              formattingOptions: jsoncFormatting,
+            }),
+          )
+        : applyRuleArrayEdit(updated, destination, existing, value);
   };
   const applySection = (
     key: "bash" | "readPaths" | "writePaths" | "protectedPathRules",
@@ -1593,6 +1734,46 @@ function prepareAuthoringDeclarationCandidate({
     else applyRuleSection([key], section.value);
   };
   applySection("bash", options.edit.bash);
+  // Custom-tool declarations share `tools` with Bash. Apply only their named
+  // local groups after the Bash edit, so profile editing persists this
+  // section without flattening the ordinary rule layers.
+  if (options.edit.customTools !== undefined) {
+    const desiredCustomTools = Object.fromEntries(
+      Object.entries(options.edit.customTools).filter(
+        ([name]) => name !== "bash",
+      ),
+    );
+    const currentDocument: unknown = parse({
+      source: updated,
+      errors: [],
+      options: { allowTrailingComma: true },
+    });
+    const currentProfile = isRecord(currentDocument)
+      ? currentDocument.profiles
+      : undefined;
+    const currentDefinition = isRecord(currentProfile)
+      ? ownRecordValue({ record: currentProfile, key: options.profile })
+      : undefined;
+    const currentTools = isRecord(currentDefinition)
+      ? currentDefinition.tools
+      : undefined;
+    // Authoring keeps an emptied group as `[]`, so a group in the file but not
+    // in the snapshot means the draft and the file disagree.
+    for (const name of isRecord(currentTools) ? Object.keys(currentTools) : [])
+      if (name !== "bash" && !Object.hasOwn(desiredCustomTools, name))
+        throw new ProfileConfigLoadError(
+          configPath,
+          `custom-tool group '${name}' is missing from the authoring draft`,
+        );
+    for (const [name, declarations] of Object.entries(desiredCustomTools)) {
+      if (!Array.isArray(declarations))
+        throw new ProfileConfigLoadError(
+          configPath,
+          `tools.${name} must be an array of custom-tool rules`,
+        );
+      applyRuleSection(["tools", name], declarations);
+    }
+  }
   applySection("readPaths", options.edit.readPaths);
   applySection("writePaths", options.edit.writePaths);
   applySection("protectedPathRules", options.edit.protectedPathRules);
@@ -1635,6 +1816,8 @@ export function validateCustomProfileName({
     throw new Error(
       "profile name must be nonempty and have no surrounding whitespace",
     );
+  if (name === prototypeDeclarationName)
+    throw new Error(`profile name '${name}' is reserved`);
   const prefix = reservedProfilePrefix({ name });
   if (prefix)
     throw new Error(
@@ -1688,7 +1871,11 @@ function prepareAuthoringGeneralCandidate({
     configPath: options.configPath,
   });
   const source = sourceOverride ?? readMutationSource({ configPath });
-  const parsed: unknown = parse(source, [], { allowTrailingComma: true });
+  const parsed: unknown = parse({
+    source,
+    errors: [],
+    options: { allowTrailingComma: true },
+  });
   if (!isMutationDocument(parsed))
     throw new ProfileConfigLoadError(
       configPath,
@@ -1829,6 +2016,9 @@ function authoringDeclarationEdit({
   readonly definition: ProfileAuthoringDraft["definition"];
 }): AuthoringDeclarationEdit {
   return {
+    ...(definition.tools === undefined
+      ? {}
+      : { customTools: definition.tools }),
     sandbox: decodeSandboxAuthoring({ raw: definition.sandbox }),
     directoryGlobs:
       definition.directoryGlobs === undefined
@@ -1932,7 +2122,11 @@ function profileDefinitionFromDocument({
   readonly profile: string;
   readonly configPath: string;
 }): Record<string, unknown> {
-  const document: unknown = parse(source, [], { allowTrailingComma: true });
+  const document: unknown = parse({
+    source,
+    errors: [],
+    options: { allowTrailingComma: true },
+  });
   if (!isMutationDocument(document))
     throw new ProfileConfigLoadError(
       configPath,
@@ -2038,7 +2232,7 @@ function profileSectionFromInstancePath({
   if (field === "promptFile") return "prompt";
   if (field === "extends") return "composition";
   if (field === "transforms") return "transforms";
-  if (field === "tools" && segments[3] === "bash") return "bash";
+  if (field === "tools") return segments[3] === "bash" ? "bash" : "customTools";
   if (field === "readPaths") return "read";
   if (field === "writePaths") return "write";
   if (field === "protectedPathRules") return "protected";
@@ -2058,6 +2252,7 @@ function issueCodeForSection({
     composition: "invalid-composition",
     transforms: "invalid-transforms",
     bash: "invalid-rule",
+    customTools: "invalid-rule",
     read: "invalid-rule",
     write: "invalid-rule",
     protected: "invalid-rule",
@@ -2110,7 +2305,11 @@ export function validateProfileAuthoringCommit({
     configPath: requestedConfigPath,
   });
   const source = readMutationSource({ configPath });
-  const parsed: unknown = parse(source, [], { allowTrailingComma: true });
+  const parsed: unknown = parse({
+    source,
+    errors: [],
+    options: { allowTrailingComma: true },
+  });
   if (!isMutationDocument(parsed))
     throw new ProfileConfigLoadError(
       configPath,
@@ -2234,8 +2433,10 @@ export function validateProfileAuthoringCommit({
     }).updated;
   }
 
-  const candidateDocument: unknown = parse(updated, [], {
-    allowTrailingComma: true,
+  const candidateDocument: unknown = parse({
+    source: updated,
+    errors: [],
+    options: { allowTrailingComma: true },
   });
   for (const error of Value.Errors(
     profileConfigFileSchema,
@@ -2585,7 +2786,11 @@ function prepareProfileRuleChanges(
         `invalid durable decision '${String(change.decision)}' for '${change.pattern}'`,
       );
   const source = readMutationSource({ configPath });
-  const parsed: unknown = parse(source, [], { allowTrailingComma: true });
+  const parsed: unknown = parse({
+    source,
+    errors: [],
+    options: { allowTrailingComma: true },
+  });
   if (!isMutationDocument(parsed))
     throw new ProfileConfigLoadError(
       configPath,
@@ -2599,7 +2804,11 @@ function prepareProfileRuleChanges(
     );
   const profilePath = ["profiles", options.target.profile];
   let updated = source;
-  const document: unknown = parse(updated, [], { allowTrailingComma: true });
+  const document: unknown = parse({
+    source: updated,
+    errors: [],
+    options: { allowTrailingComma: true },
+  });
   const locationFor = (kind: RuleKind): Array<string | number> =>
     kind === "bash"
       ? [...profilePath, "tools", "bash"]
@@ -2742,4 +2951,136 @@ export function applyProfileRuleChanges(
       });
     },
   });
+}
+
+/** Immutable, portable request for appending local custom-tool declarations. */
+export type AppendCustomToolRulesRequest = {
+  readonly fallback: PolicyConfig;
+  /** The reviewed destination; callers may not silently fall back to HOME. */
+  readonly configPath: string;
+  /** Revision from the exact snapshot the caller presented for review. */
+  readonly expectedRevision: string;
+  readonly profile: string;
+  readonly toolName: string;
+  readonly rules: readonly CustomToolRule[];
+};
+
+/** The append outcome is domain-facing so UI callers need not interpret throws. */
+export type AppendCustomToolRulesOutcome =
+  | { readonly status: "committed" }
+  | { readonly status: "stale" }
+  | { readonly status: "rejected"; readonly reason: string }
+  | { readonly status: "failed"; readonly error: Error };
+
+function failedCustomToolAppend({
+  error,
+}: {
+  readonly error: unknown;
+}): AppendCustomToolRulesOutcome {
+  return {
+    status: "failed",
+    error: error instanceof Error ? error : new Error(String(error)),
+  };
+}
+
+/** Append validated custom-tool declarations without replacing existing local rules. */
+export function appendCustomToolRules({
+  fallback,
+  configPath,
+  expectedRevision,
+  profile,
+  toolName,
+  rules,
+}: AppendCustomToolRulesRequest): AppendCustomToolRulesOutcome {
+  const nameError = customToolNameError({ name: toolName });
+  if (nameError !== undefined) return { status: "rejected", reason: nameError };
+  if (rules.length === 0)
+    return {
+      status: "rejected",
+      reason: "at least one custom-tool rule is required",
+    };
+  try {
+    withProfileConfigLock({
+      configPath,
+      operation: ({ lock }) => {
+        const source = readMutationSource({ configPath });
+        if (sourceRevision(source) !== expectedRevision)
+          throw new ProfileConfigConflictError(configPath);
+        const parseErrors: ParseError[] = [];
+        const parsed: unknown = parse({
+          source,
+          errors: parseErrors,
+          options: { allowTrailingComma: true },
+        });
+        if (parseErrors.length > 0)
+          throw new ProfileConfigMalformedError(
+            configPath,
+            `JSONC parse error: ${parseErrors.map((error) => printParseErrorCode(error.error)).join(", ")}`,
+          );
+        // All mutation inputs cross the same TypeBox schema boundary as the
+        // loader before individual JSON values are inspected below.
+        let validatedConfig: ProfileConfigFile;
+        try {
+          validatedConfig = parseOrThrow({
+            unverifiedData: parsed,
+            schema: profileConfigFileSchema,
+            message: "schema validation failed",
+          });
+        } catch (error) {
+          throw new ProfileConfigSchemaInvalidError(
+            configPath,
+            error instanceof Error ? error.message : String(error),
+          );
+        }
+        if (!Object.hasOwn(validatedConfig.profiles, profile))
+          throw new ProfileConfigLoadError(
+            configPath,
+            `profile '${profile}' does not exist`,
+          );
+        const definition = validatedConfig.profiles[profile];
+        const tools = definition.tools;
+        // Bracket lookup would read Object.prototype for a valid JSON key such
+        // as "__proto__". Only an own declaration is authoritative.
+        const existing =
+          tools && Object.hasOwn(tools, toolName) ? tools[toolName] : [];
+        const existingRules = parseOrThrow({
+          unverifiedData: existing,
+          schema: customToolRuleArraySchema,
+          message: `tools.${toolName} must be an array of custom-tool rules`,
+        });
+        const appendedRules = parseOrThrow({
+          unverifiedData: rules,
+          schema: customToolRuleArraySchema,
+          message: "invalid custom-tool rules",
+        });
+        const updated = applyRuleArrayEdit(
+          source,
+          ["profiles", profile, "tools", toolName],
+          existingRules,
+          [...existingRules, ...appendedRules],
+        );
+        // Validate the complete post-mutation document before its atomic write.
+        loadProfileConfigSource({ fallback, configPath, source: updated });
+        atomicallyWriteProfileConfig({
+          configPath,
+          source: updated,
+          expectedRevision,
+          lock,
+        });
+      },
+    });
+    return { status: "committed" };
+  } catch (error) {
+    if (error instanceof ProfileConfigConflictError) return { status: "stale" };
+    if (
+      error instanceof ProfileConfigLockTimeoutError ||
+      error instanceof ProfileConfigUnreadableError ||
+      error instanceof ProfileConfigMalformedError ||
+      error instanceof ProfileConfigSchemaInvalidError
+    )
+      return failedCustomToolAppend({ error });
+    if (error instanceof ProfileConfigLoadError)
+      return { status: "rejected", reason: error.details };
+    return failedCustomToolAppend({ error });
+  }
 }

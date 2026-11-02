@@ -14,6 +14,7 @@ export const profileAuthoringSectionIds = [
   "composition",
   "transforms",
   "bash",
+  "customTools",
   "read",
   "write",
   "protected",

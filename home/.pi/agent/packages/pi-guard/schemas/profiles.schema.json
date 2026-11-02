@@ -39,7 +39,7 @@
                 }
               },
               "patternProperties": {
-                "^(?!(?:bash|read|grep|find|ls|edit|write)$).+$": {
+                "^(?!(?:bash|read|grep|find|ls|edit|write|__proto__)$).+$": {
                   "type": "array",
                   "items": {
                     "type": "object",
@@ -223,7 +223,7 @@
                 }
               },
               "patternProperties": {
-                "^(?!(?:bash|read|grep|find|ls|edit|write)$).+$": {
+                "^(?!(?:bash|read|grep|find|ls|edit|write|__proto__)$).+$": {
                   "type": "array",
                   "items": {
                     "type": "object",

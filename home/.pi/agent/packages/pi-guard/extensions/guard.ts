@@ -108,6 +108,8 @@ import {
   loadRawProfileConfig,
   ProfileAuthoringValidationError,
   ProfileConfigConflictError,
+  appendCustomToolRules,
+  resolveProfileConfigPath,
   ProfileConfigLockTimeoutError,
   forceRemoveProfileConfigLock,
   type RawProfileConfig,
@@ -129,9 +131,17 @@ import {
 import { formatProfileColor } from "../modules/profileColors";
 import {
   editProfileRuleRows,
+  editRules,
   type AskRuleCandidate,
+  type EditableRule,
   type EditableRuleRow,
 } from "../modules/profileRuleEditor";
+import {
+  customToolInputCandidates,
+  encodeCustomRuleGroups,
+  unconstrainedPathWarning,
+} from "../modules/ruleEditorDomain";
+import { terminalSafeText } from "../modules/terminalText";
 import {
   metadataConfirmationTitle,
   metadataSectionPresentation,
@@ -1827,13 +1837,6 @@ The permissions gate remains loaded and will fail closed until the profile is co
       pathTraces: suppliedPathTraces,
       ctx = originalContext,
     }) => {
-      if (!Object.hasOwn(rawProfileConfig?.profiles ?? {}, activeProfile)) {
-        ctx.ui.notify(
-          `Cannot save a permission decision: active profile '${activeProfile}' is not user-owned. Switch to a user-owned profile first.`,
-          "error",
-        );
-        return { approved: false, handledRejection: true };
-      }
       const traces = suppliedPathTraces ?? pathTraces;
       const candidates: AskRuleCandidate[] = [];
       const seen = new Set<string>();
@@ -1896,17 +1899,6 @@ The permissions gate remains loaded and will fail closed until the profile is co
               },
         );
       }
-      const userOwned = Object.hasOwn(
-        rawProfileConfig?.profiles ?? {},
-        activeProfile,
-      );
-      if (!userOwned) {
-        ctx.ui.notify(
-          `Cannot save a permission decision: active profile '${activeProfile}' is not user-owned. Switch to a user-owned profile first.`,
-          "error",
-        );
-        return { approved: false };
-      }
       const candidateIdentity = (candidate: AskRuleCandidate): string =>
         `${candidate.kind}\0${candidate.kind === "bash" ? "" : candidate.context}\0${candidate.requestedValue}\0${candidate.kind === "bash" ? "" : (candidate.pathMatch ?? "glob")}`;
       const rows: EditableRuleRow[] = candidates.map((candidate, index) => ({
@@ -1932,84 +1924,68 @@ The permissions gate remains loaded and will fail closed until the profile is co
         });
         pruneRetainedOnNextInvocation = false;
       }
-      while (true) {
-        const editorRevision = profileConfigRevision;
-        const editorProfile = activeProfile;
-        const editorPostureRevision = postureRevision;
-        if (
-          (await refreshAfterPolicyUi({
+      const session = await runPolicyEditorSession({
+        ctx,
+        edit: () =>
+          editProfileRuleRows({
             ctx,
-            revision: editorRevision,
-            profile: editorProfile,
-            evaluatedPostureRevision: editorPostureRevision,
-          })) !== "unchanged"
-        )
-          return { approved: false, stale: true };
-        const edited = await editProfileRuleRows({
-          ctx,
-          options: {
-            mode: "ask",
-            title: `Resolve ASK · ${rows.length} profile change${rows.length === 1 ? "" : "s"}`,
-            rows: retainedRows ?? rows,
-            allowAddRemove: true,
-            defaultKind: rows[0]?.kind,
-            defaultDecision: "deny",
-          },
-        });
-        retainedRows = edited.rows;
-        const editorRefresh = await refreshAfterPolicyUi({
-          ctx,
-          revision: editorRevision,
-          profile: editorProfile,
-          evaluatedPostureRevision: editorPostureRevision,
-        });
-        if (editorRefresh !== "unchanged") {
-          // This callback can survive the outer operation restart. Do not let
-          // an edit derived from the old revision reappear if the replacement
-          // policy also evaluates this operation to ASK.
-          retainedRows = undefined;
-          pruneRetainedOnNextInvocation = false;
-          ctx.ui.notify(
-            "Profile was updated while the rule editor was open; stale edits were discarded.",
-            "warning",
-          );
-          return {
-            approved: false,
-            stale: true,
-            refreshFailed: editorRefresh === "failed",
-          };
-        }
-        if (edited.action === "back") return { approved: false, back: true };
-        const selected = edited.rows.filter(
-          (row) =>
-            row.kind !== "protected" &&
-            row.decision !== "skip" &&
-            (row.pathMatch === undefined ? row.pattern.trim() : row.pattern)
-              .length > 0,
-        );
-        if (selected.length === 0) return { approved: false, back: true };
-        const saved = await rememberDecisions({
-          drafts: selected.map((row) => ({
-            draft: pendingDraftFromEditableRow({ row }),
-            decision: row.decision === "deny" ? "deny" : "allow",
-            guidance: row.decision === "deny" ? row.guidance : undefined,
-          })),
-          ctx,
-        });
-        if (!saved) return { approved: false, stale: true };
-        // A post-save re-check must rebuild from enforcement's remaining ASK
-        // candidates. Preserve edits only for request rows explicitly skipped;
-        // resolved and additional rows must not leak into the next prompt.
-        retainedRows = edited.rows.filter(
-          (row) => row.request && row.decision === "skip",
-        );
-        pruneRetainedOnNextInvocation = true;
-        return {
-          approved: selected.every((row) => row.decision === "allow"),
-          profileUpdated: true,
-          handledRejection: selected.some((row) => row.decision === "deny"),
-        };
+            options: {
+              mode: "ask",
+              title: `Resolve ASK · ${rows.length} profile change${rows.length === 1 ? "" : "s"}`,
+              rows: retainedRows ?? rows,
+              allowAddRemove: true,
+              defaultKind: rows[0]?.kind,
+              defaultDecision: "deny",
+            },
+          }),
+      });
+      if (session.status === "stale") {
+        // This callback can survive the outer operation restart. Do not let
+        // an edit derived from the old revision reappear if the replacement
+        // policy also evaluates this operation to ASK.
+        retainedRows = undefined;
+        pruneRetainedOnNextInvocation = false;
       }
+      if (session.status !== "edited") return session.approval;
+      const edited = session.edited;
+      retainedRows = edited.rows;
+      if (edited.action === "back") return { approved: false, back: true };
+      const selected = edited.rows.filter(
+        (row) =>
+          row.kind !== "protected" &&
+          row.decision !== "skip" &&
+          (row.pathMatch === undefined ? row.pattern.trim() : row.pattern)
+            .length > 0,
+      );
+      if (selected.length === 0) return { approved: false, back: true };
+      const saved = await rememberDecisions({
+        drafts: selected.map((row) => ({
+          draft: pendingDraftFromEditableRow({ row }),
+          decision: row.decision === "deny" ? "deny" : "allow",
+          guidance: row.guidance,
+        })),
+        ctx,
+      });
+      if (!saved)
+        return {
+          approved: false,
+          stale: true,
+          // A failed post-save activation must block this request, not restart
+          // it and implicitly recover before queued work observes the failure.
+          refreshFailed: configurationErrorReason() !== undefined,
+        };
+      // A post-save re-check must rebuild from enforcement's remaining ASK
+      // candidates. Preserve edits only for request rows explicitly skipped;
+      // resolved and additional rows must not leak into the next prompt.
+      retainedRows = edited.rows.filter(
+        (row) => row.request && row.decision === "skip",
+      );
+      pruneRetainedOnNextInvocation = true;
+      return {
+        approved: selected.every((row) => row.decision === "allow"),
+        profileUpdated: true,
+        handledRejection: selected.some((row) => row.decision === "deny"),
+      };
     };
   }
 
@@ -2034,6 +2010,238 @@ The permissions gate remains loaded and will fail closed until the profile is co
       };
     }
     throw new Error("A protected path rule cannot be persisted from an ASK.");
+  }
+
+  /**
+   * Save rule(s) for a custom-tool ASK through the shared rule editor. Saving
+   * appends to the active user-owned profile and is never approval: the
+   * caller re-evaluates the captured request against the saved policy.
+   */
+  function rememberCustomToolRules({
+    toolName,
+    input,
+    ctx: originalContext,
+  }: {
+    readonly toolName: string;
+    /** The immutable tool input captured at the tool-call boundary. */
+    readonly input: unknown;
+    readonly ctx: ExtensionContext;
+  }): RememberDecision {
+    // Request rows the author skipped survive one committed save, so the
+    // re-evaluated prompt reopens with them instead of re-deriving them.
+    let retainedRows: readonly EditableRule[] | undefined;
+    return async ({ ctx = originalContext }) => {
+      const { candidates, unconstrainedPaths } = customToolInputCandidates({
+        input,
+      });
+      const session = await runPolicyEditorSession({
+        ctx,
+        edit: () =>
+          editRules({
+            ctx,
+            options: {
+              mode: "ask",
+              title: `Resolve ASK · ${toolName}`,
+              lockedToolName: toolName,
+              requestWarnings: [
+                ...candidates.flatMap(
+                  (candidate) => candidate.rawGlobWarning ?? [],
+                ),
+                ...unconstrainedPaths.map((inputPath) =>
+                  unconstrainedPathWarning({ inputPath }),
+                ),
+              ],
+              // An opaque request prefills nothing; a catch-all is authored only
+              // deliberately, and then needs the separate confirmation below.
+              rows:
+                retainedRows ??
+                (candidates.length === 0
+                  ? []
+                  : [
+                      {
+                        id: "request-custom",
+                        origin: "request",
+                        rule: {
+                          toolName,
+                          inputs: candidates.map((candidate) => ({
+                            inputPath: candidate.inputPath,
+                            matcher: {
+                              kind: "glob",
+                              pattern: candidate.initialPattern,
+                            },
+                          })),
+                          decision: "allow",
+                        },
+                      },
+                    ]),
+            },
+          }),
+      });
+      if (session.approval?.stale) retainedRows = undefined;
+      if (session.status !== "edited") return session.approval;
+      const { edited, revision, profile } = session;
+      if (edited.action !== "save") return { approved: false, back: true };
+      const serialized = encodeCustomRuleGroups({ rows: edited.rows });
+      const serializedTools = Object.keys(serialized);
+      // The editor locks the tool name, so every durable row serializes under it.
+      if (serializedTools.some((name) => name !== toolName))
+        throw new Error(
+          `The ${toolName} rule editor returned rules for ${serializedTools.join(", ")}`,
+        );
+      const rules = serialized[toolName] ?? [];
+      if (rules.length === 0) return { approved: false, back: true };
+      if (rules.some((rule) => rule.match === undefined)) {
+        const confirmed = await ctx.ui.confirm(
+          "Save broad custom-tool rule?",
+          `This creates a catch-all rule for ${toolName} with no input clauses. It can apply to every ${toolName} request. Save it only if that broad effect is deliberate.`,
+        );
+        const afterConfirm = await refreshAfterPolicyUi({
+          ctx,
+          revision,
+          profile,
+          evaluatedPostureRevision: session.postureRevision,
+        });
+        if (afterConfirm !== "unchanged") {
+          retainedRows = undefined;
+          return {
+            approved: false,
+            stale: true,
+            refreshFailed: afterConfirm === "failed",
+          };
+        }
+        if (!confirmed) {
+          retainedRows = edited.rows;
+          return { approved: false, back: true };
+        }
+      }
+      const outcome = appendCustomToolRules({
+        fallback: genericPolicyConfig,
+        configPath: resolveProfileConfigPath({ configPath: profileConfigPath }),
+        expectedRevision: revision,
+        profile,
+        toolName,
+        rules,
+      });
+      if (outcome.status === "stale") {
+        retainedRows = undefined;
+        await refreshOrPreserveConfiguration({ ctx });
+        ctx.ui.notify(
+          "Profile changed before the custom-tool rules were saved; nothing was written.",
+          "warning",
+        );
+        return { approved: false, stale: true };
+      }
+      if (outcome.status !== "committed") {
+        // Nothing was written; return to the picker so Allow once and Reject
+        // remain available for this request.
+        ctx.ui.notify(
+          `Custom-tool rules were not saved: ${outcome.status === "rejected" ? outcome.reason : outcome.error.message}`,
+          "error",
+        );
+        return { approved: false, back: true };
+      }
+      const skipped = edited.rows.filter(
+        (row) => row.origin === "request" && row.rule.decision === "skip",
+      );
+      retainedRows = skipped.length > 0 ? skipped : undefined;
+      const saved = await refreshOrPreserveConfiguration({
+        ctx,
+        selectionIntent: {
+          kind: "post-save",
+          intended: profile,
+          message: (selectedProfile) =>
+            `Saved ${rules.length} ${toolName} rule${rules.length === 1 ? "" : "s"} to ${selectedProfile}.`,
+        },
+      });
+      if (!saved) return { approved: false, stale: true, refreshFailed: true };
+      return { approved: false, profileUpdated: true };
+    };
+  }
+
+  /**
+   * Bracket an ASK rule editor with the checks every save from it needs: the
+   * policy is unchanged before and after the editor, and the active profile is
+   * user-owned with a revision to write against. Callers keep their own save
+   * step, because a Bash/path save approves while a custom save re-evaluates.
+   */
+  async function runPolicyEditorSession<Edited>({
+    ctx,
+    edit,
+  }: {
+    readonly ctx: ExtensionContext;
+    readonly edit: () => Promise<Edited>;
+  }): Promise<
+    | {
+        readonly status: "edited";
+        readonly edited: Edited;
+        readonly revision: string;
+        readonly profile: ProfileName;
+        readonly postureRevision: number;
+        readonly approval?: never;
+      }
+    | {
+        /** Stale before the editor opened, or the profile is not writable. */
+        readonly status: "unavailable";
+        readonly approval: Approval;
+      }
+    | { readonly status: "stale"; readonly approval: Approval }
+  > {
+    const revision = profileConfigRevision;
+    const profile = activeProfile;
+    const editorPostureRevision = postureRevision;
+    const refresh = () =>
+      refreshAfterPolicyUi({
+        ctx,
+        revision,
+        profile,
+        evaluatedPostureRevision: editorPostureRevision,
+      });
+    const beforeEditor = await refresh();
+    if (beforeEditor !== "unchanged")
+      return {
+        status: "unavailable",
+        approval: {
+          approved: false,
+          stale: true,
+          refreshFailed: beforeEditor === "failed",
+        },
+      };
+    if (!Object.hasOwn(rawProfileConfig?.profiles ?? {}, profile)) {
+      ctx.ui.notify(
+        `Cannot save a permission decision: active profile '${profile}' is not user-owned. Switch to a user-owned profile first.`,
+        "error",
+      );
+      return {
+        status: "unavailable",
+        approval: { approved: false, handledRejection: true },
+      };
+    }
+    // A user-owned profile was read from a file, so it has a revision.
+    if (revision === undefined)
+      throw new Error("A user-owned profile has no configuration revision");
+    const edited = await edit();
+    const afterEditor = await refresh();
+    if (afterEditor !== "unchanged") {
+      ctx.ui.notify(
+        "Profile was updated while the rule editor was open; stale edits were discarded.",
+        "warning",
+      );
+      return {
+        status: "stale",
+        approval: {
+          approved: false,
+          stale: true,
+          refreshFailed: afterEditor === "failed",
+        },
+      };
+    }
+    return {
+      status: "edited",
+      edited,
+      revision,
+      profile,
+      postureRevision: editorPostureRevision,
+    };
   }
 
   pi.registerCommand("profile-warnings", {
@@ -2632,6 +2840,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
     // external changes return stale before a callback result is accepted.
     let rememberedBashRule: RememberDecision | undefined;
     let rememberedPathRule: RememberDecision | undefined;
+    let rememberedCustomRule: RememberDecision | undefined;
     for (let attempt = 0; attempt < maxOperationEvaluationAttempts; attempt++) {
       // Pi executes the same args object it passes as event.input, so a
       // replacement object would leave this attempt's rewrites (for example,
@@ -2756,13 +2965,26 @@ The permissions gate remains loaded and will fail closed until the profile is co
           });
           const evaluatedRevision = profileConfigRevision;
           const evaluatedProfile = activeProfile;
+          const userOwned = Object.hasOwn(
+            rawProfileConfig?.profiles ?? {},
+            activeProfile,
+          );
           return await gateCustomTool({
             toolName: event.toolName,
-            input: event.input,
+            input: originalInput,
             rules: customRules,
             implicitAskDecision,
             posture: currentPosture,
             ctx,
+            // Durable authoring is offered only for a writable local profile;
+            // Allow once and Reject never depend on it.
+            remember: userOwned
+              ? (rememberedCustomRule ??= rememberCustomToolRules({
+                  toolName: event.toolName,
+                  input: originalInput,
+                  ctx,
+                }))
+              : undefined,
             refreshAfterUiAwait: () =>
               refreshAfterPolicyUi({
                 ctx,
@@ -4102,6 +4324,7 @@ async function gateCustomTool({
   implicitAskDecision = "ask",
   posture,
   ctx,
+  remember,
   refreshAfterUiAwait,
 }: {
   readonly toolName: string;
@@ -4111,6 +4334,8 @@ async function gateCustomTool({
   /** Reads the posture that resolves ASKs left after composition. */
   readonly posture: PostureReader;
   readonly ctx: ExtensionContext;
+  /** Offers "Save rule(s) to profile…"; absent when the profile is not writable. */
+  readonly remember?: RememberDecision;
   readonly refreshAfterUiAwait?: RefreshAfterUiAwait;
 }) {
   const { decision, rule: matchedRule } = decideCustomTool(input, rules);
@@ -4147,6 +4372,7 @@ async function gateCustomTool({
         "Request:",
         formatCustomToolRequest({ input }),
       ].join("\n"),
+      remember,
       refreshAfterUiAwait,
     });
     if (approval.refreshFailed) {
@@ -4156,7 +4382,8 @@ async function gateCustomTool({
           "pi-guard profile configuration became invalid while awaiting approval.",
       };
     }
-    if (approval.stale) return restartOperation();
+    // A saved rule is not approval: re-evaluate the captured request.
+    if (approval.stale || approval.profileUpdated) return restartOperation();
     if (!approval.approved) {
       return {
         block: true,
@@ -4190,21 +4417,8 @@ function customToolRules({
 const customToolRequestMaximumKeys = 50;
 const customToolRequestMaximumValueLength = 400;
 
-/**
- * Characters JSON leaves raw that a terminal can act on or render
- * misleadingly: DEL and C1 controls (including CSI), bidi marks and
- * overrides, zero-width and invisible format characters, and line/paragraph
- * separators.
- */
-const unsafeTerminalCharacters =
-  /[\u007f-\u009f\u061c\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\u2028\u2029\ufeff]/g;
-
 function terminalSafeJson({ value }: { readonly value: unknown }): string {
-  return (JSON.stringify(value) ?? String(value)).replace(
-    unsafeTerminalCharacters,
-    (character) =>
-      `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`,
-  );
+  return terminalSafeText({ text: JSON.stringify(value) ?? String(value) });
 }
 
 /**
@@ -4446,22 +4660,13 @@ const permissionRequestHeadings = {
   custom: "🧩 Custom tool permission request",
 } as const satisfies Record<PermissionRequestKind, string>;
 
-/** Only these kinds can save rules from the prompt. */
 const rememberDescriptions = {
   bash: "Save the required Bash and ordinary path rule(s) for this request.",
   read: "Save a read-path rule for this request.",
   write: "Save a write-path rule for this request.",
-} as const satisfies Record<Exclude<PermissionRequestKind, "custom">, string>;
-
-function rememberDescription({
-  kind,
-}: {
-  readonly kind: PermissionRequestKind;
-}): string {
-  if (kind === "custom")
-    throw new Error("Custom-tool permission requests cannot save rules");
-  return rememberDescriptions[kind];
-}
+  custom:
+    "Append custom-tool rule(s) to this profile, then check the request again.",
+} as const satisfies Record<PermissionRequestKind, string>;
 
 async function showPermissionInteraction({
   ctx,
@@ -4513,7 +4718,7 @@ async function showPermissionInteraction({
         ? [
             {
               name: updateProfileChoice,
-              description: rememberDescription({ kind }),
+              description: rememberDescriptions[kind],
               emoji: "📝",
               color: "magenta",
             } satisfies ProfilePickerItem,
@@ -4578,7 +4783,12 @@ async function showPermissionInteraction({
           remember,
           refreshAfterUiAwait,
         });
-      if (result.approved || result.handledRejection || result.profileUpdated)
+      if (
+        result.approved ||
+        result.handledRejection ||
+        result.profileUpdated ||
+        result.stale
+      )
         return result;
       const guidance = await collectDenialGuidance({
         ctx,

@@ -298,6 +298,32 @@ describe("profile updates through the public extension surface", () => {
   );
 
   it.each(durableDecisions)(
+    "discards a stale custom-tool editor after its real picker and form",
+    async (decision) => {
+      const scenario = customToolScenario();
+      const configPath = writeConfig({
+        config: profileWithCustomToolRule({ decision: "ask" }),
+      });
+      process.env.PI_GUARD_PROFILE_CONFIG = configPath;
+      const parent = createExtensionHarness({ interactiveUi: true });
+      await parent.start();
+
+      const pending = parent.callTool(scenario);
+      (await parent.ui.waitForPermissionChoice()).choose(saveRulesChoice);
+      const editor = await parent.ui.waitForRuleForm();
+      expect(editor.render().join("\n")).toContain("Resolve ASK · deploy");
+      replaceConfig({
+        configPath,
+        config: profileWithCustomToolRule({ decision }),
+      });
+      editor.press("Enter");
+
+      expectDecision({ result: await pending, decision });
+      expect(parent.ui.custom).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it.each(durableDecisions)(
     "propagates a newer ordinary-path %s decision to already-running parent and sibling instances",
     async (decision) => {
       const scenario = ordinaryPathScenario({
@@ -392,6 +418,7 @@ describe("profile updates through the public extension surface", () => {
 
       const pending = parent.callTool(scenario);
       const stalePicker = await parent.ui.waitForPermissionChoice();
+      expect(stalePicker.render().join("\n")).toContain(saveRulesChoice);
       replaceConfig({
         configPath,
         config: profileWithCustomToolRule({ decision }),
@@ -417,8 +444,9 @@ describe("profile updates through the public extension surface", () => {
     const pending = parent.callTool(scenario);
     (await parent.ui.waitForPermissionChoice()).choose(saveRulesChoice);
     const staleEditor = await parent.ui.waitForRuleForm();
-    staleEditor.press("CtrlA");
-    staleEditor.type("stale-pattern.txt");
+    // The request pattern is initially focused. Append a valid stale edit;
+    // Ctrl+A is the editor's documented add-clause shortcut, not select-all.
+    staleEditor.type("-stale-pattern.txt");
     staleEditor.press("Tab"); // allow → deny
     staleEditor.press("ArrowDown");
     staleEditor.type("stale guidance");

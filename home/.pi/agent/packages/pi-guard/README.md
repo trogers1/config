@@ -153,10 +153,10 @@ obvious (`deps-mutator`, `git-full`). Profiles may define optional `color`,
 - The remaining no-argument commands also have conflict-free `Ctrl+Shift` aliases: `A` `/profile-add`, `R` `/read-only`, `B` `/sandbox`, `N` `/sandbox-on`, `D` `/sandbox-off`, `X` `/sandbox-on-force`, `C` `/socrates`, and `Z` `/socrates-off`. `Ctrl+Shift+E` starts `/permissions explain ` in the editor so you can provide the required tool and input.
 - `/profile-select <name>` switches to a profile.
 - `/profile-warnings` shows detailed rule-precedence conflicts. pi-guard adds a one-time reminder when you start a new session with, activate, save, or externally reload a conflicted active profile; conflicts can be intentional composition.
-- `/profile-add` creates a custom profile through one overview with ten sections: General, Prompt, Composition, Transforms, Bash, Read, Write, Protected, Sandbox, and Startup Directory globs. It validates the complete raw draft, reports typed errors on every affected section, and saves and activates the profile atomically. Sandbox capability expansion and automatic directory activation each require a second explicit confirmation.
-- `/profile-edit` uses the same ten-section wizard for the active user-owned profile. It edits the exact raw declaration without materializing inherited values, including full identity rename, Prompt inheritance/disable/file modes, ordered composition and transforms, rules, Sandbox, and startup globs. Renames update exact `defaultProfile` and custom `extends` references while preserving JSONC comments and declaration order.
+- `/profile-add` creates a custom profile through one overview with eleven sections: General, Prompt, Composition, Transforms, Bash, Custom-tool rules, Read, Write, Protected, Sandbox, and Startup Directory globs. It validates the complete raw draft, reports typed errors on every affected section, and saves and activates the profile atomically. Sandbox capability expansion and automatic directory activation each require a second explicit confirmation.
+- `/profile-edit` uses the same eleven-section wizard for the active user-owned profile. It edits the exact raw declaration without materializing inherited values, including full identity rename, Prompt inheritance/disable/file modes, ordered composition and transforms, Bash/custom/path rules, Sandbox, and startup globs. Renames update exact `defaultProfile` and custom `extends` references while preserving JSONC comments and declaration order.
 - In `/profile-add` and `/profile-edit`, Escape is local Back and retains section changes; Ctrl+C aborts the complete command without writing. A successful explicit save activates the saved profile immediately unless `PI_SUBAGENT_PROFILE` is authoritative.
-- For an ASK request, choose `No (default)`, `Allow once`, or `Save rule(s) to profile…` when the request is concrete and authorable. Inline ASK remains rule-only and never exposes Prompt, Composition, Transforms, Sandbox, or Directory management. A durable save updates only the active user-owned profile; built-in and composed profiles cannot create compatibility child profiles. Esc returns to retained rules; Ctrl+C returns locally to the permission picker. Selected rules are committed atomically before the request is checked again.
+- For an ASK request, choose `No (default)`, `Allow once`, or `Save rule(s) to profile…` when the request is concrete and authorable. Inline ASK remains rule-only and never exposes Prompt, Composition, Transforms, Sandbox, or Directory management. A durable save updates only the active user-owned profile; built-in and composed profiles cannot create compatibility child profiles. Esc returns to retained rules; Ctrl+C returns locally to the permission picker. Selected rules are committed atomically before the request is checked again. A custom-tool ASK offers `Save rule(s) to profile…` only when the active profile is user-owned; `Allow once` and `No` are always available.
 - `/read-only` switches to the `builtin:read-only` permissions profile.
 - `/posture [deny|allow|off]` shows or sets this session's posture (see
   [Session posture](#session-posture)).
@@ -594,8 +594,10 @@ compatibility APIs are removed. TypeScript consumers should import the public
 policy types from `@trogers1/pi-guard/config`.
 
 `/profile-add` and `/profile-edit` share an overview-first wizard for General,
-Prompt, Composition, Transforms, four rule sections, Sandbox, and Startup
-Directory globs. General edits the required name/description and optional emoji
+Prompt, Composition, Transforms, Bash, Custom-tool rules, Read, Write,
+Protected, Sandbox, and Startup Directory globs. Custom-tool rules edit only
+local non-Bash `tools` declarations; empty local arrays stay explicit and do
+not suppress inherited rules. General edits the required name/description and optional emoji
 and color. A rename atomically updates exact custom-profile `extends` references
 and `defaultProfile` while retaining JSONC declaration order and comments. It
 cannot rename a profile currently named by authoritative `PI_SUBAGENT_PROFILE`;
@@ -811,6 +813,33 @@ representation. Matching rules resolve by specificity, with later rules breaking
 ties. A custom tool with no matching rule, including one with no rules at
 all, is an implicit `ask`: the profile's transforms resolve it to allow, deny,
 or a prompt, and the prompt shows the request one argument per line.
+
+Inline ASK, `/profile-add`, and `/profile-edit` share one rule editor for
+Bash, path, and custom-tool rules. It adds and removes rules and ANDed clauses
+(`Ctrl+N`, `Ctrl+A`, `Ctrl+D`, `Ctrl+Shift+D`), moves between rules with
+`Ctrl+↑/↓` and between clauses with `Ctrl+←/→`, cycles the decision with `Tab`,
+moves between fields with `Ctrl+K`, and edits multiline `guidance` (`Ctrl+J`
+or a pasted newline; `Shift+Enter` and `Ctrl+Enter` work where the terminal
+reports extended keys). These editor keys take precedence inside a field, so
+`Ctrl+A`, `Ctrl+K`, and `Ctrl+D` do not perform their usual line-editing
+actions there. `Ctrl+Shift+R` resets the current invocation and profile
+authoring adds `Ctrl+Shift+X` Clear. Matchers are plain globs; there are no URL
+presets or typed matchers. Request and rule text is shown with control,
+bidi, and invisible characters escaped. Bash and path rules saved from an
+inline ASK keep their guidance whether they allow or deny.
+
+Choosing `Save rule(s) to profile…` on a custom-tool ASK opens that editor
+with the invoked tool locked and one rule prefilled with a clause per scalar
+request value, nested values addressed with dot paths. A prefilled value
+containing `*`, `?`, or a backslash is a raw glob and the editor warns that it
+may match more than that value. The editor also warns about request paths no
+clause can represent (keys containing `.` or empty keys, empty or non-plain
+containers, values with no matchable form), since the saved rule leaves them
+unconstrained. A request with no scalar values prefills nothing; a deliberately added rule with no clauses matches every call to the
+tool and needs a second confirmation before it is saved. Saving appends the
+rules to the active user-owned profile in one revision-checked write, then
+checks the original request again. Saving is not approval: a more specific deny
+or ASK still applies, and a concurrent profile change discards the save.
 
 Every shipped profile includes `ruleset:codemode`, which allows the outer
 `codemode` call (each tool its script runs is still authorized on its own), and

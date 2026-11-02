@@ -576,7 +576,7 @@ describe("profile updates through the public extension surface", () => {
     );
     const form = await harness.ui.waitForRuleForm();
     form.press("Tab");
-    form.press("ArrowDown");
+    form.press("CtrlK");
     form.type("Writes require the approved workflow.");
     form.press("Enter");
     expect(await write).toMatchObject({ block: true });
@@ -645,7 +645,7 @@ describe("profile updates through the public extension surface", () => {
       rendered.indexOf("echo third"),
     );
     // Keep first and third as allow; skip only the second.
-    form.press("ArrowDown");
+    form.press("CtrlArrowDown");
     form.press("Tab");
     form.press("Tab");
     form.press("Enter");

@@ -1,14 +1,17 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { parse } from "jsonc-parser";
+import { parse, parseTree, type ParseError } from "jsonc-parser";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  appendCustomToolRules,
   applyProfileAuthoringCommit,
   applyProfileRuleChanges,
   loadProfileConfig,
   loadProfileConfigSnapshot,
   loadRawProfileConfig,
+  ProfileAuthoringValidationError,
   ProfileConfigConflictError,
   ProfileConfigLockTimeoutError,
   forceRemoveProfileConfigLock,
@@ -38,7 +41,9 @@ import {
 import { policyConfig } from "../modules/policy";
 import {
   parseOrThrow,
+  customToolNameError,
   profileConfigFileSchema,
+  type CustomToolRule,
   type ProfileConfigProfile,
 } from "../modules/policyHelpers";
 
@@ -74,6 +79,39 @@ function profiles(configPath: string): Record<string, Record<string, unknown>> {
   const raw = "profiles" in document ? document.profiles : undefined;
   if (!isProfiles(raw)) throw new Error("profiles");
   return raw;
+}
+function parseJsoncSafely(source: string): unknown {
+  const errors: ParseError[] = [];
+  const root = parseTree(source, errors, { allowTrailingComma: true });
+  if (root === undefined || errors.length > 0) throw new Error("invalid JSONC");
+  const materialize = (
+    node: NonNullable<ReturnType<typeof parseTree>>,
+  ): unknown => {
+    if (node.type === "array")
+      return (node.children ?? []).map((child) => materialize(child));
+    if (node.type === "object") {
+      const value: Record<string, unknown> = {};
+      for (const property of node.children ?? []) {
+        const key = property.children?.[0];
+        const declaration = property.children?.[1];
+        if (
+          key?.type !== "string" ||
+          typeof key.value !== "string" ||
+          declaration === undefined
+        )
+          continue;
+        Object.defineProperty(value, key.value, {
+          configurable: true,
+          enumerable: true,
+          value: materialize(declaration),
+          writable: true,
+        });
+      }
+      return value;
+    }
+    return node.value;
+  };
+  return materialize(root);
 }
 function editDraft({
   configPath,
@@ -418,6 +456,41 @@ describe("profile config mutations", () => {
       }),
     ).toThrow("schema validation failed");
     expect(fs.readFileSync(configPath, "utf8")).toBe(before);
+  });
+
+  it("routes escaped custom-tool JSON Pointer validation to Custom-tool rules", () => {
+    const configPath = tempConfig();
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({ profiles: { existing: baseDefinition } }),
+    );
+    const initial = editDraft({ configPath, name: "existing" });
+    const customRules = [
+      { decision: "allow" as const, match: { environment: "prod" } },
+    ];
+    Object.defineProperty(customRules[0], "match", { value: {} });
+    const invalid: ProfileAuthoringDraft = {
+      ...initial,
+      definition: {
+        ...initial.definition,
+        tools: { "deploy/tool": customRules },
+      },
+    };
+
+    try {
+      validateProfileAuthoringCommit({
+        fallback: policyConfig,
+        configPath,
+        draft: invalid,
+      });
+      throw new Error("expected custom-tool validation failure");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ProfileAuthoringValidationError);
+      if (!(error instanceof ProfileAuthoringValidationError)) throw error;
+      expect(error.issues).toContainEqual(
+        expect.objectContaining({ section: "customTools" }),
+      );
+    }
   });
 
   it("rejects optimistic and byte-identical stale authoring candidates without writing", () => {
@@ -1429,6 +1502,185 @@ describe("profile config mutations", () => {
       JSON.stringify({ token: "foreign" }),
     );
     expect(fs.readFileSync(lockPath, "utf8")).toBe(replacement);
+  });
+
+  it("returns committed, stale, and rejected outcomes for reviewed custom-tool appends", () => {
+    const configPath = tempConfig();
+    const source = JSON.stringify({ profiles: { existing: baseDefinition } });
+    fs.writeFileSync(configPath, source);
+    const revision = loadProfileConfigSnapshot({
+      fallback: policyConfig,
+      configPath,
+    }).sourceRevision;
+    const request = {
+      fallback: policyConfig,
+      configPath,
+      expectedRevision: revision,
+      profile: "existing",
+      toolName: "deploy",
+      rules: [
+        { decision: "allow", match: { environment: "prod" } },
+      ] satisfies readonly CustomToolRule[],
+    };
+
+    expect(appendCustomToolRules(request)).toEqual({ status: "committed" });
+    expect(profiles(configPath).existing.tools).toEqual({
+      deploy: [{ decision: "allow", match: { environment: "prod" } }],
+    });
+    expect(appendCustomToolRules(request)).toEqual({ status: "stale" });
+    expect(
+      appendCustomToolRules({ ...request, toolName: "release", rules: [] }),
+    ).toEqual({
+      status: "rejected",
+      reason: "at least one custom-tool rule is required",
+    });
+    expect(appendCustomToolRules({ ...request, toolName: "bash" })).toEqual({
+      status: "rejected",
+      reason: customToolNameError({ name: "bash" }),
+    });
+  });
+
+  it("fails a valid custom-tool append for incomplete JSONC without changing source", () => {
+    const configPath = tempConfig();
+    const source = '{\n  "profiles": {\n    "existing": ';
+    fs.writeFileSync(configPath, source);
+
+    const result = appendCustomToolRules({
+      fallback: policyConfig,
+      configPath,
+      expectedRevision: createHash("sha256").update(source).digest("hex"),
+      profile: "existing",
+      toolName: "deploy",
+      rules: [{ decision: "allow" }] satisfies readonly CustomToolRule[],
+    });
+
+    expect(result.status).toBe("failed");
+    if (result.status !== "failed")
+      throw new Error("expected incomplete JSONC to fail");
+    expect(result.error.name).toBe("ProfileConfigMalformedError");
+    expect(fs.readFileSync(configPath, "utf8")).toBe(source);
+  });
+
+  it("hard-fails a custom-tool append when a Bash sibling is malformed", () => {
+    const configPath = tempConfig();
+    const source = JSON.stringify({
+      profiles: {
+        existing: {
+          ...baseDefinition,
+          tools: { bash: [{ decision: "allow" }] },
+        },
+      },
+    });
+    fs.writeFileSync(configPath, source);
+
+    const result = appendCustomToolRules({
+      fallback: policyConfig,
+      configPath,
+      expectedRevision: createHash("sha256").update(source).digest("hex"),
+      profile: "existing",
+      toolName: "deploy",
+      rules: [{ decision: "allow" }] satisfies readonly CustomToolRule[],
+    });
+
+    expect(result.status).toBe("failed");
+    if (result.status !== "failed")
+      throw new Error("expected malformed Bash sibling to fail");
+    expect(result.error.name).toBe("ProfileConfigSchemaInvalidError");
+    expect(fs.readFileSync(configPath, "utf8")).toBe(source);
+  });
+
+  it("rejects appending rules for the reserved __proto__ tool name", () => {
+    const configPath = tempConfig();
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        profiles: {
+          existing: {
+            ...baseDefinition,
+            tools: { deploy: [{ decision: "allow" }] },
+          },
+        },
+      }),
+    );
+    const source = fs.readFileSync(configPath, "utf8");
+    const expectedRevision = loadProfileConfigSnapshot({
+      fallback: policyConfig,
+      configPath,
+    }).sourceRevision;
+
+    expect(
+      appendCustomToolRules({
+        fallback: policyConfig,
+        configPath,
+        expectedRevision,
+        profile: "existing",
+        toolName: "__proto__",
+        rules: [{ decision: "deny" }],
+      }),
+    ).toEqual({
+      status: "rejected",
+      reason: "'__proto__' is a reserved tool name",
+    });
+    expect(fs.readFileSync(configPath, "utf8")).toBe(source);
+  });
+
+  it("adds own special-name empty custom-tool groups without rewriting Bash JSONC", () => {
+    const configPath = tempConfig();
+    const bashDeclaration = `        // Bash declaration must survive the custom-tool clear.
+        "bash": [
+          { "pattern": "echo retained", "decision": "allow" }
+        ],`;
+    fs.writeFileSync(
+      configPath,
+      `{
+  "profiles": {
+    "existing": {
+      "description": "Existing",
+      "extends": ["builtin:default"],
+      "tools": {
+${bashDeclaration}
+      }
+    }
+  }
+}
+`,
+    );
+    const draft = editDraft({ configPath, name: "existing" });
+    const tools = Object.fromEntries([
+      ["bash", draft.definition.tools?.bash ?? []],
+      ["constructor", []],
+    ]);
+
+    commitEdit({
+      configPath,
+      draft: { ...draft, definition: { ...draft.definition, tools } },
+    });
+
+    const source = fs.readFileSync(configPath, "utf8");
+    expect(source).toContain(bashDeclaration);
+    // Read the JSONC AST with data properties, so a special name such as
+    // `constructor` is checked as an own declaration.
+    const document = parseJsoncSafely(source);
+    if (typeof document !== "object" || document === null)
+      throw new Error("missing document");
+    const declarations: unknown = Reflect.get(document, "profiles");
+    if (!isProfiles(declarations)) throw new Error("missing profiles");
+    const definition = declarations.existing;
+    if (definition === undefined) throw new Error("missing profile");
+    const persistedTools = definition.tools;
+    if (
+      typeof persistedTools !== "object" ||
+      persistedTools === null ||
+      Array.isArray(persistedTools)
+    )
+      throw new Error("missing tools");
+    expect(Object.hasOwn(persistedTools, "constructor")).toBe(true);
+    expect(
+      Object.getOwnPropertyDescriptor(persistedTools, "constructor")?.value,
+    ).toEqual([]);
+    expect(
+      Object.getOwnPropertyDescriptor(persistedTools, "bash")?.value,
+    ).toEqual([{ pattern: "echo retained", decision: "allow" }]);
   });
 
   it("canonicalizes empty appends but retains empty overwrites", () => {

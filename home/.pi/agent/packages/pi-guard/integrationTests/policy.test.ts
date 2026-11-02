@@ -6,6 +6,7 @@ import { Value } from "typebox/value";
 import { policyConfig } from "../modules/policy";
 import {
   parsePolicyConfig,
+  customToolNamePattern,
   builtinProfileNames,
   emptyResolvedRuntime,
   extendProfile,
@@ -224,9 +225,7 @@ describe("policy configuration contract", () => {
     expect(schema.properties.profiles.additionalProperties).toBe(false);
 
     const customToolSchema =
-      profileSchema.properties.tools.patternProperties[
-        "^(?!(?:bash|read|grep|find|ls|edit|write)$).+$"
-      ];
+      profileSchema.properties.tools.patternProperties[customToolNamePattern];
     if (!customToolSchema) {
       throw new Error("missing custom tool schema fixture");
     }

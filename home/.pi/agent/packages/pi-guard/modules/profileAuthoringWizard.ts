@@ -43,11 +43,19 @@ import {
 } from "./profileMetadataEditor";
 import {
   editProfileRuleSection,
+  editRules,
   profileRuleEditRows,
 } from "./profileRuleEditor";
+import {
+  decodeCustomRuleGroups,
+  encodeCustomRuleGroups,
+} from "./ruleEditorDomain";
+import { toolsSchema, parseOrThrow } from "./policyHelpers";
 import type {
+  CustomToolRule,
   ProfileConfigProfile,
   ProfileTransformName,
+  Rule,
   SandboxConfigOverride,
 } from "./policyHelpers";
 
@@ -144,6 +152,44 @@ function ruleCount({
   if (kind === "read") return definition.readPaths?.length ?? 0;
   if (kind === "write") return definition.writePaths?.length ?? 0;
   return definition.protectedPathRules?.length ?? 0;
+}
+
+/**
+ * Validate tools once against the authoritative schema, then split the
+ * validated Bash and custom declarations without parallel validation.
+ */
+function authoredToolDeclarations({
+  tools,
+}: {
+  readonly tools: ProfileConfigProfile["tools"];
+}): {
+  readonly bash: Rule[] | undefined;
+  readonly custom: Readonly<Record<string, readonly CustomToolRule[]>>;
+} {
+  const validated = parseOrThrow({
+    unverifiedData: tools ?? {},
+    schema: toolsSchema,
+    message: "invalid authored tool declarations",
+  });
+  return {
+    bash: validated.bash,
+    custom: Object.fromEntries(
+      Object.entries(validated).flatMap(([name, declarations]) => {
+        if (name === "bash") return [];
+        if (declarations === undefined)
+          throw new Error(`Validated tool '${name}' has no declarations`);
+        return [[name, declarations]];
+      }),
+    ),
+  };
+}
+
+function emptyCustomToolDeclarations({
+  names,
+}: {
+  readonly names: readonly string[];
+}): Record<string, CustomToolRule[]> {
+  return Object.fromEntries(names.map((name) => [name, []]));
 }
 
 const sectionRegistry = defineSectionRegistry({
@@ -287,6 +333,67 @@ const sectionRegistry = defineSectionRegistry({
         });
       },
     },
+    customTools: {
+      id: "customTools",
+      label: "🧩 Custom-tool rules",
+      summary: ({ draft }) =>
+        localProfileDeclarationCount({
+          count: Object.entries(draft.definition.tools ?? {}).reduce(
+            (count, [name, rules]) =>
+              count + (name === "bash" ? 0 : (rules?.length ?? 0)),
+            0,
+          ),
+        }),
+      edit: async ({ draft, context, issues }) => {
+        const { bash, custom: customTools } = authoredToolDeclarations({
+          tools: draft.definition.tools,
+        });
+        const result = await editRules({
+          ctx: context.ctx,
+          custom: context.flow.custom,
+          options: {
+            mode: draft.mode,
+            title: sectionTitle({
+              label: "🧩 Custom-tool rules",
+              draft,
+              issues,
+            }),
+            rows: decodeCustomRuleGroups({ tools: customTools }),
+            clearAvailable: true,
+          },
+        });
+        if (result.action === "back") return draft;
+        // Local empty groups are meaningful authoring declarations and must
+        // survive removing their final row or Clear. Seed every edited name so
+        // the serializer never performs a prototype lookup for "__proto__".
+        const emptyToolNames = [
+          ...new Set([
+            ...Object.keys(customTools),
+            ...result.rows.map(({ rule }) => rule.toolName),
+          ]),
+        ];
+        const serialized = (
+          result.action === "clear"
+            ? emptyCustomToolDeclarations({ names: emptyToolNames })
+            : encodeCustomRuleGroups({ rows: result.rows, emptyToolNames })
+        ) satisfies Record<string, CustomToolRule[]>;
+        const nextToolEntries: Array<[string, Rule[] | CustomToolRule[]]> = [
+          ...Object.entries(serialized),
+        ];
+        if (bash !== undefined) nextToolEntries.push(["bash", bash]);
+        const nextTools = Object.fromEntries(nextToolEntries) satisfies Record<
+          string,
+          Rule[] | CustomToolRule[]
+        >;
+        return withDefinition({
+          draft,
+          definition: {
+            ...draft.definition,
+            tools: Object.keys(nextTools).length > 0 ? nextTools : undefined,
+          },
+        });
+      },
+    },
     bash: {
       id: "bash",
       label: ruleSectionPresentation.bash.label,
@@ -295,13 +402,15 @@ const sectionRegistry = defineSectionRegistry({
           count: ruleCount({ definition: draft.definition, kind: "bash" }),
         }),
       edit: async ({ draft, context, issues }) => {
-        const initial = draft.definition.tools?.bash;
+        const { bash: initial, custom } = authoredToolDeclarations({
+          tools: draft.definition.tools,
+        });
         const result = await editProfileRuleSection({
           ctx: context.ctx,
           custom: context.flow.custom,
           mode: draft.mode,
           kind: "bash",
-          initial: profileRuleEditRows("bash", initial ?? []),
+          initial: profileRuleEditRows({ kind: "bash", rules: initial ?? [] }),
           preserveExplicitEmpty: initial !== undefined,
           title: sectionTitle({
             label: ruleSectionPresentation.bash.label,
@@ -309,10 +418,17 @@ const sectionRegistry = defineSectionRegistry({
             issues,
           }),
         });
-        const tools = draft.definition.tools ?? {};
-        const nextTools = { ...tools };
-        if (result.edit.mode === "omit") delete nextTools.bash;
-        else nextTools.bash = result.edit.value;
+        const nextToolEntries: Array<[string, Rule[] | CustomToolRule[]]> =
+          Object.entries(custom).map(([name, declarations]) => [
+            name,
+            [...declarations],
+          ]);
+        if (result.edit.mode === "set")
+          nextToolEntries.push(["bash", result.edit.value]);
+        const nextTools = Object.fromEntries(nextToolEntries) satisfies Record<
+          string,
+          Rule[] | CustomToolRule[]
+        >;
         return withDefinition({
           draft,
           definition: {
@@ -336,7 +452,7 @@ const sectionRegistry = defineSectionRegistry({
           custom: context.flow.custom,
           mode: draft.mode,
           kind: "read",
-          initial: profileRuleEditRows("read", initial ?? []),
+          initial: profileRuleEditRows({ kind: "read", rules: initial ?? [] }),
           preserveExplicitEmpty: initial !== undefined,
           title: sectionTitle({
             label: ruleSectionPresentation.read.label,
@@ -368,7 +484,7 @@ const sectionRegistry = defineSectionRegistry({
           custom: context.flow.custom,
           mode: draft.mode,
           kind: "write",
-          initial: profileRuleEditRows("write", initial ?? []),
+          initial: profileRuleEditRows({ kind: "write", rules: initial ?? [] }),
           preserveExplicitEmpty: initial !== undefined,
           title: sectionTitle({
             label: ruleSectionPresentation.write.label,
@@ -400,7 +516,10 @@ const sectionRegistry = defineSectionRegistry({
           custom: context.flow.custom,
           mode: draft.mode,
           kind: "protected",
-          initial: profileRuleEditRows("protected", initial ?? []),
+          initial: profileRuleEditRows({
+            kind: "protected",
+            rules: initial ?? [],
+          }),
           preserveExplicitEmpty: initial !== undefined,
           title: sectionTitle({
             label: ruleSectionPresentation.protected.label,

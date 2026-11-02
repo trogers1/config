@@ -123,7 +123,7 @@ describe("profile updates through the public extension surface", () => {
     );
     const deniedForm = await harness.ui.waitForRuleForm();
     deniedForm.press("Tab"); // allow → deny
-    deniedForm.press("ArrowDown");
+    deniedForm.press("CtrlK");
     deniedForm.type("Use the documented workflow instead.");
     deniedForm.press("Enter");
     const denied = await deniedPending;
@@ -147,8 +147,20 @@ describe("profile updates through the public extension surface", () => {
       "Save rule(s) to profile…",
     );
     const allowedForm = await harness.ui.waitForRuleForm();
+    allowedForm.press("CtrlK");
+    allowedForm.type("Use the approved rollout.");
+    allowedForm.press("CtrlEnter");
+    allowedForm.type("Keep this exact second line.");
     allowedForm.press("Enter");
     await allowedPending;
+    const savedProfile = loadRawProfileConfig({
+      configPath,
+    })?.profiles["custom-work"];
+    expect(savedProfile?.tools?.bash).toContainEqual({
+      pattern: "echo remember-allow",
+      decision: "allow",
+      guidance: "Use the approved rollout.\nKeep this exact second line.",
+    });
     await harness.callToolWithoutPrompt({
       toolName: "bash",
       input: { command: "echo remember-allow" },
@@ -220,29 +232,18 @@ describe("profile updates through the public extension surface", () => {
     );
     const editor = await harness.ui.waitForRuleForm();
     editor.press("CtrlN");
-    editor.press("CtrlK"); // Bash → read path
+    editor.press("CtrlShiftK"); // Bash → read path; pattern is focused.
+    editor.type("related.txt");
+    editor.press("CtrlK"); // pattern → guidance
+    editor.type("Use the related workflow.");
     editor.press("CtrlX"); // all read contexts → read
     editor.press("CtrlX"); // read → grep
-    editor.type("related.txt");
     expect(editor.render().join("\n")).toContain(
       "Additional profile rule (not required by this ASK)",
     );
-    editor.press("ArrowDown");
-    editor.type("Use the related workflow.");
-    editor.press("Escape");
-    (await harness.ui.waitForPermissionChoice()).choose(
-      "Save rule(s) to profile…",
-    );
-    const reopened = await harness.ui.waitForRuleForm();
-    const restored = reopened.render().join("\n");
-    expect(restored).toContain(
-      "Additional profile rule (not required by this ASK)",
-    );
-    expect(restored).toContain("elated.txt");
-    expect(restored).toContain("Context          grep");
-    expect(restored).toContain("se the related workflow.");
-    expect(restored).toContain("ASK → ⛔️ DENY");
-    reopened.press("Enter");
+    expect(editor.render().join("\n")).toContain("Context          grep");
+    expect(editor.render().join("\n")).toContain("ASK → ⛔️ DENY");
+    editor.press("Enter");
     await pending;
 
     const profile = loadRawProfileConfig({ configPath: configPath })?.profiles[
@@ -304,9 +305,8 @@ describe("profile updates through the public extension surface", () => {
     for (let index = 0; index < 40; index++) editor.press("ArrowRight");
     editor.type(" retained");
     editor.press("Tab"); // allow → deny
-    editor.press("ArrowDown");
+    editor.press("CtrlK");
     editor.type("Retain this request guidance.");
-    editor.press("ArrowUp");
     editor.press("Tab"); // deny → skip
     editor.press("CtrlN");
     editor.type("saved-related.txt");
@@ -325,7 +325,16 @@ describe("profile updates through the public extension surface", () => {
     expect(unresolved.render().join("\n")).toContain(
       "etain this request guidance.",
     );
-    unresolved.press("Escape");
+    unresolved.press("Escape"); // Back discards edits made after the save.
+    (await harness.ui.waitForPermissionChoice()).choose(
+      "Save rule(s) to profile…",
+    );
+    const discardedDraft = await harness.ui.waitForRuleForm();
+    const discarded = discardedDraft.render().join("\n");
+    expect(discarded).toContain("retained");
+    expect(discarded).toContain("unchanged; remains ASK");
+    expect(discarded).not.toContain("ASK → ⛔️ DENY");
+    discardedDraft.press("Escape");
     (await harness.ui.waitForPermissionChoice()).choose("No (default)");
 
     expect(await pending).toMatchObject({ block: true });
@@ -370,7 +379,7 @@ describe("profile updates through the public extension surface", () => {
       "Save rule(s) to profile…",
     );
     const firstEditor = await harness.ui.waitForRuleForm();
-    firstEditor.press("ArrowDown");
+    firstEditor.press("CtrlArrowDown");
     for (let index = 0; index < 40; index++) firstEditor.press("ArrowRight");
     firstEditor.type(" edited");
     firstEditor.press("Tab"); // allow → deny
@@ -399,6 +408,49 @@ describe("profile updates through the public extension surface", () => {
         .tools?.bash,
     ).toContainEqual({ pattern: "echo first", decision: "allow" });
   }, 10_000);
+
+  it("saves valid ASK row with incomplete skipped addition", async () => {
+    const configPath = writeConfig({
+      config: {
+        defaultProfile: "skip-incomplete-addition",
+        profiles: {
+          "skip-incomplete-addition": {
+            description: "A valid request plus an incomplete skipped addition.",
+            extends: ["builtin:default"],
+            tools: { bash: [{ pattern: "echo durable", decision: "ask" }] },
+          },
+        },
+      },
+    });
+    process.env.PI_GUARD_PROFILE_CONFIG = configPath;
+    const harness = createExtensionHarness({ interactiveUi: true });
+    await harness.start();
+
+    const pending = harness.callTool({
+      toolName: "bash",
+      input: { command: "echo durable" },
+    });
+    (await harness.ui.waitForPermissionChoice()).choose(
+      "Save rule(s) to profile…",
+    );
+    const editor = await harness.ui.waitForRuleForm();
+    editor.press("CtrlN"); // blank additional Bash pattern
+    editor.press("Tab"); // new ASK additions start deny → skip; its incomplete pattern is irrelevant
+    const skippedAddition = editor.render().join("\n");
+    expect(skippedAddition).toContain("⚙️ Bash rules · SKIP");
+    expect(skippedAddition).not.toContain("Save disabled:");
+    editor.press("Enter");
+
+    await expect(pending).resolves.toBeUndefined();
+    const rules = loadRawProfileConfig({ configPath })?.profiles[
+      "skip-incomplete-addition"
+    ].tools?.bash;
+    expect(rules).toContainEqual({
+      pattern: "echo durable",
+      decision: "allow",
+    });
+    expect(rules).not.toContainEqual({ pattern: "", decision: "skip" });
+  });
 
   it("resets an interactive profile update to exact allow defaults before saving", async () => {
     const configPath = writeConfig({
@@ -430,7 +482,7 @@ describe("profile updates through the public extension surface", () => {
     const form = await harness.ui.waitForRuleForm();
     form.type(" changed");
     form.press("Tab");
-    form.press("ArrowDown");
+    form.press("CtrlK");
     form.type("Do not save this guidance.");
     form.press("CtrlShiftR");
     form.press("Enter");

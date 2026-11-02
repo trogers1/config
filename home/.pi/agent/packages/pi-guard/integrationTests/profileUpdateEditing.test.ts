@@ -61,9 +61,9 @@ describe("profile updates through the public extension surface", () => {
     expect(rendered.indexOf(ruleSectionPresentation.write.label)).toBeLessThan(
       rendered.indexOf(ruleSectionPresentation.bash.label),
     );
-    commandForm.press("ArrowDown"); // path row → Bash row
+    commandForm.press("CtrlArrowDown"); // path row → Bash row
     commandForm.press("Tab"); // allow → deny
-    commandForm.press("ArrowDown"); // inline persistent guidance
+    commandForm.press("CtrlK"); // inline persistent guidance
     commandForm.type("Use the approved project workflow.");
     commandForm.press("Enter");
     const denied = await deniedPending;
@@ -130,6 +130,7 @@ describe("profile updates through the public extension surface", () => {
               {
                 pattern: "secret.txt",
                 decision: "ask",
+                guidance: "",
                 contexts: ["read", "grep"],
               },
             ],
@@ -144,73 +145,47 @@ describe("profile updates through the public extension surface", () => {
       },
     });
     process.env.PI_GUARD_PROFILE_CONFIG = configPath;
-    const customize = {
-      mode: "customize",
-      network: { mode: "local", value: "allow" },
-      allowLocalBinding: { mode: "omitted" },
-      allowAppleEvents: { mode: "omitted" },
-      onUnavailable: { mode: "omitted" },
-      extraWritePaths: { mode: "overwrite", value: ["/tmp/local"] },
-      extraDenyReadPaths: { mode: "inherit" },
-      extraDenyWritePaths: { mode: "inherit" },
-      kernelUnenforcedProtectedPaths: { mode: "inherit" },
-    } as const;
-    const result = (rows: object[]) => ({ action: "save", rows });
     const harness = createExtensionHarness({
+      interactiveUi: true,
       confirm: true,
-      customResults: [
-        overviewSectionSelection({ id: "bash" }),
-        result([
-          {
-            id: "bash-0",
-            kind: "bash",
-            pattern: "echo ask",
-            decision: "ask",
-            guidance: echoGuidance,
-            origin: "existing",
-          },
-        ]),
-        overviewSectionSelection({ id: "read" }),
-        result([
-          {
-            id: "read-0",
-            kind: "read",
-            pattern: "secret.txt",
-            decision: "ask",
-            contexts: ["read", "grep"],
-            origin: "existing",
-          },
-        ]),
-        overviewSectionSelection({ id: "write" }),
-        result([
-          {
-            id: "write-0",
-            kind: "write",
-            pattern: "output.txt",
-            decision: "ask",
-            contexts: ["write"],
-            origin: "existing",
-          },
-        ]),
-        overviewSectionSelection({ id: "protected" }),
-        result([
-          {
-            id: "protected-0",
-            kind: "protected",
-            pattern: ".env",
-            decision: "deny",
-            origin: "existing",
-          },
-        ]),
-        overviewSectionSelection({ id: "sandbox" }),
-        { action: "save", draft: customize },
-        overviewSectionSelection({ id: "directoryGlobs" }),
-        { action: "save", draft: { mode: "set", value: ["/workspace/new"] } },
-        submitOverviewSelection,
-      ],
     });
     await harness.start();
-    await harness.runCommand("profile-edit");
+
+    const pending = harness.runCommand("profile-edit");
+    for (const id of ["bash", "read", "write", "protected"] as const) {
+      (await harness.ui.waitForProfileAuthoringOverview()).choose({
+        selection: overviewSectionSelection({ id }),
+      });
+      // Save initialized editor rows rather than constructing a result that
+      // lacks the editor's canonical clause identities.
+      (await harness.ui.waitForRuleForm()).press("Enter");
+    }
+    (await harness.ui.waitForProfileAuthoringOverview()).choose({
+      selection: overviewSectionSelection({ id: "sandbox" }),
+    });
+    const sandbox = await harness.ui.waitForRuleForm();
+    sandbox.press("ArrowDown"); // Network
+    sandbox.press("ArrowRight"); // deny → allow
+    sandbox.press("ArrowDown");
+    sandbox.press("ArrowDown");
+    sandbox.press("ArrowDown");
+    sandbox.press("ArrowDown"); // Extra write paths
+    sandbox.press("Tab"); // append → overwrite
+    sandbox.press("CtrlD"); // Remove the inherited local declaration.
+    sandbox.press("CtrlN");
+    sandbox.type("/tmp/local");
+    sandbox.press("Enter");
+    (await harness.ui.waitForProfileAuthoringOverview()).choose({
+      selection: overviewSectionSelection({ id: "directoryGlobs" }),
+    });
+    const directories = await harness.ui.waitForRuleForm();
+    directories.press("CtrlU");
+    directories.type("/workspace/new");
+    directories.press("Enter");
+    (await harness.ui.waitForProfileAuthoringOverview()).choose({
+      selection: submitOverviewSelection,
+    });
+    await pending;
 
     expect(
       loadRawProfileConfig({ configPath: configPath })?.profiles["edit-work"],
@@ -226,7 +201,12 @@ describe("profile updates through the public extension surface", () => {
         deploy: [{ decision: "deny", match: { target: "release" } }],
       },
       readPaths: [
-        { pattern: "secret.txt", decision: "ask", contexts: ["read", "grep"] },
+        {
+          pattern: "secret.txt",
+          decision: "ask",
+          guidance: "",
+          contexts: ["read", "grep"],
+        },
       ],
       writePaths: [
         { pattern: "output.txt", decision: "ask", contexts: ["write"] },

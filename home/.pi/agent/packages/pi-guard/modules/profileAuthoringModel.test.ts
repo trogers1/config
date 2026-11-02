@@ -25,6 +25,7 @@ describe("profile authoring model", () => {
       "composition",
       "transforms",
       "bash",
+      "customTools",
       "read",
       "write",
       "protected",

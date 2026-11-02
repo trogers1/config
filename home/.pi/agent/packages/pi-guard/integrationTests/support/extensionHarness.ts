@@ -531,7 +531,7 @@ export function createExtensionHarness(
   function pressKey(component: Component, key: string): void {
     const keys: Record<string, string> = {
       Tab: "\t",
-      Enter: "\n",
+      Enter: "\r",
       Escape: "\x1b",
       ArrowUp: "\x1b[A",
       ArrowDown: "\x1b[B",
@@ -539,7 +539,17 @@ export function createExtensionHarness(
       ArrowRight: "\x1b[C",
       CtrlArrowUp: "\x1b[1;5A",
       CtrlArrowDown: "\x1b[1;5B",
+      CtrlShiftD: "\x1b[100;6u",
+      CtrlShiftK: "\x1b[107;6u",
       CtrlShiftR: "\x1b[114;6u",
+      CtrlShiftX: "\x1b[120;6u",
+      CtrlEnter: "\x1b[13;5u",
+      ShiftEnter: "\x1b[13;2u",
+      // A legacy terminal's Ctrl+J, and unextended Shift/Ctrl+Enter.
+      LineFeed: "\n",
+      CtrlArrowLeft: "\x1b[1;5D",
+      CtrlArrowRight: "\x1b[1;5C",
+      CtrlA: "\x01",
       CtrlC: "\x03",
       CtrlN: "\x0e",
       CtrlO: "\x0f",
@@ -625,7 +635,7 @@ export function createExtensionHarness(
     bg: (_color: string, text: string) => text,
     bold: (text: string) => text,
   };
-  const testTui = { requestRender: vi.fn() };
+  const testTui = { terminal: harnessViewport, requestRender: vi.fn() };
   const keybindings =
     options.keybindings ?? new KeybindingsManager(TUI_KEYBINDINGS);
   const ui = {
@@ -1195,6 +1205,7 @@ export function createExtensionHarness(
     render: (width?: number) => string[];
     press: (key: string) => void;
     type: (text: string) => void;
+    paste: (text: string) => void;
   }> {
     const custom = await nextCustom();
     return {
@@ -1206,6 +1217,9 @@ export function createExtensionHarness(
       },
       type(text) {
         for (const character of text) pressKey(custom.component, character);
+      },
+      paste(text) {
+        sendTerminalInput({ data: text, component: custom.component });
       },
     };
   }
@@ -1226,6 +1240,7 @@ export function createExtensionHarness(
     render: (width?: number) => string[];
     press: (key: string) => void;
     type: (text: string) => void;
+    paste: (text: string) => void;
   }> {
     return waitForCustomModal();
   }
