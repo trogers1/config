@@ -716,9 +716,20 @@ breaks ties.
   match paths relative to Pi's startup directory.
 - Outside paths appear as `../...`, so `../**` gates external access.
 - `*` is the default rule for a path array.
-- Deny rules can include `guidance` and `alternatives`; these are returned in the
-  blocked tool result, so Pi automatically gives them to the model without
-  another prompt.
+- Rules can include multiline `guidance`. It is returned in the blocked tool
+  result whenever a rule resolves to deny, whether authored as deny or
+  converted by `transform:deny-asks` or `transform:deny-all`, and for ASK
+  rules refused by a deny session posture, so Pi gives the model steering
+  without another prompt. Put suggested commands under a
+  `Suggested alternatives:` heading in that guidance when useful. Identical
+  guidance blocks are shown once; suggestions shared by different guidance
+  are not merged.
+- `alternatives` has been removed. A rule that still contains it is rejected
+  as invalid and permissions fail closed, with an error such as
+  `schema validation failed at /profiles/<name>/tools/bash/0/alternatives`;
+  there is no compatibility parser. To migrate, keep the existing `guidance`
+  and append a blank line, `Suggested alternatives:`, and one `- ` bullet per
+  alternative in its original order. An empty array adds nothing.
 
 ### Installed instruction resources
 
@@ -780,8 +791,8 @@ For example:
 {
   pattern: "npx vitest *",
   decision: "deny",
-  guidance: "Use the repository's configured test script instead.",
-  alternatives: ["npm test -- <requested test filters>"],
+  guidance:
+    "Use the repository's configured test script instead.\n\nSuggested alternatives:\n- npm test -- <requested test filters>",
 }
 ```
 

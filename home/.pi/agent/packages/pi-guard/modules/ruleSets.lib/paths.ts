@@ -128,12 +128,7 @@ export const docsWritePathRules: WritePathRule[] = [
     decision: "deny",
     contexts: ["bash"],
     guidance:
-      "Proven Bash reader operands use readPaths. Write-capable or unproven operands and redirections are gated as writes; only Markdown documentation paths and /tmp may be written.",
-    alternatives: [
-      "Use the read tool for concrete files",
-      "Use the grep tool for content searches",
-      "Use the find or ls tools for directory discovery",
-    ],
+      "Proven Bash reader operands use readPaths. Write-capable or unproven operands and redirections are gated as writes; only Markdown documentation paths and /tmp may be written.\n\nSuggested alternatives:\n- Use the read tool for concrete files\n- Use the grep tool for content searches\n- Use the find or ls tools for directory discovery",
   },
   { pattern: "*.md", decision: "allow" },
   { pattern: "**/*.md", decision: "allow" },

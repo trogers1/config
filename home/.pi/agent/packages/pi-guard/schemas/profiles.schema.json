@@ -32,11 +32,7 @@
                           { "type": "string", "const": "deny" }
                         ]
                       },
-                      "guidance": { "type": "string" },
-                      "alternatives": {
-                        "type": "array",
-                        "items": { "type": "string" }
-                      }
+                      "guidance": { "type": "string" }
                     },
                     "additionalProperties": false
                   }
@@ -57,10 +53,6 @@
                         ]
                       },
                       "guidance": { "type": "string" },
-                      "alternatives": {
-                        "type": "array",
-                        "items": { "type": "string" }
-                      },
                       "match": {
                         "type": "object",
                         "patternProperties": { "^.+$": { "type": "string" } },
@@ -89,10 +81,6 @@
                     ]
                   },
                   "guidance": { "type": "string" },
-                  "alternatives": {
-                    "type": "array",
-                    "items": { "type": "string" }
-                  },
                   "contexts": {
                     "type": "array",
                     "items": {
@@ -132,10 +120,6 @@
                     ]
                   },
                   "guidance": { "type": "string" },
-                  "alternatives": {
-                    "type": "array",
-                    "items": { "type": "string" }
-                  },
                   "contexts": {
                     "type": "array",
                     "items": {
@@ -232,11 +216,7 @@
                           { "type": "string", "const": "deny" }
                         ]
                       },
-                      "guidance": { "type": "string" },
-                      "alternatives": {
-                        "type": "array",
-                        "items": { "type": "string" }
-                      }
+                      "guidance": { "type": "string" }
                     },
                     "additionalProperties": false
                   }
@@ -257,10 +237,6 @@
                         ]
                       },
                       "guidance": { "type": "string" },
-                      "alternatives": {
-                        "type": "array",
-                        "items": { "type": "string" }
-                      },
                       "match": {
                         "type": "object",
                         "patternProperties": { "^.+$": { "type": "string" } },
@@ -289,10 +265,6 @@
                     ]
                   },
                   "guidance": { "type": "string" },
-                  "alternatives": {
-                    "type": "array",
-                    "items": { "type": "string" }
-                  },
                   "contexts": {
                     "type": "array",
                     "items": {
@@ -331,10 +303,6 @@
                     ]
                   },
                   "guidance": { "type": "string" },
-                  "alternatives": {
-                    "type": "array",
-                    "items": { "type": "string" }
-                  },
                   "contexts": {
                     "type": "array",
                     "items": {

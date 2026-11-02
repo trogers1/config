@@ -157,8 +157,8 @@ describe("permissions extension", () => {
                   {
                     decision: "deny",
                     match: { environment: "production" },
-                    guidance: "Use the staging deployment first.",
-                    alternatives: ["Deploy with environment=staging"],
+                    guidance:
+                      "Use the staging deployment first.\n\nSuggested alternatives:\n- Deploy with environment=staging",
                   },
                   { decision: "allow", match: { environment: "staging" } },
                 ],
@@ -176,8 +176,8 @@ describe("permissions extension", () => {
       input: { environment: "production" },
     });
     expect(denied).toMatchObject({ block: true });
-    expect(denied?.reason).toMatch(
-      /Use the staging deployment first.*environment=staging/s,
+    expect(denied?.reason).toContain(
+      "Policy guidance:\nUse the staging deployment first.\n\nSuggested alternatives:\n- Deploy with environment=staging",
     );
     await expect(
       harness.callToolWithoutPrompt({
@@ -775,7 +775,7 @@ describe("permissions extension", () => {
     ).resolves.toBeUndefined();
   });
 
-  it("keeps protected exceptions subject to ordinary policy and reports denial alternatives", async () => {
+  it("keeps protected exceptions subject to ordinary policy and reports protected-path guidance", async () => {
     vi.stubEnv("PI_GUARD_PROFILE_CONFIG", customProfileConfigPath);
     vi.stubEnv("PI_SUBAGENT_PROFILE", "protected-matrix");
     const harness = createExtensionHarness({ confirm: false });
@@ -798,12 +798,88 @@ describe("permissions extension", () => {
     });
     expect(protectedResult).toMatchObject({ block: true });
     expect(protectedResult?.reason).toContain(
-      "Use an explicitly approved file instead",
-    );
-    expect(protectedResult?.reason).toContain(
-      "Ask the user for a redacted or safe-to-share value",
+      "Policy guidance:\nThis path is protected from disclosure and mutation by the active profile.\n\nSuggested alternatives:\n- Use an explicitly approved file instead\n- Ask the user for a redacted or safe-to-share value",
     );
     expect(harness.ui.custom).not.toHaveBeenCalled();
+  });
+
+  it("returns authored and blank protected-path guidance with the suggestions", async () => {
+    const suggestions =
+      "Suggested alternatives:\n- Use an explicitly approved file instead\n- Ask the user for a redacted or safe-to-share value";
+    vi.stubEnv(
+      "PI_GUARD_PROFILE_CONFIG",
+      writeTempConfig(
+        JSON.stringify({
+          defaultProfile: "blank-protected-guidance",
+          profiles: {
+            "blank-protected-guidance": {
+              description:
+                "Protected vault paths with blank authored guidance.",
+              extends: ["builtin:default"],
+              protectedPathRules: [
+                { pattern: "**/vault/**", decision: "deny", guidance: "" },
+              ],
+            },
+          },
+        }),
+      ),
+    );
+    const harness = createExtensionHarness({ confirm: false });
+    await harness.start();
+
+    const authored = await harness.callTool({
+      toolName: "read",
+      input: { path: "home/.pi/agent/auth.json" },
+    });
+    expect(authored).toMatchObject({ block: true });
+    expect(authored?.reason).toContain(
+      `Policy guidance:\nPi credentials are protected even when other Pi configuration is readable.\n\n${suggestions}`,
+    );
+
+    const blank = await harness.callTool({
+      toolName: "read",
+      input: { path: "vault/key.txt" },
+    });
+    expect(blank).toMatchObject({ block: true });
+    expect(blank?.reason).toContain(`Policy guidance:\n${suggestions}`);
+    expect(harness.ui.custom).not.toHaveBeenCalled();
+  });
+
+  it("fails closed on a profile that still declares the removed alternatives field", async () => {
+    vi.stubEnv(
+      "PI_GUARD_PROFILE_CONFIG",
+      writeTempConfig(
+        JSON.stringify({
+          defaultProfile: "legacy-alternatives",
+          profiles: {
+            "legacy-alternatives": {
+              description: "Legacy steering that predates guidance folding.",
+              extends: ["builtin:default"],
+              tools: {
+                bash: [
+                  {
+                    pattern: "npm exec *",
+                    decision: "deny",
+                    alternatives: ["npm test"],
+                  },
+                ],
+              },
+            },
+          },
+        }),
+      ),
+    );
+    const harness = createExtensionHarness({ confirm: false });
+    await harness.start();
+
+    const result = await harness.callTool({
+      toolName: "bash",
+      input: { command: "echo hello" },
+    });
+    expect(result).toMatchObject({ block: true });
+    expect(result?.reason).toContain(
+      "schema validation failed at /profiles/legacy-alternatives/tools/bash/0/alternatives",
+    );
   });
 
   it("keeps each extension instance isolated from later profile loads", async () => {
@@ -2549,8 +2625,8 @@ describe("permissions extension", () => {
                   {
                     pattern: "npx vitest *",
                     decision: "deny",
-                    guidance: "Use the configured test script instead.",
-                    alternatives: ["npm test -- <requested test filters>"],
+                    guidance:
+                      "Use the configured test script instead.\n\nSuggested alternatives:\n- npm test -- <requested test filters>",
                   },
                 ],
               },
@@ -2567,8 +2643,9 @@ describe("permissions extension", () => {
       input: { command: "npx vitest src/example.test.ts" },
     });
 
-    expect(denied?.reason).toContain("Policy guidance:");
-    expect(denied?.reason).toContain("npm test -- <requested test filters>");
+    expect(denied?.reason).toContain(
+      "Policy guidance:\nUse the configured test script instead.\n\nSuggested alternatives:\n- npm test -- <requested test filters>",
+    );
   });
 
   describe("tool selection", () => {

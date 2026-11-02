@@ -238,27 +238,13 @@ export const packageManagerRules: Rule[] = [
     pattern: "npm exec",
     decision: "deny",
     guidance:
-      "Do not run one-off binaries with npm exec. Use the package.json scripts defined for this repository instead.",
-    alternatives: [
-      "npm run test",
-      "npm run test:watch",
-      "npm run check:all",
-      "npm run check:prettier",
-      "npm run fix:prettier",
-    ],
+      "Do not run one-off binaries with npm exec. Use the package.json scripts defined for this repository instead.\n\nSuggested alternatives:\n- npm run test\n- npm run test:watch\n- npm run check:all\n- npm run check:prettier\n- npm run fix:prettier",
   },
   {
     pattern: "npm exec *",
     decision: "deny",
     guidance:
-      "Do not run one-off binaries with npm exec. Use the package.json scripts defined for this repository instead.",
-    alternatives: [
-      "npm run test",
-      "npm run test:watch",
-      "npm run check:all",
-      "npm run check:prettier",
-      "npm run fix:prettier",
-    ],
+      "Do not run one-off binaries with npm exec. Use the package.json scripts defined for this repository instead.\n\nSuggested alternatives:\n- npm run test\n- npm run test:watch\n- npm run check:all\n- npm run check:prettier\n- npm run fix:prettier",
   },
   { pattern: "go *", decision: "allow" },
   { pattern: "*/bin/go *", decision: "allow" },

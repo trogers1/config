@@ -224,14 +224,14 @@ describe("profile config mutations", () => {
     );
   });
 
-  it("leaves omitted declarations byte-untouched, including ASK alternatives and contexts", () => {
+  it("leaves omitted declarations byte-untouched, including multiline ASK guidance and contexts", () => {
     const configPath = tempConfig();
     const before = `// retain\n{
   "profiles": {
     "existing": {
       "description": "Existing", "extends": ["builtin:default"],
-      "tools": { "deploy": [{ "decision": "deny", "match": { "environment": "prod" } }], "bash": [{ "pattern": "npm *", "decision": "ask", "alternatives": ["npm test"] }] },
-      "readPaths": [{ "pattern": "secret/**", "decision": "ask", "contexts": ["grep"], "alternatives": ["request access"] }],
+      "tools": { "deploy": [{ "decision": "deny", "match": { "environment": "prod" } }], "bash": [{ "pattern": "npm *", "decision": "ask", "guidance": "Use scripts.\\n\\nSuggested alternatives:\\n- npm test" }] },
+      "readPaths": [{ "pattern": "secret/**", "decision": "ask", "contexts": ["grep"], "guidance": "Ask first.\\n\\nSuggested alternatives:\\n- request access" }],
       "directoryGlobs": ["/old/**"]
     }
   }
@@ -249,14 +249,20 @@ describe("profile config mutations", () => {
     expect(raw.sandbox).toBe(false);
     expect(raw.tools).toEqual({
       deploy: [{ decision: "deny", match: { environment: "prod" } }],
-      bash: [{ pattern: "npm *", decision: "ask", alternatives: ["npm test"] }],
+      bash: [
+        {
+          pattern: "npm *",
+          decision: "ask",
+          guidance: "Use scripts.\n\nSuggested alternatives:\n- npm test",
+        },
+      ],
     });
     expect(raw.readPaths).toEqual([
       {
         pattern: "secret/**",
         decision: "ask",
         contexts: ["grep"],
-        alternatives: ["request access"],
+        guidance: "Ask first.\n\nSuggested alternatives:\n- request access",
       },
     ]);
     expect(raw.directoryGlobs).toEqual(["/old/**"]);

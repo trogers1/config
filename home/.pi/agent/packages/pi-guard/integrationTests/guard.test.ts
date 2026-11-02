@@ -821,8 +821,8 @@ describe("shell policy parser", () => {
           {
             pattern: "git reset *",
             decision: "deny",
-            guidance: "Avoid history-rewriting resets.",
-            alternatives: ["git stash push"],
+            guidance:
+              "Avoid history-rewriting resets.\n\nSuggested alternatives:\n- git stash push",
           },
         ],
       },
@@ -840,8 +840,10 @@ describe("shell policy parser", () => {
     expect(combined?.reason).toContain(
       "Switch branches with a dedicated tool instead.",
     );
-    expect(combined?.reason).toContain("Avoid history-rewriting resets.");
-    expect(combined?.reason).toContain("git stash push");
+    // Each rule's multiline guidance stays its own block, in rule order.
+    expect(combined?.reason).toContain(
+      "Policy guidance:\nSwitch branches with a dedicated tool instead.\n\nAvoid history-rewriting resets.\n\nSuggested alternatives:\n- git stash push",
+    );
 
     // Two segments matching the same deny rule must not repeat its steering.
     const duplicated = await gateBash({

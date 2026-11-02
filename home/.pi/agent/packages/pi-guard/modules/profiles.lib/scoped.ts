@@ -120,13 +120,7 @@ export const noShellProfile: ProfilePolicy = {
         pattern: "*",
         decision: "deny",
         guidance:
-          "The no-shell profile denies all Bash commands. Use Pi's structured tools instead.",
-        alternatives: [
-          "Use the read tool for concrete files",
-          "Use the grep tool for content searches",
-          "Use the find or ls tools for directory discovery",
-          "Use the edit and write tools for file changes",
-        ],
+          "The no-shell profile denies all Bash commands. Use Pi's structured tools instead.\n\nSuggested alternatives:\n- Use the read tool for concrete files\n- Use the grep tool for content searches\n- Use the find or ls tools for directory discovery\n- Use the edit and write tools for file changes",
       },
     ],
   },

@@ -192,6 +192,26 @@ export function decideProtectedBashPathReferences(
   return decision?.decision === "deny" ? decision : undefined;
 }
 
+const protectedPathDefaultExplanation =
+  "This path is protected from disclosure and mutation by the active profile.";
+const protectedPathSuggestedAlternatives =
+  "Suggested alternatives:\n- Use an explicitly approved file instead\n- Ask the user for a redacted or safe-to-share value";
+
+/**
+ * Guidance for a protected-path deny. Omitted guidance uses the default
+ * explanation; blank authored guidance contributes only the suggestions.
+ */
+export function protectedPathGuidance({
+  authoredGuidance,
+}: {
+  readonly authoredGuidance: string | undefined;
+}): string {
+  const explanation = authoredGuidance ?? protectedPathDefaultExplanation;
+  return explanation.trim()
+    ? `${explanation}\n\n${protectedPathSuggestedAlternatives}`
+    : protectedPathSuggestedAlternatives;
+}
+
 export function evaluatePathByPattern(
   absolutePath: string,
   startupCwd: string,
@@ -220,23 +240,14 @@ export function evaluatePathByPattern(
       rule: protectedDecision.rule
         ? {
             ...protectedDecision.rule,
-            guidance:
-              protectedDecision.rule.guidance ??
-              "This path is protected from disclosure and mutation by the active profile.",
-            alternatives: [
-              "Use an explicitly approved file instead",
-              "Ask the user for a redacted or safe-to-share value",
-            ],
+            guidance: protectedPathGuidance({
+              authoredGuidance: protectedDecision.rule.guidance,
+            }),
           }
         : {
             pattern: protectedDecision.matchPath,
             decision: "deny",
-            guidance:
-              "This path is protected from disclosure and mutation by the active profile.",
-            alternatives: [
-              "Use an explicitly approved file instead",
-              "Ask the user for a redacted or safe-to-share value",
-            ],
+            guidance: protectedPathGuidance({ authoredGuidance: undefined }),
           },
       matchPath: protectedDecision.matchPath,
       trace: {

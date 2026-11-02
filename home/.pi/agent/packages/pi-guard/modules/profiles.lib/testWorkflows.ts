@@ -78,12 +78,7 @@ export const testsOnlyProfile = extendProfile(baseProfile, {
       decision: "deny",
       contexts: ["bash"],
       guidance:
-        "Proven Bash reader operands use readPaths. Write-capable or unproven operands and redirections are gated as writes and may only target test files and /tmp. Prefer the read, grep, find, and ls tools for implementation inspection.",
-      alternatives: [
-        "Use the read tool for concrete files",
-        "Use the grep tool for content searches",
-        "Use the find or ls tools for directory discovery",
-      ],
+        "Proven Bash reader operands use readPaths. Write-capable or unproven operands and redirections are gated as writes and may only target test files and /tmp. Prefer the read, grep, find, and ls tools for implementation inspection.\n\nSuggested alternatives:\n- Use the read tool for concrete files\n- Use the grep tool for content searches\n- Use the find or ls tools for directory discovery",
     },
     ...testFilePatterns.map((pattern) => ({
       pattern,

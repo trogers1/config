@@ -777,48 +777,27 @@
           {
             "pattern": "npx prettier",
             "decision": "deny",
-            "guidance": "Do not invoke Prettier through npx. Use the repository's configured formatter or make targeted edits with Pi's edit tool.",
-            "alternatives": [
-              "npm run prettier:write",
-              "npm run fix:prettier",
-              "Use the edit tool for targeted changes",
-            ],
+            "guidance": "Do not invoke Prettier through npx. Use the repository's configured formatter or make targeted edits with Pi's edit tool.\n\nSuggested alternatives:\n- npm run prettier:write\n- npm run fix:prettier\n- Use the edit tool for targeted changes",
           },
           {
             "pattern": "npx prettier *",
             "decision": "deny",
-            "guidance": "Do not invoke Prettier through npx. Use the repository's configured formatter or make targeted edits with Pi's edit tool.",
-            "alternatives": [
-              "npm run prettier:write",
-              "npm run fix:prettier",
-              "Use the edit tool for targeted changes",
-            ],
+            "guidance": "Do not invoke Prettier through npx. Use the repository's configured formatter or make targeted edits with Pi's edit tool.\n\nSuggested alternatives:\n- npm run prettier:write\n- npm run fix:prettier\n- Use the edit tool for targeted changes",
           },
           {
             "pattern": "**/node_modules/.bin/*",
             "decision": "deny",
-            "guidance": "Do not invoke packages directly. Use the repository's configured scripts.",
-            "alternatives": [
-              "npm run prettier:write",
-              "npm run fix:prettier",
-              "npm test",
-              "Use the edit tool to add needed scripts to package.json (or equivalent)",
-            ],
+            "guidance": "Do not invoke packages directly. Use the repository's configured scripts.\n\nSuggested alternatives:\n- npm run prettier:write\n- npm run fix:prettier\n- npm test\n- Use the edit tool to add needed scripts to package.json (or equivalent)",
           },
           {
             "pattern": "npx vitest",
             "decision": "deny",
-            "guidance": "Do not invoke Vitest through npx. Inspect package.json and use the repository's configured test script instead.",
-            "alternatives": [
-              "npm test",
-              "npm test -- <requested test filters>",
-            ],
+            "guidance": "Do not invoke Vitest through npx. Inspect package.json and use the repository's configured test script instead.\n\nSuggested alternatives:\n- npm test\n- npm test -- <requested test filters>",
           },
           {
             "pattern": "npx vitest *",
             "decision": "deny",
-            "guidance": "Do not invoke Vitest through npx. Inspect package.json and use the repository's configured test script instead.",
-            "alternatives": ["npm test -- <requested test filters>"],
+            "guidance": "Do not invoke Vitest through npx. Inspect package.json and use the repository's configured test script instead.\n\nSuggested alternatives:\n- npm test -- <requested test filters>",
           },
           {
             "pattern": "env",

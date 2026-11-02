@@ -16,6 +16,7 @@ import {
   displayPath,
   evaluatePathByPattern,
   matchesGlobPattern,
+  protectedPathGuidance,
   rankPathRules,
   resolveRequestedPath,
   type BashPathReferenceTrace,
@@ -78,6 +79,7 @@ import {
   type ProfileColor,
   type PolicyConfig,
   type ProfilePolicy,
+  type ProtectedPathRule,
   type ResolvedProfile,
   profileTransformNames,
   type ProfilePolicyOverride,
@@ -2798,10 +2800,10 @@ The permissions gate remains loaded and will fail closed until the profile is co
           if (scopeDecision.decision !== "allow") {
             return {
               block: true,
-              reason: appendPolicySteering(
-                `${event.toolName} denied: path is outside PI_SUBAGENT_PERMISSIBLE_GLOBS: ${displayPath(absolutePath, startupCwd)}`,
-                [scopeDecision.rule],
-              ),
+              reason: appendPolicySteering({
+                reason: `${event.toolName} denied: path is outside PI_SUBAGENT_PERMISSIBLE_GLOBS: ${displayPath(absolutePath, startupCwd)}`,
+                rules: [scopeDecision.rule],
+              }),
             };
           }
         }
@@ -2818,10 +2820,10 @@ The permissions gate remains loaded and will fail closed until the profile is co
         if (policyDecision.decision === "deny") {
           return {
             block: true,
-            reason: appendPolicySteering(
-              `${event.toolName} denied by policy for path: ${displayPath(absolutePath, startupCwd)}`,
-              [policyDecision.rule],
-            ),
+            reason: appendPolicySteering({
+              reason: `${event.toolName} denied by policy for path: ${displayPath(absolutePath, startupCwd)}`,
+              rules: [policyDecision.rule],
+            }),
           };
         }
 
@@ -3064,10 +3066,10 @@ function decideSubagentBashScope(
 
   return {
     block: true,
-    reason: appendPolicySteering(
-      `Bash path reference denied: path is outside PI_SUBAGENT_PERMISSIBLE_GLOBS.\n\nPath:\n${decision.path}\n\nMatched policy path:\n${decision.matchPath}`,
-      [decision.rule],
-    ),
+    reason: appendPolicySteering({
+      reason: `Bash path reference denied: path is outside PI_SUBAGENT_PERMISSIBLE_GLOBS.\n\nPath:\n${decision.path}\n\nMatched policy path:\n${decision.matchPath}`,
+      rules: [decision.rule],
+    }),
   };
 }
 
@@ -3318,10 +3320,10 @@ function resolveBashEvaluation({
     return {
       kind: "deny",
       decidedBy: "protected-path",
-      reason: appendPolicySteering(
-        `Bash path reference denied by protected-path policy.\n\nRaw command:\n${command}\n\nPath:\n${protectedPathDecision.path}\n\nMatched protected path:\n${protectedPathDecision.matchPath}`,
-        [protectedPathDecision.rule],
-      ),
+      reason: appendPolicySteering({
+        reason: `Bash path reference denied by protected-path policy.\n\nRaw command:\n${command}\n\nPath:\n${protectedPathDecision.path}\n\nMatched protected path:\n${protectedPathDecision.matchPath}`,
+        rules: [protectedPathDecision.rule],
+      }),
     };
   if (readValidationError)
     return {
@@ -3333,10 +3335,10 @@ function resolveBashEvaluation({
     return {
       kind: "deny",
       decidedBy: "path-rule",
-      reason: appendPolicySteering(
-        `Bash path reference denied by policy.\n\nRaw command:\n${command}\n\nParsed command segments:\n${formatParsedCommands(command, activePolicy)}\n\nPath:\n${pathDecision.path}\n\nMatched policy path:\n${pathDecision.matchPath}`,
-        [pathDecision.rule],
-      ),
+      reason: appendPolicySteering({
+        reason: `Bash path reference denied by policy.\n\nRaw command:\n${command}\n\nParsed command segments:\n${formatParsedCommands(command, activePolicy)}\n\nPath:\n${pathDecision.path}\n\nMatched policy path:\n${pathDecision.matchPath}`,
+        rules: [pathDecision.rule],
+      }),
     };
   // Complete command denies before presenting any path ASK. A save flow must
   // never suggest that an unrelated path rule can override this deny.
@@ -3344,12 +3346,12 @@ function resolveBashEvaluation({
     return {
       kind: "deny",
       decidedBy: "command-rule",
-      reason: appendPolicySteering(
-        `Command denied by explicit rule.\n\nRaw command:\n${command}\n\nParsed command segments:\n${formatParsedCommands(command, activePolicy)}`,
-        decisions
+      reason: appendPolicySteering({
+        reason: `Command denied by explicit rule.\n\nRaw command:\n${command}\n\nParsed command segments:\n${formatParsedCommands(command, activePolicy)}`,
+        rules: decisions
           .filter(({ decision }) => decision === "deny")
           .map(({ rule }) => rule),
-      ),
+      }),
     };
   // Parse uncertainty is a synthesized, non-authorable ASK that composition
   // resolves first. An implicit allow resolves only that synthesized ASK, so
@@ -3665,13 +3667,8 @@ function explainComposedDecision({
       context,
     );
     const protectedWinner = protectedRanked[0];
-    const protectedOverride:
-      PermissionExplanation["protectedOverride"] | undefined = protectedWinner
-      ? {
-          decision: protectedWinner.item.decision,
-          pattern: protectedWinner.item.pattern,
-          guidance: protectedWinner.item.guidance,
-        }
+    const protectedOverride = protectedWinner
+      ? protectedOverrideExplanation({ rule: protectedWinner.item })
       : undefined;
 
     return {
@@ -3822,11 +3819,9 @@ function explainBashPermission({
           : undefined,
         pathMatches: pathTrace.pathMatches.map(ruleExplanation),
         protectedOverride: pathTrace.protectedMatches[0]
-          ? {
-              decision: pathTrace.protectedMatches[0].item.decision,
-              pattern: pathTrace.protectedMatches[0].item.pattern,
-              guidance: pathTrace.protectedMatches[0].item.guidance,
-            }
+          ? protectedOverrideExplanation({
+              rule: pathTrace.protectedMatches[0].item,
+            })
           : undefined,
       }
     : {
@@ -3960,6 +3955,22 @@ function ruleExplanation<T extends DisplayableRule>(
   };
 }
 
+/** Explain a protected winner with the guidance a deny would return. */
+function protectedOverrideExplanation({
+  rule,
+}: {
+  readonly rule: ProtectedPathRule;
+}): NonNullable<PermissionExplanation["protectedOverride"]> {
+  return {
+    decision: rule.decision,
+    pattern: rule.pattern,
+    guidance:
+      rule.decision === "deny"
+        ? protectedPathGuidance({ authoredGuidance: rule.guidance })
+        : rule.guidance,
+  };
+}
+
 function protectedPathLayerDecision(decision: {
   rule?: PathRule;
   matchPath: string;
@@ -3994,7 +4005,13 @@ export function formatExplanation(explanation: PermissionExplanation): string {
       `${label}: ${explanation.protectedOverride.decision} (${explanation.protectedOverride.pattern})`,
     );
     if (explanation.protectedOverride.guidance) {
-      lines.push(`  guidance: ${explanation.protectedOverride.guidance}`);
+      // Guidance is multiline; keep every line inside the override block.
+      lines.push(
+        "  guidance:",
+        ...explanation.protectedOverride.guidance
+          .split("\n")
+          .map((line) => (line ? `    ${line}` : "")),
+      );
     }
   }
 
@@ -4101,10 +4118,10 @@ async function gateCustomTool({
   if (decision === "deny") {
     return {
       block: true,
-      reason: appendPolicySteering(
-        `${toolName} denied by custom tool policy.`,
-        [matchedRule],
-      ),
+      reason: appendPolicySteering({
+        reason: `${toolName} denied by custom tool policy.`,
+        rules: [matchedRule],
+      }),
     };
   }
   if (decision === "ask") {
@@ -4641,40 +4658,30 @@ function notApprovedReason({
   readonly reason: string;
   readonly approval: Approval;
   /** The ASK rules involved; their guidance applies to a posture denial. */
-  readonly rules?: ReadonlyArray<
-    Pick<Rule, "guidance" | "alternatives"> | undefined
-  >;
+  readonly rules?: ReadonlyArray<Pick<Rule, "guidance"> | undefined>;
 }): string {
   if (approval.postureDenied)
-    return appendPolicySteering(
-      `${reason}\n\nThis session's deny posture refuses permission requests without prompting. Use an explicitly allowed command, path, or tool.`,
-      [...rules],
-    );
+    return appendPolicySteering({
+      reason: `${reason}\n\nThis session's deny posture refuses permission requests without prompting. Use an explicitly allowed command, path, or tool.`,
+      rules,
+    });
   return approval.guidance
     ? `${reason}\n\nUser steering after denial:\n${approval.guidance}`
     : reason;
 }
 
-function appendPolicySteering(
-  reason: string,
-  rules: Array<Pick<Rule, "guidance" | "alternatives"> | undefined>,
-): string {
+/** Append every involved rule's distinct guidance to a denial reason. */
+function appendPolicySteering({
+  reason,
+  rules,
+}: {
+  readonly reason: string;
+  readonly rules: ReadonlyArray<Pick<Rule, "guidance"> | undefined>;
+}): string {
   const guidance = uniqueNonEmpty(rules.map((rule) => rule?.guidance));
-  const alternatives = uniqueNonEmpty(
-    rules.flatMap((rule) => rule?.alternatives ?? []),
-  );
-  if (guidance.length === 0 && alternatives.length === 0) return reason;
-
-  const sections = [reason];
-  if (guidance.length > 0) {
-    sections.push(`Policy guidance:\n${guidance.join("\n")}`);
-  }
-  if (alternatives.length > 0) {
-    sections.push(
-      `Suggested alternatives:\n${alternatives.map((value) => `- ${value}`).join("\n")}`,
-    );
-  }
-  return sections.join("\n\n");
+  if (guidance.length === 0) return reason;
+  // Guidance is multiline, so separate each rule's block with a blank line.
+  return `${reason}\n\nPolicy guidance:\n${guidance.join("\n\n")}`;
 }
 
 function uniqueNonEmpty(values: Array<string | undefined>): string[] {

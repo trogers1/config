@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createExtensionHarness } from "../integrationTests/support/extensionHarness";
 import type { RuleKind } from "./profileConfig";
-import type { ReadPathRule, WritePathRule } from "./policyHelpers";
+import type { ReadPathRule, Rule } from "./policyHelpers";
 import {
   isBroaderPattern,
   profileRuleEditRows,
@@ -34,13 +34,13 @@ describe("profile rule editor semantics", () => {
     );
   });
 
-  it("round-trips untouched raw local ASK rows, alternatives, and contexts", () => {
+  it("round-trips untouched raw local ASK rows, multiline guidance, and contexts", () => {
     const raw: ReadPathRule[] = [
       {
         pattern: "notes/**",
         decision: "ask",
-        guidance: "Use the index first.",
-        alternatives: ["notes/README.md"],
+        guidance:
+          "Use the index first.\n\nSuggested alternatives:\n- notes/README.md",
         contexts: ["grep", "find"],
       },
     ];
@@ -51,7 +51,8 @@ describe("profile rule editor semantics", () => {
         kind: "read",
         pattern: "notes/**",
         decision: "ask",
-        guidance: "Use the index first.",
+        guidance:
+          "Use the index first.\n\nSuggested alternatives:\n- notes/README.md",
         contexts: ["grep", "find"],
         origin: "existing",
       },
@@ -66,45 +67,45 @@ describe("profile rule editor semantics", () => {
   });
 
   it("preserves unedited optional fields while changing a local row and omits cleared sections", () => {
-    const raw: WritePathRule[] = [
+    const raw: Rule[] = [
       {
-        pattern: "generated/**",
+        pattern: "date *",
         decision: "ask",
-        guidance: "Use generated output.",
-        alternatives: ["generated/index.ts"],
-        contexts: ["write"],
+        guidance: "Prefer the display form.",
+        argumentPolicy: "date-display",
       },
     ];
-    const initial = profileRuleEditRows("write", raw);
+    const bashInitial = profileRuleEditRows("bash", raw);
     const changed: EditableRuleRow[] = [
       {
-        id: initial[0].id,
-        kind: "write",
-        pattern: "generated/private/**",
-        decision: "deny",
-        guidance: "Use generated output.",
-        contexts: ["write"],
+        id: bashInitial[0].id,
+        kind: "bash",
+        pattern: "date +*",
+        decision: "allow",
+        guidance: "Prefer the display form.",
         origin: "existing",
       },
     ];
     expect(
       serializeProfileRuleSectionEdit({
-        kind: "write",
-        initial,
+        kind: "bash",
+        initial: bashInitial,
         rows: changed,
       }),
     ).toEqual({
       mode: "set",
       value: [
         {
-          pattern: "generated/private/**",
-          decision: "deny",
-          guidance: "Use generated output.",
-          alternatives: ["generated/index.ts"],
-          contexts: ["write"],
+          pattern: "date +*",
+          decision: "allow",
+          guidance: "Prefer the display form.",
+          argumentPolicy: "date-display",
         },
       ],
     });
+    const initial = profileRuleEditRows("write", [
+      { pattern: "generated/**", decision: "ask" },
+    ]);
     expect(
       serializeProfileRuleSectionEdit({ kind: "write", initial, rows: [] }),
     ).toEqual({

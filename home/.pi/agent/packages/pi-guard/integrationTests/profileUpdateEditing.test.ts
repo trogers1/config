@@ -107,6 +107,8 @@ describe("profile updates through the public extension surface", () => {
   });
 
   it("edits every /profile-edit destination without flattening untouched local ASK declarations", async () => {
+    const echoGuidance =
+      "Prefer the safe echo.\n\nSuggested alternatives:\n- echo safe";
     const configPath = writeConfig({
       config: {
         defaultProfile: "edit-work",
@@ -119,7 +121,7 @@ describe("profile updates through the public extension surface", () => {
                 {
                   pattern: "echo ask",
                   decision: "ask",
-                  alternatives: ["echo safe"],
+                  guidance: echoGuidance,
                 },
               ],
               deploy: [{ decision: "deny", match: { target: "release" } }],
@@ -164,6 +166,7 @@ describe("profile updates through the public extension surface", () => {
             kind: "bash",
             pattern: "echo ask",
             decision: "ask",
+            guidance: echoGuidance,
             origin: "existing",
           },
         ]),
@@ -214,7 +217,11 @@ describe("profile updates through the public extension surface", () => {
     ).toMatchObject({
       tools: {
         bash: [
-          { pattern: "echo ask", decision: "ask", alternatives: ["echo safe"] },
+          {
+            pattern: "echo ask",
+            decision: "ask",
+            guidance: echoGuidance,
+          },
         ],
         deploy: [{ decision: "deny", match: { target: "release" } }],
       },

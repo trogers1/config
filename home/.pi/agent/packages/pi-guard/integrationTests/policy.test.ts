@@ -367,6 +367,8 @@ describe("policy configuration contract", () => {
       ],
     });
 
+    const protectedDefaultGuidance =
+      "This path is protected from disclosure and mutation by the active profile.\n\nSuggested alternatives:\n- Use an explicitly approved file instead\n- Ask the user for a redacted or safe-to-share value";
     for (const context of ["read", "grep", "find", "ls"] as const) {
       expect(
         evaluateReadProtectedPath(policy, context, "private/.env.template"),
@@ -379,10 +381,7 @@ describe("policy configuration contract", () => {
         context,
         "private/.env.secret",
       );
-      expect(protectedDecision.rule?.alternatives).toEqual([
-        "Use an explicitly approved file instead",
-        "Ask the user for a redacted or safe-to-share value",
-      ]);
+      expect(protectedDecision.rule?.guidance).toBe(protectedDefaultGuidance);
     }
 
     for (const context of ["edit", "write", "bash"] as const) {
@@ -397,10 +396,7 @@ describe("policy configuration contract", () => {
         context,
         "private/.env.secret",
       );
-      expect(protectedDecision.rule?.alternatives).toEqual([
-        "Use an explicitly approved file instead",
-        "Ask the user for a redacted or safe-to-share value",
-      ]);
+      expect(protectedDecision.rule?.guidance).toBe(protectedDefaultGuidance);
     }
   });
 
@@ -423,6 +419,51 @@ describe("policy configuration contract", () => {
         },
       }),
     ).toThrowError(/Invalid pi-guard policy at .*decision/);
+  });
+
+  // `alternatives` was folded into guidance; there is no compatibility parser.
+  const legacyRule = { decision: "deny", alternatives: ["npm test"] } as const;
+  it.each([
+    {
+      kind: "bash",
+      policy: {
+        ...baseProfile,
+        tools: { bash: [{ ...legacyRule, pattern: "npm *" }] },
+      },
+    },
+    {
+      kind: "custom tool",
+      policy: {
+        ...baseProfile,
+        tools: {
+          ...baseProfile.tools,
+          deploy: [{ ...legacyRule, match: { env: "prod" } }],
+        },
+      },
+    },
+    {
+      kind: "read path",
+      policy: {
+        ...baseProfile,
+        readPaths: [{ ...legacyRule, pattern: "notes/**" }],
+      },
+    },
+    {
+      kind: "write path",
+      policy: {
+        ...baseProfile,
+        writePaths: [{ ...legacyRule, pattern: "notes/**" }],
+      },
+    },
+  ])("rejects the removed alternatives field on a $kind rule", ({ policy }) => {
+    expect(() =>
+      parsePolicyConfig({
+        unverifiedConfig: {
+          defaultProfile: "default",
+          profiles: { default: unresolvedProfile({ policy }) },
+        },
+      }),
+    ).toThrowError(/Invalid pi-guard policy.*alternatives/s);
   });
 
   it("rejects legacy per-tool path rules", () => {

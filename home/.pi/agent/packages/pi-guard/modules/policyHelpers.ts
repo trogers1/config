@@ -198,7 +198,6 @@ const sandboxConfigSchema = Type.Object(
 const decisionRuleProperties = {
   decision: decisionSchema,
   guidance: Type.Optional(Type.String()),
-  alternatives: Type.Optional(Type.Array(Type.String())),
 };
 
 const ruleSchema = Type.Object(

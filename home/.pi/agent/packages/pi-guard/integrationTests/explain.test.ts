@@ -33,6 +33,25 @@ function pathProfile(
 }
 
 describe("permissions explain", () => {
+  // Authored protected guidance is multiline; a deny explains it with the
+  // same suggestions the runtime denial returns, indented in its block.
+  const protectedEnvRule = {
+    pattern: "**/.env*",
+    decision: "deny",
+    guidance: "Secrets stay local.\n\nAsk the user instead.",
+  } as const;
+  const protectedEnvGuidanceBlock = [
+    "Protected-layer override: deny (**/.env*)",
+    "  guidance:",
+    "    Secrets stay local.",
+    "",
+    "    Ask the user instead.",
+    "",
+    "    Suggested alternatives:",
+    "    - Use an explicitly approved file instead",
+    "    - Ask the user for a redacted or safe-to-share value",
+  ].join("\n");
+
   it.each([
     undefined,
     "literal",
@@ -277,7 +296,7 @@ describe("permissions explain", () => {
   it("attributes Bash denial to the protected layer before command rules", () => {
     const policy: ProfilePolicy = {
       ...bashProfile([{ pattern: "rm -rf *", decision: "deny" }]),
-      protectedPathRules: [{ pattern: "**/.env*", decision: "deny" }],
+      protectedPathRules: [protectedEnvRule],
     };
 
     const explanation = explainPermission({
@@ -291,6 +310,7 @@ describe("permissions explain", () => {
     expect(explanation.decision).toBe("deny");
     expect(explanation.winner).toBeUndefined();
     expect(explanation.protectedOverride?.pattern).toBe("**/.env*");
+    expect(formatExplanation(explanation)).toContain(protectedEnvGuidanceBlock);
   });
 
   it("surfaces ordinary writePaths bash-operand denies", () => {
@@ -437,7 +457,7 @@ describe("permissions explain", () => {
         [{ pattern: "**", decision: "allow" }],
         [{ pattern: "*", decision: "allow" }],
       ),
-      protectedPathRules: [{ pattern: "**/.env*", decision: "deny" }],
+      protectedPathRules: [protectedEnvRule],
     };
 
     const explanation = explainPermission({
@@ -452,6 +472,8 @@ describe("permissions explain", () => {
     expect(explanation.protectedOverride).toBeDefined();
     expect(explanation.protectedOverride?.decision).toBe("deny");
     expect(explanation.protectedOverride?.pattern).toBe("**/.env*");
+    // The path-tool and Bash explanations share one protected-guidance source.
+    expect(formatExplanation(explanation)).toContain(protectedEnvGuidanceBlock);
   });
 
   it("shows a more-specific protected allow and the protected rule ranking", () => {
@@ -461,8 +483,12 @@ describe("permissions explain", () => {
         [{ pattern: "*", decision: "allow" }],
       ),
       protectedPathRules: [
-        { pattern: "**/.env*", decision: "deny" },
-        { pattern: ".env.template", decision: "allow" },
+        protectedEnvRule,
+        {
+          pattern: ".env.template",
+          decision: "allow",
+          guidance: "Templates hold no secrets.",
+        },
       ],
     };
 
@@ -482,8 +508,12 @@ describe("permissions explain", () => {
     expect(explanation.protectedMatches?.map((match) => match.pattern)).toEqual(
       [".env.template", "**/.env*"],
     );
+    // An allowed exception keeps its own guidance and suggests nothing.
     expect(formatExplanation(explanation)).toContain(
-      "Protected-layer winner: allow (.env.template)",
+      "Protected-layer winner: allow (.env.template)\n  guidance:\n    Templates hold no secrets.\n",
+    );
+    expect(formatExplanation(explanation)).not.toContain(
+      "Suggested alternatives",
     );
   });
 
