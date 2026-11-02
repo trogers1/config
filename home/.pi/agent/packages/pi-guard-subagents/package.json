@@ -32,7 +32,7 @@
 	"scripts": {
 		"check:all": "npm test",
 		"check:sdk": "node ../check-pi-sdk.mjs",
-		"check:deps": "depcruise extensions tests vitest.config.ts --config .dependency-cruiser.cjs",
+		"check:deps": "depcruise extensions tests vitest.config.mts --config .dependency-cruiser.cjs",
 		"check:knip": "knip",
 		"check:lint": "eslint .",
 		"check:prettier": "prettier --check .",

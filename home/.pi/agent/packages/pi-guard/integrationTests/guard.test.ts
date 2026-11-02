@@ -29,7 +29,11 @@ import {
 import { loadProfileConfig } from "../modules/profileConfig";
 import { readCommandDenialReasons } from "../modules/shell/readCommands";
 import { classifyShell } from "../modules/shell/classify";
+import type { PostureReader } from "../modules/posture";
 import { createExtensionHarness as createInteractiveExtensionHarness } from "./support/extensionHarness";
+
+/** Direct gate calls run without a session posture. */
+const noPosture: PostureReader = () => undefined;
 
 const parserPolicy = {
   tools: {
@@ -230,6 +234,8 @@ describe("shell policy parser", () => {
       ],
     ] as const) {
       const result = await gateBash({
+        posture: noPosture,
+        implicitAskDecision: "ask",
         command,
         startupCwd: process.cwd(),
         ctx,
@@ -332,6 +338,8 @@ describe("shell policy parser", () => {
       'env --split-string "$splitCommand"',
     ]) {
       const result = await gateBash({
+        posture: noPosture,
+        implicitAskDecision: "ask",
         command,
         startupCwd: process.cwd(),
         ctx: nonInteractiveContext(process.cwd()),
@@ -352,6 +360,8 @@ describe("shell policy parser", () => {
       '-m "Ready for integration"',
     ].join(" ");
     const result = await gateBash({
+      posture: noPosture,
+      implicitAskDecision: "ask",
       command,
       startupCwd: process.cwd(),
       ctx: nonInteractiveContext(process.cwd()),
@@ -364,6 +374,8 @@ describe("shell policy parser", () => {
   it("fails closed when unbash reports a parse error", async () => {
     const ctx = context(process.cwd(), false);
     const result = await gateBash({
+      posture: noPosture,
+      implicitAskDecision: "ask",
       command: "git status 'unterminated",
       startupCwd: process.cwd(),
       ctx: ctx,
@@ -378,6 +390,8 @@ describe("shell policy parser", () => {
   it("allows a parse-error ASK with exactly one non-authorable prompt", async () => {
     const ctx = context(process.cwd(), true);
     const result = await gateBash({
+      posture: noPosture,
+      implicitAskDecision: "ask",
       command: "python scripts/build.py 'unterminated",
       startupCwd: process.cwd(),
       ctx: ctx,
@@ -723,6 +737,7 @@ describe("shell policy parser", () => {
       expect(decideBash("git status --short", resolved.policy)).toBe("ask");
       await expect(
         gateBash({
+          posture: noPosture,
           command: "git status --short",
           startupCwd: process.cwd(),
           ctx,
@@ -744,6 +759,8 @@ describe("shell policy parser", () => {
     const ctx = context(process.cwd());
 
     const result = await gateBash({
+      posture: noPosture,
+      implicitAskDecision: "ask",
       command: "cat .env 'unterminated",
       startupCwd: process.cwd(),
       ctx: ctx,
@@ -758,6 +775,8 @@ describe("shell policy parser", () => {
   it("blocks unbash parse errors without attempting a non-interactive prompt", async () => {
     const ctx = nonInteractiveContext(process.cwd());
     const result = await gateBash({
+      posture: noPosture,
+      implicitAskDecision: "ask",
       command: "git status 'unterminated",
       startupCwd: process.cwd(),
       ctx: ctx,
@@ -772,6 +791,8 @@ describe("shell policy parser", () => {
   it("denies a later compound segment without prompting for an earlier ask", async () => {
     const ctx = context(process.cwd());
     const result = await gateBash({
+      posture: noPosture,
+      implicitAskDecision: "ask",
       command: "git fetch origin && git checkout main",
       startupCwd: process.cwd(),
       ctx,
@@ -808,6 +829,8 @@ describe("shell policy parser", () => {
     } satisfies ProfilePolicy;
 
     const combined = await gateBash({
+      posture: noPosture,
+      implicitAskDecision: "ask",
       command: "git checkout main && git reset --hard",
       startupCwd: process.cwd(),
       ctx: context(process.cwd()),
@@ -822,6 +845,8 @@ describe("shell policy parser", () => {
 
     // Two segments matching the same deny rule must not repeat its steering.
     const duplicated = await gateBash({
+      posture: noPosture,
+      implicitAskDecision: "ask",
       command: "git checkout main && git checkout feature",
       startupCwd: process.cwd(),
       ctx: context(process.cwd()),
@@ -839,6 +864,8 @@ describe("shell policy parser", () => {
     ]) {
       await expect(
         gateBash({
+          posture: noPosture,
+          implicitAskDecision: "ask",
           command: command,
           startupCwd: process.cwd(),
           ctx: context(process.cwd()),
@@ -855,6 +882,8 @@ describe("shell policy parser", () => {
     } satisfies ProfilePolicy;
 
     const result = await gateBash({
+      posture: noPosture,
+      implicitAskDecision: "ask",
       command: "cat .db",
       startupCwd: process.cwd(),
       ctx: context(process.cwd()),
@@ -870,6 +899,8 @@ describe("shell policy parser", () => {
 
     await expect(
       gateBash({
+        posture: noPosture,
+        implicitAskDecision: "ask",
         command: "cd docs && cd drafts && ls ../../..",
         startupCwd: startupCwd,
         ctx: ctx,
@@ -989,6 +1020,8 @@ describe("default profile bash policy", () => {
 
     await expect(
       gateBash({
+        posture: noPosture,
+        implicitAskDecision: "ask",
         command,
         startupCwd: process.cwd(),
         ctx,
@@ -1007,6 +1040,8 @@ describe("default profile bash policy", () => {
 
     await expect(
       gateBash({
+        posture: noPosture,
+        implicitAskDecision: "ask",
         command,
         startupCwd: process.cwd(),
         ctx,
@@ -1021,6 +1056,8 @@ describe("default profile bash policy", () => {
 
     await expect(
       gateBash({
+        posture: noPosture,
+        implicitAskDecision: "ask",
         command: "cd home/.pi/agent/packages/pi-guard && npm test",
         startupCwd: repositoryRoot,
         ctx: ctx,
@@ -1036,6 +1073,8 @@ describe("default profile bash policy", () => {
 
     await expect(
       gateBash({
+        posture: noPosture,
+        implicitAskDecision: "ask",
         command:
           "git diff --stat -- home/.pi/agent/packages/pi-guard/integrationTests",
         startupCwd: repositoryRoot,
@@ -1051,6 +1090,8 @@ describe("default profile bash policy", () => {
 
     await expect(
       gateBash({
+        posture: noPosture,
+        implicitAskDecision: "ask",
         command: "ls -la modules",
         startupCwd: process.cwd(),
         ctx: ctx,
@@ -1064,6 +1105,8 @@ describe("default profile bash policy", () => {
     const ctx = context(process.cwd(), false);
 
     const result = await gateBash({
+      posture: noPosture,
+      implicitAskDecision: "ask",
       command: "ls --output=.env modules",
       startupCwd: process.cwd(),
       ctx: ctx,
@@ -1095,6 +1138,8 @@ describe("default profile bash policy", () => {
 
         await expect(
           gateBash({
+            posture: noPosture,
+            implicitAskDecision: "ask",
             command: `cat ${piDocs}`,
             startupCwd: process.cwd(),
             ctx: ctx,
@@ -1120,6 +1165,8 @@ describe("default profile bash policy", () => {
 
       await expect(
         gateBash({
+          posture: noPosture,
+          implicitAskDecision: "ask",
           command: `cat ${packageDependency}`,
           startupCwd: path.join(process.cwd(), "test-project"),
           ctx: ctx,
@@ -1145,6 +1192,8 @@ describe("default profile bash policy", () => {
 
     await expect(
       gateBash({
+        posture: noPosture,
+        implicitAskDecision: "ask",
         command: "rg needle modules/allowed.ts",
         startupCwd: process.cwd(),
         ctx: ctx,
@@ -1153,6 +1202,8 @@ describe("default profile bash policy", () => {
     ).resolves.toBeUndefined();
     await expect(
       gateBash({
+        posture: noPosture,
+        implicitAskDecision: "ask",
         command: "rg --glob 'modules/**' needle modules/allowed.ts",
         startupCwd: process.cwd(),
         ctx: ctx,
@@ -1180,6 +1231,8 @@ describe("default profile bash policy", () => {
     ]) {
       await expect(
         gateBash({
+          posture: noPosture,
+          implicitAskDecision: "ask",
           command: command,
           startupCwd: process.cwd(),
           ctx: ctx,
@@ -1191,6 +1244,8 @@ describe("default profile bash policy", () => {
 
     await expect(
       gateBash({
+        posture: noPosture,
+        implicitAskDecision: "ask",
         command: "git show HEAD~3:src/example.ts",
         startupCwd: process.cwd(),
         ctx: ctx,
@@ -1199,6 +1254,8 @@ describe("default profile bash policy", () => {
     ).resolves.toBeUndefined();
     await expect(
       gateBash({
+        posture: noPosture,
+        implicitAskDecision: "ask",
         command: "git show HEAD",
         startupCwd: process.cwd(),
         ctx: ctx,
@@ -1207,6 +1264,8 @@ describe("default profile bash policy", () => {
     ).resolves.toBeUndefined();
     await expect(
       gateBash({
+        posture: noPosture,
+        implicitAskDecision: "ask",
         command: "git rev-parse HEAD~3",
         startupCwd: process.cwd(),
         ctx: ctx,
@@ -1314,6 +1373,8 @@ describe("default profile bash policy", () => {
       } satisfies ProfilePolicy;
       const ctx = nonInteractiveContext(process.cwd());
       const result = await gateBash({
+        posture: noPosture,
+        implicitAskDecision: "ask",
         command: command,
         startupCwd: process.cwd(),
         ctx: ctx,
@@ -1330,6 +1391,7 @@ describe("default profile bash policy", () => {
     const worker = policyConfig.profiles["builtin:worker"];
 
     const result = await gateBash({
+      posture: noPosture,
       command: "git show --format=fuller --stat --summary $c",
       startupCwd: process.cwd(),
       ctx,
@@ -1350,6 +1412,8 @@ describe("default profile bash policy", () => {
     const ctx = nonInteractiveContext(process.cwd());
 
     const result = await gateBash({
+      posture: noPosture,
+      implicitAskDecision: "ask",
       command: 'git diff "$LEFT" "$RIGHT"',
       startupCwd: process.cwd(),
       ctx: ctx,
@@ -1378,6 +1442,8 @@ describe("default profile bash policy", () => {
 
       await expect(
         gateBash({
+          posture: noPosture,
+          implicitAskDecision: "ask",
           command: command,
           startupCwd: process.cwd(),
           ctx: ctx,
@@ -1402,6 +1468,8 @@ describe("default profile bash policy", () => {
     ]) {
       await expect(
         gateBash({
+          posture: noPosture,
+          implicitAskDecision: "ask",
           command: command,
           startupCwd: process.cwd(),
           ctx: nonInteractiveContext(process.cwd()),
@@ -1426,6 +1494,8 @@ describe("default profile bash policy", () => {
     ]) {
       await expect(
         gateBash({
+          posture: noPosture,
+          implicitAskDecision: "ask",
           command: `git show ${operand}`,
           startupCwd: process.cwd(),
           ctx: nonInteractiveContext(process.cwd()),
@@ -1444,6 +1514,8 @@ describe("default profile bash policy", () => {
 
     await expect(
       gateBash({
+        posture: noPosture,
+        implicitAskDecision: "ask",
         command: "git tag --sort version:refname",
         startupCwd: process.cwd(),
         ctx: nonInteractiveContext(process.cwd()),
@@ -1469,6 +1541,8 @@ describe("default profile bash policy", () => {
 
     await expect(
       gateBash({
+        posture: noPosture,
+        implicitAskDecision: "ask",
         command: "cd allowed; cat ./file",
         startupCwd: process.cwd(),
         ctx: context(process.cwd()),
@@ -1478,6 +1552,8 @@ describe("default profile bash policy", () => {
 
     await expect(
       gateBash({
+        posture: noPosture,
+        implicitAskDecision: "ask",
         command: "(cd allowed; cat ./file); cat ./startup-file",
         startupCwd: process.cwd(),
         ctx: context(process.cwd()),
@@ -1487,6 +1563,8 @@ describe("default profile bash policy", () => {
 
     await expect(
       gateBash({
+        posture: noPosture,
+        implicitAskDecision: "ask",
         command: "cd first || cd second; cat ./startup-file",
         startupCwd: process.cwd(),
         ctx: nonInteractiveContext(process.cwd()),
@@ -1496,6 +1574,8 @@ describe("default profile bash policy", () => {
 
     await expect(
       gateBash({
+        posture: noPosture,
+        implicitAskDecision: "ask",
         command: 'cd "$TARGET"; cat ./startup-file',
         startupCwd: process.cwd(),
         ctx: nonInteractiveContext(process.cwd()),
@@ -1532,6 +1612,8 @@ describe("default profile bash policy", () => {
 
       await expect(
         gateBash({
+          posture: noPosture,
+          implicitAskDecision: "ask",
           command: command,
           startupCwd: process.cwd(),
           ctx: nonInteractiveContext(process.cwd()),
@@ -1553,6 +1635,8 @@ describe("default profile bash policy", () => {
 
     await expect(
       gateBash({
+        posture: noPosture,
+        implicitAskDecision: "ask",
         command: "false && cd allowed; cat ./file",
         startupCwd: process.cwd(),
         ctx: nonInteractiveContext(process.cwd()),
@@ -1578,6 +1662,8 @@ describe("default profile bash policy", () => {
     ]) {
       await expect(
         gateBash({
+          posture: noPosture,
+          implicitAskDecision: "ask",
           command: command,
           startupCwd: process.cwd(),
           ctx: context(process.cwd()),
@@ -1600,6 +1686,8 @@ describe("default profile bash policy", () => {
 
     await expect(
       gateBash({
+        posture: noPosture,
+        implicitAskDecision: "ask",
         command: "{ cd allowed; cat ./file; }; cat ./file",
         startupCwd: process.cwd(),
         ctx: context(process.cwd()),
@@ -1618,6 +1706,8 @@ describe("default profile bash policy", () => {
     for (const command of ["npm run check:types", "npm test"]) {
       await expect(
         gateBash({
+          posture: noPosture,
+          implicitAskDecision: "ask",
           command: command,
           startupCwd: process.cwd(),
           ctx: ctx,
@@ -1647,6 +1737,8 @@ describe("default profile bash policy", () => {
 
     await expect(
       gateBash({
+        posture: noPosture,
+        implicitAskDecision: "ask",
         command: "npm --prefix pkg run test",
         startupCwd: process.cwd(),
         ctx: context(process.cwd(), false),
@@ -1661,6 +1753,8 @@ describe("default profile bash policy", () => {
     ]) {
       await expect(
         gateBash({
+          posture: noPosture,
+          implicitAskDecision: "ask",
           command: command,
           startupCwd: process.cwd(),
           ctx: nonInteractiveContext(process.cwd()),
@@ -1690,6 +1784,8 @@ describe("default profile bash policy", () => {
 
       await expect(
         gateBash({
+          posture: noPosture,
+          implicitAskDecision: "ask",
           command: "cd project",
           startupCwd: process.cwd(),
           ctx: ctx,
@@ -1709,6 +1805,8 @@ describe("default profile bash policy", () => {
 
       await expect(
         gateBash({
+          posture: noPosture,
+          implicitAskDecision: "ask",
           command: "cd project",
           startupCwd: process.cwd(),
           ctx: nonInteractiveContext(process.cwd()),
@@ -1719,6 +1817,8 @@ describe("default profile bash policy", () => {
 
     it("still denies cd into protected paths", async () => {
       const result = await gateBash({
+        posture: noPosture,
+        implicitAskDecision: "ask",
         command: "cd .git",
         startupCwd: process.cwd(),
         ctx: context(process.cwd(), false),
@@ -1746,6 +1846,8 @@ describe("default profile bash policy", () => {
       const ctx = context(process.cwd());
 
       const result = await gateBash({
+        posture: noPosture,
+        implicitAskDecision: "ask",
         command: "cd docs && cp source blocked",
         startupCwd: process.cwd(),
         ctx: ctx,
@@ -1773,6 +1875,8 @@ describe("default profile bash policy", () => {
 
       await expect(
         gateBash({
+          posture: noPosture,
+          implicitAskDecision: "ask",
           command: "cd project && cat allowed",
           startupCwd: process.cwd(),
           ctx: context(process.cwd(), false),
@@ -1782,6 +1886,8 @@ describe("default profile bash policy", () => {
 
       await expect(
         gateBash({
+          posture: noPosture,
+          implicitAskDecision: "ask",
           command: "cd project && cat secret",
           startupCwd: process.cwd(),
           ctx: nonInteractiveContext(process.cwd()),
@@ -1802,6 +1908,8 @@ describe("default profile bash policy", () => {
 
     await expect(
       gateBash({
+        posture: noPosture,
+        implicitAskDecision: "ask",
         command: `cat ${unrelatedDependency}`,
         startupCwd: process.cwd(),
         ctx: ctx,
@@ -1925,6 +2033,8 @@ describe("default profile bash policy", () => {
 
   it("steers denied package manager mutations toward asking the user", async () => {
     const result = await gateBash({
+      posture: noPosture,
+      implicitAskDecision: "ask",
       command: "npm install lodash",
       startupCwd: process.cwd(),
       ctx: context(process.cwd(), false),

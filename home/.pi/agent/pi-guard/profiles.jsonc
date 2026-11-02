@@ -642,6 +642,7 @@
     },
     "mcp": {
       "description": "MCP default profile with local coding workflow guardrails.",
+      "directoryGlobs": ["~/**/mcp"],
       "extends": [
         "builtin:default",
         "ruleset:vitest",
@@ -1004,20 +1005,6 @@
         }
       ],
     },
-    "sidecar-comments-allow-asks": {
-      "description": "Sidecar-comments Golang profile for auto-pilot that allows asks",
-      "emoji": "🤖",
-      "extends": ["sidecar-comments"],
-      "color": "orange",
-      "transforms": ["transform:allow-asks"],
-    },
-    "personal-sidecar-comments-deny-asks": {
-      "description": "Auto-pilot extension to the golang sidecar profile that denies asks",
-      "emoji": "🚅",
-      "extends": ["sidecar-comments-allow-asks"],
-      "color": "green",
-      "transforms": ["transform:deny-asks"],
-    },
     "mcp-worktrees": {
       "description": "MCP workspace management with shared Git metadata and sibling-worktree write access.",
       "emoji": "🌳",
@@ -1030,34 +1017,6 @@
         ],
       },
     },
-    "mcp-deny-asks": {
-      "description": "The conservative auto-pilot for the MCP profile.",
-      "emoji": "👨‍✈️",
-      "extends": ["mcp"],
-      "color": "green",
-      "transforms": ["transform:deny-asks"],
-    },
-    "personal-allow-asks": {
-      "description": "Dangerous auto-pilot for the MCP profile",
-      "emoji": "🔥",
-      "extends": ["mcp"],
-      "color": "red",
-      "transforms": ["transform:allow-asks"],
-    },
-    "config-maintenance-allow-asks": {
-      "description": "Auto-pilot",
-      "emoji": "🔥",
-      "extends": ["config-maintenance"],
-      "transforms": ["transform:allow-asks"],
-      "color": "red",
-    },
-    "config-maintenance-deny-asks": {
-      "description": "Safer auto-pilot",
-      "emoji": "🚅",
-      "extends": ["config-maintenance"],
-      "color": "green",
-      "transforms": ["transform:deny-asks"],
-    },
     "config-maintenance-committer": {
       "description": "Git-capable config-maintence profile",
       "emoji": "⚠️",
@@ -1065,22 +1024,14 @@
       "color": "yellow",
       "sandbox": false,
     },
-    "config-maintenance-committer-deny-asks": {
-      "description": "GIT safe auto-pilot for config-maintenance git profile",
-      "emoji": "🚅",
-      "extends": ["config-maintenance-committer"],
-      "color": "green",
-      "transforms": ["transform:deny-asks"],
-      "sandbox": false,
-    },
-    "config-maintenance-allow-asks-dep-man": {
-      "description": "Dangerous dep manager on auto-pilot",
+    "config-maintenance-dep-man": {
+      "description": "config-maintenance with dependency mutations allowed",
       "emoji": "📦",
       "extends": [
-        "config-maintenance-allow-asks",
+        "config-maintenance",
         "ruleset:deps-mutations-allow",
       ],
-      "color": "red",
+      "color": "yellow",
     },
     "mcp-committer": {
       "description": "MCP git-commit capable",
@@ -1094,20 +1045,11 @@
       },
       "color": "yellow",
     },
-    "mcp-allow-asks": {
-      "description": "mcp auto-pilot that allows asks",
-      "emoji": "🔥",
-      "extends": ["mcp"],
-      "color": "red",
-      "transforms": ["transform:allow-asks"],
-      "directoryGlobs": ["~/**/mcp"],
-    },
-    "sidecar-comments-committer-allow-asks": {
-      "description": "auto-pilot committer",
-      "emoji": "🔥",
+    "sidecar-comments-committer": {
+      "description": "sidecar-comments with Git commit permissions",
+      "emoji": "⚠️",
       "extends": ["sidecar-comments", "builtin:committer"],
-      "color": "red",
-      "transforms": ["transform:allow-asks"],
+      "color": "yellow",
     },
     "mcp-git-full": {
       "description": "Git",
@@ -1127,11 +1069,11 @@
         ]
       },
     },
-    "sidecar-comments-allow-asks-implement-only": {
+    "sidecar-comments-implement-only": {
       "description": "No test files, implementation only",
       "emoji": "✍️",
       "extends": [
-        "sidecar-comments-allow-asks"
+        "sidecar-comments"
       ],
       "readPaths": [
         {

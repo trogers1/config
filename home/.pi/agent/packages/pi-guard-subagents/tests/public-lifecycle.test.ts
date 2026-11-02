@@ -1384,7 +1384,21 @@ describe("installed Pi public orchestration lifecycle", () => {
 		mkdirSync(agentsDir, { recursive: true });
 		writeFileSync(
 			join(agentsDir, "extension-worker.md"),
-			"---\nname: extension-worker\ndescription: extension isolation worker\ntools: integration_marker\nmodel: local/deterministic\nprofile: builtin:worker\n---\nRun the extension isolation scenario.\n",
+			"---\nname: extension-worker\ndescription: extension isolation worker\ntools: integration_marker\nmodel: local/deterministic\nprofile: extension-worker\n---\nRun the extension isolation scenario.\n",
+		);
+		// Listing a custom tool makes it available; a profile rule permits it.
+		const profileConfig = join(work, "profiles.json");
+		writeFileSync(
+			profileConfig,
+			JSON.stringify({
+				profiles: {
+					"extension-worker": {
+						description: "Worker that may run the isolation marker tool.",
+						extends: ["builtin:worker"],
+						tools: { integration_marker: [{ decision: "allow" }] },
+					},
+				},
+			}),
 		);
 		const requests: unknown[] = [];
 		const server = createServer(async (request, response) => {
@@ -1436,14 +1450,18 @@ describe("installed Pi public orchestration lifecycle", () => {
 			`cd ${shellQuote(work)} &&`,
 			`PI_CODING_AGENT_DIR=${shellQuote(agentDir)}`,
 			`PI_SUBAGENT_TOOL_BACKING=${shellQuote(JSON.stringify({ integration_marker: backing }))}`,
-			`PI_GUARD_ACTIVE_PROFILE=${shellQuote("builtin:worker")}`,
+			// Children inherit the parent's active profile ahead of their own.
+			`PI_GUARD_ACTIVE_PROFILE=${shellQuote("extension-worker")}`,
 			"pi --no-extensions",
 			`-e ${shellQuote(join(process.cwd(), "extensions", "index.ts"))}`,
 			"--model local/deterministic --tools subagent,subagent_message",
 			shellQuote("PUBLIC_EXTENSION_ISOLATION"),
 		].join(" ");
 		try {
-			execFileSync("tmux", ["-L", socket, "-f", "/dev/null", "new-session", "-d", "-s", session, "sh"]);
+			// Child panes inherit the tmux server environment, not command-local variables.
+			execFileSync("tmux", ["-L", socket, "-f", "/dev/null", "new-session", "-d", "-s", session, "sh"], {
+				env: { ...process.env, PI_GUARD_PROFILE_CONFIG: profileConfig },
+			});
 			execFileSync("tmux", ["-L", socket, "send-keys", "-t", session, "-l", command]);
 			execFileSync("tmux", ["-L", socket, "send-keys", "-t", session, "Enter"]);
 			const completed = await waitFor(() => {

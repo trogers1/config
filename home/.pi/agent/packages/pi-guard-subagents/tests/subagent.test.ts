@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createEventBus } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { resolveChildTools } from "../extensions/index.ts";
@@ -16,6 +16,7 @@ import {
 } from "../extensions/interactive/types.ts";
 import { CLAUDE_BRIDGE_PROVIDER, resolveProviderExtensions } from "../extensions/interactive/provider-extensions.ts";
 import { LOCAL_PROVIDER_MODEL_ID } from "./fixtures/local-provider.ts";
+import { postureEnvironmentVariable, postureOff } from "../../pi-guard/modules/posture.ts";
 import { makeTmpDir } from "./helpers.ts";
 
 function loadout({
@@ -95,6 +96,23 @@ describe("interactive child loadout boundary", () => {
 		expect(validateLoadout({ value })).toBeDefined();
 		writeFileSync(extension, "export default function replaced() {}\n");
 		expect(() => validateLoadout({ value })).toThrow(/backing extension content changed/);
+	});
+
+	it("forwards the parent's pi-guard posture to the child, and off when unset", () => {
+		const approved = validateLoadout({ value: loadout() });
+		const build = () =>
+			buildChildCommand({ loadout: approved, sessionId: "child-session", task: "t", loadoutPath: "/tmp/loadout.json" });
+		try {
+			vi.stubEnv(postureEnvironmentVariable, "deny");
+			expect(build()).toContain(`${postureEnvironmentVariable}=deny`);
+			// An explicit "off" overrides any stale value in the tmux server environment.
+			for (const unset of ["", "  ", undefined]) {
+				vi.stubEnv(postureEnvironmentVariable, unset);
+				expect(build()).toContain(`${postureEnvironmentVariable}=${postureOff}`);
+			}
+		} finally {
+			vi.unstubAllEnvs();
+		}
 	});
 
 	it("builds a default-deny child command with immutable guard and scope env", () => {

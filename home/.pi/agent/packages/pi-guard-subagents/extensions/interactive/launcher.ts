@@ -5,6 +5,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { createPane, paneExists, requireTmux } from "./tmux.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { requireActiveProviderExtensions } from "./provider-extensions.ts";
+import { postureEnvironmentVariable, postureOff } from "../../../pi-guard/modules/posture.ts";
 import { addChild, loadRegistry, registryPath, updateChild } from "./registry.ts";
 import {
 	atomicJsonWrite,
@@ -109,6 +110,9 @@ export function buildChildCommand({
 		PI_SUBAGENT_ATTEMPT_ID: loadout.attemptId,
 	};
 	if (loadout.codingAgentDir !== null) env.PI_CODING_AGENT_DIR = loadout.codingAgentDir;
+	// pi-guard's session posture carries over to children. Always set it: the
+	// child inherits the tmux server environment, which may hold a stale value.
+	env[postureEnvironmentVariable] = process.env[postureEnvironmentVariable]?.trim() || postureOff;
 	// Omitted scope must not become an empty guard override (deny-all).
 	if (loadout.writes !== null) env.PI_SUBAGENT_PERMISSIBLE_GLOBS = loadout.writes.join(",");
 	// Read ~/.zshenv without interactive/login startup. Keep the task and all

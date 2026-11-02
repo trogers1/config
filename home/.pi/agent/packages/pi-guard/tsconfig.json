@@ -17,6 +17,7 @@
     "extensions/**/*.ts",
     "modules/**/*.ts",
     "integrationTests/**/*.ts",
-    "scripts/**/*.ts"
+    "scripts/**/*.ts",
+    "vitest.config.mts"
   ]
 }

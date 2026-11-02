@@ -28,6 +28,14 @@ import { validateReadCommands } from "../modules/shell/readCommands";
 import { askPermissionChoices } from "../modules/profileUpdate";
 import { withPermissionInteraction } from "../modules/permissionUi";
 import {
+  parsePosture,
+  postureEnvironmentVariable,
+  postureNames,
+  postureOff,
+  type Posture,
+  type PostureReader,
+} from "../modules/posture";
+import {
   createBashToolDefinition,
   isToolCallEventType,
   type ExtensionAPI,
@@ -216,6 +224,8 @@ export function setGuardOperationObserverForTesting({
 type Approval = {
   approved: boolean;
   guidance?: string;
+  /** The session's deny posture refused this ASK without a prompt. */
+  postureDenied?: boolean;
   /** Return from the change editor to the permission choice without discarding. */
   back?: boolean;
   /** A profile-update deny already supplied its own inline steering. */
@@ -456,6 +466,33 @@ export default function (pi: GuardExtensionAPI) {
     return policyConfig.profiles[profile].policy;
   }
 
+  // An invalid launch posture must not stop pi-guard from loading (that would
+  // leave tools unguarded); currentPosture() rethrows it on every tool call.
+  let postureState:
+    { readonly posture: Posture | undefined } | { readonly error: Error } =
+    (() => {
+      try {
+        return {
+          posture: parsePosture({
+            value: process.env[postureEnvironmentVariable],
+          }),
+        };
+      } catch (error) {
+        return {
+          error: error instanceof Error ? error : new Error(String(error)),
+        };
+      }
+    })();
+
+  /** Bumped by every /posture change; prompts compare it to detect stale answers. */
+  let postureRevision = 0;
+
+  /** The one place an evaluation learns the session posture. */
+  function currentPosture(): Posture | undefined {
+    if ("error" in postureState) throw postureState.error;
+    return postureState.posture;
+  }
+
   async function showProfilePicker({
     ctx,
   }: {
@@ -509,7 +546,16 @@ export default function (pi: GuardExtensionAPI) {
     const profile = activePolicy(profileName);
     const color = profile.color ?? "blue";
     const emoji = profile.emoji ? `${profile.emoji} ` : "";
-    return `profile: ${emoji}${formatProfileColor(color, ansi.bold(profileName))}`;
+    return `profile: ${emoji}${formatProfileColor(color, ansi.bold(profileName))}${formatPostureStatus()}`;
+  }
+
+  function formatPostureStatus(): string {
+    if ("error" in postureState) return ` · ${ansi.red("posture: invalid")}`;
+    if (postureState.posture === "deny")
+      return ` · ${ansi.green("posture: deny")}`;
+    if (postureState.posture === "allow")
+      return ` · ${ansi.red("posture: allow")}`;
+    return "";
   }
 
   function appendProfileConflictReminder({
@@ -1247,10 +1293,13 @@ The permissions gate remains loaded and will fail closed until the profile is co
     ctx,
     revision,
     profile,
+    evaluatedPostureRevision,
   }: {
     readonly ctx: ExtensionContext;
     readonly revision: string | undefined;
     readonly profile: ProfileName;
+    /** postureRevision when the evaluation or editor began. */
+    readonly evaluatedPostureRevision: number;
   }): Promise<"unchanged" | "changed" | "failed"> {
     if (
       (
@@ -1261,7 +1310,9 @@ The permissions gate remains loaded and will fail closed until the profile is co
       ).kind === "failed"
     )
       return "failed";
-    return revision === profileConfigRevision && profile === activeProfile
+    return revision === profileConfigRevision &&
+      profile === activeProfile &&
+      evaluatedPostureRevision === postureRevision
       ? "unchanged"
       : "changed";
   }
@@ -1882,11 +1933,13 @@ The permissions gate remains loaded and will fail closed until the profile is co
       while (true) {
         const editorRevision = profileConfigRevision;
         const editorProfile = activeProfile;
+        const editorPostureRevision = postureRevision;
         if (
           (await refreshAfterPolicyUi({
             ctx,
             revision: editorRevision,
             profile: editorProfile,
+            evaluatedPostureRevision: editorPostureRevision,
           })) !== "unchanged"
         )
           return { approved: false, stale: true };
@@ -1906,6 +1959,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
           ctx,
           revision: editorRevision,
           profile: editorProfile,
+          evaluatedPostureRevision: editorPostureRevision,
         });
         if (editorRefresh !== "unchanged") {
           // This callback can survive the outer operation restart. Do not let
@@ -2181,6 +2235,43 @@ The permissions gate remains loaded and will fail closed until the profile is co
     handler: async (_args, ctx) =>
       await changeSandboxOverride({ ctx, override: "enabled" }),
   });
+  pi.registerCommand("posture", {
+    description: `Show or set how remaining permission requests resolve: ${[...postureNames, postureOff].join(", ")}`,
+    getArgumentCompletions: (prefix: string) =>
+      [...postureNames, postureOff]
+        .filter((name) => name.startsWith(prefix.trim()))
+        .map((name) => ({ value: name, label: name })),
+    handler: async (args, ctx) => {
+      const requested = args.trim();
+      if (requested !== "") {
+        try {
+          const posture = parsePosture({ value: requested });
+          postureState = { posture };
+          postureRevision += 1;
+          // Subagent launchers forward this variable to child sessions.
+          if (posture === undefined)
+            delete process.env[postureEnvironmentVariable];
+          else process.env[postureEnvironmentVariable] = posture;
+        } catch (error) {
+          ctx.ui.notify(
+            error instanceof Error ? error.message : String(error),
+            "error",
+          );
+          return;
+        }
+        ctx.ui.setStatus("permissions", formatProfileStatus(activeProfile));
+      }
+      ctx.ui.notify(
+        "error" in postureState
+          ? postureState.error.message
+          : postureState.posture === undefined
+            ? "No posture: permission requests left after profile composition prompt."
+            : `Posture: ${postureState.posture}. Permission requests left after profile composition resolve to ${postureState.posture} without prompting.`,
+        "info",
+      );
+    },
+  });
+
   pi.registerCommand("sandbox", {
     description: "Show the active sandbox posture",
     handler: async (_args, ctx) => await showSandboxStatus({ ctx }),
@@ -2356,8 +2447,14 @@ The permissions gate remains loaded and will fail closed until the profile is co
         rawConfig: rawProfileConfig,
         implicitAskDecision:
           policyConfig.profiles[activeProfile].runtime.implicitAskDecision,
+        posture: "error" in postureState ? undefined : postureState.posture,
       });
-      ctx.ui.notify(formatExplanation(explanation), "info");
+      ctx.ui.notify(
+        "error" in postureState
+          ? `${formatExplanation(explanation)}\n\n${postureState.error.message} Every tool call is blocked until it is corrected.`
+          : formatExplanation(explanation),
+        "info",
+      );
     },
   });
 
@@ -2561,6 +2658,9 @@ The permissions gate remains loaded and will fail closed until the profile is co
         const policy = activePolicy(activeProfile);
         const implicitAskDecision =
           policyConfig.profiles[activeProfile].runtime.implicitAskDecision;
+        if ("error" in postureState)
+          return { block: true, reason: postureState.error.message };
+        const evaluatedPostureRevision = postureRevision;
 
         if (isToolCallEventType("bash", event)) {
           sandboxApprovals.delete(event.toolCallId);
@@ -2610,6 +2710,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
             ctx,
             activePolicy: policy,
             implicitAskDecision,
+            posture: currentPosture,
             remember: (rememberedBashRule ??= rememberRule({
               draft: { kind: "bash", pattern: event.input.command },
               ctx,
@@ -2619,6 +2720,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
                 ctx,
                 revision: evaluatedRevision,
                 profile: evaluatedProfile,
+                evaluatedPostureRevision,
               }),
           });
           if (isRestartOperation(gateResult)) return gateResult;
@@ -2657,12 +2759,14 @@ The permissions gate remains loaded and will fail closed until the profile is co
             input: event.input,
             rules: customRules,
             implicitAskDecision,
+            posture: currentPosture,
             ctx,
             refreshAfterUiAwait: () =>
               refreshAfterPolicyUi({
                 ctx,
                 revision: evaluatedRevision,
                 profile: evaluatedProfile,
+                evaluatedPostureRevision,
               }),
           });
         }
@@ -2749,9 +2853,11 @@ The permissions gate remains loaded and will fail closed until the profile is co
               ctx,
               revision: evaluatedRevision,
               profile: evaluatedProfile,
+              evaluatedPostureRevision,
             });
           const approval = await confirmOrBlock({
             ctx,
+            posture: currentPosture,
             kind: isReadToolName(event.toolName) ? "read" : "write",
             title: `${isReadToolName(event.toolName) ? "Read" : "Write"} path permission request`,
             message: `${event.toolName} wants to access:\n${absolutePath}\n\nMatched policy path:\n${matchPath}`,
@@ -2769,10 +2875,11 @@ The permissions gate remains loaded and will fail closed until the profile is co
           if (!approval.approved)
             return {
               block: true,
-              reason: appendUserGuidance(
-                `${event.toolName} was not approved: ${absolutePath}`,
-                approval.guidance,
-              ),
+              reason: notApprovedReason({
+                reason: `${event.toolName} was not approved: ${absolutePath}`,
+                approval,
+                rules: [policyDecision.rule],
+              }),
             };
         }
 
@@ -3113,77 +3220,130 @@ function formatBashAskMessage({
   return `Overall decision: ASK\n\nReasons approval is required:\n${reasons.join("\n")}\n\nRaw command:\n${command}\n\nCommand-rule decisions only:\n${segments.join("\n") || "(no parsed command segments)"}`;
 }
 
-export async function gateBash({
+/**
+ * The Bash gate's complete decision, before any prompt. Both `gateBash` and
+ * `/permissions explain` use it, so the explained decision and its order of
+ * checks cannot drift from enforcement.
+ */
+type BashGateResolution =
+  | {
+      readonly kind: "deny";
+      readonly decidedBy:
+        | "opaque-interpreter"
+        | "protected-path"
+        | "read-validation"
+        | "path-rule"
+        | "command-rule"
+        | "parse-error"
+        | "opaque-path";
+      /** The complete block reason, including policy steering. */
+      readonly reason: string;
+    }
+  /** Shell parse uncertainty left as an ASK after composition. */
+  | { readonly kind: "ask"; readonly decidedBy: "parse-error" }
+  /** Path or command ASK rules left after composition. */
+  | {
+      readonly kind: "ask";
+      readonly decidedBy: "path-rule" | "command-rule";
+      readonly askPaths: readonly BashPathReferenceTrace[];
+    }
+  | { readonly kind: "allow" };
+
+/** A resolution, plus the evaluation it came from when one ran. */
+type ResolvedBashGate =
+  | {
+      /** Refused before evaluation: the command is never parsed. */
+      readonly resolution: BashGateResolution & { readonly kind: "deny" };
+      readonly evaluation: undefined;
+    }
+  | {
+      readonly resolution: BashGateResolution;
+      readonly evaluation: BashGateEvaluation;
+    };
+
+function resolveBashGate({
   command,
   startupCwd,
-  ctx,
-  activePolicy = defaultPolicy,
-  implicitAskDecision = "ask",
-  remember,
-  refreshAfterUiAwait,
+  cwd,
+  activePolicy,
+  implicitAskDecision,
 }: {
   readonly command: string;
   readonly startupCwd: string;
-  readonly ctx: ExtensionContext;
-  readonly activePolicy?: ProfilePolicy;
-  /** Runtime decision for ASK states not represented by an authorable rule. */
-  readonly implicitAskDecision?: ImplicitAskDecision;
-  readonly remember?: RememberDecision;
-  readonly refreshAfterUiAwait?: RefreshAfterUiAwait;
-}) {
-  if (isOpaqueInterpreterCommand(command) && hasShellControlSyntax(command)) {
+  readonly cwd: string;
+  readonly activePolicy: ProfilePolicy;
+  readonly implicitAskDecision: ImplicitAskDecision;
+}): ResolvedBashGate {
+  if (isOpaqueInterpreterCommand(command) && hasShellControlSyntax(command))
     return {
-      block: true,
-      reason:
-        "Opaque interpreter commands cannot be combined with shell control syntax; split the interpreter invocation from subsequent shell commands.",
+      resolution: {
+        kind: "deny",
+        decidedBy: "opaque-interpreter",
+        reason:
+          "Opaque interpreter commands cannot be combined with shell control syntax; split the interpreter invocation from subsequent shell commands.",
+      },
+      evaluation: undefined,
     };
-  }
+  const evaluation = evaluateBashGate(command, startupCwd, cwd, activePolicy);
+  return {
+    resolution: resolveBashEvaluation({
+      command,
+      evaluation,
+      activePolicy,
+      implicitAskDecision,
+    }),
+    evaluation,
+  };
+}
 
-  const evaluation = evaluateBashGate(
-    command,
-    startupCwd,
-    ctx.cwd ?? startupCwd,
-    activePolicy,
-  );
+function resolveBashEvaluation({
+  command,
+  evaluation,
+  activePolicy,
+  implicitAskDecision,
+}: {
+  readonly command: string;
+  readonly evaluation: BashGateEvaluation;
+  readonly activePolicy: ProfilePolicy;
+  readonly implicitAskDecision: ImplicitAskDecision;
+}): BashGateResolution {
   const {
     parseErrors,
     protectedPathDecision,
     readValidationError,
     pathDecision,
-    commands,
     commandDecisions: decisions,
   } = evaluation;
-  if (protectedPathDecision) {
+  if (protectedPathDecision)
     return {
-      block: true,
+      kind: "deny",
+      decidedBy: "protected-path",
       reason: appendPolicySteering(
         `Bash path reference denied by protected-path policy.\n\nRaw command:\n${command}\n\nPath:\n${protectedPathDecision.path}\n\nMatched protected path:\n${protectedPathDecision.matchPath}`,
         [protectedPathDecision.rule],
       ),
     };
-  }
-
-  if (readValidationError) {
+  if (readValidationError)
     return {
-      block: true,
+      kind: "deny",
+      decidedBy: "read-validation",
       reason: `Shell read command denied: ${readValidationError}\n\nUse Pi's read tool for concrete files, grep for content searches, or find followed by explicit read calls.`,
     };
-  }
-
-  if (pathDecision?.decision === "deny") {
+  if (pathDecision?.decision === "deny")
     return {
-      block: true,
+      kind: "deny",
+      decidedBy: "path-rule",
       reason: appendPolicySteering(
         `Bash path reference denied by policy.\n\nRaw command:\n${command}\n\nParsed command segments:\n${formatParsedCommands(command, activePolicy)}\n\nPath:\n${pathDecision.path}\n\nMatched policy path:\n${pathDecision.matchPath}`,
         [pathDecision.rule],
       ),
     };
-  }
   // Complete command denies before presenting any path ASK. A save flow must
   // never suggest that an unrelated path rule can override this deny.
-  if (decisions.some(({ decision }) => decision === "deny")) {
+  if (decisions.some(({ decision }) => decision === "deny"))
     return {
-      block: true,
+      kind: "deny",
+      decidedBy: "command-rule",
       reason: appendPolicySteering(
         `Command denied by explicit rule.\n\nRaw command:\n${command}\n\nParsed command segments:\n${formatParsedCommands(command, activePolicy)}`,
         decisions
@@ -3191,25 +3351,92 @@ export async function gateBash({
           .map(({ rule }) => rule),
       ),
     };
-  }
+  // Parse uncertainty is a synthesized, non-authorable ASK that composition
+  // resolves first. An implicit allow resolves only that synthesized ASK, so
+  // continue below to enforce any explicit ASK rules.
+  if (parseErrors.length > 0 && implicitAskDecision === "deny")
+    return {
+      kind: "deny",
+      decidedBy: "parse-error",
+      reason:
+        "Bash command denied: it could not be classified completely and this profile denies implicit permission requests.",
+    };
+  if (parseErrors.length > 0 && implicitAskDecision === "ask")
+    return { kind: "ask", decidedBy: "parse-error" };
+  if (evaluation.nonAuthorableAsks.length > 0 && implicitAskDecision === "deny")
+    return {
+      kind: "deny",
+      decidedBy: "opaque-path",
+      reason: `Bash command denied: it has dynamic or opaque path references and this profile denies implicit permission requests.\n\nNon-authorable path uncertainty:\n${evaluation.nonAuthorableAsks.join("\n")}`,
+    };
+  // An implicit allow resolves only the synthesized path ASK. Explicit path
+  // and command ASK rules still require approval.
+  const implicitPathAsk =
+    pathDecision?.decision === "ask" &&
+    evaluation.nonAuthorableAsks.includes(pathDecision.path);
+  const askPaths = evaluation.pathTraces.filter(
+    (trace) => trace.decision === "ask",
+  );
+  const pathAsk =
+    pathDecision?.decision === "ask" &&
+    !(implicitPathAsk && implicitAskDecision === "allow");
+  if (
+    pathAsk ||
+    askPaths.length > 0 ||
+    decisions.some(({ decision }) => decision === "ask")
+  )
+    return {
+      kind: "ask",
+      decidedBy: pathAsk || askPaths.length > 0 ? "path-rule" : "command-rule",
+      askPaths,
+    };
+  return { kind: "allow" };
+}
 
-  // Deterministic protected/ordinary/command denies above still win. Parse
-  // uncertainty is a synthesized, non-authorable ASK, so profile transforms
-  // can resolve it without opening a UI. An implicit allow resolves only that
-  // synthesized ASK; continue below to enforce any explicit ASK rules.
-  if (parseErrors.length > 0 && implicitAskDecision !== "allow") {
-    if (implicitAskDecision === "deny") {
-      return {
-        block: true,
-        reason:
-          "Bash command denied: it could not be classified completely and this profile denies implicit permission requests.",
-      };
-    }
+export async function gateBash({
+  command,
+  startupCwd,
+  ctx,
+  activePolicy,
+  implicitAskDecision,
+  posture,
+  remember,
+  refreshAfterUiAwait,
+}: {
+  readonly command: string;
+  readonly startupCwd: string;
+  readonly ctx: ExtensionContext;
+  readonly activePolicy: ProfilePolicy;
+  /** Runtime decision for ASK states not represented by an authorable rule. */
+  readonly implicitAskDecision: ImplicitAskDecision;
+  /** Reads the posture that resolves ASKs left after composition. */
+  readonly posture: PostureReader;
+  readonly remember?: RememberDecision;
+  readonly refreshAfterUiAwait?: RefreshAfterUiAwait;
+}) {
+  const resolved = resolveBashGate({
+    command,
+    startupCwd,
+    cwd: ctx.cwd ?? startupCwd,
+    activePolicy,
+    implicitAskDecision,
+  });
+  if (resolved.evaluation === undefined)
+    return { block: true, reason: resolved.resolution.reason };
+  const { resolution, evaluation } = resolved;
+  if (resolution.kind === "deny")
+    return { block: true, reason: resolution.reason };
+  if (resolution.kind === "allow") return undefined;
+
+  const { parseErrors, pathDecision, commands } = evaluation;
+  const decisions = evaluation.commandDecisions;
+  if (resolution.decidedBy === "parse-error") {
     const details = parseErrors
       .map((error) => `- offset ${error.pos}: ${error.message}`)
       .join("\n");
     const approval = await confirmOrBlock({
       ctx,
+      posture,
       kind: "bash",
       title: parseErrorBashPermissionTitle,
       message: formatBashAskMessage({
@@ -3229,135 +3456,70 @@ export async function gateBash({
     if (approval.approved) return undefined;
     return {
       block: true,
-      reason: appendUserGuidance(
-        `Bash command was not approved because it could not be classified completely,\n\n${details}`,
-        approval.guidance,
-      ),
+      reason: notApprovedReason({
+        reason: `Bash command was not approved because it could not be classified completely,\n\n${details}`,
+        approval,
+      }),
     };
   }
 
-  const hasNonAuthorableAsk = evaluation.nonAuthorableAsks.length > 0;
-  if (hasNonAuthorableAsk && implicitAskDecision === "deny") {
+  const { askPaths } = resolution;
+  const approval = await confirmOrBlock({
+    ctx,
+    posture,
+    kind: "bash",
+    title: explicitBashPermissionTitle,
+    message: formatBashAskMessage({
+      command,
+      evaluation,
+      implicitAskDecision,
+    }),
+    remember:
+      parseErrors.length === 0 &&
+      remember &&
+      // Any unresolved opaque/dynamic path is required for this request but
+      // cannot be represented truthfully as a durable rule.
+      evaluation.nonAuthorableAsks.length === 0 &&
+      (decisions.some(({ decision }) => decision === "ask") ||
+        askPaths.length > 0)
+        ? ({ ctx }) =>
+            remember({
+              ctx,
+              patterns: commands.filter(
+                (_item, index) => decisions[index]?.decision === "ask",
+              ),
+              pathTraces: askPaths,
+            })
+        : undefined,
+    refreshAfterUiAwait,
+  });
+  if (approval.refreshFailed)
     return {
       block: true,
-      reason: `Bash command denied: it has dynamic or opaque path references and this profile denies implicit permission requests.\n\nNon-authorable path uncertainty:\n${evaluation.nonAuthorableAsks.join("\n")}`,
+      reason:
+        "pi-guard profile configuration became invalid while awaiting approval.",
     };
-  }
-  // An implicit allow resolves only the synthesized path ASK. Explicit path
-  // and command ASK rules still require their normal approval.
-  const implicitPathAsk =
-    pathDecision?.decision === "ask" &&
-    evaluation.nonAuthorableAsks.includes(pathDecision.path);
-  const askPaths = evaluation.pathTraces.filter(
-    (trace) => trace.decision === "ask",
-  );
-  if (
-    (pathDecision?.decision === "ask" &&
-      !(implicitPathAsk && implicitAskDecision === "allow")) ||
-    askPaths.length > 0 ||
-    decisions.some(({ decision }) => decision === "ask")
-  ) {
-    const approval = await confirmOrBlock({
-      ctx,
-      kind: "bash",
-      title: explicitBashPermissionTitle,
-      message: formatBashAskMessage({
-        command,
-        evaluation,
-        implicitAskDecision,
-      }),
-      remember:
-        parseErrors.length === 0 &&
-        remember &&
-        // Any unresolved opaque/dynamic path is required for this request but
-        // cannot be represented truthfully as a durable rule.
-        !hasNonAuthorableAsk &&
-        (decisions.some(({ decision }) => decision === "ask") ||
-          askPaths.length > 0)
-          ? ({ ctx }) =>
-              remember({
-                ctx,
-                patterns: commands.filter(
-                  (_item, index) => decisions[index]?.decision === "ask",
-                ),
-                pathTraces: askPaths,
-              })
-          : undefined,
-      refreshAfterUiAwait,
-    });
-    if (approval.refreshFailed)
-      return {
-        block: true,
-        reason:
-          "pi-guard profile configuration became invalid while awaiting approval.",
-      };
-    if (approval.profileUpdated || approval.stale) return restartOperation();
-    if (!approval.approved)
-      return {
-        block: true,
-        reason: appendUserGuidance(
-          pathDecision?.decision === "ask"
-            ? `Bash path reference was not approved: ${pathDecision.path}`
-            : `Command was not approved: ${command}`,
-          approval.guidance,
-        ),
-      };
-    return undefined;
-  }
-
-  if (decisions.some(({ decision }) => decision === "deny")) {
-    return {
-      block: true,
-      reason: appendPolicySteering(
-        `Command denied by explicit rule.\n\nRaw command:\n${command}\n\nParsed command segments:\n${formatParsedCommands(command, activePolicy)}`,
-        decisions
-          .filter(({ decision }) => decision === "deny")
-          .map(({ rule }) => rule),
-      ),
-    };
-  }
-
-  if (decisions.some(({ decision }) => decision === "ask")) {
-    const approval = await confirmOrBlock({
-      ctx,
-      kind: "bash",
-      title: "Allow bash command?",
-      message: formatBashAskMessage({
-        command,
-        evaluation,
-        implicitAskDecision,
-      }),
-      remember:
-        parseErrors.length === 0 && remember
-          ? ({ ctx }) =>
-              remember({
-                ctx,
-                patterns: commands.filter(
-                  (_item, index) => decisions[index]?.decision === "ask",
-                ),
-                pathTraces: evaluation.pathTraces,
-              })
-          : undefined,
-      refreshAfterUiAwait,
-    });
-    if (approval.refreshFailed)
-      return {
-        block: true,
-        reason:
-          "pi-guard profile configuration became invalid while awaiting approval.",
-      };
-    if (approval.profileUpdated || approval.stale) return restartOperation();
-    if (!approval.approved)
-      return {
-        block: true,
-        reason: appendUserGuidance(
-          `Command was not approved: ${command}`,
-          approval.guidance,
-        ),
-      };
-  }
-
-  return undefined;
+  if (approval.profileUpdated || approval.stale) return restartOperation();
+  if (approval.approved) return undefined;
+  return {
+    block: true,
+    reason: notApprovedReason({
+      reason:
+        pathDecision?.decision === "ask"
+          ? `Bash path reference was not approved: ${pathDecision.path}`
+          : `Command was not approved: ${command}`,
+      approval,
+      rules: [
+        ...new Set([
+          pathDecision?.rule,
+          ...askPaths.map((trace) => trace.pathMatches[0]?.item),
+          ...decisions
+            .filter(({ decision }) => decision === "ask")
+            .map(({ rule }) => rule),
+        ]),
+      ],
+    }),
+  };
 }
 
 export function decideBash(
@@ -3426,7 +3588,30 @@ function evaluateBash(
   };
 }
 
+/**
+ * Explain a decision exactly as the permission gate makes it: composition
+ * decides allow, deny, or ASK, and a session posture resolves a remaining ASK.
+ */
 export function explainPermission({
+  posture,
+  ...request
+}: Parameters<typeof explainComposedDecision>[0] & {
+  readonly posture?: Posture;
+}): PermissionExplanation {
+  const explanation = explainComposedDecision(request);
+  if (explanation.decision !== "ask" || posture === undefined)
+    return explanation;
+  return {
+    ...explanation,
+    decision: posture,
+    notes: [
+      ...explanation.notes,
+      `This session's ${posture} posture resolves the remaining ASK to ${posture}.`,
+    ],
+  };
+}
+
+function explainComposedDecision({
   policy,
   profileName,
   tool,
@@ -3449,14 +3634,15 @@ export function explainPermission({
   const compositionChain = resolveCompositionChain(profileName, rawConfig);
 
   if (tool === "bash") {
-    return explainBashPermission(
+    return explainBashPermission({
       policy,
       profileName,
       input,
       cwd,
       startupCwd,
       compositionChain,
-    );
+      implicitAskDecision,
+    });
   }
 
   if (isPathToolName(tool)) {
@@ -3546,25 +3732,48 @@ type BashPathLayerDecision = {
   pathRule?: { decision: Decision; pattern: string; guidance?: string };
 };
 
-function explainBashPermission(
-  policy: ProfilePolicy,
-  profileName: string,
-  input: string,
-  cwd: string,
-  startupCwd: string,
-  compositionChain: string[],
-): PermissionExplanation {
-  const evaluation = evaluateBashGate(input, startupCwd, cwd, policy);
+function explainBashPermission({
+  policy,
+  profileName,
+  input,
+  cwd,
+  startupCwd,
+  compositionChain,
+  implicitAskDecision,
+}: {
+  readonly policy: ProfilePolicy;
+  readonly profileName: string;
+  readonly input: string;
+  readonly cwd: string;
+  readonly startupCwd: string;
+  readonly compositionChain: string[];
+  readonly implicitAskDecision: ImplicitAskDecision;
+}): PermissionExplanation {
+  // The same resolution, in the same order, as gateBash.
+  const { resolution, evaluation } = resolveBashGate({
+    command: input,
+    startupCwd,
+    cwd,
+    activePolicy: policy,
+    implicitAskDecision,
+  });
+  if (evaluation === undefined)
+    return {
+      tool: "bash",
+      input,
+      profile: profileName,
+      compositionChain,
+      decision: "deny",
+      winner: undefined,
+      matches: [],
+      protectedOverride: undefined,
+      notes: [resolution.reason],
+      fallback: "ask",
+    };
   const commands = evaluation.commands.length > 0 ? evaluation.commands : [""];
   const rules = policy.tools.bash ?? [];
   const fallback: Decision = "ask";
-  const {
-    parseErrors,
-    protectedPathDecision,
-    readValidationError,
-    pathDecision,
-    pathTrace,
-  } = evaluation;
+  const { protectedPathDecision, pathDecision, pathTrace } = evaluation;
   const pathLayer = protectedPathDecision
     ? protectedPathLayerDecision(protectedPathDecision)
     : pathDecision && pathDecision.decision !== "allow"
@@ -3601,36 +3810,9 @@ function explainBashPermission(
     segmentExplanations[0],
   );
 
-  let finalDecision: Decision = mostRestrictiveCommand.decision;
-  let decidedBy:
-    | "command-rule"
-    | "protected-path"
-    | "path-rule"
-    | "read-validation"
-    | "parse-error" = "command-rule";
-
-  if (
-    pathLayer?.decidedBy === "protected-path" &&
-    pathLayer.decision === "deny"
-  ) {
-    finalDecision = "deny";
-    decidedBy = "protected-path";
-  } else if (parseErrors.length > 0) {
-    finalDecision = "ask";
-    decidedBy = "parse-error";
-  } else if (readValidationError) {
-    finalDecision = "deny";
-    decidedBy = "read-validation";
-  } else if (pathLayer?.decision === "deny") {
-    finalDecision = "deny";
-    decidedBy = pathLayer.decidedBy;
-  } else if (pathLayer?.decision === "ask") {
-    finalDecision = "ask";
-    decidedBy = pathLayer.decidedBy;
-  } else if (mostRestrictiveCommand.decision === "deny") {
-    finalDecision = "deny";
-    decidedBy = "command-rule";
-  }
+  const finalDecision: Decision = resolution.kind;
+  const decidedBy =
+    resolution.kind === "allow" ? "command-rule" : resolution.decidedBy;
 
   const bashPathExplanation = pathTrace
     ? {
@@ -3660,22 +3842,18 @@ function explainBashPermission(
       `Compound command with ${segmentExplanations.length} segments; showing the most restrictive decision.`,
     );
   }
-  if (readValidationError) {
-    notes.push(`Shell read validation: ${readValidationError}`);
-  }
+  // Notes follow the shared resolution, so they cannot contradict it.
+  if (resolution.kind === "deny") notes.push(resolution.reason);
   if (decidedBy === "path-rule" && pathLayer?.pathRule) {
     notes.push(
       `Bash path-reference rule: [${pathLayer.pathRule.decision}] ${pathLayer.pathRule.pattern}`,
     );
   }
 
-  if (parseErrors.length > 0) {
+  if (resolution.kind === "ask" && resolution.decidedBy === "parse-error")
     notes.push(
-      protectedPathDecision
-        ? "Shell parse/classification errors were present, but a definite protected-path deny short-circuits approval."
-        : "Shell parse/classification errors require approval before policy evaluation of ordinary rules; non-interactive execution blocks.",
+      "Shell parse/classification errors require approval before policy evaluation of ordinary rules; non-interactive execution blocks.",
     );
-  }
 
   return {
     tool: "bash",
@@ -3905,6 +4083,7 @@ async function gateCustomTool({
   input,
   rules,
   implicitAskDecision = "ask",
+  posture,
   ctx,
   refreshAfterUiAwait,
 }: {
@@ -3912,6 +4091,8 @@ async function gateCustomTool({
   readonly input: unknown;
   readonly rules: readonly CustomToolRule[];
   readonly implicitAskDecision?: ImplicitAskDecision;
+  /** Reads the posture that resolves ASKs left after composition. */
+  readonly posture: PostureReader;
   readonly ctx: ExtensionContext;
   readonly refreshAfterUiAwait?: RefreshAfterUiAwait;
 }) {
@@ -3938,6 +4119,7 @@ async function gateCustomTool({
     if (!matchedRule && implicitAskDecision === "allow") return undefined;
     const approval = await confirmOrBlock({
       ctx,
+      posture,
       kind: "custom",
       title: `Allow ${toolName}?`,
       message: [
@@ -3961,10 +4143,11 @@ async function gateCustomTool({
     if (!approval.approved) {
       return {
         block: true,
-        reason: appendUserGuidance(
-          `${toolName} was not approved.`,
-          approval.guidance,
-        ),
+        reason: notApprovedReason({
+          reason: `${toolName} was not approved.`,
+          approval,
+          rules: [matchedRule],
+        }),
       };
     }
   }
@@ -4214,9 +4397,21 @@ function toolPath(toolName: string, input: unknown): string | undefined {
     : undefined;
 }
 
-async function confirmOrBlock(
-  options: Parameters<typeof showPermissionInteraction>[0],
-): Promise<Approval> {
+/**
+ * The permission gate: the only path to a permission prompt. Everything that
+ * reaches it is an ASK left after profile composition, so a session posture
+ * resolves it here, before any UI opens.
+ */
+async function confirmOrBlock({
+  posture,
+  ...options
+}: Parameters<typeof showPermissionInteraction>[0] & {
+  /** Read at decision time; required so no caller can forget it. */
+  readonly posture: PostureReader;
+}): Promise<Approval> {
+  const current = posture();
+  if (current === "allow") return { approved: true };
+  if (current === "deny") return { approved: false, postureDenied: true };
   if (!options.ctx.hasUI) return { approved: false };
   return await withPermissionInteraction({
     ctx: options.ctx,
@@ -4349,7 +4544,7 @@ async function showPermissionInteraction({
       return { approved: false, stale: true, refreshFailed: true };
     if (refreshResult === "changed") {
       ctx.ui.notify(
-        "Profile was updated while this permission request was open; its rule took precedence. Re-evaluating the request.",
+        "Permissions changed while this request was open (profile or posture). Re-evaluating the request.",
         "warning",
       );
       return { approved: false, stale: true };
@@ -4437,12 +4632,27 @@ async function collectGuidance({
   return guidance ? { approved: false, guidance } : { approved: false };
 }
 
-function appendUserGuidance(
-  reason: string,
-  guidance: string | undefined,
-): string {
-  if (!guidance) return reason;
-  return `${reason}\n\nUser steering after denial:\n${guidance}`;
+/** Explain a gate result that was not approved, for every gate caller. */
+function notApprovedReason({
+  reason,
+  approval,
+  rules = [],
+}: {
+  readonly reason: string;
+  readonly approval: Approval;
+  /** The ASK rules involved; their guidance applies to a posture denial. */
+  readonly rules?: ReadonlyArray<
+    Pick<Rule, "guidance" | "alternatives"> | undefined
+  >;
+}): string {
+  if (approval.postureDenied)
+    return appendPolicySteering(
+      `${reason}\n\nThis session's deny posture refuses permission requests without prompting. Use an explicitly allowed command, path, or tool.`,
+      [...rules],
+    );
+  return approval.guidance
+    ? `${reason}\n\nUser steering after denial:\n${approval.guidance}`
+    : reason;
 }
 
 function appendPolicySteering(

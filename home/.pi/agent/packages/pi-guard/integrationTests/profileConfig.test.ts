@@ -1079,6 +1079,7 @@ describe("extension harness profile configuration failures", () => {
         "sandbox-on",
         "sandbox-off",
         "sandbox-on-force",
+        "posture",
         "sandbox",
         "permissions",
         "socrates",

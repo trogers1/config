@@ -248,7 +248,9 @@ describe("permissions explain", () => {
     expect(explanation.protectedOverride?.pattern).toBe("**/.env*");
     expect(explanation.notes).toEqual(
       expect.arrayContaining([
-        expect.stringContaining("protected-path deny short-circuits approval"),
+        expect.stringContaining(
+          "Bash path reference denied by protected-path policy.",
+        ),
       ]),
     );
   });

@@ -158,6 +158,8 @@ obvious (`deps-mutator`, `git-full`). Profiles may define optional `color`,
 - In `/profile-add` and `/profile-edit`, Escape is local Back and retains section changes; Ctrl+C aborts the complete command without writing. A successful explicit save activates the saved profile immediately unless `PI_SUBAGENT_PROFILE` is authoritative.
 - For an ASK request, choose `No (default)`, `Allow once`, or `Save rule(s) to profile…` when the request is concrete and authorable. Inline ASK remains rule-only and never exposes Prompt, Composition, Transforms, Sandbox, or Directory management. A durable save updates only the active user-owned profile; built-in and composed profiles cannot create compatibility child profiles. Esc returns to retained rules; Ctrl+C returns locally to the permission picker. Selected rules are committed atomically before the request is checked again.
 - `/read-only` switches to the `builtin:read-only` permissions profile.
+- `/posture [deny|allow|off]` shows or sets this session's posture (see
+  [Session posture](#session-posture)).
 - `/sandbox` reports the active sandbox state, backend, network posture,
   writable roots, subagent scope, Bash-tool ownership, and translation coverage.
 - `/permissions explain <tool> <input>` explains which rule decided access for
@@ -462,6 +464,29 @@ are composed after the transformed inherited ordinary policy. Its
 `protectedPathRules` are appended to the unchanged inherited protected layer.
 Local rules win equal-specificity ties; a local rule must be more specific to
 outrank a more-specific inherited rule.
+
+## Session posture
+
+Transforms are composition tools: they decide allow and deny while profiles
+compose. A **session posture** resolves whatever is still an ASK afterwards,
+without changing anything composition decided:
+
+- `deny` refuses every remaining ASK without prompting (autopilot). Denials
+  include the ASK rule's guidance.
+- `allow` approves every remaining ASK without prompting.
+- `off` (or unset) prompts as usual.
+
+Set it at launch with `PI_GUARD_POSTURE=deny|allow`, or during a session with
+`/posture`; the status line shows an active posture. Subagent launchers
+forward the current posture to the children they start. An invalid value
+blocks every tool call until it is corrected, rather than leaving tools
+unguarded.
+
+Every permission prompt goes through one gate, which applies the posture
+before any UI opens, and `/permissions explain` reports the same resolution.
+Because a profile's own rules compose after its transforms, a profile's own
+`ask` rule stays an ASK under `transform:deny-asks`, and the posture resolves
+it; inherited asks were already decided by the transform.
 
 ## Protected-path rules
 
