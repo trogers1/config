@@ -2780,7 +2780,11 @@ describe("installed Pi public orchestration lifecycle", () => {
 		try {
 			// Child panes inherit the tmux server environment, not command-local HOME.
 			execFileSync("tmux", ["-L", socket, "-f", "/dev/null", "new-session", "-d", "-s", session, "sh"], {
-				env: { ...process.env, HOME: home },
+				env: {
+					...process.env,
+					HOME: home,
+					PI_GUARD_PROFILE_CONFIG: join(fixture, "missing-profile.jsonc"),
+				},
 				timeout: 5000,
 			});
 			execFileSync("tmux", ["-L", socket, "send-keys", "-t", session, "-l", command]);

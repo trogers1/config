@@ -1,0 +1,4 @@
+// Test-owned pi-guard profile config. Guarded Pi children launched by tests
+// load this instead of the developer's live ~/.pi profiles. Tests must never
+// write to it; tests/setup/guardProfileConfig.ts fails if one does.
+{ "profiles": {} }
