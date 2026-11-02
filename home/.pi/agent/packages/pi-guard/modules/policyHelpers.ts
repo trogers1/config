@@ -940,7 +940,10 @@ export function extendProfile(
     }
 
     assertCustomToolRuleArray(toolName, overrideRules);
-    const inheritedRules = mergedTools[toolName] ?? [];
+    // Own keys only: a tool named `constructor` must not read Object.prototype.
+    const inheritedRules = Object.hasOwn(mergedTools, toolName)
+      ? (mergedTools[toolName] ?? [])
+      : [];
     assertCustomToolRuleArray(toolName, inheritedRules);
     mergedTools[toolName] = [...inheritedRules, ...overrideRules];
   }

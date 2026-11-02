@@ -155,6 +155,45 @@ function assertRuntimeWorkflowIsComposed({
   }
 }
 
+/**
+ * Every shipped profile can run codemode and coordinate subagents. They come
+ * first, so a profile's own equally specific rules (for example
+ * `ruleset:subagents-off`) win the tie.
+ */
+const sharedBuiltinRuleSetNames = [
+  "ruleset:codemode",
+  "ruleset:subagents",
+] as const satisfies readonly RuleSetName[];
+
+function withSharedBuiltinTools({
+  policy,
+}: {
+  readonly policy: ProfilePolicy;
+}): ProfilePolicy {
+  const sharedTools = sharedBuiltinRuleSetNames.reduce<ProfilePolicy["tools"]>(
+    (tools, name) => ({
+      ...tools,
+      ...ruleSetDefinition({ name }).policy.tools,
+    }),
+    {},
+  );
+  for (const toolName of Object.keys(sharedTools)) {
+    if (Object.hasOwn(policy.tools, toolName))
+      throw new Error(
+        `Built-in profile declares '${toolName}', which the shared built-in rule sets own`,
+      );
+  }
+  return { ...policy, tools: { ...sharedTools, ...policy.tools } };
+}
+
+function sharedBuiltinChain({
+  chain,
+}: {
+  readonly chain: readonly string[];
+}): readonly string[] {
+  return [...sharedBuiltinRuleSetNames, ...chain];
+}
+
 function resolvedBuiltin({
   policy,
   chain,
@@ -162,9 +201,14 @@ function resolvedBuiltin({
   readonly policy: ProfilePolicy;
   readonly chain: readonly string[];
 }) {
-  assertRuntimeWorkflowIsComposed({ policy, chain });
-  const runtime = resolveCompositionRuntime({ chain });
-  return finalizeResolvedProfile({ policy, runtime });
+  const composedChain = sharedBuiltinChain({ chain });
+  const composedPolicy = withSharedBuiltinTools({ policy });
+  assertRuntimeWorkflowIsComposed({
+    policy: composedPolicy,
+    chain: composedChain,
+  });
+  const runtime = resolveCompositionRuntime({ chain: composedChain });
+  return finalizeResolvedProfile({ policy: composedPolicy, runtime });
 }
 
 const configuredPolicy = definePolicyConfig({
@@ -243,10 +287,14 @@ export function builtinCompositionChain({
 }: {
   readonly name: string;
 }): readonly string[] | undefined {
-  return Object.entries(builtinCompositionChains).find(
+  const chain = Object.entries(builtinCompositionChains).find(
     ([candidate]) => candidate === name,
   )?.[1];
+  return chain === undefined ? undefined : sharedBuiltinChain({ chain });
 }
 
-/** Ordered provenance used by catalog checks for shipped profiles. */
+/**
+ * Profile-specific recipes used by catalog checks. Resolution and
+ * explanations prepend the shared built-in rule sets.
+ */
 export { builtinCompositionChains };

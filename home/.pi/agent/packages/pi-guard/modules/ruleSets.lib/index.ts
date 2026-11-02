@@ -1,5 +1,10 @@
 import type { ProfilePolicy } from "../policyHelpers";
 import type { RuntimeRequirementName } from "../runtimeRequirements";
+import {
+  codemodeToolRules,
+  subagentOffToolRules,
+  subagentToolRules,
+} from "./agentTools";
 import { defaultGitRules, gitCommitRules, gitRefsRules } from "./git";
 import { defaultGuardRules } from "./guards";
 import { defaultProtectedPathRules } from "../protectedPaths";
@@ -113,6 +118,18 @@ export const ruleSetRegistry = {
   },
   "ruleset:test-write-protection": {
     policy: { writePaths: testWriteProtectionRules },
+    runtimeRequirements: [],
+  },
+  "ruleset:codemode": {
+    policy: { tools: codemodeToolRules },
+    runtimeRequirements: [],
+  },
+  "ruleset:subagents": {
+    policy: { tools: subagentToolRules },
+    runtimeRequirements: [],
+  },
+  "ruleset:subagents-off": {
+    policy: { tools: subagentOffToolRules },
     runtimeRequirements: [],
   },
 } as const satisfies Record<string, RuleSetDefinition>;

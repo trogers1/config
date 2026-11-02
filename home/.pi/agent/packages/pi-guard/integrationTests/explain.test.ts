@@ -558,7 +558,7 @@ describe("permissions explain", () => {
     expect(explanation.matches).toHaveLength(0);
   });
 
-  it("reports allow with a note when no custom tool policy is configured", () => {
+  it("reports the profile's implicit ASK when no custom tool policy matches", () => {
     const policy: ProfilePolicy = {
       tools: {},
       readPaths: [{ pattern: "*", decision: "allow" }],
@@ -573,10 +573,20 @@ describe("permissions explain", () => {
       cwd: startupCwd,
     });
 
-    expect(explanation.decision).toBe("allow");
-    expect(explanation.notes).toEqual(
-      expect.arrayContaining([expect.stringContaining("No policy configured")]),
-    );
+    expect(explanation.decision).toBe("ask");
+    expect(explanation.notes).toEqual([
+      "No custom tool policy matched 'unconfigured-tool'; the implicit ASK resolves as ask.",
+    ]);
+    expect(
+      explainPermission({
+        policy,
+        profileName: "builtin:worker",
+        tool: "unconfigured-tool",
+        input: "any input",
+        cwd: startupCwd,
+        implicitAskDecision: "deny",
+      }).decision,
+    ).toBe("deny");
   });
 
   it("formats the explanation with required fields", () => {
@@ -609,6 +619,8 @@ describe("permissions explain", () => {
     });
 
     expect(explanation.compositionChain).toEqual([
+      "ruleset:codemode",
+      "ruleset:subagents",
       "ruleset:shell",
       "ruleset:git",
       "ruleset:packageManagers",
@@ -642,6 +654,8 @@ describe("permissions explain", () => {
     });
 
     expect(explanation.compositionChain).toEqual([
+      "ruleset:codemode",
+      "ruleset:subagents",
       "ruleset:shell",
       "ruleset:git",
       "ruleset:packageManagers",

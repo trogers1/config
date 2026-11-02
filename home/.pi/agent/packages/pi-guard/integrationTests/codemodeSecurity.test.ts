@@ -37,6 +37,8 @@ it.each(["on", "only"] as const)(
       profiles: {
         "codemode-security": {
           description: "Real SDK nested tool security regression fixture.",
+          // Allow the outer codemode call so Guard decides each nested call.
+          extends: ["ruleset:codemode"],
           sandbox: false,
           tools: {
             bash: [

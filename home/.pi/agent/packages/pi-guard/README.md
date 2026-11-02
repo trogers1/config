@@ -772,9 +772,17 @@ optional `match` object maps dot-separated input property paths to glob
 patterns. Every property matcher must match; a rule without `match` is a
 catch-all. Values are matched as strings, while non-string values use their JSON
 representation. Matching rules resolve by specificity, with later rules breaking
-ties; a configured custom tool with no matching rule defaults to `ask`. If a
-tool has no configured rules at all, this package does not add a custom-tool
-policy for it.
+ties. A custom tool with no matching rule, including one with no rules at
+all, is an implicit `ask`: the profile's transforms resolve it to allow, deny,
+or a prompt, and the prompt shows the request one argument per line.
+
+Every shipped profile includes `ruleset:codemode`, which allows the outer
+`codemode` call (each tool its script runs is still authorized on its own), and
+`ruleset:subagents`, which allows `subagent`, `subagent_message`, and
+`ask_question`. To deny all three, compose `ruleset:subagents-off` after every
+shipped profile, including shipped profiles reached through another profile:
+like every inherited rule, a later shipped profile's copy of the allows wins
+the tie and re-enables them.
 
 ```jsonc
 "tools": {

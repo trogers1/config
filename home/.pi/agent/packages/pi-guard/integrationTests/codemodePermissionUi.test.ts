@@ -62,6 +62,9 @@ it.each(["direct", "nested", "parallel"] as const)(
           profiles: {
             "permission-ui": {
               description: "Interactive permission regression fixture",
+              // The outer codemode call is allowed; its nested reads are the
+              // permission requests under test.
+              extends: ["ruleset:codemode"],
               sandbox: false,
               writePaths: [{ pattern: "**", decision: "deny" }],
               readPaths: ruleSetDefinition({ name: "ruleset:path-guards" })

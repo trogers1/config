@@ -560,7 +560,7 @@ describe("permissions extension", () => {
     });
 
     expect(lastCallArgument({ mock: harness.ui.notify, index: 0 })).toContain(
-      "Composition: ruleset:shell → ruleset:git → ruleset:packageManagers → ruleset:deps-mutations-guard → ruleset:shell-guards → ruleset:path-guards → ruleset:go-runtime-commands → builtin:default",
+      "Composition: ruleset:codemode → ruleset:subagents → ruleset:shell → ruleset:git → ruleset:packageManagers → ruleset:deps-mutations-guard → ruleset:shell-guards → ruleset:path-guards → ruleset:go-runtime-commands → builtin:default",
     );
   });
 
@@ -690,15 +690,15 @@ describe("permissions extension", () => {
   it.each([
     [
       "builtin:read-only",
-      "ruleset:read-only-path → ruleset:read-only-shell → builtin:read-only",
+      "ruleset:codemode → ruleset:subagents → ruleset:read-only-path → ruleset:read-only-shell → builtin:read-only",
     ],
     [
       "builtin:reviewer",
-      "ruleset:read-only-path → ruleset:read-only-shell → builtin:read-only → ruleset:typescript-node-test → ruleset:rust-test → ruleset:go-runtime-commands → ruleset:vitest → builtin:reviewer",
+      "ruleset:codemode → ruleset:subagents → ruleset:read-only-path → ruleset:read-only-shell → builtin:read-only → ruleset:typescript-node-test → ruleset:rust-test → ruleset:go-runtime-commands → ruleset:vitest → builtin:reviewer",
     ],
     [
       "builtin:tests-hidden",
-      "ruleset:shell → ruleset:git → ruleset:packageManagers → ruleset:deps-mutations-guard → ruleset:shell-guards → ruleset:path-guards → ruleset:go-runtime-commands → builtin:default → ruleset:test-write-protection → builtin:tests-hidden",
+      "ruleset:codemode → ruleset:subagents → ruleset:shell → ruleset:git → ruleset:packageManagers → ruleset:deps-mutations-guard → ruleset:shell-guards → ruleset:path-guards → ruleset:go-runtime-commands → builtin:default → ruleset:test-write-protection → builtin:tests-hidden",
     ],
   ])(
     "explains the exact non-default composition chain for %s through the registered command",
@@ -754,7 +754,7 @@ describe("permissions extension", () => {
     });
 
     expect(lastCallArgument({ mock: harness.ui.notify, index: 0 })).toContain(
-      "Composition: ruleset:shell → ruleset:git → ruleset:packageManagers → ruleset:deps-mutations-guard → ruleset:shell-guards → ruleset:path-guards → ruleset:go-runtime-commands → builtin:default → ruleset:git-commit → builtin:committer → ruleset:typescript-node-test → ruleset:rust-test → ruleset:go-runtime-commands → custom profile: parent → transform:deny-asks → custom profile: child",
+      "Composition: ruleset:codemode → ruleset:subagents → ruleset:shell → ruleset:git → ruleset:packageManagers → ruleset:deps-mutations-guard → ruleset:shell-guards → ruleset:path-guards → ruleset:go-runtime-commands → builtin:default → ruleset:git-commit → builtin:committer → ruleset:typescript-node-test → ruleset:rust-test → ruleset:go-runtime-commands → custom profile: parent → transform:deny-asks → custom profile: child",
     );
   });
 
@@ -857,18 +857,6 @@ describe("permissions extension", () => {
     } finally {
       fs.rmSync(directory, { recursive: true, force: true });
     }
-  });
-
-  it("leaves a completely unconfigured custom tool outside this extension's policy", async () => {
-    const harness = createExtensionHarness();
-    await harness.start();
-
-    await expect(
-      harness.callToolWithoutPrompt({
-        toolName: "tool-with-no-policy",
-        input: { action: "inspect" },
-      }),
-    ).resolves.toBeUndefined();
   });
 
   it("does not require directory globs for a profile to be selected", async () => {

@@ -300,7 +300,8 @@ function isSandboxOverride(value: string): value is SandboxOverride {
   return value === "inherit" || value === "enabled" || value === "disabled";
 }
 
-const PERMISSION_BLOCK_PREFIX = "[⛔️ by pi-guard] " as const;
+/** Marks every block reason pi-guard returns. */
+export const PERMISSION_BLOCK_PREFIX = "[⛔️ by pi-guard] " as const;
 /** Titles shown for Bash approval prompts. */
 export const explicitBashPermissionTitle = "Bash permission request" as const;
 export const parseErrorBashPermissionTitle =
@@ -1349,6 +1350,11 @@ The permissions gate remains loaded and will fail closed until the profile is co
       "Permit exact Vitest commands and its scoped Vite runtime directory.",
     "ruleset:docs-write": "Permit documentation writes.",
     "ruleset:test-write-protection": "Protect test files from writes.",
+    "ruleset:codemode":
+      "Allow the outer codemode call; each tool it runs is authorized separately.",
+    "ruleset:subagents":
+      "Allow subagent launch, messaging, and questions between agents.",
+    "ruleset:subagents-off": "Deny subagent tools to disable subagents.",
   };
 
   const transformDescriptions = {
@@ -2348,6 +2354,8 @@ The permissions gate remains loaded and will fail closed until the profile is co
         cwd,
         startupCwd,
         rawConfig: rawProfileConfig,
+        implicitAskDecision:
+          policyConfig.profiles[activeProfile].runtime.implicitAskDecision,
       });
       ctx.ui.notify(formatExplanation(explanation), "info");
     },
@@ -2507,6 +2515,15 @@ The permissions gate remains loaded and will fail closed until the profile is co
   });
 
   pi.on("tool_call", async (event, ctx) => {
+    // An own "__proto__" key survives Pi's argument validation. Copying it onto
+    // the executed args would change their prototype, so a tool could read a
+    // value the guard never evaluated. No legitimate tool input needs one.
+    if (hasOwnProtoKey({ value: event.input }))
+      return markPermissionBlock({
+        block: true,
+        reason:
+          'Tool input contains a "__proto__" key, which pi-guard cannot safely authorize.',
+      });
     // Never re-evaluate a rewritten command. Each stale result restarts the
     // complete boundary from the immutable tool input, including scope and
     // protected-search rewriting.
@@ -2627,8 +2644,12 @@ The permissions gate remains loaded and will fail closed until the profile is co
         }
 
         if (!isPathToolName(event.toolName)) {
-          const customRules = policy.tools[event.toolName];
-          if (!customRules) return undefined;
+          // A custom tool without rules is an implicit ASK, never a bypass:
+          // the profile's implicit-ASK resolution decides it like any other.
+          const customRules = customToolRules({
+            policy,
+            toolName: event.toolName,
+          });
           const evaluatedRevision = profileConfigRevision;
           const evaluatedProfile = activeProfile;
           return await gateCustomTool({
@@ -2731,6 +2752,7 @@ The permissions gate remains loaded and will fail closed until the profile is co
             });
           const approval = await confirmOrBlock({
             ctx,
+            kind: isReadToolName(event.toolName) ? "read" : "write",
             title: `${isReadToolName(event.toolName) ? "Read" : "Write"} path permission request`,
             message: `${event.toolName} wants to access:\n${absolutePath}\n\nMatched policy path:\n${matchPath}`,
             remember: pathRule,
@@ -3188,6 +3210,7 @@ export async function gateBash({
       .join("\n");
     const approval = await confirmOrBlock({
       ctx,
+      kind: "bash",
       title: parseErrorBashPermissionTitle,
       message: formatBashAskMessage({
         command,
@@ -3236,6 +3259,7 @@ export async function gateBash({
   ) {
     const approval = await confirmOrBlock({
       ctx,
+      kind: "bash",
       title: explicitBashPermissionTitle,
       message: formatBashAskMessage({
         command,
@@ -3296,6 +3320,7 @@ export async function gateBash({
   if (decisions.some(({ decision }) => decision === "ask")) {
     const approval = await confirmOrBlock({
       ctx,
+      kind: "bash",
       title: "Allow bash command?",
       message: formatBashAskMessage({
         command,
@@ -3409,6 +3434,7 @@ export function explainPermission({
   cwd = process.cwd(),
   startupCwd = cwd,
   rawConfig,
+  implicitAskDecision = "ask",
 }: {
   readonly policy: ProfilePolicy;
   readonly profileName: string;
@@ -3417,6 +3443,8 @@ export function explainPermission({
   readonly cwd?: string;
   readonly startupCwd?: string;
   readonly rawConfig?: RawProfileConfig;
+  /** The profile's resolved implicit-ASK decision ("ask" without transforms). */
+  readonly implicitAskDecision?: ImplicitAskDecision;
 }): PermissionExplanation {
   const compositionChain = resolveCompositionChain(profileName, rawConfig);
 
@@ -3478,36 +3506,28 @@ export function explainPermission({
     };
   }
 
-  const customRules = policy.tools[tool];
-  if (customRules) {
-    const ranked = rankCustomToolRules(input, customRules);
-    const winner = ranked[0];
-    const fallback: Decision = "ask";
-    return {
-      tool,
-      input,
-      profile: profileName,
-      compositionChain,
-      decision: winner?.item.decision ?? fallback,
-      winner: winner ? ruleExplanation(winner) : undefined,
-      matches: ranked.map(ruleExplanation),
-      protectedOverride: undefined,
-      notes: [],
-      fallback,
-    };
-  }
-
+  // Unmatched custom tools are implicit ASKs resolved by the profile, exactly
+  // as the tool_call gate resolves them.
+  const ranked = rankCustomToolRules(
+    input,
+    customToolRules({ policy, toolName: tool }),
+  );
+  const winner = ranked[0];
   return {
     tool,
     input,
     profile: profileName,
     compositionChain,
-    decision: "allow",
-    winner: undefined,
-    matches: [],
+    decision: winner?.item.decision ?? implicitAskDecision,
+    winner: winner ? ruleExplanation(winner) : undefined,
+    matches: ranked.map(ruleExplanation),
     protectedOverride: undefined,
-    notes: [`No policy configured for tool '${tool}'; call proceeds.`],
-    fallback: "allow",
+    notes: winner
+      ? []
+      : [
+          `No custom tool policy matched '${tool}'; the implicit ASK resolves as ${implicitAskDecision}.`,
+        ],
+    fallback: implicitAskDecision,
   };
 }
 
@@ -3890,7 +3910,7 @@ async function gateCustomTool({
 }: {
   readonly toolName: string;
   readonly input: unknown;
-  readonly rules: CustomToolRule[];
+  readonly rules: readonly CustomToolRule[];
   readonly implicitAskDecision?: ImplicitAskDecision;
   readonly ctx: ExtensionContext;
   readonly refreshAfterUiAwait?: RefreshAfterUiAwait;
@@ -3918,8 +3938,16 @@ async function gateCustomTool({
     if (!matchedRule && implicitAskDecision === "allow") return undefined;
     const approval = await confirmOrBlock({
       ctx,
+      kind: "custom",
       title: `Allow ${toolName}?`,
-      message: `${toolName} matched a custom tool policy requiring confirmation.`,
+      message: [
+        matchedRule
+          ? `${toolName} matched a custom tool policy requiring confirmation.`
+          : `${toolName} has no matching custom tool policy.`,
+        "",
+        "Request:",
+        formatCustomToolRequest({ input }),
+      ].join("\n"),
       refreshAfterUiAwait,
     });
     if (approval.refreshFailed) {
@@ -3943,9 +3971,80 @@ async function gateCustomTool({
   return undefined;
 }
 
+/**
+ * Read an exact custom tool key without consulting Object.prototype, so tool
+ * names such as `constructor` resolve to their own rules or to none.
+ */
+function customToolRules({
+  policy,
+  toolName,
+}: {
+  readonly policy: ProfilePolicy;
+  readonly toolName: string;
+}): readonly CustomToolRule[] {
+  return Object.hasOwn(policy.tools, toolName)
+    ? (policy.tools[toolName] ?? [])
+    : [];
+}
+
+const customToolRequestMaximumKeys = 50;
+const customToolRequestMaximumValueLength = 400;
+
+/**
+ * Characters JSON leaves raw that a terminal can act on or render
+ * misleadingly: DEL and C1 controls (including CSI), bidi marks and
+ * overrides, zero-width and invisible format characters, and line/paragraph
+ * separators.
+ */
+const unsafeTerminalCharacters =
+  /[\u007f-\u009f\u061c\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\u2028\u2029\ufeff]/g;
+
+function terminalSafeJson({ value }: { readonly value: unknown }): string {
+  return (JSON.stringify(value) ?? String(value)).replace(
+    unsafeTerminalCharacters,
+    (character) =>
+      `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`,
+  );
+}
+
+/**
+ * Every top-level argument on its own line, each value compact and truncated
+ * in place, so no argument can push another out of view.
+ */
+function formatCustomToolRequest({
+  input,
+}: {
+  readonly input: unknown;
+}): string {
+  if (typeof input !== "object" || input === null || Array.isArray(input))
+    return truncateCustomToolValue({
+      text: terminalSafeJson({ value: input }),
+    });
+  const entries = Object.entries(input);
+  const shown = entries.slice(0, customToolRequestMaximumKeys).map(
+    ([key, value]) =>
+      `${terminalSafeJson({ value: key })}: ${truncateCustomToolValue({
+        text: terminalSafeJson({ value }),
+      })}`,
+  );
+  const omitted = entries.length - shown.length;
+  return [
+    ...shown,
+    ...(omitted > 0
+      ? [`… ${omitted} more key${omitted === 1 ? "" : "s"} omitted`]
+      : []),
+  ].join("\n");
+}
+
+function truncateCustomToolValue({ text }: { readonly text: string }): string {
+  if (text.length <= customToolRequestMaximumValueLength) return text;
+  const omitted = text.length - customToolRequestMaximumValueLength;
+  return `${text.slice(0, customToolRequestMaximumValueLength)}… [${omitted} chars omitted]`;
+}
+
 export function decideCustomTool(
   input: unknown,
-  rules: CustomToolRule[],
+  rules: readonly CustomToolRule[],
 ): { decision: Decision; rule?: CustomToolRule } {
   const winner = chooseMostSpecific(
     rules,
@@ -3972,7 +4071,11 @@ function readInputPropertyPath(
 ): { found: boolean; value?: unknown } {
   let value = input;
   for (const part of propertyPath.split(".")) {
-    if (typeof value !== "object" || value === null || !(part in value))
+    if (
+      typeof value !== "object" ||
+      value === null ||
+      !Object.hasOwn(value, part)
+    )
       return { found: false };
     value = Reflect.get(value, part);
   }
@@ -4052,9 +4155,39 @@ function restoreToolInput({
   readonly snapshot: ToolCallEvent["input"];
 }): void {
   for (const key of Object.keys(target)) {
-    if (!Object.hasOwn(snapshot, key)) Reflect.deleteProperty(target, key);
+    if (!Object.hasOwn(snapshot, key) && !Reflect.deleteProperty(target, key))
+      throw new Error(
+        `Cannot reset tool input property '${key}' for re-evaluation`,
+      );
   }
-  Object.assign(target, structuredClone(snapshot));
+  // Define rather than assign: assignment would run setters such as __proto__.
+  for (const [key, value] of Object.entries(structuredClone(snapshot)))
+    Object.defineProperty(target, key, {
+      value,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+}
+
+/**
+ * Whether any object in the input has an own "__proto__" property. Iterative,
+ * so even pathologically deep input yields a marked block, not a RangeError.
+ */
+function hasOwnProtoKey({ value }: { readonly value: unknown }): boolean {
+  const seen = new Set<object>();
+  const pending: unknown[] = [value];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (typeof current !== "object" || current === null || seen.has(current))
+      continue;
+    seen.add(current);
+    if (Object.hasOwn(current, "__proto__")) return true;
+    // Push one at a time: spreading a very wide array can overflow the stack.
+    const children: unknown[] = Object.values(current);
+    for (const child of children) pending.push(child);
+  }
+  return false;
 }
 
 function isPathToolName(toolName: string): toolName is PathToolName {
@@ -4091,14 +4224,43 @@ async function confirmOrBlock(
   });
 }
 
+/** Selects the prompt's heading and remember wording; never inferred from text. */
+type PermissionRequestKind = "bash" | "read" | "write" | "custom";
+
+const permissionRequestHeadings = {
+  bash: "⚙️ Bash command permission request",
+  read: "📖 Read path permission request",
+  write: "✏️ Write path permission request",
+  custom: "🧩 Custom tool permission request",
+} as const satisfies Record<PermissionRequestKind, string>;
+
+/** Only these kinds can save rules from the prompt. */
+const rememberDescriptions = {
+  bash: "Save the required Bash and ordinary path rule(s) for this request.",
+  read: "Save a read-path rule for this request.",
+  write: "Save a write-path rule for this request.",
+} as const satisfies Record<Exclude<PermissionRequestKind, "custom">, string>;
+
+function rememberDescription({
+  kind,
+}: {
+  readonly kind: PermissionRequestKind;
+}): string {
+  if (kind === "custom")
+    throw new Error("Custom-tool permission requests cannot save rules");
+  return rememberDescriptions[kind];
+}
+
 async function showPermissionInteraction({
   ctx,
+  kind,
   title,
   message: _message,
   remember,
   refreshAfterUiAwait,
 }: {
   readonly ctx: ExtensionContext;
+  readonly kind: PermissionRequestKind;
   readonly title: string;
   readonly message: string;
   readonly remember?: RememberDecision;
@@ -4122,8 +4284,6 @@ async function showPermissionInteraction({
   setWorkingVisible?.(false);
   try {
     const [noChoice, yesChoice, updateProfileChoice] = askPermissionChoices;
-    const isBashRequest = /bash/i.test(title);
-    const isReadRequest = /read|grep|find|ls/i.test(title);
     const askChoices: ProfilePickerItem[] = [
       {
         name: noChoice,
@@ -4141,11 +4301,7 @@ async function showPermissionInteraction({
         ? [
             {
               name: updateProfileChoice,
-              description: isBashRequest
-                ? "Save the required Bash and ordinary path rule(s) for this request."
-                : isReadRequest
-                  ? "Save a read-path rule for this request."
-                  : "Save a write-path rule for this request.",
+              description: rememberDescription({ kind }),
               emoji: "📝",
               color: "magenta",
             } satisfies ProfilePickerItem,
@@ -4171,16 +4327,8 @@ async function showPermissionInteraction({
           render: (width) =>
             [
               theme.fg(
-                isBashRequest ? "accent" : "warning",
-                theme.bold(
-                  `${
-                    isBashRequest
-                      ? "⚙️ Bash command"
-                      : isReadRequest
-                        ? "📖 Read path"
-                        : "✏️ Write path"
-                  } permission request`,
-                ),
+                kind === "bash" ? "accent" : "warning",
+                theme.bold(permissionRequestHeadings[kind]),
               ),
               ...modalTitle.split("\n").map((line) => theme.fg("dim", line)),
               ...picker.render(width),
@@ -4212,6 +4360,7 @@ async function showPermissionInteraction({
       if (result.back)
         return await showPermissionInteraction({
           ctx,
+          kind,
           title,
           message: _message,
           remember,

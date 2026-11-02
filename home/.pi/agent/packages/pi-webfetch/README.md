@@ -9,7 +9,7 @@ A tiny Pi package that adds a single `webfetch` tool.
 - waits for the page to render with JavaScript enabled
 - returns sanitized, content-focused HTML rather than the full noisy DOM
 - truncates large output and saves the full HTML to a temp file
-- asks once per origin per session before first fetch
+- relies on Pi's configured guard policy for any approval; it does not prompt or remember origin approvals itself
 
 ## What it intentionally does not do
 
@@ -44,6 +44,8 @@ Tool parameters:
 - `settleMs` - extra client-side settle time after navigation, capped at 5000
 
 ## Notes
+
+`webfetch` does not maintain per-origin approvals or show its own confirmation prompt. Configure Pi Guard if this tool needs approval decisions; without Pi Guard, webfetch fetches valid URLs without prompting.
 
 If Chromium is not installed yet, the tool returns a message telling you to run:
 
