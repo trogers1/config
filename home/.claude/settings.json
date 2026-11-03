@@ -1,34 +1,8 @@
 {
-  "theme": "dark",
   "permissions": {
-    "defaultMode": "acceptEdits",
     "allow": [
       "Bash(node --version)",
       "Bash(npm --version)"
-    ],
-    "ask": [
-      "Bash(git add *)",
-      "Bash(git commit *)",
-      "Bash(git push *)",
-      "Bash(git reset *)",
-      "Bash(git restore *)",
-      "Bash(git clean *)",
-      "Bash(git checkout *)",
-      "Bash(git switch *)",
-      "Bash(git rebase *)",
-      "Bash(git merge *)",
-      "Bash(npm install *)",
-      "Bash(npm ci *)",
-      "Bash(npm update *)",
-      "Bash(npm uninstall *)",
-      "Bash(npx *)",
-      "Bash(docker *)",
-      "Bash(glab *)",
-      "Bash(gh *)",
-      "Bash(jira *)",
-      "Bash(jiratui *)",
-      "Bash(node -e *)",
-      "Bash(rm *)"
     ],
     "deny": [
       "Bash(sudo *)",
@@ -58,7 +32,32 @@
       "Bash(*scripts/infra/sync-secrets*)",
       "Read(~/.ssh/**)",
       "Read(~/.aws/**)"
-    ]
+    ],
+    "ask": [
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Bash(git reset *)",
+      "Bash(git restore *)",
+      "Bash(git clean *)",
+      "Bash(git checkout *)",
+      "Bash(git switch *)",
+      "Bash(git rebase *)",
+      "Bash(git merge *)",
+      "Bash(npm install *)",
+      "Bash(npm ci *)",
+      "Bash(npm update *)",
+      "Bash(npm uninstall *)",
+      "Bash(npx *)",
+      "Bash(docker *)",
+      "Bash(glab *)",
+      "Bash(gh *)",
+      "Bash(jira *)",
+      "Bash(jiratui *)",
+      "Bash(node -e *)",
+      "Bash(rm *)"
+    ],
+    "defaultMode": "acceptEdits"
   },
   "hooks": {
     "SessionStart": [
@@ -104,5 +103,7 @@
   },
   "sandbox": {
     "enabled": true
-  }
+  },
+  "theme": "dark",
+  "agentPushNotifEnabled": true
 }
