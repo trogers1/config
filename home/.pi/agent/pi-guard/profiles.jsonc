@@ -28,6 +28,108 @@
     "infra-mutation-deny": {
       "tools": {
         "bash": [
+          // Guard whole cloud CLIs, not mutation-name denylists: read APIs
+          // can also disclose secrets.
+          {
+            "pattern": "az",
+            "decision": "ask",
+            "guidance": "Cloud provider CLI requires explicit approval. Review the account or project, region, operation, and arguments before running; read operations can also disclose secrets.",
+          },
+          {
+            "pattern": "az *",
+            "decision": "ask",
+            "guidance": "Cloud provider CLI requires explicit approval. Review the account or project, region, operation, and arguments before running; read operations can also disclose secrets.",
+          },
+          {
+            "pattern": "*/az",
+            "decision": "ask",
+            "guidance": "Cloud provider CLI requires explicit approval. Review the account or project, region, operation, and arguments before running; read operations can also disclose secrets.",
+          },
+          {
+            "pattern": "*/az *",
+            "decision": "ask",
+            "guidance": "Cloud provider CLI requires explicit approval. Review the account or project, region, operation, and arguments before running; read operations can also disclose secrets.",
+          },
+          {
+            "pattern": "gcloud",
+            "decision": "ask",
+            "guidance": "Cloud provider CLI requires explicit approval. Review the account or project, region, operation, and arguments before running; read operations can also disclose secrets.",
+          },
+          {
+            "pattern": "gcloud *",
+            "decision": "ask",
+            "guidance": "Cloud provider CLI requires explicit approval. Review the account or project, region, operation, and arguments before running; read operations can also disclose secrets.",
+          },
+          {
+            "pattern": "*/gcloud",
+            "decision": "ask",
+            "guidance": "Cloud provider CLI requires explicit approval. Review the account or project, region, operation, and arguments before running; read operations can also disclose secrets.",
+          },
+          {
+            "pattern": "*/gcloud *",
+            "decision": "ask",
+            "guidance": "Cloud provider CLI requires explicit approval. Review the account or project, region, operation, and arguments before running; read operations can also disclose secrets.",
+          },
+          {
+            "pattern": "gsutil",
+            "decision": "ask",
+            "guidance": "Cloud provider CLI requires explicit approval. Review the account or project, region, operation, and arguments before running; read operations can also disclose secrets.",
+          },
+          {
+            "pattern": "gsutil *",
+            "decision": "ask",
+            "guidance": "Cloud provider CLI requires explicit approval. Review the account or project, region, operation, and arguments before running; read operations can also disclose secrets.",
+          },
+          {
+            "pattern": "*/gsutil",
+            "decision": "ask",
+            "guidance": "Cloud provider CLI requires explicit approval. Review the account or project, region, operation, and arguments before running; read operations can also disclose secrets.",
+          },
+          {
+            "pattern": "*/gsutil *",
+            "decision": "ask",
+            "guidance": "Cloud provider CLI requires explicit approval. Review the account or project, region, operation, and arguments before running; read operations can also disclose secrets.",
+          },
+          {
+            "pattern": "bq",
+            "decision": "ask",
+            "guidance": "Cloud provider CLI requires explicit approval. Review the account or project, region, operation, and arguments before running; read operations can also disclose secrets.",
+          },
+          {
+            "pattern": "bq *",
+            "decision": "ask",
+            "guidance": "Cloud provider CLI requires explicit approval. Review the account or project, region, operation, and arguments before running; read operations can also disclose secrets.",
+          },
+          {
+            "pattern": "*/bq",
+            "decision": "ask",
+            "guidance": "Cloud provider CLI requires explicit approval. Review the account or project, region, operation, and arguments before running; read operations can also disclose secrets.",
+          },
+          {
+            "pattern": "*/bq *",
+            "decision": "ask",
+            "guidance": "Cloud provider CLI requires explicit approval. Review the account or project, region, operation, and arguments before running; read operations can also disclose secrets.",
+          },
+          {
+            "pattern": "aws",
+            "decision": "ask",
+            "guidance": "AWS CLI requires explicit approval. Review the account, region, operation, and arguments before running; read operations can also disclose secrets.",
+          },
+          {
+            "pattern": "aws *",
+            "decision": "ask",
+            "guidance": "AWS CLI requires explicit approval. Review the account, region, operation, and arguments before running; read operations can also disclose secrets.",
+          },
+          {
+            "pattern": "*/aws",
+            "decision": "ask",
+            "guidance": "AWS CLI requires explicit approval. Review the account, region, operation, and arguments before running; read operations can also disclose secrets.",
+          },
+          {
+            "pattern": "*/aws *",
+            "decision": "ask",
+            "guidance": "AWS CLI requires explicit approval. Review the account, region, operation, and arguments before running; read operations can also disclose secrets.",
+          },
           {
             "pattern": "terraform apply*",
             "decision": "deny",
@@ -822,6 +924,10 @@
             "pattern": "git check-ref-format --branch *",
             "decision": "allow"
           },
+          {
+            "pattern": "sidecar *",
+            "decision": "allow"
+          },
         ],
       },
       "readPaths": [
@@ -1044,6 +1150,34 @@
         "network": "allow",
       },
       "color": "yellow",
+      "tools": {
+        "bash": [
+          {
+            "pattern": "glab api --hostname gitlab.economicmodeling.com 'projects/ltc%2Fask-lightcast-ai%2Fmcp/jobs/*'",
+            "decision": "allow"
+          },
+          {
+            "pattern": "glab api --hostname gitlab.economicmodeling.com 'projects/3557/merge_requests/*' --jq *",
+            "decision": "allow"
+          },
+          {
+            "pattern": "glab api --hostname gitlab.economicmodeling.com 'projects/3557/merge_requests/*/pipelines?**' --jq *",
+            "decision": "allow"
+          },
+          {
+            "pattern": "glab api --hostname gitlab.economicmodeling.com 'projects/3557/merge_requests/*'",
+            "decision": "allow"
+          },
+          {
+            "pattern": "glab api --hostname gitlab.economicmodeling.com 'projects/3557/merge_requests/*/pipelines?*'",
+            "decision": "allow"
+          },
+          {
+            "pattern": "glab api --hostname gitlab.economicmodeling.com 'projects/3557/jobs/*/trace' *",
+            "decision": "allow"
+          }
+        ]
+      },
     },
     "sidecar-comments-committer": {
       "description": "sidecar-comments with Git commit permissions",
