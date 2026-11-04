@@ -1,6 +1,6 @@
 ---
 name: jira-ticket-management
-description: Manage live Jira tickets with the jira-ticket CLI. Use when reading ticket details, creating tickets, changing existing tickets, setting status or estimates, adding/removing active sprint assignment, or adding relationships to existing tickets. Discover supported operations and draft formats through CLI help; clarify ambiguous intent and obtain approval before mutations.
+description: Manage live Jira tickets with the jira-ticket CLI. Use when searching tickets with JQL, reading ticket details, creating tickets, changing existing tickets, setting status or estimates, adding/removing active sprint assignment, or adding relationships to existing tickets. Discover supported operations and draft formats through CLI help; clarify ambiguous intent and obtain approval before mutations.
 disable-model-invocation: true
 ---
 
@@ -21,6 +21,7 @@ Run `jira-ticket --help` first to discover the installed version's capabilities.
 ```sh
 jira-ticket --help
 jira-ticket get --help
+jira-ticket search --help
 jira-ticket create --help
 jira-ticket update --help
 jira-ticket sprints --help
@@ -35,6 +36,7 @@ If the command is missing, consult `README.md` and ask before installing depende
 
 | User intent | CLI workflow |
 | --- | --- |
+| Search tickets | `search --jql 'QUERY' [--limit 1–100]`; always restricted to configured default project, no override. Follow `next_page_token` explicitly with unchanged query/project/limit; consult help |
 | Read a ticket | `get KEY_OR_NUMERIC_ID` |
 | Discover live choices | `types`, `statuses`, `link-types`, `sprints TARGET [--board ID]` (consult their help) |
 | Add/remove active sprint assignment | Discover `sprints TARGET`; save exact approved `sprint: {"action":"add" or "remove","id":"VERIFIED_ACTIVE_SPRINT_ID"}` and optional numeric-string `board` in a partial draft; preview, approve, update |

@@ -48,7 +48,7 @@ If the command is missing, install it and follow uv's shell instructions. If con
 
 ### Agent guard policy
 
-Installation does not change Pi guard profiles. Profiles must permit executing the installed `jira-ticket` command and reading the saved draft; sandboxed live operations also need network access and process access to the configured jiratui settings. Treat help, version, example, doctor, types, statuses, link-types, sprints, get, preflight and update --dry-run as read-only operations. Keep mutation approval for `create` and `update` rather than broadly authorizing Python or arbitrary inline API scripts. A guard denial is a policy issue, not a reason to choose another interpreter or bypass the CLI.
+Installation does not change Pi guard profiles. Profiles must permit executing the installed `jira-ticket` command and reading the saved draft; sandboxed live operations also need network access and process access to the configured jiratui settings. Treat help, version, example, doctor, types, statuses, link-types, sprints, search, get, preflight and update --dry-run as read-only operations. Keep mutation approval for `create` and `update` rather than broadly authorizing Python or arbitrary inline API scripts. A guard denial is a policy issue, not a reason to choose another interpreter or bypass the CLI.
 
 ## Configuration and safety
 
@@ -57,6 +57,33 @@ Installation does not change Pi guard profiles. Profiles must permit executing t
 Only Jira Cloud Basic auth and verified HTTPS are supported. Configured CA bundles are respected; disabled TLS verification, client certificates, credential-bearing URLs and bearer auth are rejected. Credentials are read only inside the process, **never accepted in CLI arguments or draft JSON**. Error responses, exceptions and authentication settings are not echoed. Preflight output contains approved content and account IDs; treat it as private.
 
 **Only explicit `create` or `update` without `--dry-run` authorizes writes.** GET, preflight, discovery, dry-runs and doctor are read-only. Review and approve the complete final draft first. There are no automatic retries of any mutation (including issue/estimate PUTs and create/transition/link POSTs), no deletion/cleanup and no test-ticket mode. Never create a ticket to test the workflow.
+
+## Search tickets with JQL
+
+```sh
+jira-ticket search --help
+jira-ticket search --jql 'statusCategory != Done ORDER BY updated DESC'
+jira-ticket search --jql 'summary ~ "migration"' --limit 25
+# Continue the SAME query with the returned opaque token:
+jira-ticket search --jql 'summary ~ "migration"' --limit 25 --next-page-token TOKEN
+```
+
+Search is read-only and **always scoped to the configured default project**.
+There is no project override or cross-project opt-out. The CLI combines
+`project = "CONFIGURED_PROJECT" AND (your predicate)`, preserving a top-level
+`ORDER BY` clause. A conflicting project clause in your JQL therefore returns
+no matches; it does not replace the configured scope. Missing/invalid configured
+projects fail rather than searching globally. An ordering-only JQL is supported.
+
+One page is fetched through Jira Cloud's enhanced `GET /rest/api/3/search/jql`
+endpoint. `--limit` is 1–100 (default 50). Output has `outcome: search`,
+`read_only: true`, `project`, and `issues` with ID, canonical key/browser link,
+summary, status and issue type (`issuetype`). Use `get KEY` for full details.
+`is_last: false` means more results exist: pass `next_page_token` as
+`--next-page-token` with unchanged JQL, configured project and limit.
+No automatic pagination, total count, snapshot consistency or immediate
+read-after-write visibility is promised. Treat queries, tokens and results as
+private. Server error bodies are not printed.
 
 ## Read and partially update an existing ticket (0.4.0)
 

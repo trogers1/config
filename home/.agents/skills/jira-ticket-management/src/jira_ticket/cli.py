@@ -8,6 +8,7 @@ from . import __version__
 from .core import Creator, Failure, client_for, configuration, issue_reference, points_value, text_adf, validate_adf, validate_links
 from .updater import Updater
 from . import sprints
+from .search import search
 
 
 REQUIRED = {'summary', 'description', 'type', 'status', 'story_points'}
@@ -137,6 +138,13 @@ def parser_for_cli():
                         description='Print a JSON example, not an approved ticket. Create requires summary, description (literal string or ADF), type, status, story_points (JSON number or unset). With --update: partial draft, create keys plus sprint {action: add|remove, id: VERIFIED_ACTIVE_SPRINT_ID}, at least one key; discover with sprints TARGET [--board ID]. Sprint approval binds that exact active ID; additional active/future displacement is rejected, closed history preserved. Board may be sprint context without points. Otherwise: omitted fields unchanged, no identity defaults or clearing; unset points and [] links are no-ops. Optional string selectors: project, assignee, reporter, parent, board (only with numeric Agile estimate). Optional links array (or []): each object has exactly type (verified link type ID/unique name), direction (inward/outward from target ticket perspective), issue (existing Jira key/ID). Discover labels with jira-ticket link-types and approve natural-language relationships; no synthetic/batch targets. Never include credentials.',
                         epilog='Example: jira-ticket draft-example > draft.json; replace example values and obtain approval.')
     commands.choices['draft-example'].add_argument('--update', action='store_true', help='Partial update example: omitted fields unchanged; no clearing or defaults')
+    search_command = commands.add_parser('search', help='Read-only raw JQL search with explicit token pagination',
+        description='Run supplied JQL restricted to the configured default project, with no override or opt-out. Returns compact issues and a continuation token; no writes.',
+        epilog="Example: jira-ticket search --jql 'project = RI ORDER BY updated DESC' --limit 50. Continue with the same JQL and --next-page-token TOKEN. Use get KEY for full details.")
+    search_command.add_argument('--jql', required=True, help='Nonempty Jira Query Language query; quote it for your shell')
+    search_command.add_argument('--limit', type=int, default=50, help='Maximum issues per page, 1–100 (default: 50)')
+    search_command.add_argument('--next-page-token', help='Opaque continuation token from the preceding page of the same query')
+    search_command.add_argument('--config', type=Path, help='Select jiratui config; never pass credentials')
     sprint_command = commands.add_parser('sprints', help='Read existing issue project Scrum boards and active sprints; no writes',
         description='Discover exact active sprint IDs for update-only sprint: {action: add|remove, id: VERIFIED_ACTIVE_SPRINT_ID}. Select a board explicitly if ambiguous; approval binds the exact sprint ID, never a rollover.',
         epilog='Discover: jira-ticket sprints KEY [--board NUMERIC_ID]. Save sprint and optional board in a partial draft; update KEY --draft FILE --dry-run, approve, then execute the unchanged draft.')
@@ -190,6 +198,9 @@ def project_for(config, override=None):
 def run(args):
     if args.command == 'draft-example':
         return {'summary': 'Example only: approved replacement summary'} if args.update else example_draft()
+    if args.command == 'search':
+        if not args.jql.strip() or not 1 <= args.limit <= 100 or (args.next_page_token is not None and not args.next_page_token.strip()):
+            raise Failure('Search requires nonempty JQL, a limit from 1 to 100, and a nonempty continuation token when supplied.')
     if args.command in ('get', 'update', 'sprints') and not issue_reference(args.issue):
         raise DraftFailure('invalid_reference', 'Target must be an existing Jira key or numeric ID.',
                            remediation='Use a verified existing Jira key (e.g. PROJECT-123) or numeric issue ID, not a URL or draft placeholder. No configuration or requests were attempted.')
@@ -208,6 +219,8 @@ def run(args):
         raise Failure('Effective jiratui configuration could not be loaded. Configure jiratui locally, select --config PATH if needed, and run jira-ticket doctor. Never share credentials or raw configuration errors.') from None
     with client_for(config) as client:
         creator = Creator(client, config.jira_base_url or config.jira_api_base_url)
+        if args.command == 'search':
+            return search(api=creator, jql=args.jql, project=project_for(config), limit=args.limit, next_page_token=args.next_page_token)
         if args.command in ('get', 'update', 'sprints'):
             updater = Updater(client, config.jira_base_url or config.jira_api_base_url)
             if args.command == 'sprints':
@@ -281,4 +294,4 @@ def main(argv=None):
         result = {'outcome': 'doctor_failed' if args.command == 'doctor' else 'preflight_failed',
                   'message': 'Configuration, input or read-only request failed. Run jira-ticket doctor and check effective jiratui configuration locally; never expose credentials or raw server errors.'}
     print(json.dumps(result, ensure_ascii=False, indent=2))
-    return 0 if args.command == 'draft-example' or result['outcome'] in ('doctor_ok', 'types', 'statuses', 'link_types', 'sprints', 'dry_run', 'created', 'issue', 'updated', 'unchanged') else 1
+    return 0 if args.command == 'draft-example' or result['outcome'] in ('doctor_ok', 'types', 'statuses', 'link_types', 'sprints', 'search', 'dry_run', 'created', 'issue', 'updated', 'unchanged') else 1
