@@ -1,6 +1,6 @@
 # jira-ticket
 
-The `jira-ticket-management` skill uses this CLI to read, create and partially update live Jira tickets. Start with `jira-ticket --help` and the relevant subcommand's `--help`; this README is the detailed reference for installation, configuration, draft fields and recovery. In Pi, reload resources after renaming the skill and invoke it explicitly with `/skill:jira-ticket-management` if needed.
+The `jira-ticket-management` skill uses this CLI to search, read, create and partially update live Jira tickets, and to read or add ticket comments as the authenticated user. Start with `jira-ticket --help` and the relevant subcommand's `--help`; this README is the detailed reference for installation, configuration, draft fields and recovery. In Pi, reload resources after renaming the skill and invoke it explicitly with `/skill:jira-ticket-management` if needed.
 
 Portable, approval-driven Jira Cloud CLI. The package owns its Python dependencies, including pinned `jiratui==1.16.0`; it does not borrow another application's interpreter. It uses jiratui's public `ApplicationConfiguration` and preserves effective config discovery and YAML/environment precedence.
 
@@ -48,7 +48,7 @@ If the command is missing, install it and follow uv's shell instructions. If con
 
 ### Agent guard policy
 
-Installation does not change Pi guard profiles. Profiles must permit executing the installed `jira-ticket` command and reading the saved draft; sandboxed live operations also need network access and process access to the configured jiratui settings. Treat help, version, example, doctor, types, statuses, link-types, sprints, search, get, preflight and update --dry-run as read-only operations. Keep mutation approval for `create` and `update` rather than broadly authorizing Python or arbitrary inline API scripts. A guard denial is a policy issue, not a reason to choose another interpreter or bypass the CLI.
+Installation does not change Pi guard profiles. Profiles must permit executing the installed `jira-ticket` command and reading the saved draft; sandboxed live operations also need network access and process access to the configured jiratui settings. Treat help, version, example, doctor, types, statuses, link-types, sprints, search, get, preflight, update --dry-run and comment --dry-run as read-only operations. Keep mutation approval for `create`, `update` and `comment` rather than broadly authorizing Python or arbitrary inline API scripts. A guard denial is a policy issue, not a reason to choose another interpreter or bypass the CLI.
 
 ## Configuration and safety
 
@@ -56,7 +56,7 @@ Installation does not change Pi guard profiles. Profiles must permit executing t
 
 Only Jira Cloud Basic auth and verified HTTPS are supported. Configured CA bundles are respected; disabled TLS verification, client certificates, credential-bearing URLs and bearer auth are rejected. Credentials are read only inside the process, **never accepted in CLI arguments or draft JSON**. Error responses, exceptions and authentication settings are not echoed. Preflight output contains approved content and account IDs; treat it as private.
 
-**Only explicit `create` or `update` without `--dry-run` authorizes writes.** GET, preflight, discovery, dry-runs and doctor are read-only. Review and approve the complete final draft first. There are no automatic retries of any mutation (including issue/estimate PUTs and create/transition/link POSTs), no deletion/cleanup and no test-ticket mode. Never create a ticket to test the workflow.
+**Only explicit `create`, `update` or `comment` without `--dry-run` authorizes writes.** GET, preflight, discovery, dry-runs and doctor are read-only. Review and approve the complete final draft first. There are no automatic retries of any mutation (including issue/estimate PUTs and create/transition/link POSTs), no deletion/cleanup and no test-ticket mode. Never create a ticket to test the workflow.
 
 ## Search tickets with JQL
 
@@ -84,6 +84,21 @@ summary, status and issue type (`issuetype`). Use `get KEY` for full details.
 No automatic pagination, total count, snapshot consistency or immediate
 read-after-write visibility is promised. Treat queries, tokens and results as
 private. Server error bodies are not printed.
+
+## Read and add comments
+
+```sh
+jira-ticket get RI-123 --comments                              # read-only; comments are omitted without the flag
+jira-ticket comment --help                                     # offline
+jira-ticket comment RI-123 --text-file comment.txt --dry-run   # read-only plan
+# Only after approval of the exact comment body:
+jira-ticket comment RI-123 --text-file comment.txt
+jira-ticket comment RI-123 --adf-file comment.json             # documented ADF subset instead of literal text
+```
+
+`get --comments` adds `comments`: every comment, oldest first, fully paginated, each with numeric `id`, `author` (`accountId`, `displayName`, or null for an anonymous comment), `created`, `updated`, `visibility` (`type`/`value` or null) and the full ADF `body`. Without the flag no comment endpoint is called. Pagination fails closed on a changed total or repeated ID, but no snapshot consistency is promised: an add and a delete between pages can go undetected.
+
+`comment` posts one comment **as the authenticated jiratui account**; there is no author override. `--text-file` is literal UTF-8 text without a byte order mark (each line a paragraph, markup kept visible; one trailing newline is a line terminator and is dropped, unlike a draft description string). `--adf-file` accepts the same ADF subset as descriptions, with duplicate JSON keys rejected. Bodies are validated before configuration is read. `--dry-run` shows the canonical target, its summary, the author from `GET /myself` and the exact payload, after verifying the account has `ADD_COMMENTS` permission on the ticket. Execution sends one `POST issue/ID/comment` by immutable ID, then reads the comment back and verifies its ID, author and body. Output is `outcome: commented` with a `focusedCommentId` link. Any failure once the POST starts is `partial_failure` with `failed_step` (`comment_create` or `comment_verification`), `uncertain_operation: comment_create`, `remaining_action`, and `comment_id`/`comment_link` when Jira returned an ID. The comment may exist, so check the ticket rather than retrying. If Jira normalizes a body differently from what was sent, a successful post is reported this way. Editing and deleting comments are not supported.
 
 ## Read and partially update an existing ticket (0.4.0)
 
@@ -250,7 +265,7 @@ Status belongs to the selected project's type, but typically cannot be set in th
 
 ## Outcomes and reporting
 
-All operational results are JSON. Exit 0 means `doctor_ok`, `types`, `statuses`, `link_types`, `sprints`, `issue`, `dry_run`, `created`, `updated` or `unchanged`; failures exit 1. Help/version/example exit 0; argparse usage errors exit 2.
+All operational results are JSON. Exit 0 means `doctor_ok`, `types`, `statuses`, `link_types`, `sprints`, `search`, `issue`, `dry_run`, `created`, `updated`, `unchanged` or `commented`; failures exit 1. Help/version/example exit 0; argparse usage errors exit 2.
 
 - `doctor_ok`: local configuration passed; `connectivity` is `not_checked` or explicitly `verified`. No settings or account ID printed.
 - `doctor_failed`: safe diagnostic only; no mutations.
@@ -258,11 +273,13 @@ All operational results are JSON. Exit 0 means `doctor_ok`, `types`, `statuses`,
 - `link_types`: live verified `link_types` array with ID/name/inward/outward labels; read-only.
 - `sprints`: canonical existing issue/project and eligible Scrum boards with all active sprint IDs/names/states; read-only.
 - `dry_run`: no writes; `payload`, `requested_status` and any `post_create_estimate` / `post_create_links` plans.
-- `issue`: read-only existing-ticket details with canonical ID/key/link.
+- `issue`: read-only existing-ticket details with canonical ID/key/link; `comments` only with `--comments`.
+- `search`: read-only page of compact issues with `is_last` and `next_page_token`.
+- `commented`: one comment posted as the authenticated account and verified by readback; `comment` has its ID, author, body and `focusedCommentId` link.
 - `updated` / `unchanged`: existing-ticket supplied changes verified, with writes / without writes.
 - `preflight_failed`: no mutation attempted. Resolve with the user.
 - `created`: requested fields/status verified; key and full HTTPS browser `link`.
-- `partial_failure`: issue exists; key, full link, `failed_step`, safe message and `remaining_action`. Always report its clickable link and exact manual recovery. Do not create again or repeat uncertain writes.
+- `partial_failure`: issue exists (for `comment`, the comment may or may not exist); key, full link, `failed_step`, safe message and `remaining_action`. Always report its clickable link and exact manual recovery. Do not create again or repeat uncertain writes.
 - `unknown`: create outcome has no established key/link; explicitly state neither is available. Reconcile with Jira/user before any further mutation; never fabricate a link or retry POST.
 
 Render known URLs as clickable Markdown, e.g. `[RI-123](https://your-site.atlassian.net/browse/RI-123)`, for success **and every partial failure**. Verification covers project, type, summary, full description, assignee, reporter, supplied parent/estimate, final status and all requested issue relationships. Omitted defaults are not claimed empty.
@@ -276,4 +293,4 @@ uv run --locked python -m unittest discover -s tests -v
 uv build
 ```
 
-The unittest suite uses `httpx.MockTransport` and fake effective config; no actual config or Jira is read. It covers the retained creation workflow, exact estimator and pagination safety, identities, required fields/parents, transition/verification/unknown outcomes, public CLI validation, help/version/example discovery, doctor redaction, read-only aliases and no mutation retries. Link tests cover catalog/schema validation, existing cross-project targets, canonical duplicates, both Jira orientations, sequential and automation-supplied relationships, fail-closed readback, uncertain writes and per-link partial recovery. Existing-ticket tests additionally cover public get/update key/ID/canonical context, offline discovery, partial local validation before config, omitted/default preservation, no-op unset, literal/ADF replacement, explicit identities, exact inline/Agile estimates, editmeta object shape, required existing fields, parent/project/type edit restrictions, transition preflight before mutation, canonical IDs across key moves, read-only full plans, link additions/dedup/self-link safety, supplied-only verification, timeout/HTTP partial outcomes with progress and no retries/later writes, revalidation and no issue POST. Sprint tests cover read-only discovery/pagination, exact-ID add/remove/no-ops, board ambiguity, malformed schema/memberships, closed history, extra-assignment rejection, rollover/drift, shared estimates and sequential operations, local create rejection, redaction and uncertain POST/readback recovery without retries. Never use live tickets to verify packaging.
+The unittest suite uses `httpx.MockTransport` and fake effective config; no actual config or Jira is read. It covers the retained creation workflow, exact estimator and pagination safety, identities, required fields/parents, transition/verification/unknown outcomes, public CLI validation, help/version/example discovery, doctor redaction, read-only aliases and no mutation retries. Link tests cover catalog/schema validation, existing cross-project targets, canonical duplicates, both Jira orientations, sequential and automation-supplied relationships, fail-closed readback, uncertain writes and per-link partial recovery. Existing-ticket tests additionally cover public get/update key/ID/canonical context, offline discovery, partial local validation before config, omitted/default preservation, no-op unset, literal/ADF replacement, explicit identities, exact inline/Agile estimates, editmeta object shape, required existing fields, parent/project/type edit restrictions, transition preflight before mutation, canonical IDs across key moves, read-only full plans, link additions/dedup/self-link safety, supplied-only verification, timeout/HTTP partial outcomes with progress and no retries/later writes, revalidation and no issue POST. Sprint tests cover read-only discovery/pagination, exact-ID add/remove/no-ops, board ambiguity, malformed schema/memberships, closed history, extra-assignment rejection, rollover/drift, shared estimates and sequential operations, local create rejection, redaction and uncertain POST/readback recovery without retries. Comment tests cover opt-in reads, strict pagination, anonymous authors, malformed comments, permission and identity prechecks, literal/ADF bodies, BOM and duplicate-key rejection before config, single unretried POSTs and readback/partial-failure reporting. Never use live tickets to verify packaging.

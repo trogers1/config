@@ -1,14 +1,15 @@
-"""Approval-driven Jira Cloud tickets: read, create, or explicitly partially update."""
+"""Approval-driven Jira Cloud tickets: search, read (optionally with comments), create, partially update, or comment as the authenticated user."""
 import argparse
 import json
 from pathlib import Path
 import sys
 
 from . import __version__
-from .core import Creator, Failure, client_for, configuration, issue_reference, points_value, text_adf, validate_adf, validate_links
+from .core import Creator, DuplicateKeys, Failure, NonFiniteNumber, authenticated_account, client_for, literal_text, strict_json, configuration, issue_reference, points_value, text_adf, validate_adf, validate_links
 from .updater import Updater
 from . import sprints
 from .search import search
+from . import comments
 
 
 REQUIRED = {'summary', 'description', 'type', 'status', 'story_points'}
@@ -36,24 +37,14 @@ def example_draft():
             'story_points': 'unset', 'links': []}
 
 
-def _object(pairs):
-    result = {}
-    for key, value in pairs:
-        if key in result:
-            raise DraftFailure('duplicate_keys', 'Duplicate JSON keys are not supported; keep exactly one value per key.')
-        result[key] = value
-    return result
-
-
-def _constant(value):
-    raise invalid('Use a finite nonnegative JSON number for story_points, or the string unset.', 'story_points')
-
-
 def load_draft(path, *, update=False):
     """Validate the entire saved draft before reading configuration or Jira."""
     try:
-        draft = json.loads(path.read_text(encoding='utf-8'), object_pairs_hook=_object,
-                           parse_constant=_constant)
+        draft = strict_json(text=path.read_text(encoding='utf-8'))
+    except DuplicateKeys as exc:
+        raise DraftFailure('duplicate_keys', str(exc)) from None
+    except NonFiniteNumber:
+        raise invalid('Use a finite nonnegative JSON number for story_points, or the string unset.', 'story_points') from None
     except (OSError, UnicodeError, ValueError):
         raise DraftFailure('invalid_json', 'Draft must be a readable UTF-8 JSON file.', remediation='Check the draft path, file encoding and JSON syntax locally; never put credentials in the draft.') from None
     if not isinstance(draft, dict):
@@ -107,7 +98,7 @@ def load_draft(path, *, update=False):
         if not description.strip():
             raise invalid('Description must contain the complete approved nonempty text.', 'description')
         # Same newline normalization as reading the old literal-text file.
-        description = text_adf(description.replace('\r\n', '\n').replace('\r', '\n'))
+        description = text_adf(literal_text(text=description))
     elif not isinstance(description, dict):
         raise invalid('Description must be literal text or a supported ADF object; files and prepared payloads are not accepted.', 'description')
     try:
@@ -125,7 +116,8 @@ def parser_for_cli():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='Start: jira-ticket doctor (local only)\n'
                'Discover: jira-ticket types; jira-ticket statuses --type VERIFIED_TYPE; jira-ticket link-types\n'
-               'Read existing: jira-ticket get KEY_OR_NUMERIC_ID\n'
+               'Read existing: jira-ticket get KEY_OR_NUMERIC_ID [--comments]\n'
+               'Comment: jira-ticket comment KEY --text-file comment.txt --dry-run; then approve and omit --dry-run\n'
                'Partial update: jira-ticket update KEY --draft changes.json --dry-run; then approve and omit --dry-run\n'
                'Draft format (offline): jira-ticket draft-example; jira-ticket draft-example --update\n'
                'Read-only: jira-ticket preflight --draft approved.json (alias: dry-run)\n'
@@ -157,9 +149,20 @@ def parser_for_cli():
                                   epilog=f'Example: jira-ticket {name} RI-123' + (' --draft changes.json --dry-run. Format: jira-ticket draft-example --update' if name == 'update' else ' (or numeric ID). No approval needed for GET.'))
         sub.add_argument('issue', help='Existing Jira key or numeric ID')
         sub.add_argument('--config', type=Path, help='Select jiratui config; never pass credentials')
+        if name == 'get':
+            sub.add_argument('--comments', action='store_true', help='Also read all comments, oldest first (not included by default)')
         if name == 'update':
             sub.add_argument('--draft', required=True, type=Path, help='Approved partial UTF-8 JSON draft; create keys plus update-only sprint, at least one key; omitted fields unchanged. Discover: draft-example --update; sprints TARGET')
             sub.add_argument('--dry-run', action='store_true', help='Read-only full update plan; no mutations')
+    comment_command = commands.add_parser('comment', help='Add a comment to an existing ticket as the authenticated user; explicit mutation unless --dry-run',
+        description='Post one comment, authored by the authenticated jiratui account, from a saved approved body file. Literal text keeps each line as a paragraph with markup visible; --adf-file accepts the documented ADF subset. Never retried; verified by readback.',
+        epilog='Example: jira-ticket comment RI-123 --text-file comment.txt --dry-run; approve the exact body, then rerun without --dry-run. Read comments with get KEY --comments.')
+    comment_command.add_argument('issue', help='Existing Jira key or numeric ID')
+    body_source = comment_command.add_mutually_exclusive_group(required=True)
+    body_source.add_argument('--text-file', type=Path, help='Approved UTF-8 literal comment text')
+    body_source.add_argument('--adf-file', type=Path, help='Approved UTF-8 JSON ADF doc (documented subset)')
+    comment_command.add_argument('--dry-run', action='store_true', help='Read-only plan showing target, author and body; no writes')
+    comment_command.add_argument('--config', type=Path, help='Select jiratui config; never pass credentials')
     for name, help_text in (
         ('doctor', 'Local effective configuration check (no requests by default)'),
         ('types', 'Read live, fully paginated issue types'),
@@ -201,7 +204,7 @@ def run(args):
     if args.command == 'search':
         if not args.jql.strip() or not 1 <= args.limit <= 100 or (args.next_page_token is not None and not args.next_page_token.strip()):
             raise Failure('Search requires nonempty JQL, a limit from 1 to 100, and a nonempty continuation token when supplied.')
-    if args.command in ('get', 'update', 'sprints') and not issue_reference(args.issue):
+    if args.command in ('get', 'update', 'sprints', 'comment') and not issue_reference(args.issue):
         raise DraftFailure('invalid_reference', 'Target must be an existing Jira key or numeric ID.',
                            remediation='Use a verified existing Jira key (e.g. PROJECT-123) or numeric issue ID, not a URL or draft placeholder. No configuration or requests were attempted.')
     if args.command == 'sprints' and args.board is not None:
@@ -213,6 +216,12 @@ def run(args):
         if args.command == 'update':
             exc.error['remediation'] = 'Correct the saved partial draft using jira-ticket draft-example --update and its --help; rerun jira-ticket update TARGET --draft FILE --dry-run. No configuration, requests or writes were attempted.'
         raise
+    if args.command == 'comment':
+        try:
+            body = comments.load_body(text_file=args.text_file, adf_file=args.adf_file)
+        except Failure as exc:
+            raise DraftFailure('invalid_value', str(exc), fields=['body'],
+                               remediation='Correct the saved comment body file and rerun with --dry-run; no configuration, requests or writes were attempted.') from None
     try:
         config = configuration(args.config)
     except Exception:
@@ -221,16 +230,24 @@ def run(args):
         creator = Creator(client, config.jira_base_url or config.jira_api_base_url)
         if args.command == 'search':
             return search(api=creator, jql=args.jql, project=project_for(config), limit=args.limit, next_page_token=args.next_page_token)
-        if args.command in ('get', 'update', 'sprints'):
+        if args.command in ('get', 'update', 'sprints', 'comment'):
             updater = Updater(client, config.jira_base_url or config.jira_api_base_url)
+            if args.command == 'comment':
+                prepared = comments.prepare(api=updater, reference=args.issue, body=body)
+                if args.dry_run:
+                    return {'outcome': 'dry_run', 'read_only': True, **prepared}
+                return comments.add(api=updater, prepared=prepared)
             if args.command == 'sprints':
                 current = updater.read_issue(args.issue)
                 return {'outcome': 'sprints', 'read_only': True, 'id': current['id'], 'key': current['key'],
-                        'link': updater.browser_url + '/browse/' + current['key'],
+                        'link': updater.issue_link(key=current['key']),
                         'project': current['fields']['project'],
                         'boards': sprints.discover(api=updater, project_id=str(current['fields']['project']['id']), board_id=args.board)}
             if args.command == 'get':
-                return {'outcome': 'issue', 'read_only': True, **updater.get(args.issue)}
+                issue = updater.get(args.issue)
+                if args.comments:
+                    issue['comments'] = comments.read(api=updater, issue_id=issue['id'])
+                return {'outcome': 'issue', 'read_only': True, **issue}
             prepared = updater.prepare_update(args.issue, inputs)
             if args.dry_run:
                 return {'outcome': 'dry_run', 'read_only': True, **prepared}
@@ -238,9 +255,7 @@ def run(args):
         if args.command == 'doctor':
             project_for(config)
             if args.connectivity:
-                myself = creator.request('GET', 'myself')
-                if not myself.get('accountId') or myself.get('active') is False:
-                    raise Failure('Authenticated account is not active.')
+                authenticated_account(api=creator)
             # Neither settings nor identity returned: doctor is safe to share.
             return {'outcome': 'doctor_ok', 'configuration': 'valid',
                     'connectivity': 'verified' if args.connectivity else 'not_checked',
@@ -294,4 +309,4 @@ def main(argv=None):
         result = {'outcome': 'doctor_failed' if args.command == 'doctor' else 'preflight_failed',
                   'message': 'Configuration, input or read-only request failed. Run jira-ticket doctor and check effective jiratui configuration locally; never expose credentials or raw server errors.'}
     print(json.dumps(result, ensure_ascii=False, indent=2))
-    return 0 if args.command == 'draft-example' or result['outcome'] in ('doctor_ok', 'types', 'statuses', 'link_types', 'sprints', 'search', 'dry_run', 'created', 'issue', 'updated', 'unchanged') else 1
+    return 0 if args.command == 'draft-example' or result['outcome'] in ('doctor_ok', 'types', 'statuses', 'link_types', 'sprints', 'search', 'dry_run', 'created', 'issue', 'updated', 'unchanged', 'commented') else 1

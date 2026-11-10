@@ -1,4 +1,5 @@
 """Small, fail-closed Jira Cloud creation workflow. No mutation retries."""
+import json
 import os
 import re
 from decimal import Decimal, InvalidOperation
@@ -43,6 +44,42 @@ def client_for(config):
     return httpx.Client(base_url=str(url).rstrip('/') + '/',
                         auth=(config.jira_api_username, config.jira_api_token.get_secret_value()),
                         verify=ssl.ca_bundle or True, timeout=30, follow_redirects=False)
+
+
+def strict_json(*, text):
+    """Parse JSON, rejecting duplicate keys and NaN/Infinity rather than silently resolving them."""
+    def pairs(items):
+        result = {}
+        for key, value in items:
+            if key in result:
+                raise DuplicateKeys('Duplicate JSON keys are not supported; keep exactly one value per key.')
+            result[key] = value
+        return result
+    def constant(value):
+        raise NonFiniteNumber('NaN and Infinity are not valid JSON numbers.')
+    return json.loads(text, object_pairs_hook=pairs, parse_constant=constant)
+
+
+class DuplicateKeys(Failure):
+    pass
+
+
+class NonFiniteNumber(Failure):
+    pass
+
+
+def literal_text(*, text):
+    """Literal file text with platform newlines normalized to \\n."""
+    return text.replace('\r\n', '\n').replace('\r', '\n')
+
+
+def authenticated_account(*, api):
+    myself = api.request('GET', 'myself')
+    if not isinstance(myself, dict) or not isinstance(myself.get('accountId'), str) or not myself['accountId']:
+        raise Failure('Authenticated account could not be verified.')
+    if myself.get('active') is False:
+        raise Failure('Authenticated account is not active.')
+    return myself
 
 
 def text_adf(text):
@@ -147,7 +184,7 @@ def validate_links(links):
 def metadata_id(*, value: object) -> str:
     if (not isinstance(value, (str, int)) or isinstance(value, bool) or
             not str(value).isascii() or not str(value).isdigit()):
-        raise Failure('Sprint/board metadata requires numeric IDs.')
+        raise Failure('Jira metadata requires numeric IDs.')
     return str(value)
 
 
@@ -159,6 +196,9 @@ class Creator:
             raise Failure('A credential-free HTTPS browser URL is required.')
         self.browser_url = str(url).rstrip('/')
 
+    def issue_link(self, *, key):
+        return self.browser_url + '/browse/' + key
+
     def request(self, method, path, *, agile=False, **kwargs):
         prefix = 'rest/agile/1.0/' if agile else 'rest/api/3/'
         response = self.client.request(method, prefix + path, **kwargs)
@@ -166,7 +206,7 @@ class Creator:
             raise Failure(f'{method} {path.split("?")[0]} failed: HTTP {response.status_code}.')
         return response.json() if response.content else {}
 
-    def pages(self, path, key, *, params=None, agile=False, strict=False):
+    def pages(self, path, key, *, params=None, agile=False, strict=False, require_total=False):
         results, start = [], 0
         seen, expected_total = set(), None
         while True:
@@ -182,19 +222,19 @@ class Creator:
                         or 'isLast' in data and type(data['isLast']) is not bool
                         or 'total' in data and (type(data['total']) is not int or data['total'] < 0)
                         or 'maxResults' in data and (type(data['maxResults']) is not int or data['maxResults'] < 1 or len(page) > data['maxResults'])
-                        or expected_total is not None and 'total' not in data):
-                    raise Failure('Malformed sprint metadata pagination.')
+                        or (expected_total is not None or require_total) and 'total' not in data):
+                    raise Failure('Malformed metadata pagination.')
                 if 'total' in data:
                     if expected_total is not None and expected_total != data['total']:
-                        raise Failure('Sprint metadata pagination total changed.')
+                        raise Failure('Metadata pagination total changed.')
                     expected_total = data['total']
                     end = start + len(page)
                     if end > expected_total or ('isLast' in data and data['isLast'] != (end == expected_total)):
-                        raise Failure('Contradictory sprint metadata pagination.')
+                        raise Failure('Contradictory metadata pagination.')
                 for item in page:
                     identity = metadata_id(value=item.get('id') if isinstance(item, dict) else None)
                     if identity in seen:
-                        raise Failure('Repeated sprint metadata ID; pagination cannot be trusted.')
+                        raise Failure('Repeated metadata ID; pagination cannot be trusted.')
                     seen.add(identity)
             results.extend(page)
             start += len(page)
@@ -367,9 +407,7 @@ class Creator:
             if not key or key in fields:
                 raise Failure('Ambiguous create field metadata.')
             fields[key] = field
-        myself = self.request('GET', 'myself')
-        if not myself.get('accountId') or myself.get('active') is False:
-            raise Failure('Authenticated account is not active.')
+        myself = authenticated_account(api=self)
         assigned = self.identity(assignee, myself)
         reported = self.identity(reporter, myself)
         assignable = self.request('GET', 'user/assignable/search', params={'project': project_data['key'], 'accountId': assigned, 'maxResults': 1000})
@@ -445,7 +483,7 @@ class Creator:
             key = created.get('key')
             if not isinstance(key, str) or not key or not all(c.isalnum() or c == '-' for c in key):
                 return result
-            result = {'outcome': 'partial_failure', 'key': key, 'link': self.browser_url + '/browse/' + key}
+            result = {'outcome': 'partial_failure', 'key': key, 'link': self.issue_link(key=key)}
             if prepared.get('post_create_links'):
                 result['links'] = [{**link, 'status': 'pending'} for link in prepared['post_create_links']]
             fields = dict(prepared['payload']['fields'])

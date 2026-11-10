@@ -199,7 +199,7 @@ class ExistingCliTests(unittest.TestCase):
         self.assert_read_only()
 
     def test_offline_help_and_update_example(self):
-        for args in ([], ['--help'], ['get', '--help'], ['update', '--help'], ['draft-example', '--help'], ['draft-example', '--update']):
+        for args in ([], ['--help'], ['get', '--help'], ['update', '--help'], ['comment', '--help'], ['draft-example', '--help'], ['draft-example', '--update']):
             output = io.StringIO()
             with patch.object(cli, 'configuration') as config, patch.object(cli, 'client_for') as client, redirect_stdout(output), redirect_stderr(output):
                 if '--help' in args:

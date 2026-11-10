@@ -64,6 +64,6 @@ def search(*, api, jql, project, limit, next_page_token):
             if not isinstance(value, dict) or not isinstance(value.get('name'), str):
                 raise Failure('Malformed Jira search status or issue type.')
             details[field] = {'id': metadata_id(value=value.get('id')), 'name': value['name']}
-        issues.append({'id': identity, 'key': key, 'link': api.browser_url + '/browse/' + key, **details})
+        issues.append({'id': identity, 'key': key, 'link': api.issue_link(key=key), **details})
     return {'outcome': 'search', 'read_only': True, 'project': project, 'issues': issues,
             'is_last': data['isLast'], 'next_page_token': token}

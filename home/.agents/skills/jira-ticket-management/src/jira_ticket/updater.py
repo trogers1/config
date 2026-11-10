@@ -64,7 +64,7 @@ class Updater(Creator):
             safe_links.append({'type': selected_details(link['type'], ('id', 'name', 'inward', 'outward')),
                                'direction': sides[0], 'issue': selected_details(target, ('id', 'key')),
                                'summary': target.get('fields', {}).get('summary')})
-        return {'id': data['id'], 'key': data['key'], 'link': self.browser_url + '/browse/' + data['key'],
+        return {'id': data['id'], 'key': data['key'], 'link': self.issue_link(key=data['key']),
                 'details': {'summary': fields['summary'], 'description': fields.get('description'),
                             'project': selected_details(fields['project'], ('id', 'key', 'name')),
                             'type': selected_details(fields['issuetype'], ('id', 'name', 'subtask', 'hierarchyLevel')),
@@ -254,7 +254,7 @@ class Updater(Creator):
             for link in links:
                 link['relationship'] = link['relationship'].replace('NEW ticket', current['key'], 1)
                 link['status'] = 'verified' if (link['type']['id'], link['direction'], link['issue']['id'], link['issue']['key']) in existing else 'pending'
-        return {'id': issue_id, 'key': current['key'], 'link': self.browser_url + '/browse/' + current['key'],
+        return {'id': issue_id, 'key': current['key'], 'link': self.issue_link(key=current['key']),
                 'current': self.details(current)['details'], 'requested_fields': requested,
                 'payload': {'fields': payload}, 'estimate': estimate, 'requested_status': status,
                 'transition': transition, 'links': links,
@@ -264,7 +264,7 @@ class Updater(Creator):
     def refresh(self, result):
         current = self.read_issue(result['id'])
         result['key'] = current['key']
-        result['link'] = self.browser_url + '/browse/' + current['key']
+        result['link'] = self.issue_link(key=current['key'])
         return current['fields']
 
     def apply_update_links(self, result):
@@ -276,7 +276,7 @@ class Updater(Creator):
             if data.get('id') != result['id'] or not issue_reference(data.get('key')):
                 raise Failure('Existing issue canonical identity could not be verified for links.')
             result['key'] = data['key']
-            result['link'] = self.browser_url + '/browse/' + data['key']
+            result['link'] = self.issue_link(key=data['key'])
             target = self.request('GET', 'issue/' + link['issue']['id'], params={'fields': 'summary,project'})
             if target.get('id') != link['issue']['id'] or not issue_reference(target.get('key')):
                 raise Failure('Link target canonical identity could not be refreshed.')
