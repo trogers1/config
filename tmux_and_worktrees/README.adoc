@@ -372,6 +372,9 @@ identity. The installed Pi extension records `getSessionFile()` and session ID
 at `session_start`, including `/new`, `/resume`, `/fork`, and `/reload`. Claude's
 metadata-only `SessionStart` hook records `session_id` and `transcript_path`,
 including `/clear` and `/resume`. Neither integration reads transcript contents.
+Recording is a no-op if the inherited tmux server or pane is gone. Sending a
+message to an old conversation does not recreate its workspace; use
+`dev resume-all` explicitly to recover missing sessions.
 Resume uses `pi --session <exact-file>` or `claude --resume <exact-id>` with no
 fallback to latest/fresh. Custom agent command flags/wrappers are not replayed
 on exact resume; normal session creation still uses the configured command.

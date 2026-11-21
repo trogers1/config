@@ -118,6 +118,10 @@ case "$1" in
         fi
         ;;
     display-message)
+        if [ -n "${FAKE_TMUX_DISPLAY_ERROR:-}" ]; then
+            printf '%s\n' "$FAKE_TMUX_DISPLAY_ERROR" >&2
+            exit 1
+        fi
         pane=""
         session=""
         for file in "$dir/panes"/*; do
@@ -128,7 +132,10 @@ case "$1" in
                 break
             fi
         done
-        [ -n "$pane" ] || exit 1
+        if [ -z "$pane" ]; then
+            printf "can't find pane: %s\n" "$full_target" >&2
+            exit 1
+        fi
         case "${args[${#args[@]} - 1]}" in
             '#{pane_id}') printf '%s\n' "$pane" ;;
             *) printf '%s\t%s\t/fake/tmux\t%s\n' "$session" "$pane" "${FAKE_TMUX_SERVER_ID:-111}" ;;
@@ -465,6 +472,29 @@ claude_event() {
 pi_event "$PI_PANE" "$PI_FIRST" "$PI_EXACT"
 claude_event startup claude-first
 claude_event clear claude-exact
+# A stale inherited pane is not a reason to fail startup or recreate a workspace.
+cp "$REGISTRY" "$TMP_DIR/before-stale-hook.json"
+SAVED_CLAUDE_PANE="$CLAUDE_PANE"
+CLAUDE_PANE="%999999"
+reset_log
+claude_event resume stale-conversation
+# Stale targets must not hide corrupt state or malformed hook inputs.
+for invalid_registry in '{' '{}'; do
+    printf '%s' "$invalid_registry" >"$REGISTRY"
+    cp "$REGISTRY" "$TMP_DIR/invalid-registry.json"
+    if claude_event resume stale-conversation 2>"$TMP_DIR/err"; then fail 'stale pane hid invalid registry'; fi
+    cmp "$REGISTRY" "$TMP_DIR/invalid-registry.json" || fail 'hook rewrote invalid registry'
+done
+cp "$TMP_DIR/before-stale-hook.json" "$REGISTRY"
+if claude_event resume '' 2>"$TMP_DIR/err"; then fail 'stale pane hid malformed metadata'; fi
+assert_contains "$(cat "$TMP_DIR/err")" 'conversation.session_id'
+if grep -Eq '^(new-session|new-window|send-keys)' "$FAKE_TMUX_DIR/log"; then fail 'stale hook recreated a workspace'; fi
+CLAUDE_PANE="$SAVED_CLAUDE_PANE"
+if FAKE_TMUX_DISPLAY_ERROR="error connecting to /fake/tmux (Permission denied)" claude_event resume ignored 2>"$TMP_DIR/err"; then
+    fail 'hook swallowed tmux permission failure'
+fi
+assert_contains "$(cat "$TMP_DIR/err")" 'returned non-zero exit status 1'
+cmp "$REGISTRY" "$TMP_DIR/before-stale-hook.json" || fail 'stale pane hook changed registry'
 cp "$REGISTRY" "$TMP_DIR/registered-before-invalid.json"
 if printf '{"hook_event_name":"SessionStart","source":"startup","session_id":123,"transcript_path":"/tmp/fake.jsonl"}' |
     TMUX=/fake/tmux,111,0 TMUX_PANE="$CLAUDE_PANE" bash "$REPO_DIR/home/.claude/hooks/dev-session.sh" >/dev/null 2>"$TMP_DIR/err"; then
@@ -492,9 +522,14 @@ git init -q -b main "$STAGED"
 printf '' >"$STAGED/.worktree-init.sh"
 git -C "$STAGED" add . && git -C "$STAGED" commit -qm init
 (cd "$STAGED" && "$DEV" tree --no-attach --agent claude --stage-agent task >/dev/null 2>&1)
+cp "$REGISTRY" "$TMP_DIR/before-stale-hook.json"
 rm -rf "$FAKE_TMUX_DIR/sessions" "$FAKE_TMUX_DIR/panes"
 mkdir -p "$FAKE_TMUX_DIR/sessions"
 export FAKE_TMUX_SERVER_ID=222
+reset_log
+FAKE_TMUX_DISPLAY_ERROR="no server running on /fake/tmux" claude_event resume stale-conversation
+cmp "$REGISTRY" "$TMP_DIR/before-stale-hook.json" || fail 'dead server hook changed registry'
+if grep -Eq '^(new-session|new-window|send-keys)' "$FAKE_TMUX_DIR/log"; then fail 'metadata hook recreated a workspace'; fi
 reset_log
 "$DEV" resume-all >"$TMP_DIR/resume-out"
 assert_contains "$(cat "$TMP_DIR/resume-out")" 'Resumed detached: pi-app-dev'

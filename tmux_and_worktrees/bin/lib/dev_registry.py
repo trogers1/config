@@ -121,9 +121,20 @@ def tmux(*, args, check=True):
     return subprocess.run(["tmux", *args], text=True, capture_output=True, check=check)
 
 
-def identity(*, target):
+def identity(*, target, optional=False):
     result = tmux(args=["display-message", "-p", "-t", target,
-                        "#{session_name}\t#{pane_id}\t#{socket_path}\t#{pid}"]).stdout.strip().split("\t")
+                        "#{session_name}\t#{pane_id}\t#{socket_path}\t#{pid}"], check=False)
+    # Recording is best-effort when an inherited tmux target has disappeared.
+    # Session creation still requires a live target and fails on any error.
+    missing_target = (
+        result.stderr.strip() == f"can't find pane: {target}"
+        or re.fullmatch(r"no server running on [^\n]+", result.stderr.strip())
+        or re.fullmatch(r"error connecting to [^\n]+ \((?:No such file or directory|Connection refused)\)", result.stderr.strip())
+    )
+    if optional and result.returncode == 1 and missing_target:
+        return None
+    result.check_returncode()
+    result = result.stdout.strip().split("\t")
     if len(result) != 4 or not re.fullmatch(r"%[0-9]+", result[1]) or not result[2] or not result[3].isdigit():
         raise ValueError(f"Cannot identify configured dev agent pane: {target}")
     return {"name": result[0], "pane": result[1], "server": f"{result[2]},{result[3]}"}
@@ -176,9 +187,11 @@ def bind(*, agent):
     metadata = conversation(value=metadata)
     if metadata is None or metadata["agent"] != agent:
         raise ValueError("Agent metadata does not match the recording agent")
-    binding = identity(target=os.environ["TMUX_PANE"])
     with locked(name="registry.lock"):
         data = load()
+        binding = identity(target=os.environ["TMUX_PANE"], optional=True)
+        if binding is None:
+            return
         for record in data["sessions"].values():
             if all(record[k] == binding[k] for k in ("pane", "server")) and record["agent"] == agent:
                 record["name"] = binding["name"]
