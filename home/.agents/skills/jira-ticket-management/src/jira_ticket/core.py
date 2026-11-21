@@ -2,6 +2,7 @@
 import json
 import os
 import re
+from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
@@ -181,6 +182,41 @@ def validate_links(links):
     return links
 
 
+USER_PAGE_SIZE = 1000
+IDENTITY_REMEDIATION = 'User enumeration unavailable or malformed; use a verified id:ACCOUNT_ID.'
+
+
+@dataclass(frozen=True)
+class JiraUser:
+    account_id: str
+    active: bool
+    email: str | None
+    display_name: str | None
+
+
+def validated_user(*, value: object) -> JiraUser:
+    if not isinstance(value, dict):
+        raise Failure(IDENTITY_REMEDIATION)
+    account = value.get('accountId')
+    active = value.get('active')
+    email = value.get('emailAddress')
+    name = value.get('displayName')
+    if (not isinstance(account, str) or not account.strip() or not isinstance(active, bool)
+            or (email is not None and not isinstance(email, str))
+            or ('displayName' in value and not isinstance(name, str))):
+        raise Failure(IDENTITY_REMEDIATION)
+    return JiraUser(account_id=account, active=active, email=email, display_name=name)
+
+
+def assignee_selector(*, value: object) -> str | None:
+    """Null/blank deliberately means unassigned; all other values are selectors."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise Failure('Assignee must be null or a string: blank to unassign, email, id:ACCOUNT_ID or exact display name.')
+    return value.strip() or None
+
+
 def metadata_id(*, value: object) -> str:
     if (not isinstance(value, (str, int)) or isinstance(value, bool) or
             not str(value).isascii() or not str(value).isdigit()):
@@ -250,21 +286,37 @@ class Creator:
             raise Failure(f'{label} must resolve to exactly one verified value.')
         return matches[0]
 
-    def identity(self, value, myself):
+    def identity(self, *, value: str | None, myself: dict[str, object]) -> str:
         if value is None:
-            return myself['accountId']
+            return validated_user(value=myself).account_id
         if value.startswith('id:'):
-            user = self.request('GET', 'user', params={'accountId': value[3:]})
-            if user.get('accountId') != value[3:] or user.get('active') is False:
+            user = validated_user(value=self.request('GET', 'user', params={'accountId': value[3:]}))
+            if not value[3:] or user.account_id != value[3:] or not user.active:
                 raise Failure('Account ID must identify an active user.')
-            return user['accountId']
-        users = self.request('GET', 'user/search', params={'query': value, 'maxResults': 1000})
-        if len(users) >= 1000:
-            raise Failure('User search may be truncated; use id:ACCOUNT_ID.')
-        matches = {u['accountId'] for u in users if u.get('active') is not False and
-                   value.casefold() in (u.get('displayName', '').casefold(), u.get('emailAddress', '').casefold())}
+            return user.account_id
+        seen: set[str] = set()
+        matches: set[str] = set()
+        start = 0
+        while True:
+            try:
+                page = self.request('GET', 'users/search', params={'startAt': start, 'maxResults': USER_PAGE_SIZE})
+            except Failure:
+                raise Failure(IDENTITY_REMEDIATION) from None
+            if not isinstance(page, list):
+                raise Failure(IDENTITY_REMEDIATION)
+            if not page:
+                break
+            for record in page:
+                user = validated_user(value=record)
+                if user.account_id in seen:
+                    raise Failure(IDENTITY_REMEDIATION)
+                seen.add(user.account_id)
+                candidates = (user.email,) if '@' in value else (user.email, user.display_name)
+                if user.active and any(candidate is not None and candidate.casefold() == value.casefold() for candidate in candidates):
+                    matches.add(user.account_id)
+            start += len(page)
         if len(matches) != 1:
-            raise Failure('Name/email must resolve to exactly one active user; use id:ACCOUNT_ID.')
+            raise Failure('Name/email must resolve to exactly one active user; use a verified id:ACCOUNT_ID.')
         return matches.pop()
 
     def estimate_board(self, project, override=None):
@@ -408,14 +460,17 @@ class Creator:
                 raise Failure('Ambiguous create field metadata.')
             fields[key] = field
         myself = authenticated_account(api=self)
-        assigned = self.identity(assignee, myself)
-        reported = self.identity(reporter, myself)
-        assignable = self.request('GET', 'user/assignable/search', params={'project': project_data['key'], 'accountId': assigned, 'maxResults': 1000})
-        if not any(u.get('accountId') == assigned for u in assignable):
-            raise Failure('Assignee is not assignable in this project.')
+        selector = assignee_selector(value=assignee)
+        assigned = self.identity(value=selector, myself=myself) if selector is not None else None
+        reported = self.identity(value=reporter, myself=myself)
+        if assigned is not None:
+            assignable = self.request('GET', 'user/assignable/search', params={'project': project_data['key'], 'accountId': assigned, 'maxResults': 1000})
+            if not isinstance(assignable, list) or not any(isinstance(u, dict) and u.get('accountId') == assigned and u.get('active') is True for u in assignable):
+                raise Failure('Assignee is not assignable in this project.')
         payload = {'project': {'id': project_id}, 'issuetype': {'id': type_id},
                    'summary': summary, 'description': description,
-                   'assignee': {'accountId': assigned}, 'reporter': {'accountId': reported}}
+                   'assignee': {'accountId': assigned} if assigned is not None else None,
+                   'reporter': {'accountId': reported}}
         if parent:
             if not all(c.isalnum() or c == '-' for c in parent):
                 raise Failure('Invalid parent key/ID.')
@@ -460,8 +515,10 @@ class Creator:
             writable = key == 'issuetype' or 'operations' not in (field or {}) or 'set' in field['operations']
             if not field or field.get('schema', {}).get('type') != expected_schema[key] or not writable:
                 raise Failure(f'Requested field {key} cannot be set on this create screen.')
+            if value is None and field.get('required'):
+                raise Failure(f'Required field {key} cannot be cleared.')
             allowed = field.get('allowedValues')
-            if allowed:
+            if allowed and value is not None:
                 identifier = value.get('id', value.get('accountId')) if isinstance(value, dict) else value
                 if not any(str(v.get('id', v.get('accountId', v.get('value')))) == str(identifier) for v in allowed):
                     raise Failure(f'Requested field {key} is not an allowed value.')
@@ -475,7 +532,7 @@ class Creator:
             prepared['post_create_links'] = self.prepare_links(links)
         return prepared
 
-    def create(self, prepared):
+    def create(self, *, prepared):
         # Once POST begins, any exception is partial/unknown success. Never retry.
         result = {'outcome': 'unknown', 'message': 'Creation outcome unknown; no key is available, so no browser link can be supplied. Reconcile with Jira before any further mutation.'}
         try:
@@ -526,7 +583,7 @@ class Creator:
                     attr = 'accountId' if name in ('assignee', 'reporter') else 'id'
                     equal = isinstance(observed, dict) and str(observed.get(attr)) == str(expected[attr])
                 else:
-                    equal = observed == expected
+                    equal = name in actual and observed == expected
                 if not equal:
                     raise Failure(f'Created field {name} failed verification.')
             if str(actual['status']['id']) != target:

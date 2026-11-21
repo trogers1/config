@@ -230,7 +230,7 @@ class ExistingCliTests(unittest.TestCase):
                   {'summary': 'x' * 256}, {'description': None}, {'description': []}, {'description': '  '},
                   {'description': {'type': 'doc', 'version': 1, 'content': []}},
                   {'type': 3}, {'status': None}, {'project': 'RI/SECRET'}, {'parent': 'placeholder'},
-                  {'assignee': None}, {'reporter': ''}, {'board': 5940}, {'board': '5940'},
+                  {'assignee': False}, {'reporter': ''}, {'board': 5940}, {'board': '5940'},
                   {'story_points': 'unset', 'board': '5940'}, {'story_points': True}, {'story_points': None},
                   {'story_points': '2'}, {'story_points': -1}, {'links': None}, {'links': [{'issue': 'RI-1'}]},
                   {'links': [self.links[0] | {'issue': 'new'}]}, {'links': [self.links[0] | {'direction': 'blocks'}]}]
@@ -255,7 +255,7 @@ class ExistingCliTests(unittest.TestCase):
         self.assertEqual(self.jira.actual, before | {'summary': 'Approved changed summary'})
         self.assertEqual(self.jira.puts, [{'fields': {'summary': 'Approved changed summary'}}])
         self.assertEqual(result['verified_fields'], ['summary'])
-        self.assertFalse(any(path in ('myself', 'user', 'user/search', 'user/assignable/search') or path.endswith('/transitions') for _, path in self.jira.requests))
+        self.assertFalse(any(path in ('myself', 'user', 'users/search', 'user/assignable/search') or path.endswith('/transitions') for _, path in self.jira.requests))
         self.assertIn(('GET', 'issue/999/editmeta'), self.jira.requests)
 
     def test_verification_compares_only_supplied_fields(self):
@@ -293,6 +293,39 @@ class ExistingCliTests(unittest.TestCase):
         self.assertEqual(self.jira.puts[0], {'fields': {'assignee': {'accountId': 'new-assignee'}, 'reporter': {'accountId': 'new-reporter'}}})
         self.assertNotIn(('GET', 'myself'), self.jira.requests)
         self.assertEqual(self.jira.requests.count(('GET', 'user/assignable/search')), 1)
+
+    def test_unassign_and_email_through_update(self):
+        for value in (None, '', '  '):
+            with self.subTest(value=value):
+                self.jira = ExistingJira()
+                code, plan = self.invoke({'assignee': value}, dry=True)
+                self.assertEqual(code, 0)
+                self.assertIsNone(plan['payload']['fields']['assignee'])
+                self.assertEqual(self.jira.puts, [])
+                code, result = self.invoke({'assignee': value})
+                self.assertEqual(code, 0, result)
+                self.assertIsNone(self.jira.actual['assignee'])
+                self.assertFalse(any(path.startswith('user') for _, path in self.jira.requests))
+        self.jira = ExistingJira()
+        user = {'accountId': 'new', 'emailAddress': 'person@example.com', 'active': True}
+        self.jira.users = [user]
+        code, result = self.invoke({'assignee': user['emailAddress'].upper()})
+        self.assertEqual(code, 0, result)
+        self.assertEqual(self.jira.actual['assignee'], {'accountId': user['accountId']})
+
+    def test_unassign_readback_drift_is_partial_failure_not_retried(self):
+        self.jira.readback_mismatch = 'assignee'
+        code, result = self.invoke({'assignee': None})
+        self.assertNotEqual(code, 0)
+        self.assertEqual(result['outcome'], 'partial_failure')
+        self.assertEqual(len(self.jira.puts), 1)
+        self.assertIn('assignee', result['message'])
+
+    def test_required_assignee_cannot_be_cleared(self):
+        self.jira.edit['assignee']['required'] = True
+        code, result = self.invoke({'assignee': None})
+        self.assertEqual(code, 1, result)
+        self.assertEqual(self.jira.puts, [])
 
     def test_identity_inactive_ambiguous_unassignable_and_allowed_values_fail(self):
         for failure in ('inactive', 'ambiguous', 'unassignable', 'allowed'):

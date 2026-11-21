@@ -112,9 +112,9 @@ jira-ticket update RI-123 --draft changes.json --dry-run
 jira-ticket update RI-123 --draft changes.json
 ```
 
-`get` returns `outcome: issue`, `read_only: true`, immutable `id`, canonical `key`, HTTPS browser `link`, and `details`: summary, full ADF description, project, type, status, assignee, reporter, parent, exact story points, and oriented existing links. Identity details contain account IDs/display names, not authentication or raw configuration. Unassigned/no-parent/no-estimate may be null on **read**; null is never an update instruction. Description is read in full even if its existing ADF uses nodes outside the writable subset. GET never requests approval; its output is private ticket content. Invalid keys/IDs fail locally before configuration discovery.
+`get` returns `outcome: issue`, `read_only: true`, immutable `id`, canonical `key`, HTTPS browser `link`, and `details`: summary, full ADF description, project, type, status, assignee, reporter, parent, exact story points, and oriented existing links. Identity details contain account IDs/display names, not authentication or raw configuration. Unassigned/no-parent/no-estimate may be null on **read**; null is an update instruction only for `assignee` (explicit unassign). Description is read in full even if its existing ADF uses nodes outside the writable subset. GET never requests approval; its output is private ticket content. Invalid keys/IDs fail locally before configuration discovery.
 
-A partial draft uses the **create keys plus update-only `sprint`**, but none is required individually. Supply at least one key. Omit everything not approved to change. There are **no create-time defaults**: no configured project, `/myself`, assignee/reporter replacement, status reset, estimate reset or implicit parent removal. Unknown/duplicate keys, nulls, booleans, empty content, numeric strings for points, unsupported ADF and malformed links fail before configuration/network access. `story_points: "unset"` and `links: []` are valid no-ops, never clearing/removal; an empty object is invalid. An already-equal request can produce `unchanged` with no writes.
+A partial draft uses the **create keys plus update-only `sprint`**, but none is required individually. Supply at least one key. Omit everything not approved to change. There are **no create-time defaults**: no configured project, `/myself`, assignee/reporter replacement, status reset, estimate reset or implicit parent removal. Unknown/duplicate keys, nulls (except assignee), booleans, empty content (except blank assignee), numeric strings for points, unsupported ADF and malformed links fail before configuration/network access. `story_points: "unset"` and `links: []` are valid no-ops, never clearing/removal; an empty object is invalid. An already-equal request can produce `unchanged` with no writes.
 
 Example (only if all listed changes are explicitly approved):
 
@@ -137,7 +137,7 @@ Example (only if all listed changes are explicitly approved):
 | `project` | Optional effective configured project override | Omitted retains current project; supplied live project must be writable with `set` on editmeta. No move API fallback |
 | `type` | Required live unique ID/name | Omitted retains current type; supplied type must belong to resulting project and be writable on editmeta. No type substitution |
 | `status` | Required live unique ID/name; post-create direct transition | Only if supplied; exact resulting project/type status plus unique existing-issue direct transition preflight. No intermediate transitions or guessed required values |
-| `assignee` | Omitted defaults to authenticated user | Omitted unchanged; explicit `id:ACCOUNT_ID` or unique exact active name/email. Changed assignee must be assignable in resulting project |
+| `assignee` | Omitted/null/blank means UNASSIGNED, never Jira's automatic assignee | Omitted unchanged; null/blank explicitly unassigns; email, `id:ACCOUNT_ID` or unique exact active name selects a person. Changed person must be assignable in resulting project |
 | `reporter` | Omitted defaults to authenticated user | Omitted unchanged; explicit active unique identity, edit writability/allowed values. No `/myself` default |
 | `parent` | Optional immediate same-project hierarchy parent; required for subtask | Supplied immediate hierarchy and resulting-project check. Existing parent revalidated on actual project/type change; no implicit removal. Subtasks need a verified parent |
 | `story_points` | Required number or `"unset"` | Optional finite nonnegative JSON number; `"unset"` no-op. Exact numeric `customfield_10004` catalog validation; inline edit if writable, otherwise only verified Agile estimator |
@@ -199,19 +199,32 @@ Save the **entire approved draft** in a UTF-8 JSON file. `assets/example-draft.j
   "type": "VERIFIED_TYPE_ID_OR_NAME",
   "status": "VERIFIED_STATUS_ID_OR_NAME",
   "story_points": "unset",
+  "assignee": null,
   "links": []
 }
 ```
 
-Required keys: `summary`, `description`, `type`, `status`, `story_points`. Optional keys: `project`, `assignee`, `reporter`, `parent`, `board`, `links`. Except for the optional `links` array, all selectors and summary must be nonempty JSON strings; omit unused optional keys instead of supplying null. Unknown keys, duplicate JSON keys, credentials, prepared payloads and unsupported extra Jira fields are rejected. There is no prepared-payload acceptance bypass. Draft paths use normal `pathlib.Path` semantics, including relative paths, platform-native paths and spaces; quote paths in a shell. Config paths additionally support user-home expansion.
+Required keys: `summary`, `description`, `type`, `status`, `story_points`. Optional keys: `project`, `assignee`, `reporter`, `parent`, `board`, `links`. Except for the optional `links` array and `assignee` (null/blank means unassigned), all selectors and summary must be nonempty JSON strings; omit unused optional keys instead of supplying null. Unknown keys, duplicate JSON keys, credentials, prepared payloads and unsupported extra Jira fields are rejected. There is no prepared-payload acceptance bypass. Draft paths use normal `pathlib.Path` semantics, including relative paths, platform-native paths and spaces; quote paths in a shell. Config paths additionally support user-home expansion.
 
 - `story_points`: explicit finite nonnegative **JSON number**, e.g. `0`, `2`, `3.5`, or exactly `"unset"`. Booleans, null and numeric strings are rejected. `unset` means approved omission/Jira defaults, not clearing a default. Never replace a requested estimate with unset to bypass errors.
 - `description`: complete literal string or supported ADF object (below), not a path or reference to a separate file.
 - `project`: override the effective default in the saved draft, so preflight and create use identical content.
-- `assignee`/`reporter`: omit for authenticated `/myself` defaults, not configured account ID or git identity. Overrides accept `id:ACCOUNT_ID` or an exact uniquely resolved active display name/email. Assignee must be assignable; reporter must be writable and meet allowed values.
+- `assignee`: omitted on creation, `null`, `""` or whitespace-only means **UNASSIGNED**. Creation explicitly sends null rather than Jira automatic assignment. On updates only an explicit null/blank clears; omission leaves the assignee untouched. An email (trimmed, case-insensitive) must match exactly one verified active account's visible email, never a display name or fuzzy search result. Resolution exhausts the paginated `GET users/search` directory (without a query), including short pages, until an empty page. Hidden email, no match, ambiguous match, unavailable enumeration, malformed users and repeated account IDs fail closed; use a verified `id:ACCOUNT_ID` when enumeration or email is unavailable. Exact unique active display names remain supported. A selected person must be assignable in the project. Required/unwritable assignee fields reject unassignment; readback must explicitly confirm null. Other field/permission restrictions fail without falling back to a default.
+- `reporter`: omitted on creation defaults to authenticated `/myself`, not configured account ID or git identity; omitted on update stays unchanged. Overrides accept `id:ACCOUNT_ID` or an exact unique verified active display name/email. Reporter must be writable and meet allowed values; blank/null is not supported.
+
 - `parent`: existing same-project parent key/ID, with verified hierarchy immediately above the chosen type. Required for sub-tasks. Parent hierarchy is separate from issue links; never substitute one for the other.
 - `links`: optional array, including `[]`. Each entry must have **exactly** `type`, `direction`, `issue`, all nonempty strings. Type is a verified link type ID or unique name from `link-types`; direction is exactly `inward` or `outward` **from the NEW ticket's perspective**. Issue is an **existing** Jira key or numeric ID; cross-project targets are allowed. Synthetic references, other drafts, batch aliases and future tickets are not supported. Unknown keys, directions and types fail; nothing is guessed.
 - `board`: numeric ID **string**, only for a numeric estimate requiring Agile fallback. Must appear in fully paginated project boards and use the exact estimator. Without an override exactly one eligible board is required.
+
+Assignee-only partial-update examples (preview and approve before execution):
+
+```json
+{"assignee": null}
+```
+
+```json
+{"assignee": "person@example.com"}
+```
 
 Preflight the saved draft, then after user approval create from the **same unchanged file**:
 

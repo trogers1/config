@@ -21,7 +21,7 @@ class Jira:
         self.statuses = [{'id': '10', 'name': 'Open'}, {'id': '20', 'name': 'Done'}]
         schemas = {'project': 'project', 'issuetype': 'issuetype', 'summary': 'string',
                    'description': 'string', 'assignee': 'user', 'reporter': 'user', 'parent': 'issuelink'}
-        self.fields = [{'fieldId': k, 'schema': {'type': v}, 'required': k != 'parent', 'operations': ['set']} for k, v in schemas.items()]
+        self.fields = [{'fieldId': k, 'schema': {'type': v}, 'required': k not in ('parent', 'assignee'), 'operations': ['set']} for k, v in schemas.items()]
         # Estimates deliberately only appear on the second metadata page.
         self.estimate = {'fieldId': 'customfield_10004', 'schema': {'type': 'number'}, 'operations': ['set']}
         self.catalog = [{'id': 'customfield_10004', 'name': 'Story Points Estimates', 'schema': {'type': 'number'}},
@@ -30,6 +30,7 @@ class Jira:
         self.transition_error = False
         self.create_timeout = False
         self.users = []
+        self.myself = {'accountId': 'me', 'active': True}
         self.actual = None
         self.parent_project = '42'
         self.parent_level = 1
@@ -82,11 +83,12 @@ class Jira:
         elif path == 'field':
             data = self.catalog
         elif path == 'myself':
-            data = {'accountId': 'me', 'active': True}
+            data = self.myself
         elif path == 'user/assignable/search':
-            data = [{'accountId': request.url.params['accountId']}]
-        elif path == 'user/search':
-            data = self.users
+            data = [{'accountId': request.url.params['accountId'], 'active': True}]
+        elif path == 'users/search':
+            start = int(request.url.params['startAt'])
+            data = self.users[start:start + int(request.url.params['maxResults'])]
         elif path == 'user':
             data = {'accountId': request.url.params['accountId'], 'active': True}
         elif path == 'issuetype/3':
@@ -132,8 +134,8 @@ class WorkflowTests(unittest.TestCase):
     def test_payload_preserves_identity_type_points_and_description_second_page(self):
         prepared = self.prepare()
         fields = prepared['payload']['fields']
-        self.assertEqual(fields['assignee'], {'accountId': 'me'})
-        self.assertEqual(fields['reporter'], {'accountId': 'me'})
+        self.assertIsNone(fields['assignee'])
+        self.assertEqual(fields['reporter'], {'accountId': self.jira.myself['accountId']})
         self.assertEqual(fields['issuetype'], {'id': '3'})
         self.assertEqual(fields['project'], {'id': '42'})
         self.assertEqual(fields['customfield_10004'], 3.5)
@@ -170,7 +172,7 @@ class WorkflowTests(unittest.TestCase):
         self.assert_no_writes()
 
     def test_success_transitions_and_verifies_without_duplicate(self):
-        result = self.creator.create(self.prepare(parent='RI-444'))
+        result = self.creator.create(prepared=self.prepare(parent='RI-444'))
         self.assertEqual(result, {'outcome': 'created', 'key': 'RI-999', 'link': 'https://browser.example/browse/RI-999'})
         self.assertEqual(self.jira.actual['parent'], {'id': '444'})
         self.assertEqual(self.jira.requests.count(('POST', 'issue')), 1)
@@ -179,7 +181,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertFalse(any(path.startswith('agile/') for _, path in self.jira.requests))
 
     def test_already_in_status_needs_no_transition(self):
-        result = self.creator.create(self.prepare(status='Open'))
+        result = self.creator.create(prepared=self.prepare(status='Open'))
         self.assertEqual(result['outcome'], 'created')
         self.assertNotIn(('POST', 'issue/RI-999/transitions'), self.jira.requests)
 
@@ -211,7 +213,7 @@ class WorkflowTests(unittest.TestCase):
         self.jira.estimate = None
         prepared = self.prepare(points='2')
         self.jira.requests.clear()
-        result = self.creator.create(prepared)
+        result = self.creator.create(prepared=prepared)
         self.assertEqual(result['outcome'], 'created')
         self.assertEqual(self.jira.requests, [
             ('POST', 'issue'), ('GET', 'agile/issue/RI-999/estimation'),
@@ -256,7 +258,7 @@ class WorkflowTests(unittest.TestCase):
                 self.jira.requests.clear()
                 self.jira.estimate_value = None
                 self.jira.estimate_error = error
-                result = self.creator.create(prepared)
+                result = self.creator.create(prepared=prepared)
                 self.assertEqual(result['outcome'], 'partial_failure')
                 self.assertEqual(result['key'], 'RI-999')
                 self.assertEqual(result['link'], 'https://browser.example/browse/RI-999')
@@ -279,7 +281,7 @@ class WorkflowTests(unittest.TestCase):
                 result['fields']['customfield_10004'] = 99
             return result
         with patch.object(self.creator, 'request', side_effect=request):
-            result = self.creator.create(prepared)
+            result = self.creator.create(prepared=prepared)
         self.assertEqual(result['outcome'], 'partial_failure')
         self.assertEqual(result['key'], 'RI-999')
         self.assertEqual(result['link'], 'https://browser.example/browse/RI-999')
@@ -342,7 +344,7 @@ class WorkflowTests(unittest.TestCase):
                 self.jira.transitions = [] if mode == 'missing' else [{'id': '7', 'to': {'id': '20'}}]
                 if mode == 'ambiguous':
                     self.jira.transitions.append({'id': '8', 'to': {'id': '20'}})
-                result = self.creator.create(self.prepare())
+                result = self.creator.create(prepared=self.prepare())
                 self.assertEqual(result['outcome'], 'partial_failure')
                 self.assertEqual(result['key'], 'RI-999')
                 self.assertEqual(result['link'], 'https://browser.example/browse/RI-999')
@@ -353,7 +355,7 @@ class WorkflowTests(unittest.TestCase):
 
     def test_ambiguous_create_timeout_never_retried_or_leaks_exception(self):
         self.jira.create_timeout = True
-        result = self.creator.create(self.prepare())
+        result = self.creator.create(prepared=self.prepare())
         self.assertEqual(result['outcome'], 'unknown')
         self.assertNotIn('key', result)
         self.assertNotIn('link', result)
@@ -371,7 +373,7 @@ class WorkflowTests(unittest.TestCase):
                 result['fields']['summary'] = 'wrong'
             return result
         with patch.object(self.creator, 'request', side_effect=request):
-            result = self.creator.create(prepared)
+            result = self.creator.create(prepared=prepared)
         self.assertEqual(result['outcome'], 'partial_failure')
         self.assertEqual(result['key'], 'RI-999')
         self.assertEqual(result['link'], 'https://browser.example/browse/RI-999')
@@ -397,7 +399,7 @@ class WorkflowTests(unittest.TestCase):
 
     def test_transition_required_fields_never_guessed(self):
         self.jira.transitions[0]['fields'] = {'resolution': {'required': True, 'hasDefaultValue': False}}
-        result = self.creator.create(self.prepare())
+        result = self.creator.create(prepared=self.prepare())
         self.assertEqual(result['outcome'], 'partial_failure')
         self.assertEqual(result['key'], 'RI-999')
         self.assertNotIn(('POST', 'issue/RI-999/transitions'), self.jira.requests)

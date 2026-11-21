@@ -5,7 +5,7 @@ from pathlib import Path
 import sys
 
 from . import __version__
-from .core import Creator, DuplicateKeys, Failure, NonFiniteNumber, authenticated_account, client_for, literal_text, strict_json, configuration, issue_reference, points_value, text_adf, validate_adf, validate_links
+from .core import Creator, DuplicateKeys, Failure, NonFiniteNumber, assignee_selector, authenticated_account, client_for, literal_text, strict_json, configuration, issue_reference, points_value, text_adf, validate_adf, validate_links
 from .updater import Updater
 from . import sprints
 from .search import search
@@ -34,10 +34,10 @@ def example_draft():
     return {'summary': 'Example only: document a local setup workflow',
             'description': 'Example only; do not create this ticket.\n\nReplace this with the complete user-approved description.',
             'type': 'VERIFIED_TYPE_ID_OR_NAME', 'status': 'VERIFIED_STATUS_ID_OR_NAME',
-            'story_points': 'unset', 'links': []}
+            'story_points': 'unset', 'assignee': None, 'links': []}
 
 
-def load_draft(path, *, update=False):
+def load_draft(*, path, update=False):
     """Validate the entire saved draft before reading configuration or Jira."""
     try:
         draft = strict_json(text=path.read_text(encoding='utf-8'))
@@ -71,7 +71,12 @@ def load_draft(path, *, update=False):
             validate_links(draft['links'])
         except Failure as exc:
             raise invalid(str(exc), 'links') from None
-    for key in sorted((REQUIRED - {'description', 'story_points'}) | (OPTIONAL - {'links'})):
+    if 'assignee' in draft:
+        try:
+            draft['assignee'] = assignee_selector(value=draft['assignee'])
+        except Failure as exc:
+            raise invalid(str(exc), 'assignee') from None
+    for key in sorted((REQUIRED - {'description', 'story_points'}) | (OPTIONAL - {'links', 'assignee'})):
         if key in draft and (not isinstance(draft[key], str) or not draft[key].strip()):
             raise invalid('This field must be a nonempty string; omit unused optional fields rather than using null.', key)
     if 'summary' in draft and len(draft['summary']) > 255:
@@ -127,9 +132,9 @@ def parser_for_cli():
     parser.add_argument('--version', action='version', version=f'jira-ticket {__version__}')
     commands = parser.add_subparsers(dest='command', required=True)
     commands.add_parser('draft-example', help='Print a safe JSON draft example offline; no configuration or requests',
-                        description='Print a JSON example, not an approved ticket. Create requires summary, description (literal string or ADF), type, status, story_points (JSON number or unset). With --update: partial draft, create keys plus sprint {action: add|remove, id: VERIFIED_ACTIVE_SPRINT_ID}, at least one key; discover with sprints TARGET [--board ID]. Sprint approval binds that exact active ID; additional active/future displacement is rejected, closed history preserved. Board may be sprint context without points. Otherwise: omitted fields unchanged, no identity defaults or clearing; unset points and [] links are no-ops. Optional string selectors: project, assignee, reporter, parent, board (only with numeric Agile estimate). Optional links array (or []): each object has exactly type (verified link type ID/unique name), direction (inward/outward from target ticket perspective), issue (existing Jira key/ID). Discover labels with jira-ticket link-types and approve natural-language relationships; no synthetic/batch targets. Never include credentials.',
+                        description='Print a JSON example, not an approved ticket. Create requires summary, description (literal string or ADF), type, status, story_points (JSON number or unset). With --update: partial draft, create keys plus sprint {action: add|remove, id: VERIFIED_ACTIVE_SPRINT_ID}, at least one key; discover with sprints TARGET [--board ID]. Sprint approval binds that exact active ID; additional active/future displacement is rejected, closed history preserved. Board may be sprint context without points. Otherwise: omitted fields unchanged, no identity defaults; assignee null/blank explicitly unassigns; unset points and [] links are no-ops. Assignee: omitted on create means UNASSIGNED; null/blank unassigns; email resolves exactly one active user (or use id:ACCOUNT_ID/exact display name). Optional string selectors: project, reporter, parent, board (only with numeric Agile estimate). Optional links array (or []): each object has exactly type (verified link type ID/unique name), direction (inward/outward from target ticket perspective), issue (existing Jira key/ID). Discover labels with jira-ticket link-types and approve natural-language relationships; no synthetic/batch targets. Never include credentials.',
                         epilog='Example: jira-ticket draft-example > draft.json; replace example values and obtain approval.')
-    commands.choices['draft-example'].add_argument('--update', action='store_true', help='Partial update example: omitted fields unchanged; no clearing or defaults')
+    commands.choices['draft-example'].add_argument('--update', action='store_true', help='Partial update example: omitted fields unchanged; assignee null/blank unassigns; no create defaults')
     search_command = commands.add_parser('search', help='Read-only raw JQL search with explicit token pagination',
         description='Run supplied JQL restricted to the configured default project, with no override or opt-out. Returns compact issues and a continuation token; no writes.',
         epilog="Example: jira-ticket search --jql 'project = RI ORDER BY updated DESC' --limit 50. Continue with the same JQL and --next-page-token TOKEN. Use get KEY for full details.")
@@ -145,7 +150,7 @@ def parser_for_cli():
     sprint_command.add_argument('--config', type=Path, help='Select jiratui config; never pass credentials')
     for name in ('get', 'update'):
         sub = commands.add_parser(name, help='Read existing ticket details' if name == 'get' else 'Partially update an existing ticket; explicit mutation unless --dry-run',
-                                  description='Read-only existing ticket JSON' if name == 'get' else 'Omitted fields unchanged. No generic clearing or create defaults. Update-only sprint: {"action":"add"|"remove", "id":"VERIFIED_ACTIVE_SPRINT_ID"}; discover with sprints TARGET [--board ID]. Optional board context can be shared with estimates. Exact sprint must remain active; extra active/future membership removal is rejected. Preview and approve before writes.',
+                                  description='Read-only existing ticket JSON' if name == 'get' else 'Omitted fields unchanged. Assignee null/blank unassigns; email selects exactly one active user (also id:ACCOUNT_ID/exact name). No other generic clearing or create defaults. Update-only sprint: {"action":"add"|"remove", "id":"VERIFIED_ACTIVE_SPRINT_ID"}; discover with sprints TARGET [--board ID]. Optional board context can be shared with estimates. Exact sprint must remain active; extra active/future membership removal is rejected. Preview and approve before writes.',
                                   epilog=f'Example: jira-ticket {name} RI-123' + (' --draft changes.json --dry-run. Format: jira-ticket draft-example --update' if name == 'update' else ' (or numeric ID). No approval needed for GET.'))
         sub.add_argument('issue', help='Existing Jira key or numeric ID')
         sub.add_argument('--config', type=Path, help='Select jiratui config; never pass credentials')
@@ -198,7 +203,7 @@ def project_for(config, override=None):
     return project
 
 
-def run(args):
+def run(*, args):
     if args.command == 'draft-example':
         return {'summary': 'Example only: approved replacement summary'} if args.update else example_draft()
     if args.command == 'search':
@@ -211,7 +216,7 @@ def run(args):
         if not args.board.isascii() or not args.board.isdigit():
             raise invalid('Board must be a numeric string verified for the existing issue project.', 'board')
     try:
-        inputs = load_draft(args.draft, update=args.command == 'update') if args.command in ('preflight', 'dry-run', 'create', 'update') else None
+        inputs = load_draft(path=args.draft, update=args.command == 'update') if args.command in ('preflight', 'dry-run', 'create', 'update') else None
     except DraftFailure as exc:
         if args.command == 'update':
             exc.error['remediation'] = 'Correct the saved partial draft using jira-ticket draft-example --update and its --help; rerun jira-ticket update TARGET --draft FILE --dry-run. No configuration, requests or writes were attempted.'
@@ -248,10 +253,10 @@ def run(args):
                 if args.comments:
                     issue['comments'] = comments.read(api=updater, issue_id=issue['id'])
                 return {'outcome': 'issue', 'read_only': True, **issue}
-            prepared = updater.prepare_update(args.issue, inputs)
+            prepared = updater.prepare_update(reference=args.issue, draft=inputs)
             if args.dry_run:
                 return {'outcome': 'dry_run', 'read_only': True, **prepared}
-            return updater.update(prepared)
+            return updater.update(prepared=prepared)
         if args.command == 'doctor':
             project_for(config)
             if args.connectivity:
@@ -266,7 +271,7 @@ def run(args):
             inputs['project'] = project_for(config, inputs['project'])
             prepared = creator.prepare(**inputs)
             if args.command == 'create' and not args.dry_run:
-                return creator.create(prepared)
+                return creator.create(prepared=prepared)
             return {'outcome': 'dry_run', **prepared,
                     'note': 'No writes. Any planned Agile estimate update precedes the status transition. Board membership and a unique direct transition can only be checked after creation; failure then is partial success. Approved links to existing tickets are applied sequentially only after estimate, status and field verification; relationship labels describe the NEW ticket perspective.'}
         project = project_for(config, args.project)
@@ -296,7 +301,7 @@ def main(argv=None):
         argv[0] = 'preflight'
     args = parser.parse_args(argv)
     try:
-        result = run(args)
+        result = run(args=args)
     except DraftFailure as exc:
         result = {'outcome': 'preflight_failed', 'message': str(exc), 'errors': [exc.error]}
     except Failure as exc:

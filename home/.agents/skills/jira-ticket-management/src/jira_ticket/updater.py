@@ -5,7 +5,7 @@ never retried, and use the established immutable issue ID, not its mutable key.
 """
 from decimal import Decimal
 
-from .core import Creator, Failure, issue_reference, points_value
+from .core import Creator, Failure, assignee_selector, issue_reference, points_value
 from . import sprints
 
 
@@ -77,31 +77,16 @@ class Updater(Creator):
     def get(self, reference):
         return self.details(self.read_issue(reference))
 
-    def identity(self, value, myself):
-        # Existing tickets have no authenticated-user identity defaults. Resolve
-        # only explicit changes and require affirmative active-user metadata.
-        if value.startswith('id:'):
-            account = value[3:]
-            user = self.request('GET', 'user', params={'accountId': account})
-            if not account or user.get('accountId') != account or user.get('active') is not True:
-                raise Failure('Account ID must identify a verified active user.')
-            return account
-        users = self.request('GET', 'user/search', params={'query': value, 'maxResults': 1000})
-        if not isinstance(users, list) or len(users) >= 1000:
-            raise Failure('User search is incomplete; use id:ACCOUNT_ID.')
-        matches = {u['accountId'] for u in users if isinstance(u, dict) and u.get('active') is True
-                   and isinstance(u.get('accountId'), str) and u['accountId'] and
-                   value.casefold() in (u.get('displayName', '').casefold(), u.get('emailAddress', '').casefold())}
-        if len(matches) != 1:
-            raise Failure('Name/email must resolve to exactly one verified active user; use id:ACCOUNT_ID.')
-        return matches.pop()
-
     @staticmethod
-    def check_edit_field(metadata, name, value):
+    def check_edit_field(*, metadata, name, value):
         field = metadata.get(name)
         if (not isinstance(field, dict) or field.get('schema', {}).get('type') != FIELD_SCHEMA[name]
                 or 'set' not in field.get('operations', [])):
             raise Failure(f'Requested field {name} cannot be set on this edit screen; unsupported moves require a separately approved Jira UI workflow.')
+        if value is None:
+            if field.get('required'):
+                raise Failure(f'Required field {name} cannot be cleared.')
+            return
         if 'allowedValues' in field:
             allowed = field['allowedValues']
             if not isinstance(allowed, list):
@@ -126,7 +111,7 @@ class Updater(Creator):
             raise Failure('Direct transition requires additional fields; no values were guessed.')
         return {'id': str(matches[0]['id']), 'to': target}
 
-    def prepare_update(self, reference, draft):
+    def prepare_update(self, *, reference, draft):
         current = self.read_issue(reference, all_fields=True)
         issue_id, old = current['id'], current['fields']
         # Jira GET editmeta returns an unpaginated fields OBJECT, not create pages.
@@ -174,11 +159,15 @@ class Updater(Creator):
             if name in draft:
                 previous = (old.get(name) or {}).get('accountId')
                 # An explicitly unchanged ID does not require reassignability.
-                account = previous if draft[name] == 'id:' + str(previous) else self.identity(draft[name], {})
-                requested[name] = {'accountId': account}
-                if name == 'assignee' and account != previous:
+                value = assignee_selector(value=draft[name]) if name == 'assignee' else draft[name]
+                if name == 'assignee' and value is None:
+                    account = None
+                else:
+                    account = previous if isinstance(previous, str) and previous.strip() and value == 'id:' + previous else self.identity(value=value, myself={})
+                requested[name] = {'accountId': account} if account is not None else None
+                if name == 'assignee' and account is not None and account != previous:
                     users = self.request('GET', 'user/assignable/search', params={'project': project['key'], 'accountId': account, 'maxResults': 1000})
-                    if not isinstance(users, list) or not any(u.get('accountId') == account and u.get('active') is not False for u in users):
+                    if not isinstance(users, list) or not any(isinstance(u, dict) and u.get('accountId') == account and u.get('active') is True for u in users):
                         raise Failure('Assignee is not assignable in the resulting project.')
         parent_changed_context = project_id != str(old['project']['id']) or type_id != str(old['issuetype']['id'])
         parent = draft.get('parent')
@@ -228,7 +217,7 @@ class Updater(Creator):
         for name, value in requested.items():
             if name == 'customfield_10004' and estimate:
                 continue
-            self.check_edit_field(metadata, name, value)
+            self.check_edit_field(metadata=metadata, name=name, value=value)
             if not equal_field(name, old.get(name), value):
                 payload[name] = value
         for name, field in metadata.items():
@@ -299,7 +288,7 @@ class Updater(Creator):
                 result.pop('uncertain_operation', None)
             link['status'] = 'verified'
 
-    def update(self, prepared):
+    def update(self, *, prepared):
         result = {k: prepared[k] for k in ('id', 'key', 'link')}
         result.update(outcome='partial_failure', writes=0, links=[dict(link) for link in prepared['links']])
         fields = prepared['payload']['fields']
@@ -317,7 +306,7 @@ class Updater(Creator):
                 result['failed_step'] = 'field_verification'
                 actual = self.refresh(result)
                 for name, value in fields.items():
-                    if not equal_field(name, actual.get(name), value):
+                    if name not in actual or not equal_field(name, actual.get(name), value):
                         raise Failure(f'Requested field {name} failed verification.')
                 result.pop('uncertain_operation', None)
             if estimate and estimate['write_needed']:
@@ -371,7 +360,7 @@ class Updater(Creator):
             result['failed_step'] = 'final_verification'
             actual = self.refresh(result)
             for name, value in prepared['requested_fields'].items():
-                if not equal_field(name, actual.get(name), value):
+                if name not in actual or not equal_field(name, actual.get(name), value):
                     raise Failure(f'Requested field {name} failed verification.')
             if target and str(actual['status']['id']) != target['id']:
                 raise Failure('Requested status failed verification.')

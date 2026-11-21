@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 import httpx
 from jira_ticket import cli
-from jira_ticket.core import Failure, configuration, text_adf
+from jira_ticket.core import USER_PAGE_SIZE, Failure, configuration, text_adf
 from test_create_ticket import Jira
 
 
@@ -51,6 +51,70 @@ class CliTests(unittest.TestCase):
         for field, value in preview['payload']['fields'].items():
             self.assertEqual(self.jira.actual[field], value)
         self.assertEqual(self.jira.requests.count(('POST', 'issue')), 1)
+
+    def test_create_assignee_defaults_and_explicit_unassign(self):
+        for change in ({}, {'assignee': None}, {'assignee': ''}, {'assignee': '  '}):
+            with self.subTest(change=change):
+                self.jira = Jira()
+                code, preview = self.invoke('preflight', self.draft | change)
+                self.assertEqual(code, 0, preview)
+                self.assertIsNone(preview['payload']['fields']['assignee'])
+                self.assertEqual(preview['payload']['fields']['reporter'], {'accountId': self.jira.myself['accountId']})
+                self.assert_no_writes()
+                code, result = self.invoke('create', self.draft | change)
+                self.assertEqual(code, 0, result)
+                self.assertIsNone(self.jira.actual['assignee'])
+                self.assertNotIn(('GET', 'user/assignable/search'), self.jira.requests)
+
+    def test_email_requires_unique_exact_active_email(self):
+        email = 'person@example.com'
+        user = {'accountId': 'person', 'emailAddress': email, 'active': True}
+        cases = [([user], True), ([], False), ([user | {'active': False}], False),
+                 ([{k: v for k, v in user.items() if k != 'active'}], False),
+                 ([user, user | {'accountId': 'second'}], False),
+                 ([user | {'emailAddress': 'other@example.com', 'displayName': email}], False),
+                 ([user | {'emailAddress': 'prefix' + email}], False),
+                 ([user | {'emailAddress': None}], False), ([user] * USER_PAGE_SIZE, False)]
+        for users, success in cases:
+            with self.subTest(users=users[:2], success=success):
+                self.jira = Jira()
+                self.jira.users = users
+                code, result = self.invoke('create', self.draft | {'assignee': f' {email.upper()} '})
+                self.assertEqual(code, 0 if success else 1, result)
+                if success:
+                    self.assertEqual(self.jira.actual['assignee'], {'accountId': user['accountId']})
+                else:
+                    self.assert_no_writes()
+
+    def test_unassigned_create_requires_explicit_null_readback(self):
+        for missing in (False, True):
+            with self.subTest(missing=missing):
+                self.jira = Jira()
+                handle = self.jira.handle
+
+                def drift(request):
+                    response = handle(request)
+                    if request.method == 'GET' and request.url.path.endswith('/issue/RI-999'):
+                        data = response.json()
+                        if missing:
+                            data['fields'].pop('assignee')
+                        else:
+                            data['fields']['assignee'] = {'accountId': 'automatic-assignee'}
+                        return httpx.Response(200, json=data)
+                    return response
+
+                with patch.object(self.jira, 'handle', side_effect=drift):
+                    code, result = self.invoke('create')
+                self.assertNotEqual(code, 0)
+                self.assertEqual(result['outcome'], 'partial_failure')
+                self.assertIn('assignee', result['message'])
+                self.assertEqual(self.jira.requests.count(('POST', 'issue')), 1)
+
+    def test_required_assignee_rejects_unassigned_before_write(self):
+        next(field for field in self.jira.fields if field['fieldId'] == 'assignee')['required'] = True
+        code, result = self.invoke('create')
+        self.assertEqual(code, 1, result)
+        self.assert_no_writes()
 
     def test_adf_is_preserved_not_converted_or_dropped(self):
         adf = {'type': 'doc', 'version': 1, 'content': [{'type': 'heading', 'attrs': {'level': 2},
@@ -198,7 +262,7 @@ class CliTests(unittest.TestCase):
         config.assert_not_called()
         client.assert_not_called()
         example = json.loads(output.getvalue())
-        self.assertEqual(set(example), cli.REQUIRED | {'links'})
+        self.assertEqual(set(example), cli.REQUIRED | {'links', 'assignee'})
         self.assertEqual(example['links'], [])
         self.assertEqual(example['story_points'], 'unset')
 

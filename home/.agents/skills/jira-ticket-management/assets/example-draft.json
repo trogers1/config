@@ -4,5 +4,6 @@
   "type": "VERIFIED_TYPE_ID_OR_NAME",
   "status": "VERIFIED_STATUS_ID_OR_NAME",
   "story_points": "unset",
+  "assignee": null,
   "links": []
 }
