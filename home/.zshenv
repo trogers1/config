@@ -12,6 +12,10 @@ prefer-managed-pi() {
 }
 prefer-managed-pi
 
+# Rustup proxies and cargo-installed tools, including in agent/IDE shells.
+typeset -gU path PATH
+path=("${CARGO_HOME:-$HOME/.cargo}/bin" "${path[@]}")
+
 # Rancher must also be discoverable from non-interactive shells and Pi children.
 typeset -gU path PATH
 path=("$HOME/.rd/bin" "${path[@]}")

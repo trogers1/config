@@ -19,13 +19,5 @@
   ],
   "lastChangelogVersion": "1.6.0",
   "theme": "dark",
-  "enabledModels": [
-    "openai/gpt-6-astra",
-    "openai/gpt-6-luna",
-    "openai/gpt-6-sol",
-    "openai/gpt-6.1-sol",
-    "claude-bridge/claude-opus-5-5",
-    "claude-bridge/claude-sonnet-5-5",
-    "claude-bridge/claude-haiku-5-5"
-  ]
+  "enabledModels": []
 }

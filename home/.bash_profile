@@ -1,4 +1,6 @@
 # rancher-desktop uses non-interactive bash shell
 export PATH="$HOME/.rd/bin:$PATH"
 
-. "$HOME/.cargo/env"
+if [ -r "${CARGO_HOME:-$HOME/.cargo}/env" ]; then
+  . "${CARGO_HOME:-$HOME/.cargo}/env"
+fi
