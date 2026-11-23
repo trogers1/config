@@ -10,118 +10,133 @@ description: >-
 
 # Guardrails
 
-Use this skill when Taylor asks you to check that appropriate guardrails are in place, or to add the ones that are missing. "Guardrails" here means the automated, fail-loud machinery that runs *before* code is executed, committed, pushed, or shipped — so mistakes surface locally and in CI instead of in production.
+Use this skill when Taylor asks you to check that appropriate guardrails are in place, or to add the ones that are missing. Guardrails are automated, fail-loud checks that surface mistakes locally and in CI rather than in production.
 
-Default rule: a guardrail belongs at the *lowest* level that can enforce it cheaply, and it must run automatically — wired into a lifecycle script (`pretest`, `prestart`, `prebuild`, `postinstall`, `prepare`) or a git hook (`pre-commit`, `pre-push`). A check that only runs when someone remembers is not a guardrail.
+A guardrail belongs at the **lowest level that can enforce it cheaply** and must run automatically: through lifecycle wiring, installed hooks, or required CI checks. A command that only runs when someone remembers is not a guardrail. Editor integration is convenience, not enforcement.
+
+## Start With the Repo's Tooling
+
+Identify the languages, workspace layout, existing task runner, bootstrap, hooks, and CI before choosing tools. Read the relevant references before implementing:
+
+- [TypeScript / Node](references/typescript-node.md) — compiler, ESLint, Prettier, dependency-cruiser, knip, npm lifecycle and hooks.
+- [Rust](references/rust.md) — Cargo, rustfmt, Clippy, crate boundaries, toolchains, task wiring and hooks.
+- [Go](references/go.md) — gofmt, vet, modules/workspaces, generation, package boundaries, toolchains and explicit check gates.
+
+These references are worked examples, not the list of supported languages or mandatory tool bundles. This skill applies to any language. For mixed-language repos, compose the applicable gates, including languages not covered by a reference. Do not add npm to a Rust-only repo or a new task runner when the existing one suffices.
+
+### Translate guarantees, not tool names
+
+For each concept below:
+
+1. **State the design guarantee and applicability.** For example, “domain code cannot depend on transport adapters,” not “install dependency-cruiser.” Identify the failure this project could actually experience.
+2. **Inspect existing/native enforcement.** Compiler rules, visibility, package layout, build dependencies, and standard tooling may already guarantee it. Verify their scope before adding another check.
+3. **Choose the language-appropriate mechanism.** Prefer maintained, idiomatic tools compatible with the repo's versions and build system. Read project configuration and relevant tool documentation to verify behavior; do not guess command flags or assume a similarly named tool has equivalent guarantees.
+4. **Wire and verify it.** Put the check at the earliest practical automatic boundary and exercise its real entry point. Where practical, introduce a controlled violation in a disposable fixture/worktree and confirm the gate rejects it, without disturbing user changes.
+5. **Record limitations.** If no reliable equivalent exists, state what remains unenforced and why. Use a narrower honest check or a justified small custom validator when worthwhile; do not invent a tool, force a foreign ecosystem, or claim example-based testing proves a stronger property.
+
+An interpreted language may have no compile-time type gate; a compiled language may already enforce private-module imports; a public library may not know which exported APIs consumers use. The desired design properties stay consistent, but enforcement and applicability differ. Mark genuine non-applicability separately from a missing applicable guardrail.
+
+Names such as `check:types`, `check:all`, and `fix:lint` describe **roles**, not mandatory syntax. Preserve idiomatic task names. Checks must not rewrite sources/manifests; fixes may mutate them. Build caches are not source mutations. Keep checks independently runnable and compose them into one authoritative aggregate gate.
 
 ## Guardrail Categories
 
-### 1. Static checks (`check:*` family)
+### 1. Static correctness and formatting
 
-The baseline. Every TS repo should have these as named `check:*` scripts so they can be composed and run independently:
+Establish the applicable baseline:
 
-- `check:types` — `tsc --noEmit`. Strict mode in `tsconfig.json` (`strict`, `noUnusedLocals`, `noUnusedParameters`, `isolatedModules`, `forceConsistentCasingInFileNames`).
-- `check:lint` — `eslint .` with `typescript-eslint` recommended. Add repo-specific architecture rules as custom ESLint rules (see §5).
-- `check:prettier` — `prettier --check .`. Shared `.prettierrc`. If an auto-fix command is useful, name it `fix:prettier` (`prettier --write .`), not `format`; keep `check:*` scripts read-only/fail-loud and `fix:*` scripts mutating.
-- `check:deps` — `depcruise` against a `.dependency-cruiser.{js,cjs}` config. Enforces no-circular, no-orphans, no-deprecated, not-to-unresolvable, not-to-dev-dep (production code must not depend on devDependencies), and peer/optional dep awareness.
-- `check:knip` — `knip` with an explicit `entry` + `project` so unused exports/dependencies fail loudly. Keeps the surface honest. Do not add broad suppressions such as `ignoreExportsUsedInFile` unless you have a specific documented false positive; first try fixing the export surface or tightening `entry`/`project`.
+- **Compiler/type checks:** reject invalid code under deliberate strictness settings and supported build configurations.
+- **Lint:** catch likely mistakes and enforce justified project conventions. Select rules deliberately rather than enabling every available restriction.
+- **Formatting:** use the language's standard formatter with a read-only check and a separate repair command. Prefer defaults over extensive style customization.
+- **Dependency policy:** enforce dependency resolution, dependency kinds, and any required source/license/advisory policies. Distinguish built-in package-manager guarantees from additional checks.
+- **Unused surface:** detect unused code, exports, and dependencies where tooling supports it. Know the limits: a public API may be consumed outside the repo, and conditional code can produce false positives.
 
-Wire them all into `pretest` so `npm test` cannot run against a broken tree:
-
-```jsonc
-"pretest": "npm run check:types && npm run check:lint && npm run check:prettier && npm run check:deps && npm run check:knip",
-"test": "vitest run"
-```
+Wire the checks into the automatic gate. Avoid duplicate work when one tool already performs another check over the same configuration. Choose features/platforms/targets from the supported matrix; a broad-sounding flag is not proof of complete coverage.
 
 ### 2. Generated-artifact freshness
 
-If the repo derives code from a source of truth (OpenAPI → types, protobuf, schema → types), generation is a guardrail: the derived files must be regenerated from sources before any build/test, or they silently drift. Typical pattern:
+When sources generate bindings, schemas, types, or other artifacts, prevent consumers from using stale output:
 
-- `generate:all` aggregates every generator (e.g. `generate:openapi`).
-- `prestart`, `build`, and `pretest` all invoke `npm run generate:all` first.
-- Generated files are gitignored and/or marked `*.generated.ts` so they're never hand-edited and can be excluded from lint/format.
+- Prefer native build integration for build-local generated artifacts, with correct input tracking and outputs outside hand-maintained source directories.
+- For checked-in outputs, provide deterministic generation plus a freshness check covering changed, added, and deleted owned files. Generate in a temporary directory or disposable checkout so the check does not rewrite a developer's tree.
+- Compose generators before consumers. Aggregate multiple generators through the existing task runner.
+- Make ownership explicit: never hand-edit generated output. Exclude it from lint/format only deliberately; otherwise make generation produce the expected formatted output.
 
-If a repo has generated artifacts but no generation step in its lifecycle scripts, that's a missing guardrail — add it.
+If derived artifacts exist without automatic generation or freshness enforcement, add the missing gate. Do not add generation machinery to a repo with nothing generated.
 
-### 3. Environment & runtime preflight
+### 3. Environment and runtime preflight
 
-Checks that the world the code is about to run in is actually ready. Especially important for apps with external dependencies. Examples of the shape these take:
+Check real prerequisites at the boundary that needs them:
 
-- **Node version** — only pin and assert an exact `.nvmrc` when version skew is a real failure mode (apps, CLIs, repos with Docker/CI/runtime parity concerns, or code relying on a specific Node release). For small libraries or pi extensions that run inside Pi's own supported Node runtime, prefer an `engines.node` lower bound matching the host package requirement; don't add an exact `check:node` guardrail by default.
-- **External-service connectivity** — for any dependency the code needs at runtime (cache, DB, queue), a preflight check does a real round-trip (e.g. set/get/delete against a cache) before tests run, with a timeout. Run in `pretest`. Catches "tests fail because the service is down" vs "tests fail because the code is wrong."
-- **Secrets/env** — `.env.template` is the source of truth for required env vars; a script materializes `.env` from a secrets store (e.g. AWS Secrets Manager, Vault), failing loud if a required key is missing. Catches missing config before runtime, not during a request.
-- **Patched dependencies** — if the repo patches deps, `postinstall` runs `patch-package` so patches are guaranteed present after every install.
+- **Runtime/toolchain:** declare supported versions and provision required compiler/formatter/linter components. Pin an exact version when reproducibility or version skew is a real failure mode; distinguish a minimum supported version from the active development version.
+- **Native and extra check tools:** declare installation requirements and pin separately installed check tools where reproducibility matters. Provision them in bootstrap/CI, not by silently downloading them during checks or commits.
+- **External services:** before dependent integration tests, perform a bounded real round-trip (e.g. set/get/delete against a cache). Keep unrelated static checks independent of service availability.
+- **Configuration/secrets:** derive required settings from the repo's source of truth (e.g. `.env.template` and validation schema). Materialize configuration explicitly, fail on missing required values, and never embed runtime secrets into generated code or build artifacts.
+- **Dependency patches:** use reproducible, version-controlled patch mechanisms and verify the resolved dependency actually uses the patch. Never rely on edits to a machine-local package cache.
 
-Add the preflight checks that match the repo's real failure modes. Don't add a cache check to a package with no cache.
+Add only checks that match the repo's actual failure modes. A service-free library does not need connectivity preflight. A shell PATH change alone does not install a missing toolchain.
 
-### 4. Parallelization
+### 4. Gate composition and parallelization
 
-When the static check set grows past ~3 independent scripts, run them concurrently but keep output deterministic. A `run-parallel-checks.ts` could spawn each `npm run <check>` as a child process, buffer output, and print results in submission order. If checks grow too large, use it:
+Keep one full gate for hooks and CI, with an optional quick subset for tight feedback loops. Generation must precede consumers; preflight must precede dependent tests. A quick gate that skips freshness is not equivalent to the full gate.
 
-```jsonc
-"check:all": "npm run generate:all && npm run check:all:quick",
-"check:all:quick": "tsx scripts/run-parallel-checks.ts check:types check:lint check:deps check:knip check:input-schemas check:prettier"
-```
+When several independent checks make the gate slow, measure and then use the existing runner to parallelize them. Buffer or label output deterministically and propagate every failure. Respect native build-system parallelism and cache locks; concurrent compiler invocations can duplicate work or serialize rather than speed anything up.
 
-`check:all:quick` is the fast path (no generation) for tight feedback loops; `check:all` is the full pre-push gate.
+### 5. Architecture boundaries
 
-### 5. Architecture-boundary rules
+Enforce design constraints at the strongest available layer:
 
-Static checks catch syntax/type errors; boundary rules catch *design* drift. Express them in two layers:
+- **Native boundaries first:** package/crate/module layout, visibility, and dependency kinds can make forbidden dependencies impossible.
+- **Dependency graph rules:** enforce allowed layer edges, production vs. test dependencies, and cycle constraints not already guaranteed by the toolchain. Inspect real metadata rather than maintaining a parallel graph by hand.
+- **Import/API rules:** use a linter or syntax-aware check for constraints the graph cannot express, such as banned APIs, deep imports, or scoped migration rules.
 
-- **dependency-cruiser** (`check:deps`) — module/layer boundaries. Examples: `no-circular` (error for apps, often `warn` for small libraries — choose deliberately), a rule that a given layer may only import from itself plus approved neighbors (e.g. a data layer that must not reach into the HTTP layer), `not-to-dev-dep` (production code must not depend on devDependencies), and `not-to-spec` (production code must not import test files).
-- **ESLint custom rules** — import-shape rules dep-cruiser can't express. Examples: a rule that files inside a library's own directory must not import via that library's public index (it hides whether an export is really used externally), `no-restricted-imports` banning deep imports into internal directories, and a `no-restricted-imports` rule enforcing an incremental migration constraint like "handlers must not import from the HTTP layer directly; go through the data layer."
+A general linter or dependency vulnerability scanner is not automatically an architecture checker. Distinguish module-level and package-level guarantees. Scope incremental rules narrowly and explain why they exist. Avoid text-search checks that confuse comments, aliases, or re-exports with semantic dependencies.
 
-Boundary rules are the guardrails that let you refactor with confidence — they fail loud the moment a layering rule is violated, instead of letting the architecture rot silently. When adding a new architectural rule, prefer dep-cruiser for "X must not depend on Y" and ESLint for "don't import via path shape Z."
+### 6. Schema and contract drift
 
-### 6. Schema/contract drift
+When two representations describe the same boundary (internal model/schema vs. external JSON Schema, OpenAPI, protobuf, etc.), prefer deriving them from one source of truth. Otherwise enforce the intended compatibility relationship, such as the internal accepted shape being a valid subset of the external contract.
 
-When the repo has two representations of the same shape (e.g. an internal TypeBox input schema vs. an external MCP/OpenAPI tool schema), assert the internal one is a *valid subset* of the external one. A `validate-schemas.ts` could run as `check:input-schemas` inside `check:all:quick`. This is the same drift-protection philosophy as the `testing` skill's boundary schema, applied across an internal/external contract pair.
+Check serialization behavior, not just in-memory types: field renames, absent vs. nullable fields, enum representation, and unknown-field handling matter. Wire the compatibility task into the aggregate gate. A few valid fixtures do not prove schema inclusion; use an appropriate compatibility check or state the narrower guarantee honestly.
 
-Add this whenever a hand-maintained schema must stay compatible with a generated or externally-owned one.
+## Automatic Enforcement
 
-## Git Hooks
+### Local lifecycle and hooks
 
-Guardrails only work if they run. Wire `check:all` (or at least the fast `check:all:quick`) into hooks:
+- **Before tests/builds:** use native lifecycle wiring when available; otherwise provide an explicit aggregate task and make hooks/CI call it. Do not claim a native test command runs checks it does not invoke.
+- **Pre-commit:** keep it fast and formatting-focused. Prefer read-only checks; staged-file auto-fixing is acceptable only when it preserves partially staged work. Never blindly format and re-stage an entire workspace.
+- **Pre-push:** run the full gate, or explicitly document any weaker local subset.
+- **Bootstrap:** install hooks through the existing mechanism and verify tools are discoverable from non-interactive IDE environments. Fail with actionable repair instructions rather than installing tools during a commit.
+- **Multiple VCS workflows:** verify Git and jj push paths separately when both are used. Do not assume a Git hook manager intercepts `jj git push`; use supported integration or a documented checked push task, plus required CI.
 
-- **`pre-commit`** — fast, local, formatting-focused. You can use `lint-staged` (prettier `--write` on staged files) so commits aren't blocked on full checks.
-- **`pre-push`** — the full gate. `npm run check:all`.
-- **Both VCS hooks** — if the repo is used with both `git` and `jj`, install *both* husky (`.husky/pre-push`) and lefthook (`lefthook.yml`, `pre-push` → `./scripts/with-node.sh npm run check:all`). You can do this if you want to support jj, because jj's push path doesn't trigger husky.
-- **`prepare`** — `husky` so hooks install automatically after `npm install`.
+### CI parity
 
-`scripts/with-node.sh` (or equivalent) ensures Node is on PATH when the hook fires from an IDE that didn't load the shell profile.
+CI must invoke the same aggregate gate as local checks instead of copying its command list into YAML. Add separate platform/feature/minimum-version jobs and integration checks where the supported matrix requires them.
 
-## CI
-
-The same `check:all` the hooks run locally must run in CI, plus the things only CI can do (integration tests against real services, Docker build, deploy gates). Generally, CI config files like `.gitlab-ci.yml` should mirror the local script set. The guardrail contract is: **local `check:all` passing should mean CI's check stage passes.** If CI runs checks the local hooks don't, either add them locally or accept that local green is a weaker signal.
+The contract is: **local full-gate green should imply CI's equivalent baseline checks pass**. Document configurations or infrastructure that only CI covers; local green is not a claim to cover those. Provision toolchains and external tools reproducibly before running the gate; caches must never substitute for installation or skip checks.
 
 ## Audit Workflow
 
-When asked to check guardrails on a repo:
+1. **Discover tooling and callers.** Read manifests, workspace definitions, task scripts, bootstrap, hooks, and CI. Load the applicable language references. Identify the full gate, quick subset, and automatic callers; flag checks that are only documented/manual.
+2. **Check static coverage.** Compiler strictness, lint, formatting, dependency policy, unused-surface checks, and supported configurations. Distinguish missing guarantees from guarantees already supplied by the native toolchain.
+3. **Check generation.** Find derived files, generator inputs/outputs, native build integration, and checked-in artifact freshness. Can a source/schema edit leave stale output while the gate passes?
+4. **Check preflight.** Version constraints, component provisioning, native tools, lockfile/patch policy, required configuration, and real external dependencies. Are failures actionable and checks placed before the work that requires them?
+5. **Check boundaries.** Does visibility/package layout enforce the intended design? Do graph/import rules encode actual project layers? Are test-only dependencies isolated and incremental rules narrowly scoped?
+6. **Check contracts.** Find internal/external shape pairs. Are they derived from one source, or is compatibility enforced with a clearly stated guarantee?
+7. **Check gate composition.** Are required checks aggregated, ordered correctly, and fail-loud? Is parallelism safe and useful? Are suppressions narrow and justified?
+8. **Check local enforcement.** Do installed hooks invoke the intended tasks, preserve partial staging, and work outside interactive shells? Verify each supported VCS path.
+9. **Check CI parity.** Does CI use the same baseline gate with reproducible provisioning? Are matrix-only guarantees documented? Are CI-only baseline checks missing locally?
 
-1. **Read the lifecycle scripts.** `cat package.json` and list every `pre*`/`post*`/`prepare` script. These are where guardrails live. Note which `check:*` scripts exist and whether `pretest`/`prestart`/`build` actually invoke them.
-2. **Check for generation.** Are there `*.generated.ts` / derived files? Is there a `generate:*` script, and is it in `prestart`/`build`/`pretest`?
-3. **Check for preflight.** External deps (DB, cache, APIs)? Node version pinned (`.nvmrc`) and asserted? Env template present and complete?
-4. **Read the dep-cruiser config.** Is it just the boilerplate, or does it encode real boundary rules for this repo's layers? Are severities `error` where they matter?
-5. **Read the ESLint config.** Recommended only, or custom architecture rules? Any `no-restricted-imports` guarding layering?
-6. **Check knip config.** Does `entry`/`project` actually cover the code, or is it default (which misses things)?
-7. **Check hooks.** `.husky/`, `lefthook.yml`, `lint-staged`. Is `check:all` wired into `pre-push`? Is `prepare` set so hooks auto-install?
-8. **Check CI.** Does it run the same `check:all`? Are there CI-only checks that should be local too?
-9. **Check for contract pairs.** Internal schema + external schema that must stay compatible? Add a subset-validation check.
-
-Report findings as: ✅ present / ⚠️ present but weak / ❌ missing, each with the specific file and what to change. Then add the missing ones, smallest correct change first, and verify each with the repo's actual check command.
+Report each applicable guarantee as ✅ enforced / ⚠️ partially enforced / ❌ missing, naming the mechanism, automatic entry point, relevant file, and any limitation or proposed change. Mark genuinely inapplicable concepts as N/A with a reason; absence of a preferred tool is not itself a missing guarantee. Then add missing guardrails, smallest correct change first, and verify each through the repo's actual check entry point.
 
 ## Adding Guardrails
 
-- Add one guardrail per atomic change. Run the relevant `check:*` after each.
-- Prefer composing existing `check:*` scripts over inlining commands — keep each check independently runnable. Keep `check:*` scripts non-mutating and fail-loud; use `fix:*` scripts for mutating repair commands (for example `fix:prettier`, `fix:lint`) and avoid ambiguous names like `format`.
-- Set severity deliberately: `error` for rules that mean "this is wrong," `warn` for "look at this." Don't make everything an error or developers learn to ignore the noise.
-- Document *why* a non-obvious rule exists, in its `comment` (dep-cruiser) or `message` (ESLint) or a short `docs/` note explaining the convention it enforces. A rule with no rationale gets deleted.
-- When adding a boundary rule as part of an incremental migration (e.g. "only this module is migrated for now; broaden later"), scope it narrowly to the affected paths and leave a comment saying so.
-- Keep `pretest` fast enough to tolerate. If it grows slow, parallelize with `run-parallel-checks.ts` and split a `check:all:quick` (no generation) from `check:all` (full).
+- Add one guardrail per atomic change and run the relevant check after each. Use the full gate before declaring completion.
+- Compose existing commands rather than implementing parallel versions. Keep checks non-mutating and fixes explicit; do not rename native commands solely to match this skill's naming examples.
+- Select severity deliberately and understand gate-wide warning promotion. Avoid broad suppressions; document narrowly justified false positives.
+- Explain non-obvious rules in configuration, lint messages, or nearby documentation. A rule with no rationale gets deleted.
+- Keep the gate tolerably fast without weakening its guarantees; split quick/full tasks or parallelize independent work only when useful.
 
 ## What This Skill Is Not
 
-- Not a testing skill — test *design* is the `testing` skill. This skill is about the *gate* that runs the tests and the checks around them.
-- Not a CI/CD pipeline builder — it covers the check stage that CI consumes, not deploy/release orchestration.
-- Not "add every guardrail everywhere." The trigger for each guardrail is the *failure mode it prevents*, not the repo's size — each section above states its own applicability condition, and that condition is the decision driver. Repo scale mainly governs §2 (only if there are derived artifacts) and §3 (only if there are external dependencies). §1, §4, §5, and §6 apply to small libraries too the moment their condition is met: a small package with a hand-maintained schema still needs §6, and one with a 5-check `pretest` chain is a candidate for §4. The real over-guarding sin is adding a guardrail for a failure mode the repo doesn't have (a cache check with no cache, a generation step with no generated artifacts) — not adding a guardrail to a small repo that genuinely needs it.
+- Not a testing skill — test *design* belongs to `testing`; this skill governs the gate that runs tests and checks.
+- Not a deploy/release pipeline builder — it covers the check stage CI consumes.
+- Not “add every guardrail everywhere.” Applicability follows real failure modes, not repo size. A small crate with a hand-maintained external contract needs drift checks; a large repo without generated artifacts does not need generation machinery.
