@@ -1409,6 +1409,8 @@ The permissions gate remains loaded and will fail closed until the profile is co
     "ruleset:typescript-node-test":
       "Permit TypeScript and Node package-script test commands.",
     "ruleset:rust-test": "Permit Rust build and test commands.",
+    "ruleset:rust-dep-management":
+      "Permit Rust toolchain mutations and tool installation runtime state.",
     "ruleset:vitest":
       "Permit exact Vitest commands and its scoped Vite runtime directory.",
     "ruleset:docs-write": "Permit documentation writes.",

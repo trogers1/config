@@ -376,7 +376,20 @@ fsck --lost-found`, etc.).
 - `ruleset:read-only-path` — read-only path posture with writes limited to
   tmp/handoff/progress and the standard protected-path layer.
 - `ruleset:typescript-node-test` — npm/pnpm/yarn test and run commands.
-- `ruleset:rust-test` — cargo build/test/check/clippy commands.
+- `ruleset:rust-test` — cargo fmt/build/test/check/clippy commands plus audited
+  registry/Git caches and exact cache lock/database files under `~/.cargo`.
+  These runtime grants survive task write scopes; they do not grant writes to
+  Cargo binaries, configuration, credentials, or `~/.rustup`.
+  Workspace build artifacts such as `target/` still obey ordinary workspace
+  permissions and each worker's declared write scope.
+- `ruleset:rust-dep-management` — rustup update/toolchain/component/target
+  mutations and runtime writes to `~/.rustup`, `~/.cargo/bin`, Cargo installation
+  records, and caches. Selected by `builtin:deps-mutator`, not the default profile.
+  Update/install commands require `rustup update --no-self-update [toolchain]`
+  or `rustup toolchain install --no-self-update <toolchain>` so they cannot
+  implicitly update rustup itself.
+  Cargo install/add/remove commands use the existing dependency-mutation rules;
+  Cargo configuration and credentials are not included in these writable roots.
 - `ruleset:go-runtime-commands` — Go build/test commands plus the audited Go
   toolchain-cache runtime requirement.
 - `ruleset:vitest` — supported Vitest/package test commands plus the internal,

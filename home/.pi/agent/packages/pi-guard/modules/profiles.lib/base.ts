@@ -22,6 +22,7 @@ const baseRuleSetNames = [
   "ruleset:shell-guards",
   "ruleset:path-guards",
   "ruleset:go-runtime-commands",
+  "ruleset:rust-test",
 ] as const;
 
 export const baseCompositionChain = [

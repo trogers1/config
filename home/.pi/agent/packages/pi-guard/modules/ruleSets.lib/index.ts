@@ -15,7 +15,7 @@ import {
 } from "./packageManagers";
 import { goTestRules } from "./go";
 import { typeScriptNodeTestRules } from "./node";
-import { rustTestRules } from "./rust";
+import { rustDependencyManagementRules, rustTestRules } from "./rust";
 import { vitestRules } from "./vitest";
 import {
   defaultReadPaths,
@@ -106,7 +106,11 @@ export const ruleSetRegistry = {
   },
   "ruleset:rust-test": {
     policy: { tools: { bash: rustTestRules } },
-    runtimeRequirements: [],
+    runtimeRequirements: ["rust-toolchain-cache"],
+  },
+  "ruleset:rust-dep-management": {
+    policy: { tools: { bash: rustDependencyManagementRules } },
+    runtimeRequirements: ["rust-toolchain-cache", "rust-toolchain-management"],
   },
   "ruleset:vitest": {
     policy: { tools: { bash: vitestRules } },

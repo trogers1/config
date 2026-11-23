@@ -7,6 +7,8 @@ import {
   finalizeResolvedProfile,
 } from "../modules/policyHelpers";
 import { policyConfig } from "../modules/policy";
+import { decideBash } from "../extensions/guard";
+import { runtimeRequirementDefinition } from "../modules/runtimeRequirements";
 import {
   clearSandboxCaches,
   resolveSandbox,
@@ -111,6 +113,103 @@ afterEach(async () => {
 });
 
 describe("runtime requirement sandbox resolution", () => {
+  it.each([
+    { profile: "builtin:default", scoped: false },
+    { profile: "builtin:default", scoped: true },
+    { profile: "builtin:deps-mutator", scoped: false },
+    { profile: "builtin:deps-mutator", scoped: true },
+  ] as const)(
+    "keeps Rust runtime grants narrow for $profile with source scope=$scoped",
+    async ({ profile, scoped }) => {
+      const specifications: SandboxSpec[] = [];
+      setSandboxBackendForTesting(recordingBackend({ specifications }));
+      writeProfileConfig({
+        extendsProfiles: [profile],
+      });
+      if (scoped) process.env.PI_SUBAGENT_PERMISSIBLE_GLOBS = "src/**";
+      const startupCwd = process.cwd();
+      await invokeBashThroughExtension({ startupCwd, command: "cargo check" });
+      const specification = onlyPreparedSpecification({ specifications });
+      const roots = specification.filesystem.writeAllowRoots;
+      for (const configured of policyConfig.profiles[
+        profile
+      ].runtime.requirements.flatMap(
+        (name) => runtimeRequirementDefinition({ name }).sandboxWritePaths,
+      )) {
+        const resolved = path.join(
+          os.homedir(),
+          configured.slice(2).replace(/\/\*\*$/, ""),
+        );
+        expect(roots).toContain(resolved);
+      }
+      // Negative paths must not be covered by any ancestor grant.
+      for (const relative of [
+        ...(profile === "builtin:default" ? [".cargo/bin", ".rustup"] : []),
+        ".cargo/config",
+        ".cargo/config.toml",
+        ".cargo/credentials",
+        ".cargo/credentials.toml",
+        ".cargo/.global-cache-journal",
+      ]) {
+        const candidate = path.join(os.homedir(), relative);
+        expect(
+          roots.some(
+            (root) =>
+              candidate === root || candidate.startsWith(root + path.sep),
+          ),
+          candidate,
+        ).toBe(false);
+      }
+      if (scoped)
+        expect(roots).not.toContain(path.resolve(startupCwd, "target"));
+    },
+  );
+
+  it("limits Rust dependency/toolchain mutations to the dependency profile", () => {
+    for (const command of [
+      "cargo install ripgrep",
+      "cargo uninstall ripgrep",
+      "rustup update --no-self-update",
+      "rustup update --no-self-update stable",
+      "rustup toolchain install --no-self-update stable",
+      "rustup toolchain uninstall nightly",
+      "rustup component add clippy",
+      "rustup component remove clippy",
+      "rustup target add wasm32-unknown-unknown",
+      "rustup target remove wasm32-unknown-unknown",
+    ]) {
+      expect(
+        decideBash(
+          command,
+          policyConfig.profiles["builtin:deps-mutator"].policy,
+        ),
+        command,
+      ).toBe("allow");
+      expect(
+        decideBash(command, policyConfig.profiles["builtin:default"].policy),
+        command,
+      ).not.toBe("allow");
+    }
+    for (const command of [
+      "cargo publish",
+      "cargo login token",
+      "rustup self update",
+      "rustup self uninstall",
+      "rustup update",
+      "rustup update stable",
+      "rustup toolchain install",
+      "rustup toolchain install stable",
+    ]) {
+      expect(
+        decideBash(
+          command,
+          policyConfig.profiles["builtin:deps-mutator"].policy,
+        ),
+        command,
+      ).not.toBe("allow");
+    }
+  });
+
   it("carries ruleset:vitest through the full extension path and narrowed scope", async () => {
     const specifications: SandboxSpec[] = [];
     setSandboxBackendForTesting(recordingBackend({ specifications }));

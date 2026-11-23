@@ -224,9 +224,13 @@ describe("rule-set namespace", () => {
 
   it("records exact runtime requirements and provenance from composition", () => {
     const profile = genericPolicyConfig.profiles["builtin:default"];
-    expect(profile.runtime.requirements).toEqual(["go-toolchain-cache"]);
+    expect(profile.runtime.requirements).toEqual([
+      "go-toolchain-cache",
+      "rust-toolchain-cache",
+    ]);
     expect(profile.runtime.provenance).toEqual({
       "go-toolchain-cache": ["ruleset:go-runtime-commands"],
+      "rust-toolchain-cache": ["ruleset:rust-test"],
     });
   });
 
@@ -234,9 +238,10 @@ describe("rule-set namespace", () => {
     const profile = genericPolicyConfig.profiles["builtin:default"];
     expect(profile.runtime).toEqual({
       implicitAskDecision: "ask",
-      requirements: ["go-toolchain-cache"],
+      requirements: ["go-toolchain-cache", "rust-toolchain-cache"],
       provenance: {
         "go-toolchain-cache": ["ruleset:go-runtime-commands"],
+        "rust-toolchain-cache": ["ruleset:rust-test"],
       },
     });
     expect(JSON.parse(JSON.stringify(profile))).toHaveProperty("runtime");
@@ -311,12 +316,12 @@ describe("rule-set namespace", () => {
       }),
     });
 
-    expect(config.profiles.transformed.runtime.requirements).toEqual([
-      "go-toolchain-cache",
-    ]);
-    expect(config.profiles.transformed.runtime.provenance).toEqual({
-      "go-toolchain-cache": ["ruleset:go-runtime-commands"],
-    });
+    expect(config.profiles.transformed.runtime.requirements).toEqual(
+      genericPolicyConfig.profiles["builtin:default"].runtime.requirements,
+    );
+    expect(config.profiles.transformed.runtime.provenance).toEqual(
+      genericPolicyConfig.profiles["builtin:default"].runtime.provenance,
+    );
   });
 
   it("rejects invalid programmatic runtime requirements", () => {

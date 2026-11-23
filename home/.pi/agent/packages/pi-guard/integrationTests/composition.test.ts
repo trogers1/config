@@ -110,11 +110,11 @@ describe("profile composition", () => {
     // profile and direct workflow parent, without duplicating either the
     // requirement or its source provenance.
     expect(config.profiles.reviewer.runtime.requirements).toEqual([
-      "go-toolchain-cache",
+      ...genericPolicyConfig.profiles["builtin:default"].runtime.requirements,
       "vitest-vite-temp",
     ]);
     expect(config.profiles.reviewer.runtime.provenance).toEqual({
-      "go-toolchain-cache": ["ruleset:go-runtime-commands"],
+      ...genericPolicyConfig.profiles["builtin:default"].runtime.provenance,
       "vitest-vite-temp": ["ruleset:vitest"],
     });
   });

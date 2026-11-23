@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { explainPermission, formatExplanation } from "../extensions/guard";
 import { createExtensionHarness } from "./support/extensionHarness";
-import { policyConfig } from "../modules/policy";
+import { builtinCompositionChains, policyConfig } from "../modules/policy";
 import type { RawProfileConfig } from "../modules/profileConfig";
 import type {
   CustomToolRule,
@@ -653,14 +653,7 @@ describe("permissions explain", () => {
     expect(explanation.compositionChain).toEqual([
       "ruleset:codemode",
       "ruleset:subagents",
-      "ruleset:shell",
-      "ruleset:git",
-      "ruleset:packageManagers",
-      "ruleset:deps-mutations-guard",
-      "ruleset:shell-guards",
-      "ruleset:path-guards",
-      "ruleset:go-runtime-commands",
-      "builtin:default",
+      ...builtinCompositionChains["builtin:default"],
     ]);
   });
 
@@ -688,14 +681,7 @@ describe("permissions explain", () => {
     expect(explanation.compositionChain).toEqual([
       "ruleset:codemode",
       "ruleset:subagents",
-      "ruleset:shell",
-      "ruleset:git",
-      "ruleset:packageManagers",
-      "ruleset:deps-mutations-guard",
-      "ruleset:shell-guards",
-      "ruleset:path-guards",
-      "ruleset:go-runtime-commands",
-      "builtin:default",
+      ...builtinCompositionChains["builtin:default"],
       "transform:deny-asks",
       "custom profile: my-profile",
     ]);

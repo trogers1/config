@@ -15,6 +15,14 @@ prefer-managed-pi
 # Rustup proxies and cargo-installed tools, including in agent/IDE shells.
 typeset -gU path PATH
 path=("${CARGO_HOME:-$HOME/.cargo}/bin" "${path[@]}")
+# Homebrew's keg-only rustup keeps its proxies outside CARGO_HOME.
+for rustup_prefix in "${HOMEBREW_PREFIX:-/opt/homebrew}" /usr/local; do
+  if [[ -x "$rustup_prefix/opt/rustup/bin/rustup" ]]; then
+    path=("$rustup_prefix/opt/rustup/bin" "${path[@]}")
+    break
+  fi
+done
+unset rustup_prefix
 
 # Rancher must also be discoverable from non-interactive shells and Pi children.
 typeset -gU path PATH

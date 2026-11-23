@@ -1947,6 +1947,9 @@ describe("default profile bash policy", () => {
     "pip3 list",
     "uv pip list",
     "uv tree",
+    "cargo fmt",
+    "cargo fmt --manifest-path audio-create/Cargo.toml",
+    "cargo fmt --check",
     "cargo build",
     "cargo test",
     "cargo test -- --nocapture",
@@ -2024,7 +2027,6 @@ describe("default profile bash policy", () => {
     "uv run python main.py",
     "uvx cowsay",
     "bundle exec rake db:migrate",
-    "cargo fmt",
     "cargo clean",
     "composer outdated",
   ])("asks for uncommon package manager commands: %s", (command) => {

@@ -3,7 +3,7 @@ import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { RuleSetName } from "../modules/ruleSets.lib/index";
 import type { ProfileConfigFile } from "../modules/policyHelpers";
 import { createExtensionHarness } from "./support/extensionHarness";
@@ -44,6 +44,7 @@ beforeAll(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   delete process.env.PI_GUARD_PROFILE_CONFIG;
   delete process.env.PI_SUBAGENT_PROFILE;
   delete process.env.PI_SUBAGENT_PERMISSIBLE_GLOBS;
@@ -895,6 +896,67 @@ describe("sandbox full-harness OS acceptance", () => {
       fs.rmSync(fixtureNodeModules, { recursive: true, force: true });
     }
   });
+
+  it.each([false, true])(
+    "writes Cargo caches through the real sandbox with task scope=%s",
+    async (scoped) => {
+      const root = fixture();
+      const home = fs.mkdtempSync(
+        path.join(import.meta.dirname, ".cargo-home-"),
+      );
+      tempDirectories.push(home);
+      fs.mkdirSync(path.join(home, ".cargo"), { recursive: true });
+      vi.stubEnv("HOME", home);
+      const configPath = path.join(root, "profiles.jsonc");
+      fs.writeFileSync(
+        configPath,
+        JSON.stringify({
+          defaultProfile: "runtime-acceptance",
+          profiles: {
+            "runtime-acceptance": {
+              description:
+                "Default Rust runtime with parent-authorized macOS scratch",
+              extends: ["builtin:default"],
+              sandbox: {
+                network: "deny",
+                extraWritePaths: ["/var/folders/*/*/T/**"],
+              },
+            },
+          },
+        }),
+      );
+      process.env.PI_GUARD_PROFILE_CONFIG = configPath;
+      if (scoped) process.env.PI_SUBAGENT_PERMISSIBLE_GLOBS = "allowed";
+      const harness = createExtensionHarness({
+        contextCwd: root,
+        confirm: true,
+      });
+      await harness.start();
+      try {
+        const command = node({
+          source:
+            "const fs = require('fs'); const path = require('path'); " +
+            "const target = path.join(process.env.HOME, '.cargo/registry/cache/example'); " +
+            "fs.mkdirSync(target, { recursive: true }); " +
+            "fs.writeFileSync(path.join(target, 'download.crate'), 'cached');",
+        });
+        const call = harness.createToolCall({
+          toolName: "bash",
+          input: { command, timeout: 10 },
+        });
+        const gate = await harness.callTool(call);
+        expect(gate?.block, gate?.reason).not.toBe(true);
+        const result = await harness.executeTool({
+          name: "bash",
+          params: { command, timeout: 10 },
+          toolCallId: call.toolCallId,
+        });
+        expect(exitCodeFrom({ result }), JSON.stringify(result)).toBe(0);
+      } finally {
+        await harness.shutdown();
+      }
+    },
+  );
 
   it("permits Go's module-cache metadata through the complete sandboxed Pi path", async () => {
     const root = fixture();

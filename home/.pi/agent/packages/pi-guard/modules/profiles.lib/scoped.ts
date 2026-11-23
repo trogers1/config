@@ -36,6 +36,7 @@ export const depsMutatorCompositionChain = [
   "ruleset:shell-guards",
   "ruleset:path-guards",
   "ruleset:go-runtime-commands",
+  "ruleset:rust-dep-management",
   "builtin:deps-mutator",
 ] as const;
 
@@ -100,6 +101,7 @@ export const depsMutatorProfile: ProfilePolicy = {
         "ruleset:deps-mutations-allow",
         "ruleset:shell-guards",
         "ruleset:go-runtime-commands",
+        "ruleset:rust-dep-management",
       ],
     }),
   },

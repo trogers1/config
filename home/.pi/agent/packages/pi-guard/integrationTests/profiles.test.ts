@@ -560,7 +560,7 @@ describe("permissions extension", () => {
     });
 
     expect(lastCallArgument({ mock: harness.ui.notify, index: 0 })).toContain(
-      "Composition: ruleset:codemode → ruleset:subagents → ruleset:shell → ruleset:git → ruleset:packageManagers → ruleset:deps-mutations-guard → ruleset:shell-guards → ruleset:path-guards → ruleset:go-runtime-commands → builtin:default",
+      "Composition: ruleset:codemode → ruleset:subagents → ruleset:shell → ruleset:git → ruleset:packageManagers → ruleset:deps-mutations-guard → ruleset:shell-guards → ruleset:path-guards → ruleset:go-runtime-commands → ruleset:rust-test → builtin:default",
     );
   });
 
@@ -698,7 +698,7 @@ describe("permissions extension", () => {
     ],
     [
       "builtin:tests-hidden",
-      "ruleset:codemode → ruleset:subagents → ruleset:shell → ruleset:git → ruleset:packageManagers → ruleset:deps-mutations-guard → ruleset:shell-guards → ruleset:path-guards → ruleset:go-runtime-commands → builtin:default → ruleset:test-write-protection → builtin:tests-hidden",
+      "ruleset:codemode → ruleset:subagents → ruleset:shell → ruleset:git → ruleset:packageManagers → ruleset:deps-mutations-guard → ruleset:shell-guards → ruleset:path-guards → ruleset:go-runtime-commands → ruleset:rust-test → builtin:default → ruleset:test-write-protection → builtin:tests-hidden",
     ],
   ])(
     "explains the exact non-default composition chain for %s through the registered command",
@@ -754,7 +754,7 @@ describe("permissions extension", () => {
     });
 
     expect(lastCallArgument({ mock: harness.ui.notify, index: 0 })).toContain(
-      "Composition: ruleset:codemode → ruleset:subagents → ruleset:shell → ruleset:git → ruleset:packageManagers → ruleset:deps-mutations-guard → ruleset:shell-guards → ruleset:path-guards → ruleset:go-runtime-commands → builtin:default → ruleset:git-commit → builtin:committer → ruleset:typescript-node-test → ruleset:rust-test → ruleset:go-runtime-commands → custom profile: parent → transform:deny-asks → custom profile: child",
+      "Composition: ruleset:codemode → ruleset:subagents → ruleset:shell → ruleset:git → ruleset:packageManagers → ruleset:deps-mutations-guard → ruleset:shell-guards → ruleset:path-guards → ruleset:go-runtime-commands → ruleset:rust-test → builtin:default → ruleset:git-commit → builtin:committer → ruleset:typescript-node-test → ruleset:rust-test → ruleset:go-runtime-commands → custom profile: parent → transform:deny-asks → custom profile: child",
     );
   });
 

@@ -93,6 +93,23 @@ describe("shipped profile catalog", () => {
     }
   });
 
+  it.each([
+    "cargo fmt",
+    "cargo fmt --manifest-path audio-create/Cargo.toml",
+    "cargo fmt --check",
+  ])(
+    "builtin:default allows Rust formatting without prompting: %s",
+    async (command) => {
+      const harness = await harnessFor("builtin:default");
+      await expect(
+        harness.callToolWithoutPrompt({
+          toolName: "bash",
+          input: { command },
+        }),
+      ).resolves.toBeUndefined();
+    },
+  );
+
   it("builtin:reviewer denies edit but allows npm test", async () => {
     const harness = await harnessFor("builtin:reviewer");
 

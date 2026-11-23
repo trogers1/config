@@ -37,6 +37,33 @@ const runtimeRequirementDefinitions = [
     },
   ],
   [
+    "rust-toolchain-cache",
+    {
+      sandboxWritePaths: [
+        "~/.cargo/registry",
+        "~/.cargo/registry/**",
+        "~/.cargo/git",
+        "~/.cargo/git/**",
+        "~/.cargo/.package-cache",
+        "~/.cargo/.package-cache-mutate",
+        "~/.cargo/.global-cache",
+      ],
+      protectedPathPatterns: [],
+    },
+  ],
+  [
+    "rust-toolchain-management",
+    {
+      sandboxWritePaths: [
+        "~/.rustup",
+        "~/.cargo/bin",
+        "~/.cargo/.crates.toml",
+        "~/.cargo/.crates2.json",
+      ],
+      protectedPathPatterns: [],
+    },
+  ],
+  [
     "vitest-vite-temp",
     {
       sandboxWritePaths: vitestViteTemporaryWritePaths,
