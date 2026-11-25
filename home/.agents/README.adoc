@@ -73,6 +73,10 @@ including two independent parallel reviewers. Global `AGENTS.md` and the Pi
 subagent tool description surface the default; `orchestrate` and `flow-review`
 refer to the policy rather than maintaining separate copies. The policy applies
 to focused implementation reviews too, without requiring HTML artifacts.
+Both the shared reviewer prompt and review policy require reviewers to read
+`~/.agents/snippets/code.md` and `~/.agents/snippets/types.md` before inspecting
+code. These canonical installed paths work across agents and symlink locations;
+reviewers do not depend on agent-specific snippet activation or inherited context.
 
 MR review loop: `export-mr-comments` / `address-comments` / `flow-review` →
 `discuss-mr-comments` (interactive, one thread at a time; local approval only) →

@@ -59,14 +59,14 @@ The task ledger. One entry per task:
 
 Rules for the task list:
 - Each task must be **self-contained and well-specified** — a worker with zero conversation context must be able to execute it.
-- Each task declares a **`writes` scope** (path prefixes it may modify). Tasks with overlapping scopes must run sequentially, never in parallel.
+- Each implementation task declares a **`writes` scope** (path prefixes it may modify). Tasks with overlapping scopes must run sequentially, never in parallel. Read-only agent launches omit `writes` entirely, not `writes: []`; their profile enforces read-only access. Follow `review-policy` for reviewer launches.
 - Mark dependencies explicitly. Independent tasks with disjoint scopes are parallel candidates.
 
 Keep progress.md terse — statuses, session ids, one-line outcomes. Do not paste worker output into it; the handoff files hold the detail.
 
 ### 3. Dispatch workers
 
-- **Independent tasks**: a single `subagent` call with `tasks: [...]`, each with `writes`, a short `label`, and `runDir: ".pi/orchestration/<run-name>"`.
+- **Independent tasks**: a single `subagent` call with `tasks: [...]`, each implementation task with `writes`, a short `label`, and `runDir: ".pi/orchestration/<run-name>"`. Omit `writes` for read-only agents.
 - **Dependent tasks**: separate single-mode calls as dependencies clear.
 - Every brief must stand alone: goal context in 1–2 sentences, exact files/behaviors, conventions, how to verify, and the write scope. Link to plan.md sections by path rather than repeating long text — workers can read files.
 

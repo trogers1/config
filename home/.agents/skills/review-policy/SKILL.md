@@ -14,6 +14,18 @@ This is the shared review policy for routine implementation reviews,
 `orchestrate`, and `flow-review`. It governs the parent coordinating the review;
 each reviewer remains responsible for independently inspecting the change.
 
+## Required reviewer guidance
+
+Every reviewer must read `~/.agents/snippets/code.md` (Code Style) and
+`~/.agents/snippets/types.md` (Typesafety and Casting) in full before inspecting
+code, and apply them subject to repository instructions. Include this requirement
+in each delegated review task, even when using an agent other than the shared
+`reviewer` agent. Expand `~` to the current user's home directory for file tools;
+these canonical shared paths do not depend on the agent's prompt or skill symlink
+location. Do not rely on slash commands, snippet toggles, or the parent's context
+being inherited. If either file cannot be read, report the blocker and do not
+mark the review complete.
+
 ## Two independent parallel reviewers
 
 By default, delegate each review to **two independent, read-only reviewer
@@ -28,6 +40,13 @@ inspect the affected final changes before closing the review. Repeated reports,
 resumes, or approvals from one reviewer do not constitute two independent reviews.
 If two reviewers are unavailable, report that limitation and ask before
 substituting a single review.
+
+For Pi reviewer launches, omit the `writes` field entirely, including on parallel
+`tasks` entries; do not pass `writes: []`. Keep the `builtin:read-only` profile to
+enforce read-only access. As a temporary workaround for the current scope coupling,
+omitting `writes` avoids exporting an empty `PI_SUBAGENT_PERMISSIBLE_GLOBS`, which
+also blocks contextual reads and searches. Do not broaden the reviewer profile or
+supply a write scope merely to enable review access.
 
 Reviewers do not edit the implementation or shared review artifacts. The parent
 owns integration and artifacts such as `flow.json` and `flow.html`, when requested.
