@@ -1201,5 +1201,14 @@
         }
       ]
     },
+    "mcp-dep-manager": {
+      "description": "Dependency installation and management",
+      "emoji": "📦",
+      "extends": [
+        "mcp",
+        "builtin:deps-mutator"
+      ],
+      "color": "yellow"
+    },
   },
 }

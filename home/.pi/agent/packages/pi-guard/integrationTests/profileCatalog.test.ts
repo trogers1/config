@@ -110,6 +110,22 @@ describe("shipped profile catalog", () => {
     },
   );
 
+  it.each(["ps", "/bin/ps", "ps aux", "ps -A", "/bin/ps -p 123"])(
+    "builtin:default command-allows ps only without arguments: %s",
+    async (command) => {
+      const harness = await harnessFor("builtin:default");
+      const result = await harness.callTool({
+        toolName: "bash",
+        input: { command },
+      });
+      if (command === "ps" || command === "/bin/ps") {
+        expect(result).toBeUndefined();
+      } else {
+        expect(result).toMatchObject({ block: true });
+      }
+    },
+  );
+
   it("builtin:reviewer denies edit but allows npm test", async () => {
     const harness = await harnessFor("builtin:reviewer");
 

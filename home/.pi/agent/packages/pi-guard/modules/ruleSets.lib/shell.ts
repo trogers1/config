@@ -11,6 +11,8 @@ export const defaultShellRules: Rule[] = [
   ...dateDisplayRules,
   { pattern: "*", decision: "ask" },
   { pattern: "pwd", decision: "allow" },
+  { pattern: "ps", decision: "allow" },
+  { pattern: "/bin/ps", decision: "allow" },
   { pattern: "cd", decision: "allow" },
   {
     pattern: "printf",
